@@ -23,4 +23,7 @@
    jig_support_reason·jig_supports·source_supports. stages _sm_post load_source·metric_default, _ls_rank_input(노드 힘 사이드카 합침·
    준비 안 됨 = LOAD_SOURCE_FALLBACK), result.json load_source·metric_default(새 스냅샷만), 보고서 SM_METRIC_KO jd·js·bf·fi.
    tests/opt/test_load_source.py 8.
-7. [ ] 전체 pytest, 계약 부록 A.5, decisions, 커밋.
+7. [x] 전체 pytest tests/: 1547 passed · 192 skipped · 3 failed(허용 3건만 — test_large_model_cad_share·test_v0160_bytes_skip_policy[h8]·
+   [h5open]). 계약 부록 A.5·decisions -25~-28. 이름 분기 없음 시험(스터디·A3 함수·source_load 모듈). ruff 새 지적 0, mypy 새 지적 0.
+8. [ ] (통합 몫) CHANGELOG [0.24.4] P2c·P3 줄, W3 의 워커 지지 규칙(opt_jig_supports)을 코어 tg.jig_supports 로 바꿀지 결정(의미 같음),
+   B3 가 bead_doe.load_source_default·opt_run.load_source_default 를 DEFAULTS·pydantic·yaml 에 넣었는지 확인(코어는 스냅샷 doe.load_source 만 읽음).
