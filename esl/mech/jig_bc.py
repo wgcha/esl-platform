@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Any
 
 import numpy as np
 
@@ -24,7 +25,7 @@ from esl.mech.shell import mesh_components, rigid_rank
 
 # ====================================================================== 계획 표(선언)
 METHOD_COLS = ("src", "tie_value", "tie_stiff", "frame", "factor", "tie_rel_warn", "limits", "name")
-METHODS = {
+METHODS: dict[str, dict[str, Any]] = {
     "fixed": {"src": "jig", "tie_value": "zero", "tie_stiff": "hard", "frame": "jig_kabsch", "factor": "own",
               "tie_rel_warn": True, "limits": (), "name": "고정"},
     "prescribed": {"src": "jig_disp", "tie_value": "target", "tie_stiff": "hard", "frame": "part", "factor": "fixed",
@@ -33,12 +34,12 @@ METHODS = {
                "tie_rel_warn": False, "limits": (), "name": "스프링"},
 }
 TIE_COLS = ("dirs", "aux321", "text")
-TIE_DOFS = {
+TIE_DOFS: dict[str, dict[str, Any]] = {
     "normal": {"dirs": "normal_subspace", "aux321": "inplane", "text": "tie 면외(법선)"},
     "translation": {"dirs": "xyz", "aux321": "none", "text": "tie 병진 123"},
 }
 # 옛 스냅샷(rank.jig 에 tie_dofs·methods 키 없음)의 뜻 — DEFAULTS(normal·세 방식)와 다름(V-0244-JIG-15, 코드 상수 한 곳)
-LEGACY_ABSENT = {"tie_dofs": "translation", "methods": ("fixed",)}
+LEGACY_ABSENT: dict[str, Any] = {"tie_dofs": "translation", "methods": ("fixed",)}
 COL_VALUES = {"tie_value": ("zero", "target"), "tie_stiff": ("hard", "spring"), "frame": ("jig_kabsch", "part"),
               "factor": ("own", "fixed"), "dirs": ("normal_subspace", "xyz"), "aux321": ("inplane", "none")}
 KIND_TIE, KIND_AUX = 1, 2               # bc_kind: tie 구속 · 3-2-1 면내
@@ -154,7 +155,8 @@ def _orient(v):
 
 def node_frames(mesh, nodes, *, kink_deg: float, valid_elem=None) -> dict:
     """구속 법선(§3.1, D-0.24.4-JIG-4): S_n = Σ_{e∋n, valid} A_e m̂_e m̂_eᵀ(기준 형상, ``mass.elem_area_normal`` 식) 고유분해
-    λ₁ ≥ λ₂ ≥ λ₃, 구속 방향 = λ_k ≥ τλ₁ 인 고유벡터(τ = tan²(kink_deg/2) — 평판 1·꺾임 2·모서리 3), 부호 = 최대 절댓값 성분 양수.
+    λ₁ ≥ λ₂ ≥ λ₃, 구속 방향 = λ₁ 고유벡터 + λ_k ≥ τλ₁ 인 고유벡터(τ = tan²(kink_deg/2) — 평판 1·꺾임 2·모서리 3),
+    부호 = 최대 절댓값 성분 양수.
     valid = 두께 > 0 ∧ E > 0(null shell 제외 — ``valid_elem`` 로 덮어씀). valid 이웃 없으면 이웃 전 요소, 그래도 없으면(고립) 3축.
     반환 {node (m,), dir (m,3), dirs [(n, d̂)], rank (len(nodes),), nodes (정렬·중복 제거), rank_counts {1,2,3},
     n_isolated, n_null_excluded(null 이웃을 뺀 노드 수), kink_deg}."""
@@ -195,7 +197,7 @@ def node_frames(mesh, nodes, *, kink_deg: float, valid_elem=None) -> dict:
         if iso[i]:
             dd = [np.eye(3)[k] for k in range(3)]
         else:
-            dd = [_orient(V[i, :, k].copy()) for k in (2, 1, 0) if lam[i, k] >= tau * lam[i, 2]]
+            dd = [_orient(V[i, :, k].copy()) for k in (2, 1, 0) if k == 2 or lam[i, k] >= tau * lam[i, 2]]
         rank[i] = len(dd)
         rows_n += [int(n)] * len(dd)
         rows_d += dd
@@ -248,7 +250,7 @@ def aux321_inplane(X0, sup321, tie_dirs, *, dup_deg: float) -> dict:
     out_n, out_d, n_dup = [], [], 0
     for n, d in cand:
         if n not in basis:                            # 그 노드 tie 방향 정규직교 기저
-            qs = []
+            qs: list[np.ndarray] = []
             for v in td[tn == n]:
                 w = v - sum((q @ v) * q for q in qs) if qs else v.copy()
                 nr = float(np.linalg.norm(w))
@@ -520,6 +522,11 @@ def score(C_mix_d: float, C_mix_0: float, E_0: float) -> float:
     return 1.0 + (float(C_mix_d) - float(C_mix_0)) / float(E_0)
 
 
+def per_esl_C(C_mix_d: float, C_mix_0: float, E_0: float) -> float:
+    """per_esl 저장값 C_<pe> = E_0 + (C_mix,d − C_mix,0), C_ref = E_0 → 기존 비 C/C_ref = ``score``(최악 엔트리 구조 그대로)."""
+    return float(E_0) + (float(C_mix_d) - float(C_mix_0))
+
+
 def aux_reaction_rel(F, BC: dict, rc) -> float:
     """3-2-1 면내 반력비 Σ_n‖r_aux,n‖ / Σ‖F_n‖(정보 — 평형인 면내 맞춤 하중이면 ≈ 0). F = 0 이면 0."""
     kind = np.asarray(BC["bc_kind"]).astype(np.int64)
@@ -605,8 +612,7 @@ def save_bc(BC: dict) -> dict:
 
 def load_bc(z) -> dict:
     """npz(또는 매핑) → BC(키 없음 = 길이 0)."""
-    get = (lambda k: z[k] if k in z else None) if hasattr(z, "__contains__") else (lambda k: getattr(z, k, None))
-    return save_bc({k: v for k in BC_KEYS if (v := get(k)) is not None})
+    return save_bc({k: z[k] for k in BC_KEYS if k in z})
 
 
 def pattern_sha(BC: dict) -> str:

@@ -1032,7 +1032,7 @@ class ShellModel:
     # ------------------------------------------------------------------
     # v0.24.4 경계 확장(esl_jig_case.md §4.2, D-0.24.4-JIG-10): 임의 단위 방향 구속(국부 틀) + 접지 스프링. 추가만 — 위 경로 불변.
     @_oom_guard("정적 해 분해(K̃_ff — 국부 구속·스프링)")
-    def factorize_bc(self, dirs, *, springs=None) -> "BcSolve":
+    def factorize_bc(self, dirs, *, springs=None) -> BcSolve:
         """구속 행 dirs = (node, d̂)(d̂ᵀu_node = 값), 스프링 행 springs = (node, d̂, k)(접지 스프링 ½k(d̂ᵀu − g)²) → 분해 1회.
 
         구속 노드마다 국부 정규직교 틀 Q_n(첫 열들 = 그 노드 구속 방향을 입력 순서대로 Gram–Schmidt, 나머지 = 보완 축)으로
@@ -1113,9 +1113,12 @@ class ShellModel:
                         if tnodes.size else np.zeros(0, np.int64)).astype(np.int64)
         free = np.setdiff1d(np.arange(6 * N), fixed)
 
+        need_iter = self.backend == "iterative" or self._auto       # 반복법 전처리(노드 대각 블록)는 그때만 보관
+        Dg = data[np.flatnonzero(indices == brow)].copy() if need_iter else None
+        del Kt_b, data, brow
+
         def iter_setup():
-            dk = np.flatnonzero(indices == brow)
-            D = data[dk].copy()
+            D = Dg.copy()
             nd_, dd = np.divmod(fixed, 6)
             D[nd_, dd, :] = 0.0
             D[nd_, :, dd] = 0.0
@@ -1136,7 +1139,7 @@ class ShellModel:
         norm_K = _norm_inf(Kff)
         lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
                         iter_opts=self.iter_opts, iter_setup=iter_setup)
-        del Kff, Kt_b, data
+        del Kff
         self.stats["n_factorizations"] = int(self.stats.get("n_factorizations", 0)) + 1
         return BcSolve(self, Kt, lu, free, fixed, norm_K, tnodes=tnodes, Q=Q, Rm=Rm, nk=nk, bc_node=cn, bc_dir=cd,
                        row_loc=row_loc, sp_node=sn, sp_dir=sd, sp_k=sk)

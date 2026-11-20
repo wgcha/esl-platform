@@ -53,7 +53,7 @@ def test_factorized_values_none_is_old_path(plate):
     u0, R0 = sm.solve(F, spc)
     u1, R1 = h.solve(F)
     assert np.array_equal(u0, u1) and np.array_equal(R0, R1)                 # 옛 경로 = 같은 비트
-    u2, R2 = h.solve(F, values=np.zeros(len(h.cons)))                        # 값 0 = 같은 해(반올림)
+    u2, _ = h.solve(F, values=np.zeros(len(h.cons)))                        # 값 0 = 같은 해(반올림)
     assert np.allclose(u2, u1, rtol=0, atol=1e-12 * np.abs(u1).max())
 
 
@@ -77,7 +77,7 @@ def test_factorized_values_matches_dense_reduced(plate):
     fixed = np.array([6 * p + d for p, d in h.cons])
     assert np.allclose(u.ravel()[fixed], v, rtol=0, atol=1e-15)
     assert np.abs(F.sum(axis=0) + R.sum(axis=0)).max() <= 1e-8 * np.abs(R).sum()
-    u0, _ = h.solve(np.zeros_like(F), values=v)                              # F = 0 순수 변위(반력끼리 평형) — 평형 검사 통과
+    h.solve(np.zeros_like(F), values=v)                                      # F = 0 순수 변위(반력끼리 평형) — 평형 검사 통과
     with pytest.raises(EslError):
         h.solve(F, values=v[:-1])
 
@@ -137,7 +137,7 @@ def test_factorize_bc_rigid_prescribed_motion_passes_equilibrium(plate):
     w = 1e-3                                                                 # 면내 회전 + 병진
     rig = np.c_[-w * P[:, 1] + 0.2, w * P[:, 0] - 0.1, np.zeros(P.shape[0])]
     v = np.einsum("ri,ri->r", dd, rig[nd])
-    u, R, rc, _ = hb.solve(np.zeros((P.shape[0], 3)), values=v)
+    u, _, rc, _ = hb.solve(np.zeros((P.shape[0], 3)), values=v)
     assert np.abs(u[:, :3] - rig).max() <= 1e-9 * np.abs(rig).max()
     assert np.abs(rc).max() <= 1e-6 * hb.norm_K * np.abs(rig).max()
 
@@ -188,3 +188,19 @@ def test_bcsolve_transform_roundtrip_and_modes_match_spc():
     u0, _ = h.solve(F)
     u1 = hb.solve(F)[0]
     assert np.abs(u1 - u0).max() <= 1e-10 * np.abs(u0).max()
+
+
+def test_factorize_bc_iterative_backend_matches_direct(plate):
+    """반복법(CG, 변환 공간 블록 야코비·근사 영공간 = Tᵀ 강체 모드) = 직접법(1e-9)."""
+    P = plate["P"]
+    sm_i = ShellModel(P, plate["sm"].conn, plate["sm"].elem_type, 1.0, E, NU, backend="iterative", iter_rtol=1e-12)
+    J, F = plate["J"], plate["F"]
+    D = np.random.default_rng(5).normal(size=(3 * J.size, 3))
+    sp_ = (J[:2], np.tile([0, 0, 1.0], (2, 1)), np.full(2, 50.0))
+    v = np.linspace(-0.01, 0.01, 3 * J.size)
+    g = np.array([0.1, -0.1])
+    ud = plate["sm"].factorize_bc((np.repeat(J, 3), D), springs=sp_).solve(F, values=v, ground=g)[0]
+    hi = sm_i.factorize_bc((np.repeat(J, 3), D), springs=sp_)
+    ui = hi.solve(F, values=v, ground=g)[0]
+    assert type(hi.lu).__name__ == "_CG"
+    assert np.abs(ui - ud).max() <= 1e-9 * np.abs(ud).max()
