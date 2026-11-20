@@ -150,25 +150,18 @@ SRC_DIR_SCHEMA = "esl/val_sources/1"
 
 
 def _val_plan() -> dict[str, Any]:
-    """코어 출처 계획 표 ``esl.val_src``(VAL_PLAN·REASON_TEXT) — 어댑터 경유. 출처가 필요할 때만 부른다(옛 경로는 코어 무관)."""
+    """코어 출처 계획 표 ``esl.val_src``(VAL_PLAN) — 어댑터 래퍼 ``val_src_plan`` 경유. 출처가 필요할 때만 부른다(옛 경로는 코어 무관)."""
     from esl_worker import core_adapter as ca
 
-    rows = tuple(ca._attr("esl.val_src", "VAL_PLAN"))
-    legacy = [r["key"] for r in rows if r.get("legacy")]
-    return {"rows": rows, "keys": tuple(r["key"] for r in rows), "legacy": legacy[0] if legacy else None,
-            "text": dict(ca._attr("esl.val_src", "REASON_TEXT"))}
+    p = ca.val_src_plan()
+    return {"rows": tuple(p["rows"]), "keys": tuple(p["keys"]), "legacy": p["legacy"]}
 
 
 def _reason_text(plan: dict[str, Any], code: str | None, detail: str | None = None) -> str | None:
-    """사유 코드 → 문구(검증 표 → v0.24.1 3D 표 → 상세/코드). 한 곳 = 코어(값 사본을 만들지 않음)."""
-    if code is None:
-        return None
-    base = plan["text"].get(code)
-    if base is not None:
-        return f"{base}({detail})" if detail else base
-    from esl_worker.core_adapter import _attr
+    """사유 코드 → 문구. 원본 한 곳 = 코어 ``esl.val_src.reason_text``(어댑터 ``val_reason_text``, 3D 표 포함)."""
+    from esl_worker import core_adapter as ca
 
-    return _attr("esl.view3d_src", "reason_text")(code, detail)
+    return ca.val_reason_text(code, detail)
 
 
 def _src_row(src: str | None) -> dict[str, Any] | None:

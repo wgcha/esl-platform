@@ -1,15 +1,13 @@
 """v0.24.3 ④ 검증 출처별 API(계약 esl_validate_sources.md §7·§14.1 V-0243-VAL-12~16).
 
-코어 산출(05_val/sources.json·05_val/<dir>/)은 묶음 A 형식(§6.2·§6.3)의 픽스처로 심는다. 코어 ``esl.val_src`` 가 없는
-작업 트리(묶음 A 합류 전)에서는 계약 §2.2 표대로의 최소 모듈을 심어 시험한다(있으면 실제 모듈).
+코어 산출(05_val/sources.json·05_val/<dir>/)은 묶음 A 형식(§6.2·§6.3)의 픽스처로 심는다. 계획 표·문구는 실제 코어
+``esl.val_src``(어댑터 ``core_adapter.val_src_plan``·``val_reason_text``).
 """
 
 from __future__ import annotations
 
 import json
 import os
-import sys
-import types
 import uuid
 from pathlib import Path
 
@@ -19,27 +17,6 @@ from esl_test_support import API, REPO, H, create_case, make_settings_dict
 from p2_support import seed_run, write_compare_field
 
 R = H("tok-power")
-VAL_PLAN_STUB = (
-    {"key": "jig", "legacy": False, "load": None, "dir": None, "na": "V3D_STUDY_ONLY"},
-    {"key": "full", "legacy": True, "load": ("esl", "f_eq.npz", "f"), "dir": "", "na": "PREREQUISITE_MISSING"},
-    {"key": "bforce", "legacy": False, "load": ("esl", "bforce.npz", "f"), "dir": "bforce", "na": "V3D_SRC_NOT_RUN"},
-    {"key": "fint", "legacy": False, "load": ("esl", "fint.npz", "f"), "dir": "fint", "na": "V3D_SRC_NOT_RUN"},
-)
-REASON_STUB = {
-    "VAL_SRC_NOT_RUN": "이 검증에는 출처별 결과가 없습니다(v0.24.3 이전 검증) — ④ 검증을 다시 실행하면 생깁니다",
-    "VAL_SRC_FAILED": "출처 검증 계산 실패", "VAL_SRC_DISABLED": "설정에서 꺼짐(validation.sources.enabled)"}
-
-
-@pytest.fixture(autouse=True)
-def val_src_core(monkeypatch):
-    try:
-        import esl.val_src  # noqa: F401
-    except ImportError:
-        m = types.ModuleType("esl.val_src")
-        m.VAL_PLAN, m.REASON_TEXT = VAL_PLAN_STUB, REASON_STUB
-        monkeypatch.setitem(sys.modules, "esl.val_src", m)
-
-
 @pytest.fixture()
 def settings_dict(tmp_path):
     return make_settings_dict(tmp_path, ui={"max_preview_points": 500})

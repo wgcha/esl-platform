@@ -484,3 +484,25 @@ D-0.24.3-VAL-1 범위·단계 · -2 별도 계획 표 VAL_PLAN · -3 검증 단�
 - R-VAL-4 ESL 단계 bforce·fint 재현 풀이 분해 공유(지금 `_nodal_recon` 마다 `sm.solve` — 같은 3-2-1 분해 2회, ESL ≈ −1 분해).
 - R-VAL-5 출처 05_val 디스크 — 현장 크기가 크면 출처 `compare.csv` 선택 설정 검토.
 - R-VAL-6 (P3 가 밀리면) 비드 최적화 jig(지그 지지 덱).
+
+## 구현 메모 (2026-11-20, v0.24.3 P1 통합)
+
+계약과 다른 점·통합에서 고친 것. 계약 본문은 그대로 두고 여기에 기록한다.
+
+| 묶음 | 계약 | 구현 · 이유 |
+|---|---|---|
+| A | §4.1 `sm.factorize` 로 분해 1회 | `ShellModel.solve` 그대로 + `esl/mech/shell.py` `keep_factor`/`kept_factor`(선택, 기본 끔 — **소유 밖 파일, 기록**)로 그 분해를 출처 해에 재사용. 기존 `tests/pipeline/test_disp_primary.py` 가 `ShellModel.solve` 를 monkeypatch 하므로 무수정 통과. 출처 해 = 따로 푼 `sm.solve` 와 비트 동일(V-3). 단계 요약 solver 키 그대로(`n_factorizations` 없음) |
+| A | §6.2 행 | 상태가 done 이 아니면 `dir` = null(폴더 없음). `solve.groups[].assembly_s`, `solve.eval_s{key}` 추가(legacy `solve_s` = 전체 − factor_s − assembly_s, `eval_s` = 변형률 회복 + 지표 + 파일 쓰기) |
+| A | §6.2 행 `note` | 코드가 아니라 문구(`NOTE_TEXT`). 화면은 그대로 표시 |
+| A | §6.3 판정 불가 출처(fallback 없음) | 파일 = `validation.json`·`validation.csv` 만(compare 파일 없음). `noise_hotspot_strain_rel` 은 S4 공통 값, hotspot·제외·field·strain_ref·disp = 빈 목록/null. `validation.json` 끝 `src` 블록·`criteria.reaction_role` |
+| A | V-3 `hotspots_excluded` "full 과 같음" | 제외 요소·사유·ε_rad 같음(ε_val 은 출처 응답 값) |
+| A | "기존 시험 무수정" | `tests/cumulative/golden_util.py`: v0.7.2 골든 비교에서 v0.24.3 추가 산출물(`sources.json`·`05_val/<출처>/`·07_report 출처 표 블록) 제외(v0.12.1 `ADDED_KEYS` 와 같은 원칙) — 메인 승인 |
+| B | §2.2 표를 직접 복제한 임시 `esl.val_src` 로 시험 | 통합: `results.py` `_val_plan` 이 어댑터 `core_adapter.val_src_plan()`, 사유 문구는 `val_reason_text` 로 교체(문구 사본 제거), `backend/tests/test_val_src_api.py` 임시 모듈 제거 = 실제 코어 |
+| B | sources.json 행에 `code` 없음 가정 → na/VAL_SRC_NOT_RUN | 실제 코어 행은 항상 `code`·`reason`(문구)을 가진다. 백엔드는 행 `code`·`reason` 우선, 행이 없거나 code 가 없을 때만 계획 열(`load` None → 열 `na`, 아니면 `VAL_SRC_NOT_RUN`) |
+| B | §7.1 compare 파일 없음 | 판정 불가 출처의 `?src=` field·disp-field = 409 `PREREQUISITE_MISSING`(legacy 와 같은 코드), 출처 validation 응답의 `field`·`disp` = null — 화면이 이 값으로 해당 카드를 끄고 안내 문구를 보인다(실측: `worker/tests/test_val_src_e2e.py`, `full_solve: never`) |
+| C | 목 서버 `?demoValSrc` | 기본 `old`(옛 서버 = 404 → 탭 없음), `ok`·`notrun` 은 시연 전용. 실제 응답과의 차이(경계력 반력 역할 info·내력 한계 등)는 목 데이터 값일 뿐 형식은 같음 |
+| C | `styles.css` | `.val-src-tabwrap .seg button` 패딩 4줄(+주석) — 판정 카드 머리 줄 높이 불변 |
+| C | §14.1 시험 21(DOM 높이 측정 vitest) | **미작성** — jsdom 은 레이아웃이 없어 측정 불가. 2560×1440 Playwright 로 v0.24.2·v0.24.3 높이를 B 가 확인(`/home/claude/shots/pw_v0243.mjs`, 높이 동일). 통합 때 실제 응답 스크린샷은 만들지 않고 아래 vitest 로 대체 |
+| 통합 | 실연동 시험 | `worker/tests/test_val_src_e2e.py`(실제 코어·워커 등록·API: 전부 done / 자료 없음 / 옛 검증 / full_solve never 판정 불가), 프런트 `v0243_real_backend.test.ts` ← `fixtures/real_v0243.json`(실제 응답 저장, 재생성 방법은 시험 머리말) |
+
+측정(A, 합성 평판 21,901 노드·2코어): 검증 출처 끔 9.5 s → 켬 12.2~12.4 s(+29~30 %), 05_val 5.2 MB → 15.5 MB.
