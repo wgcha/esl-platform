@@ -353,7 +353,13 @@ def test_v0244_jig_support_text_limits_and_classes():
     assert vs.support_text("bc321", doc) == vs.SUPPORT_TEXT["bc321"]                          # 자리 없는 문구 그대로
     t = vs.cond_text(JD, doc)
     assert t == ("하중 " + vs.LOAD_FRAME_TEXT["ref_basis"] + " · 지지 지그 경계(tie 면외(법선) 12 + 3-2-1 면내 3) · 균형 "
-                 + vs.BALANCE_TEXT["jig_disp"] + " · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이")
+                 + vs.BALANCE_TEXT["jig_disp"] + " · 값 낙하 변위 · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이")
+    # 지그 3행만 "값" 구간(0·낙하 변위·스프링 α) — 그 밖의 행 문구는 이전과 같음
+    for k, v in (("jig", "0"), ("jig_disp", "낙하 변위"), ("jig_spring", "스프링 α")):
+        assert f" · 값 {v} · {vs.COND_TAIL}" in vs.cond_text(vs.plan(k), doc)
+    for k in ("full", "bforce", "fint"):
+        assert "값" not in vs.cond_text(vs.plan(k), None)
+    assert vs.cond_text(vs.plan("full"), None).endswith("균형 " + vs.BALANCE_TEXT["self"] + " · " + vs.COND_TAIL)
     # 한계: 코드 = 진단 json limits, 문구 = 같은 자리 limit_text(LIMIT_TEXT 에 없는 코드), 등급 caution → 비교 가능
     assert vs.limit_doc_text(J, doc) == {"JIG_DISP_FROM_TARGET": "tie 강제 — 유리", "JIG_AUX_REACTION": "면내 반력 큼"}
     sb = vs.src_block(JD, doc, 3.0)

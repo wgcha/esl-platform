@@ -97,6 +97,9 @@ LOAD_FRAME_TEXT = {"ref_k0": "기준 형상 F = K₀·u_rel",
 BALANCE_TEXT = {"self": "자기평형(구성상)", "jig": "지그 지지(tie 구속·3-2-1 면내)가 받음",
                 "jig_disp": "tie 강제 변위·3-2-1 면내가 받음", "jig_spring": "tie 스프링·3-2-1 면내가 받음",
                 "inertia_relief": "관성 이완", "none": "균형 보정 없음 — 불평형은 지지 반력으로"}
+# 균형 코드별 "값" 구간(esl_jig_case.md §5.5 cond_text "값 <0|낙하 변위|스프링 α>") — 표에 있는 균형 코드만 조건 한 줄에
+# " · 값 <문구>" 를 넣는다(없으면 구간 없음 → 기존 출처 문구 바이트 불변). 키는 행 이름이 아니라 균형 코드.
+BALANCE_VALUE_TEXT = {"jig": "0", "jig_disp": "낙하 변위", "jig_spring": "스프링 α"}
 # 지지 문구 — {이름} 자리는 진단 json 의 bc 블록 값(SUPPORT_FIELDS 경로)으로 채움(없으면 "–")
 SUPPORT_TEXT = {"bc321": "3-2-1(03_bc/support.json)", "jig": "지그 경계({tie_text} {n_jig} + 3-2-1 면내 {n_aux})"}
 SUPPORT_FIELDS = ("bc",)
@@ -259,12 +262,14 @@ def support_text(support: str | None, doc: dict[str, Any] | None) -> str:
 
 
 def cond_text(row: dict[str, Any], doc: dict[str, Any] | None) -> str:
-    """조건 한 줄: "하중 <load_frame> · 지지 <support> · 균형 <balance> · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이"."""
+    """조건 한 줄: "하중 <load_frame> · 지지 <support> · 균형 <balance> [· 값 <지그 값>] · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이"."""
     c = cond_of(row, doc)
     lf = LOAD_FRAME_TEXT.get(c["load_frame"], c["load_frame"] or "–")
     sp = support_text(c["support"], doc)
     bl = BALANCE_TEXT.get(c["balance"], c["balance"] or "–")
-    return f"하중 {lf} · 지지 {sp} · 균형 {bl} · {COND_TAIL}"
+    val = BALANCE_VALUE_TEXT.get(c["balance"] or "")
+    mid = f"값 {val} · " if val is not None else ""
+    return f"하중 {lf} · 지지 {sp} · 균형 {bl} · {mid}{COND_TAIL}"
 
 
 def note_text(row: dict[str, Any]) -> str | None:

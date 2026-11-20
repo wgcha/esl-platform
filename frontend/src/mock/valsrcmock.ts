@@ -19,11 +19,12 @@ export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "o
   if (!jigRows) return rows;
   // v0.24.4(esl_jig_case.md §5.5): 지그 3행(KEYS 순서 jig·jig_disp·jig_spring) — jig 고정 PASS · jig_disp PASS ⚠(JIG_DISP_FROM_TARGET) · jig_spring = 이 검증에 없음
   const run = mode === "ok" && latest;
-  const jigCond = (val: string) => `하중 지그 맞춤 · 지지 tie 면외(법선) 128 + 3-2-1 면내 3 · 값 ${val} · 목표 u_rel · 응답 = 검증 풀이`;
+  // 실제 코어(esl/val_src.py cond_text)와 같은 구간: 하중 · 지지 · 균형 · 값 · 목표 · 응답
+  const jigCond = (bal: string, val: string) => `하중 기준 형상 F = Σ a_k·기저(지그 맞춤) · 지지 지그 경계(tie 면외(법선) 128 + 3-2-1 면내 3) · 균형 ${bal} · 값 ${val} · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이`;
   const info = { reaction_role: "info" as const, reaction_tol_key: "validation.sources.reaction_tol", note: VAL_SRC_NOTE_RECON };
-  const jig: ValidationSourceRow = run ? { ...blank("jig"), available: true, status: "PASS", ...info, cond_text: jigCond("0"), comparable: true } : { ...blank("jig"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN };
+  const jig: ValidationSourceRow = run ? { ...blank("jig"), available: true, status: "PASS", ...info, cond_text: jigCond("지그 지지(tie 구속·3-2-1 면내)가 받음", "0"), comparable: true } : { ...blank("jig"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN };
   const disp: ValidationSourceRow = run
-    ? { ...blank("jig_disp"), available: true, status: "PASS", ...info, cond_text: jigCond("낙하 변위"), limits: ["JIG_DISP_FROM_TARGET"], limit_text: ["tie 변위를 낙하 결과에서 그대로 강제 — 순수 지그 비교로는 주의"], comparable: true }
+    ? { ...blank("jig_disp"), available: true, status: "PASS", ...info, cond_text: jigCond("tie 강제 변위·3-2-1 면내가 받음", "낙하 변위"), limits: ["JIG_DISP_FROM_TARGET"], limit_text: ["tie 변위를 낙하 결과에서 그대로 강제 — 순수 지그 비교로는 주의"], comparable: true }
     : { ...blank("jig_disp"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN };
   const spring: ValidationSourceRow = { ...blank("jig_spring"), code: "JIG_NOT_RUN", reason: "이 ESL 결과에는 지그 스프링 계산이 없습니다(v0.24.4 이전 계산) — ESL 을 다시 계산하면 생깁니다" };
   return [jig, disp, spring, ...rows.filter((r) => r.key !== "jig")];
