@@ -233,7 +233,7 @@ def aux321_inplane(X0, sup321, tie_dirs, *, dup_deg: float) -> dict:
     """3-2-1 면내 행(§3.3, D-0.24.4-JIG-5): 판 평면 = 파트 PCA(``supports.pca_corners`` 축 e₁·e₂, 법선 e₃),
     n₁(123) → e₁, e₂ · n₂(2성분) → ê = e₃ × (x₂ − x₁)/‖·‖(면내 회전 막음). n₃·모든 면외 성분 제외.
     중복 제거: 그 노드의 tie 구속 방향(+ 앞서 받은 면내 행)에 대해 Gram–Schmidt, 남은 노름 < sin(dup_deg) = 행 뺌(n_dup).
-    반환 {node, dir, nodes [n₁, n₂, n₃], n_dup, plane{e1, e2, n}}."""
+    반환 {node, dir, rows [(n, d̂)], nodes [n₁, n₂, n₃], n_dup, plane{e1, e2, n}}."""
     X = np.asarray(X0, dtype=np.float64)
     n1, n2, n3 = _sup321(sup321)
     pl = supports.pca_corners(X)["plane"]
@@ -266,7 +266,9 @@ def aux321_inplane(X0, sup321, tie_dirs, *, dup_deg: float) -> dict:
         basis[n].append(u)
         out_n.append(int(n))
         out_d.append(u)
-    return {"node": np.asarray(out_n, dtype=np.int64), "dir": np.asarray(out_d, dtype=np.float64).reshape(-1, 3),
+    node = np.asarray(out_n, dtype=np.int64)
+    dirv = np.asarray(out_d, dtype=np.float64).reshape(-1, 3)
+    return {"node": node, "dir": dirv, "rows": [(int(a), b) for a, b in zip(node, dirv)],
             "nodes": [int(n1), int(n2), int(n3)], "n_dup": int(n_dup),
             "plane": {"e1": e1.tolist(), "e2": e2.tolist(), "n": e3.tolist()}}
 
@@ -275,7 +277,7 @@ def aux_rows(X0, sup321, tie: dict, tie_dofs: str, *, dup_deg: float) -> dict:
     """3-2-1 면내 행(TIE_DOFS.aux321 열): inplane = ``aux321_inplane``, none = 빈 행."""
     if TIE_DOFS[tie_dofs]["aux321"] == "inplane":
         return aux321_inplane(X0, sup321, tie, dup_deg=dup_deg)
-    return {"node": np.zeros(0, np.int64), "dir": np.zeros((0, 3)), "nodes": [], "n_dup": 0, "plane": None}
+    return {"node": np.zeros(0, np.int64), "dir": np.zeros((0, 3)), "rows": [], "nodes": [], "n_dup": 0, "plane": None}
 
 
 # ====================================================================== (3) 목표 프레임 · BC — §3.2
@@ -483,13 +485,16 @@ def solve(h, F, BC: dict, *, homogeneous: bool = False):
                    ground=np.asarray(BC["sp_g"], dtype=np.float64) if np.asarray(BC["sp_node"]).size else None)
 
 
-def modes(h, weights, n_modes: int, rho_t: float, *, tol: float = 0.0, maxiter=None) -> dict:
-    """지그 구속 저차 모드(σ = 0, 분해 재사용 — D-JIG-15) → {phi (m,N,6) 전역, lam, hz, n_conv, ok, err, g (m,N,3) 관성 하중}.
-    변환 공간 해법(BcSolve)은 K̃·fixed_t 로 풀고 φ = to_global(φ̃)(질량 = 병진 등방 m·I₃ — 회전 불변). 실패 = JIG_MODES_FAILED."""
+def modes(h, weights, n_modes: int, rho_t: float, *, sigma: float = 0.0, tol: float = 0.0, maxiter=None) -> dict:
+    """지그 구속 저차 모드(D-JIG-15 — σ = 0 이면 지그 분해 재사용, 아니면 (K − σM)_ff 분해) → {phi (m,N,6) 전역, lam, hz,
+    n_conv, ok, err, g (m,N,3) 관성 하중}. 변환 공간 해법(BcSolve)은 K̃·fixed_t 로 풀고 φ = to_global(φ̃)(질량 = 병진 등방
+    m·I₃ — 회전 불변). 실패 = JIG_MODES_FAILED(``jig.jig_modes`` 규칙 그대로)."""
     m = jig.lumped_mass(weights, rho_t)
     M6 = jig.mass_diag6(m)
     N = int(h.model.n_nodes)
-    md = jig.jig_modes(h.K_t, M6, h.fixed_t, int(n_modes), 0.0, opinv=jig.opinv_from(h, N), tol=tol, maxiter=maxiter)
+    sg = float(sigma)
+    md = jig.jig_modes(h.K_t, M6, h.fixed_t, int(n_modes), sg, opinv=jig.opinv_from(h, N) if sg == 0.0 else None,
+                       tol=tol, maxiter=maxiter)
     md["phi"] = h.to_global(md["phi"])
     md["g"] = jig.mode_loads(md["phi"], m)
     return md

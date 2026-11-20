@@ -204,3 +204,26 @@ def test_factorize_bc_iterative_backend_matches_direct(plate):
     ui = hi.solve(F, values=v, ground=g)[0]
     assert type(hi.lu).__name__ == "_CG"
     assert np.abs(ui - ud).max() <= 1e-9 * np.abs(ud).max()
+
+
+def test_factorize_bc_mixed_rank_nonorthogonal_rows(plate):
+    """노드마다 구속 1·2·3행(같은 노드 안 비직교 방향 — Gram–Schmidt R ≠ I): 값 만족·행 반력 합 = 노드 반력·평형."""
+    sm, J, F = plate["sm"], plate["J"], plate["F"]
+    rng = np.random.default_rng(6)
+    nodes, dirs = [], []
+    for i, n in enumerate(J):
+        k = 1 + i % 3
+        nodes += [int(n)] * k
+        dirs += list(rng.normal(size=(k, 3)) + [0.0, 0.0, 2.0])               # 같은 노드 행끼리 비직교
+    nodes, dirs = np.asarray(nodes), np.asarray(dirs)
+    order = rng.permutation(nodes.size)                                         # 입력 순서 섞음(행 순서 = 입력 순서)
+    nodes, dirs = nodes[order], dirs[order]
+    hb = sm.factorize_bc((nodes, dirs))
+    v = rng.normal(size=nodes.size) * 0.02
+    u, R, rc, _ = hb.solve(F, values=v)
+    Dn = dirs / np.linalg.norm(dirs, axis=1)[:, None]
+    assert np.abs(np.einsum("ri,ri->r", Dn, u[nodes, :3]) - v).max() <= 1e-11
+    Rr = np.zeros_like(R)
+    np.add.at(Rr, nodes, rc[:, None] * Dn)
+    assert np.abs(Rr - R).max() <= 1e-9 * np.abs(R).max()
+    assert np.abs(F.sum(axis=0) + R.sum(axis=0)).max() <= 1e-8 * (np.abs(F).sum() + np.abs(R).sum())

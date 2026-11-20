@@ -1284,6 +1284,13 @@ class BcSolve:
         tp = np.full(model.n_nodes, -1, dtype=np.int64)
         tp[tnodes] = np.arange(tnodes.size)
         self._tpos = tp
+        # 노드별 상삼각 R(Gram–Schmidt) — 쓰지 않는 대각은 1(일괄 풀이용), 국부 구속 dof 마스크
+        used = np.arange(3)[None, :] < np.asarray(nk)[:, None]
+        Rp = np.array(Rm, dtype=np.float64, copy=True) * (used[:, :, None] & used[:, None, :])
+        ii = np.arange(3)
+        Rp[:, ii, ii] = np.where(used, Rp[:, ii, ii], 1.0)
+        self._Rp = Rp
+        self._used = used
 
     # ---------------------------------------------------------------- 좌표 변환(병진 성분만 — 회전 dof 는 변환 밖)
     def _apply(self, x, local: bool):
@@ -1311,14 +1318,11 @@ class BcSolve:
         v = np.zeros(m) if values is None else np.asarray(values, dtype=np.float64).reshape(-1)
         if v.size != m or not np.all(np.isfinite(v)):
             raise EslError("INPUT_INVALID", f"values 길이 {v.size} ≠ 구속 행 {m}(또는 비유한)")
-        loc = np.zeros((self.tnodes.size, 3))
         vv = np.zeros((self.tnodes.size, 3))
-        t = self._tpos[self.bc_node]
-        vv[t, self.row_loc] = v
-        for i in range(self.tnodes.size):
-            k = int(self.nk[i])
-            loc[i, :k] = np.linalg.solve(self.Rm[i, :k, :k].T, vv[i, :k]) if k else 0.0
-        return loc
+        vv[self._tpos[self.bc_node], self.row_loc] = v
+        if not self.tnodes.size:
+            return vv
+        return np.linalg.solve(np.swapaxes(self._Rp, 1, 2), vv[:, :, None])[:, :, 0] * self._used
 
     @_oom_guard("정적 해(K̃_ff, 분해 재사용)")
     def solve(self, F, values=None, ground=None):
@@ -1342,9 +1346,8 @@ class BcSolve:
         ft = self.to_local(f6).ravel()
         ut = np.zeros(6 * N)
         loc = self._local_values(values)
-        for i, n in enumerate(self.tnodes):
-            k = int(self.nk[i])
-            ut[6 * n:6 * n + k] = loc[i, :k]
+        if self.tnodes.size:
+            ut.reshape(N, 6)[self.tnodes, :3] = np.where(self._used, loc, 0.0)
         K, free, lu = self.K_t, self.free_t, self.lu
         rhs = ft[free] - (K @ ut)[free]
 
@@ -1362,13 +1365,10 @@ class BcSolve:
         rt = (K @ ut - ft).reshape(N, 6)
         R = np.zeros((N, 3))
         rc = np.zeros(self.bc_node.size)
-        lam = np.zeros((self.tnodes.size, 3))
-        for i, n in enumerate(self.tnodes):
-            k = int(self.nk[i])
-            r_loc = rt[n, :k]
-            R[n] = self.Q[i, :, :k] @ r_loc
-            lam[i, :k] = np.linalg.solve(self.Rm[i, :k, :k], r_loc)
-        if self.bc_node.size:
+        if self.tnodes.size:
+            r_loc = np.where(self._used, rt[self.tnodes, :3], 0.0)          # 국부 구속 dof 반력(자유 성분 = 0)
+            R[self.tnodes] = np.einsum("tij,tj->ti", self.Q, r_loc)
+            lam = np.linalg.solve(self._Rp, r_loc[:, :, None])[:, :, 0] * self._used
             rc = lam[self._tpos[self.bc_node], self.row_loc]
         u = self.to_global(ut.reshape(N, 6))
         fs = self.sp_k * (g - np.einsum("si,si->s", self.sp_dir, u[self.sp_node, :3])) if ms else np.zeros(0)
