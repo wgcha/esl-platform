@@ -398,6 +398,7 @@ score(C_mix_d, C_mix_0, E_0) -> float;  pattern_sha(BC) -> str;  save_bc(dict)/l
 | 파일(npz 4개 압축) | ≈ 10~20 s | ✓ | ✓ |
 | **합계** | | **≈ +11~15 분** | **≈ +9~12 분** |
 
+- **정정(v0.24.4 독립 검증 실측, 부록 A.7)**: 위 "분해 ≈ 200 s" 는 3-2-1 분해(13.9~15.1 s @32,761)의 외삽이다. 지그(tie 노드 구속이 흩어진 K_ff)는 같은 SuperLU 기본 순서에서 **57~60 s / 3.9 GB**(법선)·27 s / 3.3 GB(병진)로 3.5~4배 느렸다 → 194k 외삽 분해 ≈ 14 분(기본 순서)이라 첫 ESL +20~25 분·④ +15~18 분·메모리 +26 % 였다. 분해 순서를 노드 블록 순서로 바꾸면(`solver.jig_factor_order = node_mmd`, 기본) 9.0 s / 2.7 GB → 194k 외삽 분해 ≈ 2 분, **첫 ESL ≈ +9~12 분·④ ≈ +5~6 분·메모리 피크 3-2-1 대비 −14 %**(외삽 — 194k 실측 아님).
 - `methods` 에서 spring 을 빼면 ≈ −5 분. 메모리 피크 = 분해 1개(지금 ESL 과 같음 — 분해마다 `del`).
 - ④ 검증: 지그 묶음 2개(jig+jig_disp 분해 1, jig_spring 분해 1) ≈ +2 × 200 s + 해 3 + 지표 3 × ≈ 20 s → **≈ +8~9 분**. 05_val 출처 폴더 +3개(각 루트와 같은 크기).
 - 04_esl 디스크: jig_basis.npz(mode_f 4×N×3 등) ≈ 15~25 MB, 방식 npz ≈ 8~10 MB × 3. 3D 캐시 = 탭 첫 열기 때(bforce 와 같은 규모).
@@ -523,6 +524,7 @@ D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 �
 - R-JIGC-1 (P2c 가 밀리면) 스터디 세 방식 계산. R-JIGC-2 스터디 jig_disp·jig_spring 3D. R-JIGC-3 `spring_alpha_scan` 계산·화면.
 - R-JIGC-4 상태 파일(.str/.sta) include 를 paicad fixed-scan 이 못 읽는 경우 — 원본 include 만 사본(상태 파일 제외) 재시도.
 - R-JIGC-5 h3d 에 추가 질량만 있을 때 M = deck + ΔM 합성. R-JIGC-6 bf_resolve 사유에 가용 이름 목록·종류 단위 재보충.
+- R-JIGC-10 3-2-1 분해(옛 경로)에도 노드 블록 순서(solver.jig_factor_order 와 같은 `order`) 적용 — 옛 결과 바이트 보존 정책 결정 필요(부록 A.7).
 - R-JIGC-7 fixed·normal 목표 프레임을 점-면(법선 가중) Kabsch 로(지금 = 전 성분 Kabsch).
 - R-JIGC-8 기하 비선형(막) 강성 K_σ(u_rel) 추가 연구(가설 검증 후).
 - R-VAL-7(새) 비드 최적화 지그 경계 덱 전달(§9 사상). R-VAL-3(스터디가 Case 지그 재사용)·R-VAL-6 그대로.
@@ -626,3 +628,17 @@ D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 �
 | 실연동 시험 | `worker/tests/test_load_source_e2e.py`: 비드 최적화(load_source 없음 = params·target 에 키 없음, full = 하중 같음, jig translation+fixed → tie 123 지지 = 선정·덱 SPC1, jig_disp 422 UNSUPPORTED, fint 422 UNAVAILABLE, 모르는 키 422, bforce FAIL → 422 UNCONFIRMED → ack 로 성공) · 스터디(없음·jig_spring → metric js·C_js 열·jig 방식 블록·bforce → metric bf, 결과 API 에 load_source·metric_default). 프런트 픽스처 `frontend/src/__tests__/fixtures/real_v0244_p3.json` + `v0244_p3_real_backend.test.ts` |
 | 실연동에서 고친 것 | ① 결과 API(`DoeResultOut.metric·metric_effective`)가 jd·js·bf·fi 를 거부(500) → `RankMetricLit` 확장 ② `load_source`·`metric_default` 가 API 응답에서 빠짐 → 통과 ③ 프런트 types 의 DoeRankMetric 확장 |
 | 알려진 한계 | 설정 `*.load_source_default` 가 null 이 아닌 값(또는 opt 기본 full 이 아닌 값)이어도 요청에 출처가 없으면 서버는 적용하지 않는다(화면 안내 문구만 바뀜) — 필요하면 후속(R-JIGC-9). 실제 paicad·hw·OptiStruct 는 여전히 가짜(합성) |
+
+### A.7 독립 검증(Verifier) 지적 수정 (2026-11-21)
+
+| 항목 | 결정·결과 |
+|---|---|
+| 삭제·이동 안전(심링크) | 지그 준비 가드가 `<case>/_jig` 의 realpath 를 허용 범위로 써서 `_jig` 가 Case 밖을 가리키는 링크면 `rmtree` 가 밖을 지울 수 있었다. 공용 `esl_platform.core.safe_fs.checked_path(root, path)` — path 가 root(Case 폴더) 아래이고 root 다음 모든 구성 요소(자신 포함)가 링크가 아니며 realpath 도 root realpath 안일 때만 통과, 아니면 `UnsafePath`(OSError). 허용 위치는 Case 폴더 기준 문자열 경로, 대상 검사는 위 함수. 적용: `jig_prep.make_guard`(rmtree·makedirs·스테이징 쓰기 전 — `_fill` 시작에서 `_jig` 먼저 검사)·`_backup_move`·`write_record`, `esl_snapshot._inside`(03_bc·04_esl·05_val 복원·저장), `view3d._publish`(3D 캐시 이동), `library._stash`(링크면 옮기지 않고 경고만 — 실패 처리 중 호출). 거부 = 삭제·이동 없이 사유 기록(지그 준비는 `EXCEPTION`·`PATH_OUTSIDE_ROOT` 로 `jig_prep.json` 에, ESL 은 계속). 이미 링크 검사가 있던 곳(uploads·opt_templates·redrop·trash)은 그대로. `bf_ondemand` 는 삭제·이동 없음. 시험 `worker/tests/test_jig_prep.py`(심링크 `_jig`·`jig_fixed`·상위 링크·`_backup_move`·run 통합 — 밖 폴더 내용 불변) |
+| 문구 조사 | `JIG_METHOD_NOT_RUN` "지그 {name}을" → "이 스터디에서 계산하지 않은 지그 방식입니다: {name} — …"(받침 무관 구조). 화면 `JIG_METHOD_NOT_RUN_TEXT` 도 같은 구조. 같은 패턴 점검: 서버·화면 나머지 `{x}을/를/이/가` 는 값이 고정 명사(업로드 이름·폴더·휴지통 폴더)라 조사가 맞음 |
+| 제목 줄 | 새 스터디·새 최적화 화면 `ls-pick` 이 선택 뒤 표식 때문에 줄바꿈(33→59 px). select 폭 15rem·shrink(말줄임), 표식 `max-width 6.5rem` 말줄임, 전체 문구는 드롭다운 항목·툴팁·확인 대화에 그대로. Playwright(`/home/claude/shots/pw_v0244b.mjs`, 1920·2560, 모든 출처 선택): 수정 전 1920 새 스터디 33→59/75 px, 수정 뒤 모든 선택에서 33(1920)·37(2560) = v0.24.3 높이, 새 최적화 37·42 불변 |
+| 결과 칩 | `loadSourceChipOf` 가 `load_source_check.worst` 로 표식을 만든다(`gradeMark` — `markOf` 재사용): caution = "PASS ⚠", not_comparable = "<판정> · 비교용 아님", FAIL·판정 불가, NO_RESULT = 검증 전. worst 가 없는 옛 스냅샷 = 항목에서 계산(이전과 같음) |
+| ④ cond_text | `val_src.BALANCE_VALUE_TEXT`(균형 코드 → "0"·"낙하 변위"·"스프링 α") 에 있는 행만 "· 값 <…> ·" 구간이 들어간다 — 지그 3행만 바뀌고 full·bforce·fint 문구 불변(`05_val` full 골든 불변). 목 서버(`valsrcmock.ts`)도 실제 코어와 같은 구간 순서로 맞춤. 실응답 픽스처 재생성 |
+| 분해 순서(선택 6) | 측정(32,761 노드·2코어·SuperLU, 지그 K_ff = tie 구속이 흩어짐, 해 상대차 ≤ 2.4e-12): 3-2-1 15.1 s / 3.1 GB · 지그 법선 기본 MMD 57.4 s / 3.9 GB · 지그 병진(spc 가지) 27.1 s / 3.3 GB → **node_mmd** 법선 9.0 s / 2.67 GB · 병진 8.9 s / 2.53 GB. 10,201 노드 순서 비교(지그 법선 분해 s / GB): MMD_AT_PLUS_A 8.3/1.10 · MMD_ATA 4.9/1.20 · COLAMD 6.0/1.45 · **노드 MMD 1.9/0.98** · 노드 ATA 3.5/1.20 · 노드 COLAMD 3.3/1.24(3-2-1 은 2.4/0.84). 같은 채움(nnz 27.3 M vs 26.9 M)인데 4배 느린 원인 = 흩어진 구속 dof 가 빠진 K_ff 에서 dof 단위 MMD 가 블록(6 dof) 구조를 잃음 → 노드 그래프(정점당 6 dof)로 순서를 정해 펼치면 해결(채움 27.3→22.3 M). 구속 제거 뒤 재정렬만으로는 개선 없음(MMD_ATA·COLAMD 는 채움이 늘어 메모리 증가). **적용**: `solver.jig_factor_order`(`node_mmd` 기본 | `default`) — 코어 `SOLVER_JIG_DEFAULTS`·`esl/config.py` 스키마·`OptSolverCfg.jig_factor_order`(지정할 때만 dump)·`esl.example.yaml` 같은 이름. `jig_bc.factorize`(새 지그 경로)만 읽고 `sm.factorize(spc)`·`solve`(옛 3-2-1·spc)는 order 를 안 줘 순열 없음(바이트 불변, 시험 `test_jig_factor_order_does_not_touch_old_paths_and_validates`). 같은 경로를 쓰는 지그 결과는 반올림 수준(≤1e-9 상대, 시험)으로 달라질 수 있음 — 0.24.4 신규 결과라 옛 결과 영향 없음. CHOLMOD·PARDISO 는 자체 순서라 무관. 3-2-1 분해에도 같은 순서를 쓰면 빨라질 수 있으나 옛 결과 바이트 보존 때문에 하지 않음(후속 R-JIGC-10) |
+| 비용 정정 | §8 정정 문단. 194k 외삽(분해 ∝ N^1.5 ≈ ×14): 기본 순서 첫 ESL +20~25 분·④ +15~18 분·메모리 +26 % → node_mmd 첫 ESL ≈ +9~12 분·④ ≈ +5~6 분·메모리 −14 %(3-2-1 대비). 194k 실측 아님 — 현장 `forces.jig*.seconds` 로 확인 |
+| 현장 위험 (a) | `tie_dofs` 기본 `normal` 이라 비드 최적화 `load_source=jig` 는 `tie_dofs=translation` 으로 만든 ESL 이 아니면 422 `LOAD_SOURCE_UNSUPPORTED`(비드 최적화는 병진 구속 + 고정만 전달). **미리 안내**: `GET /library/entries/sources` 행에 `opt_code`("LOAD_SOURCE_UNSUPPORTED")·`opt_reason`(생성 422 와 같은 규칙 `jig_support_reason`) 추가 — 화면은 비드 최적화에서 그 출처를 선택 불가 + 서버 사유로 표시(스터디는 영향 없음, 옛 서버 = 이전 화면). 병진 지그로 최적화하려면 `bead_doe.rank.jig.tie_dofs: translation` 으로 Case ESL 을 다시 계산 |
+| 현장 위험 (b) | `bead_doe.load_source_default`·`opt_run.load_source_default` 는 화면 안내용이다(서버 미적용 — 요청에 `load_source` 가 없으면 서버는 지금과 같이 만든다). 후속 R-JIGC-9 |
