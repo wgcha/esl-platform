@@ -63,6 +63,7 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
   };
   const lt = normalizeLoadTransferCfg(r.load_transfer);
   return {
+    ...(typeof r.load_source_default === "string" ? { load_source_default: r.load_source_default } : {}),
     ...(lt ? { load_transfer: lt } : {}),
     enabled: r.enabled === true,
     reason: typeof r.reason === "string" ? r.reason : null,

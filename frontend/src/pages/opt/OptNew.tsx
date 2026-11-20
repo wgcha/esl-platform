@@ -14,6 +14,8 @@ import { LoadStrategy, kProblem, type StrategyValue } from "../../components/Loa
 import { MethodInfo } from "../../components/MethodInfo";
 import { ModeSelect, entryKey } from "../../components/ModeSelect";
 import { usePolling } from "../../lib/usePolling";
+import { LoadSourceConfirmDialog, LoadSourcePicker } from "../../components/LoadSourcePicker";
+import { loadSourceBody, loadSourceErrorText, unconfirmedOf, type UnconfirmedDetail } from "../../view3d/loadSource";
 import { libPath, sceneText } from "../library/common";
 
 export interface BeadForm {
@@ -165,6 +167,9 @@ export function OptNew() {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** v0.24.4 P3 하중 출처("" = 기본 — 요청에 필드 없음) · 서버 확인 요청(422) 본문 */
+  const [loadSource, setLoadSource] = useState("");
+  const [lsConfirm, setLsConfirm] = useState<UnconfirmedDetail | null>(null);
   const onKoProblem = useCallback((p: string | null) => setKoProblem(p), []);
 
   // 서버 설정값으로 기본값 채우기(전략 A·목표 절대·k 5, 비드 45°·60·10 mm)
@@ -257,12 +262,14 @@ export function OptNew() {
     return beadProblem(bead);
   }
 
-  async function run() {
+  async function run(ack = false) {
     if (!strategy || !bead || !scenario) return;
     setBusy(true);
     setError(null);
+    setLsConfirm(null);
     try {
       const r = await opt.createRun({
+        ...loadSourceBody(loadSource, ack),
         project_id: projectId,
         scenario,
         title: title.trim() || null,
@@ -274,7 +281,9 @@ export function OptNew() {
       });
       nav(optPath(projectId, r.id));
     } catch (e) {
-      setError(errorText(e));
+      const uc = unconfirmedOf(e);
+      if (uc) setLsConfirm(uc);
+      else setError(loadSourceErrorText(e) ?? errorText(e));
       setBusy(false);
     }
   }
@@ -291,8 +300,10 @@ export function OptNew() {
           ))}
         </div>
         <span className="spacer" />
-        <PrimaryButton label="최적화 실행" onClick={run} disabledReason={reason()} busy={busy} />
+        {ids.length > 0 && <LoadSourcePicker entryIds={ids} ctx="opt" value={loadSource} onChange={setLoadSource} defaultKey={st?.load_source_default ?? "full"} disabled={!allowed || busy} />}
+        <PrimaryButton label="최적화 실행" onClick={() => void run()} disabledReason={reason()} busy={busy} />
       </div>
+      {lsConfirm && <LoadSourceConfirmDialog sourceKey={loadSource} detail={lsConfirm} busy={busy} onConfirm={() => void run(true)} onCancel={() => setLsConfirm(null)} />}
       {blocked && (
         <div className="warn-box" role="alert" data-testid="opt-blocked">
           최적화 실행 불가: {blocked}
