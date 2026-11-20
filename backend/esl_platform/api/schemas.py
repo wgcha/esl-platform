@@ -627,6 +627,53 @@ class ValidationSourcesHistOut(_Out):
     items: list[ValidationSourcesHistItem]
 
 
+LoadGradeLit = Literal["PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"]   # 나쁜 쪽이 뒤(services.library.LOAD_GRADES)
+
+
+class EntrySourceRow(ValidationSourceRow):
+    """v0.24.4 P3 항목 출처 1행: ④ 검증 출처 행 + 출처 하중 존재·등급(esl_jig_case.md §9)."""
+    load_available: bool
+    load_code: str | None = None
+    load_reason: str | None = None
+    grade: LoadGradeLit
+    flags: list[LoadGradeLit]
+
+
+class EntrySourcesItem(_Out):
+    entry_id: str
+    validation_id: str | None = None
+    rows: list[EntrySourceRow]
+
+
+class EntrySourceEntry(_Out):
+    entry_id: str
+    validation_id: str | None = None
+    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    comparable: bool | None = None
+    grade: LoadGradeLit
+    flags: list[LoadGradeLit]
+    limits: list[str]
+    load_available: bool
+    load_code: str | None = None
+    load_reason: str | None = None
+
+
+class EntrySourceSummary(_Out):
+    key: str
+    label: str | None = None
+    worst: LoadGradeLit
+    n: int
+    unavailable_entry_ids: list[str]
+    needs_confirm: bool
+    entries: list[EntrySourceEntry]
+
+
+class EntrySourcesOut(_Out):
+    ids: list[str]
+    items: list[EntrySourcesItem]
+    sources: list[EntrySourceSummary]
+
+
 class ArtifactOut(_Out):
     id: str
     case_id: str
@@ -1562,6 +1609,11 @@ class OptRunIn(_Req):
     template_id: str | None = Field(default=None, max_length=64)
     design: OptDesignIn = Field(default_factory=OptDesignIn)
     options: OptOptionsIn = Field(default_factory=OptOptionsIn)
+    # v0.24.4 P3(esl_jig_case.md §9): 하중 출처(코어 출처 표 키 — 없으면 지금 동작 = 항목 자신의 하중·3-2-1). 검증 미통과·비교용
+    # 아님·주의 출처는 load_source_ack true 가 있어야 진행(422 LOAD_SOURCE_UNCONFIRMED), 하중 없음 422 LOAD_SOURCE_UNAVAILABLE,
+    # 지그 계열은 병진 고정·S1 만(422 LOAD_SOURCE_UNSUPPORTED)
+    load_source: str | None = Field(default=None, min_length=1, max_length=32)
+    load_source_ack: bool | None = None
 
 
 class OptSizeSettings(_Out):
@@ -1819,6 +1871,10 @@ class DoeCheckIn(_Req):
     # v0.20.0 하중 전달(esl_load_transfer.md §4.2·§13.6, 모든 시나리오 ①②③④ 공통): 없으면 bead_doe.load_transfer(최상위) 설정값. work + cell_size_mm 값 → 422 LOAD_TRANSFER_INVALID, cell + cell_size_mm 생략 = 설정값(명시적 null = 기존 24×14 격자)
     load_transfer: Literal["work", "cell"] | None = None
     cell_size_mm: float | None = None
+    # v0.24.4 P3(esl_jig_case.md §9, 스터디 생성에만 적용 — check-inputs 는 무시): 하중 출처(코어 출처 표 키 — 없으면 지금 동작 =
+    # rank.metric → metric_effective). 확인·하중 없음 규칙은 OptRunIn 과 같다(지그 계열은 스냅샷 rank.jig.methods 에 그 방식 포함)
+    load_source: str | None = Field(default=None, min_length=1, max_length=32)
+    load_source_ack: bool | None = None
 
 
 class DoeStudyIn(DoeCheckIn):

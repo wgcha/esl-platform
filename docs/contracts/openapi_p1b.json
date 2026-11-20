@@ -2815,6 +2815,30 @@
             ],
             "title": "Inch"
           },
+          "load_source": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source"
+          },
+          "load_source_ack": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source Ack"
+          },
           "load_transfer": {
             "anyOf": [
               {
@@ -5550,6 +5574,30 @@
             ],
             "title": "Inch"
           },
+          "load_source": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source"
+          },
+          "load_source_ack": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source Ack"
+          },
           "load_transfer": {
             "anyOf": [
               {
@@ -7062,6 +7110,490 @@
           }
         },
         "title": "EntrySize",
+        "type": "object"
+      },
+      "EntrySourceEntry": {
+        "properties": {
+          "comparable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparable"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "flags": {
+            "items": {
+              "enum": [
+                "PASS",
+                "caution",
+                "not_comparable",
+                "UNDETERMINED",
+                "FAIL",
+                "NO_RESULT"
+              ],
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "grade": {
+            "enum": [
+              "PASS",
+              "caution",
+              "not_comparable",
+              "UNDETERMINED",
+              "FAIL",
+              "NO_RESULT"
+            ],
+            "title": "Grade",
+            "type": "string"
+          },
+          "limits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "load_available": {
+            "title": "Load Available",
+            "type": "boolean"
+          },
+          "load_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Code"
+          },
+          "load_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Reason"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNDETERMINED",
+                  "LEGACY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "validation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation Id"
+          }
+        },
+        "required": [
+          "entry_id",
+          "grade",
+          "flags",
+          "limits",
+          "load_available"
+        ],
+        "title": "EntrySourceEntry",
+        "type": "object"
+      },
+      "EntrySourceRow": {
+        "description": "v0.24.4 P3 항목 출처 1행: ④ 검증 출처 행 + 출처 하중 존재·등급(esl_jig_case.md §9).",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "comparable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparable"
+          },
+          "cond_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cond Text"
+          },
+          "fail_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fail Reasons",
+            "type": "array"
+          },
+          "flags": {
+            "items": {
+              "enum": [
+                "PASS",
+                "caution",
+                "not_comparable",
+                "UNDETERMINED",
+                "FAIL",
+                "NO_RESULT"
+              ],
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "grade": {
+            "enum": [
+              "PASS",
+              "caution",
+              "not_comparable",
+              "UNDETERMINED",
+              "FAIL",
+              "NO_RESULT"
+            ],
+            "title": "Grade",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "limit_text": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limit Text",
+            "type": "array"
+          },
+          "limits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "load_available": {
+            "title": "Load Available",
+            "type": "boolean"
+          },
+          "load_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Code"
+          },
+          "load_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Reason"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "reaction_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "judge",
+                  "info"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Role"
+          },
+          "reaction_tol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Tol"
+          },
+          "reaction_tol_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Tol Key"
+          },
+          "reaction_warn": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Warn"
+          },
+          "reaction_warned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Warned"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PASS",
+                  "FAIL",
+                  "UNDETERMINED",
+                  "LEGACY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "undetermined_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Undetermined Reason"
+          }
+        },
+        "required": [
+          "key",
+          "available",
+          "fail_reasons",
+          "limits",
+          "limit_text",
+          "load_available",
+          "grade",
+          "flags"
+        ],
+        "title": "EntrySourceRow",
+        "type": "object"
+      },
+      "EntrySourceSummary": {
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/EntrySourceEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "needs_confirm": {
+            "title": "Needs Confirm",
+            "type": "boolean"
+          },
+          "unavailable_entry_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unavailable Entry Ids",
+            "type": "array"
+          },
+          "worst": {
+            "enum": [
+              "PASS",
+              "caution",
+              "not_comparable",
+              "UNDETERMINED",
+              "FAIL",
+              "NO_RESULT"
+            ],
+            "title": "Worst",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "worst",
+          "n",
+          "unavailable_entry_ids",
+          "needs_confirm",
+          "entries"
+        ],
+        "title": "EntrySourceSummary",
+        "type": "object"
+      },
+      "EntrySourcesItem": {
+        "properties": {
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/EntrySourceRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "validation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation Id"
+          }
+        },
+        "required": [
+          "entry_id",
+          "rows"
+        ],
+        "title": "EntrySourcesItem",
+        "type": "object"
+      },
+      "EntrySourcesOut": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ids",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EntrySourcesItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/EntrySourceSummary"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids",
+          "items",
+          "sources"
+        ],
+        "title": "EntrySourcesOut",
         "type": "object"
       },
       "EslRunOut": {
@@ -9456,6 +9988,30 @@
             "minItems": 1,
             "title": "Entry Ids",
             "type": "array"
+          },
+          "load_source": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source"
+          },
+          "load_source_ack": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source Ack"
           },
           "options": {
             "$ref": "#/components/schemas/OptOptionsIn"
@@ -22100,6 +22656,51 @@
           }
         },
         "summary": "Register",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/esl/api/library/entries/sources": {
+      "get": {
+        "description": "v0.24.4 P3: 선택한 항목들의 하중 출처별 ④ 판정·하중 존재·최악 등급(쉼표로 구분한 ids, 최대 200개). 스터디·비드 최적화 생성\n화면의 출처 선택·확인 요약. `/library/entries/{eid}` 보다 앞에 둔다.",
+        "operationId": "entries_sources_esl_api_library_entries_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "ids",
+            "required": true,
+            "schema": {
+              "maxLength": 20000,
+              "minLength": 1,
+              "title": "Ids",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntrySourcesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Entries Sources",
         "tags": [
           "library"
         ]

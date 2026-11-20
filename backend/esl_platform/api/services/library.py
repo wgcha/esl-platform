@@ -774,3 +774,185 @@ def analysis_report(ctx: AppContext, aid: str) -> str:
     if not os.path.isfile(path):
         raise not_found("REPORT_NOT_FOUND", "보고서가 아직 없습니다(분석 작업 완료 후 생성)")
     return path
+
+
+# ================================================================ v0.24.4 P3: 하중 출처 판정(묶음) — esl_jig_case.md §9·esl_validate_sources.md §12.2
+# 항목 → 그 항목 검증(library_entries.validation_id)의 출처별 ④ 판정(results._source_rows 와 같은 행) + 출처 하중 존재 여부.
+# 출처 이름으로 분기하지 않는다: 코어 계획 표(``core_adapter.val_src_plan`` = esl.val_src.VAL_PLAN)의 열(legacy·load·doc·na·
+# 한계 등급)만 읽는다. 하중 존재 = <Case 04_esl>/<load 파일> 이 있고 진단 json 이 막지 않음(코어 source_load.find 의 존재 검사와
+# 같은 후보 순서 — 노드 ID·변형 일치는 워커가 다시 확인).
+LOAD_GRADES = ("PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT")     # 나쁜 쪽이 뒤
+GRADE_OF_STATUS = {"PASS": "PASS", "FAIL": "FAIL", "UNDETERMINED": "UNDETERMINED"}
+
+
+def _case_load_dirs(ctx: AppContext, case: dict[str, Any], e: dict[str, Any]) -> list[str]:
+    """출처 하중이 있을 수 있는 04_esl 폴더(항목 실행 스냅샷 → 같은 Case runs/*/04_esl(최근순) → 현재 04_esl)."""
+    cdir = case_dir(ctx, case)
+    out = [os.path.join(co.run_snapshot_dir(cdir, e["esl_run_id"]), "04_esl")]
+    rd = os.path.join(cdir, "runs")
+    if os.path.isdir(rd):
+        rs = [os.path.join(rd, r, "04_esl") for r in os.listdir(rd) if r != e["esl_run_id"]]
+        out += sorted((d for d in rs if os.path.isdir(d)), key=os.path.getmtime, reverse=True)
+    out.append(os.path.join(cdir, "04_esl"))
+    return out
+
+
+def _read_doc(path: str) -> dict[str, Any] | None:
+    import json
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _find_load(plan_row: dict[str, Any], dirs: list[str]) -> tuple[str | None, dict[str, Any] | None, str | None, str | None]:
+    """(하중 폴더 | None, 진단 json | None, 사유 코드, 사유 문구). legacy 열 = 항목 자신의 f(항상 있음 — 폴더 None),
+    load 열 None = 이 출처에는 하중 파일 없음."""
+    if plan_row["legacy"]:
+        return "", None, None, None
+    code, text = plan_row["na"], None
+    if plan_row["load"] is not None:
+        fname = plan_row["load"][1]
+        dname = plan_row["doc"][1] if plan_row["doc"] else None
+        for d in dirs:
+            if not os.path.isfile(os.path.join(d, fname)):
+                continue
+            doc = _read_doc(os.path.join(d, dname)) if dname and os.path.isfile(os.path.join(d, dname)) else None
+            bad = doc is not None and (doc.get("status") not in (None, "ok") or ("grade" in doc and doc["grade"] in (None, "none")))
+            if not bad:
+                return d, doc, None, None
+            if doc.get("code"):
+                code, text = str(doc["code"]), doc.get("reason")
+    return None, None, code, text or core_adapter.val_reason_text(code)
+
+
+def _load_state(plan_row: dict[str, Any], dirs: list[str]) -> tuple[bool, str | None, str | None]:
+    d, _doc, code, text = _find_load(plan_row, dirs)
+    return d is not None, code, text
+
+
+def _row_grade(row: dict[str, Any], limit_class: dict[str, str]) -> tuple[str, list[str]]:
+    """출처 행 → (가장 나쁜 등급, 해당 등급 모두). 결과 없음·LEGACY·미확인 = NO_RESULT, not_comparable·caution = 한계 등급."""
+    flags: list[str] = []
+    st = row.get("status") if row.get("available") else None
+    flags.append(GRADE_OF_STATUS.get(st, "NO_RESULT"))
+    if row.get("available"):
+        classes = {limit_class.get(c, "caution") for c in row.get("limits") or []}
+        if row.get("comparable") is False or "not_comparable" in classes:
+            flags.append("not_comparable")
+        if "caution" in classes or row.get("reaction_warned"):
+            flags.append("caution")
+    bad = [g for g in LOAD_GRADES if g in flags and g != "PASS"]      # PASS 는 다른 등급이 없을 때만
+    return (bad[-1], bad) if bad else ("PASS", ["PASS"])
+
+
+def entries_sources(ctx: AppContext, ids: list[str]) -> dict[str, Any]:
+    """GET /library/entries/sources?ids= — 항목마다 출처 행(KEYS 순서) + 출처마다 선택 항목들의 최악 등급 요약.
+    파일을 쓰지 않는다. 없는 항목 = 404 ENTRY_NOT_FOUND."""
+    from . import results as res
+
+    ids = list(dict.fromkeys(i for i in ids if i))
+    if not ids:
+        raise unprocessable("INVALID_PARAMS", "ids 가 비었습니다")
+    plan = core_adapter.val_src_plan()
+    with ctx.engine.connect() as conn:
+        ents = lib_repo.list_entries(conn, ids=ids)
+        by = {e["id"]: e for e in ents}
+        miss = [i for i in ids if i not in by]
+        if miss:
+            raise not_found("ENTRY_NOT_FOUND", f"라이브러리 항목을 찾을 수 없습니다: {miss}")
+        cases: dict[str, tuple[dict[str, Any], str | None]] = {}
+        for e in ents:
+            if e["case_id"] not in cases:
+                c = load_case(conn, e["case_id"])
+                v = cases_repo.list_validations(conn, case_id=c["id"])
+                cases[e["case_id"]] = (c, v[0]["id"] if v else None)
+        vals = {e["id"]: (cases_repo.get_validation(conn, e["validation_id"]) if e.get("validation_id") else None)
+                for e in ents}
+    items = []
+    for i in ids:
+        e = by[i]
+        case, latest = cases[e["case_id"]]
+        val = vals[i]
+        rows = res._source_rows(ctx, case, val, latest) if val is not None else [
+            {"key": r["key"], "available": False, "code": "VAL_SRC_NOT_RUN",
+             "reason": core_adapter.val_reason_text("VAL_SRC_NOT_RUN"), "status": None, "fail_reasons": [],
+             "undetermined_reason": None, "reaction_role": None, "reaction_tol": None, "reaction_tol_key": None,
+             "reaction_warn": None, "reaction_warned": None, "cond_text": None, "note": None, "limits": [],
+             "limit_text": [], "comparable": None} for r in plan["rows"]]
+        dirs = _case_load_dirs(ctx, case, e)
+        out_rows = []
+        for row, pr in zip(rows, plan["rows"]):
+            ok, lcode, ltext = _load_state(pr, dirs)
+            grade, flags = _row_grade(row, plan["limit_class"])
+            out_rows.append({**row, "load_available": ok, "load_code": lcode, "load_reason": ltext, "grade": grade,
+                             "flags": flags})
+        items.append({"entry_id": i, "validation_id": e.get("validation_id"), "rows": out_rows})
+    sources = []
+    for k, pr in enumerate(plan["rows"]):
+        ents_k = []
+        for it in items:
+            r = it["rows"][k]
+            ents_k.append({"entry_id": it["entry_id"], "validation_id": it["validation_id"], "status": r["status"],
+                           "comparable": r["comparable"], "grade": r["grade"], "flags": r["flags"],
+                           "limits": r["limits"], "load_available": r["load_available"], "load_code": r["load_code"],
+                           "load_reason": r["load_reason"]})
+        sources.append(_source_summary(pr["key"], plan["label"].get(pr["key"]), ents_k))
+    return {"ids": ids, "items": items, "sources": sources}
+
+
+def _source_summary(key: str, label: str | None, ents: list[dict[str, Any]]) -> dict[str, Any]:
+    worst = max((e["grade"] for e in ents), key=LOAD_GRADES.index)
+    unavailable = [e["entry_id"] for e in ents if not e["load_available"]]
+    return {"key": key, "label": label, "worst": worst, "n": len(ents), "unavailable_entry_ids": unavailable,
+            "needs_confirm": bool(ents) and not unavailable and worst != "PASS", "entries": ents}
+
+
+def source_plan_row(key: str) -> dict[str, Any]:
+    """출처 키 → 코어 계획 행(모르는 키 = 422 INVALID_PARAMS{load_source, keys})."""
+    plan = core_adapter.val_src_plan()
+    for r in plan["rows"]:
+        if r["key"] == key:
+            return r
+    keys = list(plan["keys"])
+    raise unprocessable("INVALID_PARAMS", f"모르는 하중 출처입니다: {key} (가능: {keys})", load_source=key, keys=keys)
+
+
+def check_load_source(ctx: AppContext, key: str, entry_ids: list[str], ack: bool | None, *,
+                      doc_check: Any = None) -> dict[str, Any]:
+    """작업 생성 때 하중 출처 검사(스터디·비드 최적화 공통, 계약 §9): 모르는 키 422 INVALID_PARAMS, 하중 없음 422
+    LOAD_SOURCE_UNAVAILABLE{entry_ids, reasons}, ``doc_check(진단 json) -> 사유 | None`` 이 사유를 돌려주면 422
+    LOAD_SOURCE_UNSUPPORTED{entry_ids, reasons}, 검증 미통과·not_comparable·caution 은 ack 없으면 422
+    LOAD_SOURCE_UNCONFIRMED{entries, worst}. 반환 = 스냅샷 ``load_source_check {key, entries:[{entry_id, status, comparable,
+    validation_id}], worst}``."""
+    pr = source_plan_row(key)
+    sm = next(s for s in entries_sources(ctx, entry_ids)["sources"] if s["key"] == key)
+    by = {e["entry_id"]: e for e in sm["entries"]}
+    if sm["unavailable_entry_ids"]:
+        reasons = {i: by[i]["load_reason"] or by[i]["load_code"] for i in sm["unavailable_entry_ids"]}
+        raise unprocessable("LOAD_SOURCE_UNAVAILABLE", f"{key} 하중이 없는 ESL {len(reasons)}개 — 그 출처를 쓸 수 없습니다",
+                            load_source=key, entry_ids=list(sm["unavailable_entry_ids"]), reasons=reasons)
+    if doc_check is not None:
+        bad: dict[str, str] = {}
+        with ctx.engine.connect() as conn:
+            ents = {e["id"]: e for e in lib_repo.list_entries(conn, ids=list(entry_ids))}
+            cases = {c: load_case(conn, c) for c in {e["case_id"] for e in ents.values()}}
+        for i in entry_ids:
+            _d, doc, _c, _t = _find_load(pr, _case_load_dirs(ctx, cases[ents[i]["case_id"]], ents[i]))
+            why = doc_check(doc)
+            if why:
+                bad[i] = why
+        if bad:
+            raise unprocessable("LOAD_SOURCE_UNSUPPORTED", f"{key} 하중을 이 최적화에 쓸 수 없는 ESL {len(bad)}개",
+                                load_source=key, entry_ids=list(bad), reasons=bad, reason=next(iter(bad.values())))
+    ents_c = [{k: e[k] for k in ("entry_id", "status", "comparable", "validation_id")} for e in sm["entries"]]
+    chk = {"key": key, "entries": ents_c, "worst": sm["worst"]}
+    if sm["needs_confirm"] and not ack:
+        bad_e = [{k: e[k] for k in ("entry_id", "status", "comparable", "validation_id", "grade", "flags", "limits")}
+                 for e in sm["entries"] if e["grade"] != "PASS"]
+        raise unprocessable("LOAD_SOURCE_UNCONFIRMED", f"{key} 출처에 검증 미통과·비교용 아님·주의 항목 {len(bad_e)}개 — 확인 후 "
+                            "load_source_ack: true 로 다시 요청하세요", load_source=key, entries=bad_e, worst=sm["worst"])
+    return chk

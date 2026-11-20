@@ -127,6 +127,8 @@ def prepare(ex) -> tuple[str, dict[str, Any]]:
            "design": p.get("design") or {}, "options": p.get("options") or {}, "warnings": list(p.get("warnings") or []),
            "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
            "entry_ids": list(r.get("entry_ids") or []), "job_id": job["id"], "retry": bool(job.get("retry_of_job_id"))}
+    if p.get("load_source"):          # v0.24.4 P3: 하중 출처 키(없으면 키 자체를 두지 않음 — 지금 동작)
+        lib["load_source"] = str(p["load_source"])
     return cdir, lib
 
 

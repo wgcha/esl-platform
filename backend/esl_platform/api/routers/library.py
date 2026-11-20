@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 
 from ...core.auth import Principal
+from ...core.errors import unprocessable
 from ..deps import get_ctx, get_principal
 from ..html_report import html_report
 from .results import ZIP_RESPONSE, zip_response
@@ -24,6 +25,7 @@ from ..schemas import (
     EntryOut,
     EntryPatch,
     EntryRetire,
+    EntrySourcesOut,
     ExportBatchCreate,
     ExportBatchOut,
     ExportBatchSummary,
@@ -53,6 +55,17 @@ def list_entries(request: Request, project_id: str | None = None, model: str | N
     return svc.list_entries(get_ctx(request), project_id, status, mode=mode, model=model, inch=inch,
                             drop_type=drop_type, drop_class=drop_class, orient=orient, scenario=scenario,
                             verdict=verdict)
+
+
+@router.get("/library/entries/sources", response_model=EntrySourcesOut)
+def entries_sources(request: Request, ids: str = Query(min_length=1, max_length=20000),
+                    principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.24.4 P3: 선택한 항목들의 하중 출처별 ④ 판정·하중 존재·최악 등급(쉼표로 구분한 ids, 최대 200개). 스터디·비드 최적화 생성
+    화면의 출처 선택·확인 요약. `/library/entries/{eid}` 보다 앞에 둔다."""
+    lst = [i.strip() for i in ids.split(",") if i.strip()]
+    if len(set(lst)) > 200:
+        raise unprocessable("INVALID_PARAMS", "ids 는 최대 200개")
+    return svc.entries_sources(get_ctx(request), lst)
 
 
 @router.get("/library/entries/{eid}", response_model=EntryOut)
