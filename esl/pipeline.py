@@ -1774,7 +1774,9 @@ def stage_validate(ctx: Context) -> dict:
         else:
             ctx.warnings.append("u_rel 이 전부 0 (변형 없음) — 판정 불가(UNDETERMINED, ZERO_DISP)")
         u_val = None if legacy["fallback"] is None else _FALLBACK_FN[legacy["fallback"]](ctx, sm, u_rel)
+    t_eps = _time.perf_counter()
     eps_sol = None if u_val is None else sm.strains(u_val)
+    t_eps = _time.perf_counter() - t_eps                    # legacy 변형률 회복 시간(eval_s 에 더함 — 출처와 같은 범위)
 
     # Radioss 쪽 한 번(출처 무관): hotspot ε_eq(t* 프레임, Mid)·전 요소 비교 기반·잡음 — 경고 1회
     fmeta = _frames_meta(ctx)
@@ -1840,7 +1842,7 @@ def stage_validate(ctx: Context) -> dict:
 
     d = ctx.fresh_dir(D_VAL)
     _write_val_files(ctx, d, ev, nid)
-    srec["eval_s"][legacy["key"]] = round(_time.perf_counter() - t0, 4)
+    srec["eval_s"][legacy["key"]] = round(_time.perf_counter() - t0 + t_eps, 4)
     if verdict == "FAIL":
         ctx.warnings.append("검증 FAIL: " + ", ".join(f"{m['metric']}({_FAIL_REASON[m['metric']]})"
                                                      for m in metrics if m["role"] == "judge" and m["pass"] is False))

@@ -3,6 +3,8 @@
 ``esl.pipeline.stage_validate`` 가 legacy(full) 행과 출처 행에 **같은 함수·같은 인수 규칙**으로 부른다. 정의 =
 ``esl_disp_primary.md`` §3 그대로(목표 = S3 u_rel, U = max‖u_rel‖, 비교 = 응답·목표 양쪽 ``remove_linear_rigid``,
 reaction_rel = Σ‖R‖/Σ‖F‖, reaction_sum_rel = ‖ΣR‖/Σ‖F‖). full 경로 호출 결과 = v0.24.2 인라인 계산과 비트 동일(골든 V-1).
+이름 정리(§3.4): ESL 단계 진단 ``bforce.json``·``fint.json`` 의 ``recon.reaction_rel``(= ‖ΣR‖/Σ‖F‖, 파일·의미 불변)과 같은 정의는
+검증의 ``reaction_sum_rel`` 이고, 검증의 ``reaction_rel`` 은 Σ‖R‖/Σ‖F‖ 다(시험 V-3 이 두 값 일치를 확인).
 
 파일 IO·설정 해석·경고(ctx.warnings) 없음 — 값은 인수. import 허용 = numpy·``esl.errors``·``esl.mech.kabsch``·
 ``esl.report.field``(순수). esl.doe·esl.pipeline·esl_platform·esl_worker 금지(시험 V-4).
