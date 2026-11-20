@@ -354,6 +354,8 @@ ValidationSourcesHistOut { case_id: str, items: list[ValidationSourcesHistItem] 
 
 ## 12. P2 · P3 (v0.24.4)
 
+> **상세 계약 = `docs/contracts/esl_jig_case.md`(2026-11-20, D-0.24.4-JIG-1~18)** — 사용자 결정(16:47 강제 변위, 16:51 세 방식 모두, 16:53 tie 면외만, 16:54 3-2-1 포함)으로 지그가 세 출처 행(`jig`·`jig_disp`·`jig_spring`)·tie 구속 성분(normal 기본)으로 확장됐다. 아래 §12 본문은 기록으로 그대로 두고, 충돌하면 그 문서가 우선한다(예: ③ `esl-jig-line` → 3D 탭 툴팁·재현 줄, 비드 최적화 jig = translation·fixed 만, V-0244-VAL-n → V-0244-JIG-n).
+
 ### 12.1 P2 — Case ③ ESL 지그 산출
 
 | 항목 | 결정 |
