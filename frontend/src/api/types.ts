@@ -3305,7 +3305,7 @@ export interface DoeRankRow {
   umax_ev_all?: number | null;
 }
 /** v0.20.0 순위 지표: lin = 1차 섭동(새 기본), solve = 재풀이 C(옛) */
-export type DoeRankMetric = "lin" | "solve" | "jig";
+export type DoeRankMetric = "lin" | "solve" | "jig" | "jd" | "js" | "bf" | "fi";
 /** v0.16.2 AD-D-8: MORPH_EXTREME_ELEMENTS(극단 요소)도 순위 ⚠ */
 export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN" | "CROSS_BEAD_MOVE" | "MORPH_EXTREME_ELEMENTS" | "MESH_QUALITY_RANK";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
@@ -3456,6 +3456,9 @@ export interface DoeResultOut {
   } | null;
   /** v0.20.0 순위 지표(esl_stiffness_metric.md §6 — 옛 결과 = 키 없음 = solve 표시 그대로). lin = 재풀이 없는 1차 섭동 지표 */
   metric?: DoeRankMetric | null;
+  /** v0.24.4 P3: 스터디 load_source 를 고른 새 결과만 — 고른 출처 키·그 출처가 없을 때의 기본 지표 */
+  load_source?: string | null;
+  metric_default?: DoeRankMetric | null;
   lin_form?: "taylor" | "ritz" | null;
   /** v0.20.0 이 스터디 스냅샷의 순위 지표 설정(임계값 출처 1순위) */
   rank?: DoeRankCfg | null;

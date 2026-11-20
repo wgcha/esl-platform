@@ -1939,6 +1939,9 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     for k in ("metric", "lin_form"):
         if isinstance(r.get(k), str):
             out[k] = r[k]
+    for k in ("load_source", "metric_default"):      # v0.24.4 P3: 고른 하중 출처·그 출처가 없을 때의 기본 지표(새 스냅샷만 — 코어 값 그대로)
+        if isinstance(r.get(k), str):
+            out[k] = r[k]
     out["rank"] = _rank_snapshot_out(ctx, sid)       # 스터디 스냅샷 doe.rank(경고 문턱 — 화면이 상수 대신 사용), 옛 스터디 = null
     # 결정 A(2026-11-13): 순위에 실제로 쓴 지표 metric_effective(다른 메시 비교 = solve)·cross_mesh(경고 SM_CROSS_MESH) — 코어 값
     if isinstance(r.get("metric_effective"), str):

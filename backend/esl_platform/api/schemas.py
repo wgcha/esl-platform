@@ -2225,6 +2225,10 @@ class DoeView3dRegenOut(_Out):
     reason: str | None = None
 
 
+# 순위 지표 키(코어 RANK_SOURCES.metric 열 + lin·solve·jig·effective 의 값) — v0.24.4 P3 로 jd·js·bf·fi 가 기본 지표가 될 수 있음
+RankMetricLit = Literal["lin", "solve", "jig", "jd", "js", "bf", "fi"]
+
+
 class DoeResultOut(_Out):
     scenario: DoeScenarioLit | None = None          # v0.14.0
     reference_source: Literal["step", "case"] | None = None    # ④ 만
@@ -2257,13 +2261,16 @@ class DoeResultOut(_Out):
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric(lin|solve)·lin_form(ritz|taylor) — 옛 스터디 = null(solve).
     # ranking 행(dict) += score_solve·imbalance_max·rho_min·rho_max·umax_def, per_esl 행 += C_lin·C_ritz·rho·imbalance_rel·umax_def·ts_err?
     # (새 스냅샷만), 경고 SM_LIN_RANGE·SM_IMBALANCE — 모두 코어가 쓴 대로 통과
-    metric: Literal["lin", "solve", "jig"] | None = None
+    metric: RankMetricLit | None = None
+    # v0.24.4 P3(esl_jig_case.md §9): 스터디 load_source 를 고른 새 스냅샷만 — 고른 출처 키·그 출처가 없을 때의 기본 지표(없으면 null)
+    load_source: str | None = None
+    metric_default: RankMetricLit | None = None
     lin_form: Literal["ritz", "taylor"] | None = None
     # 이 스터디 스냅샷 {metric, lin_form, lin_valid, imbalance_warn}(경고 문턱 SM_LIN_RANGE·SM_IMBALANCE 를 화면이 상수 대신 사용), 옛 스터디 null
     rank: dict[str, Any] | None = None
     # 결정 A(2026-11-13): 순위에 실제로 쓴 지표(lin = 같은 메시 1차 강성 지표 | solve) — 다른 메시 비교(옛 ③·④)는 solve·cross_mesh true
     # (경고 SM_CROSS_MESH, 정밀도 낮음). rank{…} 에도 같은 두 키. 옛 스터디 = null
-    metric_effective: Literal["lin", "solve", "jig"] | None = None
+    metric_effective: RankMetricLit | None = None
     cross_mesh: bool | None = None
     C_ref_solve: float | None = None         # 재풀이 C 기준값(보조 열). ranking 행 += C_solve{entry_id: C}, n_failed.sm = 지표 계산 실패 수
     # v0.23.0 지그 순위(esl_jig_rank.md §4): 지그 블록(옛 스터디·지그 블록 없는 스냅샷 = null). ranking 행(dict) += score_jig·umax_jig·C_jig{},

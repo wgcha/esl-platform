@@ -4550,6 +4550,17 @@
             ],
             "title": "Lin Form"
           },
+          "load_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Source"
+          },
           "load_transfer": {
             "anyOf": [
               {
@@ -4568,7 +4579,11 @@
                 "enum": [
                   "lin",
                   "solve",
-                  "jig"
+                  "jig",
+                  "jd",
+                  "js",
+                  "bf",
+                  "fi"
                 ],
                 "type": "string"
               },
@@ -4578,13 +4593,37 @@
             ],
             "title": "Metric"
           },
+          "metric_default": {
+            "anyOf": [
+              {
+                "enum": [
+                  "lin",
+                  "solve",
+                  "jig",
+                  "jd",
+                  "js",
+                  "bf",
+                  "fi"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric Default"
+          },
           "metric_effective": {
             "anyOf": [
               {
                 "enum": [
                   "lin",
                   "solve",
-                  "jig"
+                  "jig",
+                  "jd",
+                  "js",
+                  "bf",
+                  "fi"
                 ],
                 "type": "string"
               },

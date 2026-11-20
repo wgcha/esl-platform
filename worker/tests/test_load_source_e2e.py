@@ -35,7 +35,13 @@ def tools(tmp_path):
 
 
 @pytest.fixture()
-def settings_dict(tmp_path, tools):
+def settings_dict(request, tmp_path, tools):
+    if "study" in request.node.name:
+        from doe_worker_support import doe_worker_settings, write_fake_paicad
+
+        d = doe_worker_settings(tmp_path, write_fake_paicad(tmp_path))
+        d["bead_doe"]["rank"] = {"jig": {"fix_kinds": ["RBE2"]}}      # 가짜 paicad 는 RBE2 종류 클러스터를 돌려줌
+        return d
     return opt_settings(tmp_path, tools)
 
 
@@ -75,7 +81,7 @@ def write_case_esl(d: Path, raw: dict[str, np.ndarray], *, tie_dofs: str = "tran
         U.write_json(str(d / f"{row['src']}.json"), {"schema": "esl/case_jig/1", "source": row["src"], "method": m,
                                                       "tie_dofs": tie_dofs, "status": "ok", "code": None})
     np.savez(d / "bforce.npz", node_id=nid, f=np.asarray(raw["f"]) * bforce_scale, u_val=ur)
-    U.write_json(str(d / "bforce.json"), {"grade": "A", "code": None, "reason": None})
+    U.write_json(str(d / "bforce.json"), {"grade": "full", "code": None, "reason": None})
     return J
 
 
@@ -219,4 +225,65 @@ def test_opt_fail_source_needs_ack_then_runs(client, engine, worker_factory, esl
     # 설정 노출(C3 가 읽음)
     OUT["opt_settings"] = client.get(f"{API}/opt/settings", headers=R).json()
     assert OUT["opt_settings"]["load_source_default"] == "full"
+    _dump()
+
+
+# ================================================================ (a) 스터디
+from doe_support import api  # noqa: E402
+from doe_worker_support import RULES, doe_worker_settings, set_control, write_fake_paicad  # noqa: E402
+from test_doe_e2e import create as _doe_create  # noqa: E402
+from test_doe_e2e import full_flow as _doe_full_flow  # noqa: E402
+from test_doe_e2e import study as _doe_study  # noqa: E402
+
+
+@pytest.fixture()
+def exe(settings_dict):
+    return Path(settings_dict["bead_doe"]["paicad"]["exe"])
+
+
+def _study_flow(client, engine, worker_factory, esl_root, inputs_root, exe, **kw):
+    set_control(exe, rules=RULES)
+    w = worker_factory()
+    w.heartbeat_once()
+    s1 = make_s1(engine, esl_root, inputs_root)
+    seed_sources(engine, esl_root, s1)
+    s = _doe_create(client, s1["entry_ids"], title="P3 출처", **kw)
+    out = _doe_full_flow(client, engine, w, esl_root, s, expect_ok=5, expect_skip={"collision": 1, "fixed": 1, "geom": 1},
+                         expect_morph=1)
+    return s, out, s1
+
+
+@pytest.mark.parametrize("src", [None, "jig_spring", "bforce"])
+def test_study_load_source_e2e(src, client, engine, worker_factory, esl_root, inputs_root, exe):
+    kw = {"load_source": src} if src else {}
+    if src == "bforce":
+        kw["load_source_ack"] = True
+    s, out, _s1 = _study_flow(client, engine, worker_factory, esl_root, inputs_root, exe, **kw)
+    d = out["dir"]
+    g = _doe_study(client, s["id"])
+    res = json.loads((d / "post" / "result.json").read_text(encoding="utf-8"))
+    csv = (d / "post" / "ranking.csv").read_text(encoding="utf-8-sig").splitlines()
+    rep = api(client, "GET", f"/doe/studies/{s['id']}/report").text
+    rr = api(client, "GET", f"/doe/studies/{s['id']}/results").json()
+    OUT[f"study_{src or 'none'}"] = {"study": {k: g[k] for k in ("id", "scenario", "inputs", "phase", "result_ready")},
+                                     "result": {k: rr.get(k) for k in ("metric", "metric_effective", "load_source", "metric_default",
+                                                                        "n_ok", "warnings")}}
+    OUT["doe_settings"] = api(client, "GET", "/doe/settings").json()
+    if src is None:
+        # 옛 요청: 스냅샷·결과에 load_source 없음
+        assert "load_source" not in g["inputs"] and "load_source" not in res and "metric_default" not in res
+        OUT["study_none_metric"] = res.get("metric")
+    else:
+        assert g["inputs"]["load_source"] == src and g["inputs"]["load_source_check"]["key"] == src
+        assert res["load_source"] == src and res.get("metric_default"), res.keys()
+        assert rr["load_source"] == src and rr["metric_default"] == res["metric_default"], rr       # API 가 통과(B3)
+        want = {"jig_spring": "js", "bforce": "bf"}[src]
+        assert res["metric"] == want, (res["metric"], res.get("metric_default"), [w for w in res.get("warnings", []) if "LOAD_SOURCE" in str(w)])
+        assert csv[0].split(",")[0]            # CSV 머리 존재
+    if src == "jig_spring":
+        ms = res["jig"]["methods"]
+        assert "jig_spring" in ms and ms["jig_spring"]["status"] == "ok", ms
+        assert "C_js" in csv[0].split(",")
+        assert all(r.get("score") is not None for r in res["ranking"] if r.get("status", "OK") == "OK")
+    assert rep and "<html" in rep.lower()
     _dump()
