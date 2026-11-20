@@ -31,7 +31,10 @@ BASELINE = "d000"
 # 하중 출처 지표 키 → (n_failed 이름, 베이스라인 값 없음 문구). 지그(v0.23.0)·경계력 ESL(v0.24.0 esl_bforce.md §5.4)
 _ALT_KEYS = {"C_jig": ("jig", "베이스라인 지그 지표가 없음(JIG_SKIPPED)"),
              "C_bf": ("bf", "베이스라인 경계력 ESL 지표가 없음(BF_DESIGN_FAILED)"),
-             "C_fi": ("fi", "베이스라인 내력 ESL 지표가 없음(FINT_DESIGN_FAILED)")}
+             "C_fi": ("fi", "베이스라인 내력 ESL 지표가 없음(FINT_DESIGN_FAILED)"),
+             # v0.24.4 P2c(esl_jig_case.md §7): 지그 강제 변위·스프링 — null 안 = n_failed["jd"|"js"](JIG_DESIGN_FAILED)
+             "C_jd": ("jd", "베이스라인 지그 변위 지표가 없음(JIG_SKIPPED)"),
+             "C_js": ("js", "베이스라인 지그 스프링 지표가 없음(JIG_SKIPPED)")}
 _VIEW_ONLY = frozenset(sm.VIEW_METRICS.values())   # 보기 전용 지표(옛 스냅샷 허용 — 노드 힘 출처)
 _SKIP_KEY = {"SKIPPED_COLLISION": "collision", "SKIPPED_FIXED": "fixed", "SKIPPED_GEOM": "geom"}
 _FAIL_KEY = {"FAILED_MORPH": "morph", "FAILED_MESH": "mesh", "FAILED_SOLVE": "solve"}

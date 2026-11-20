@@ -15,7 +15,12 @@
 3. [x] post: _rank_views 행마다 need(옛 _jig_ref 조건과 같음), _jig_extras 는 고정 실패여도 다른 방식 준비면 보기, _jig_post 블록 +
    tie_dofs·methods(새 스냅샷만), ranking.csv 끝 열 C_jd·umax_jd·C_js·umax_js(_jig_csv_arg), 지그 3D·진단 = 저장 BC 재풀이(새 npz).
 4. [x] tests/doe/test_jig_stages.py jcfg() = 옛 키 집합(새 키 제외 — 이 파일들은 v0.23 지그 시험, 의도 변경 §12-3).
-5. [ ] tests/doe/test_jig_methods.py(합성 비드 판 ×0.5·1·1.5 Π 단조·바이트·k 재사용·격리·CSV·보기)
-6. [ ] A3: esl/library/source_load.py find(key, meta, raw) → (dir, doc, f, bc, why) — bc_node·sp_node = 노드 ID(W3 가정),
-   stages._ns_find 위임(바이트 동일), esl/opt/target.py 지그 지지, stages load_source → metric(_sm_post·bd_post).
+5. [x] tests/doe/test_jig_methods.py 8(비드 ×0.5·1·1.5 Π 단조 — s fixed 2.445·1·0.597, prescribed 2.396·1·0.608, spring 2.391·1·0.610,
+   스터디 ≈ 2.2 s; 파일·보기·CSV; 분해 공유 = 묶음 2 × (1 + 안 수) + 진단·3D, spring_k 1회; translation 새 스냅샷 fixed = 옛 바이트;
+   spring 베이스라인·안 묶음 실패 격리; load_source jig_disp → metric jd·bforce 미준비 → LOAD_SOURCE_FALLBACK). rank._ALT_KEYS += C_jd·C_js.
+6. [x] A3: esl/library/source_load.py find(key, meta, raw, *, code, name, load) → (dir, doc, f, bc, why) — bc_node·sp_node = 노드 ID
+   (W3 3ebbf843 가정과 같음), summary_for_mapping(entry, f). stages._ns_find 위임(문구 같음). esl/opt/target.py source_entry_load·
+   jig_support_reason·jig_supports·source_supports. stages _sm_post load_source·metric_default, _ls_rank_input(노드 힘 사이드카 합침·
+   준비 안 됨 = LOAD_SOURCE_FALLBACK), result.json load_source·metric_default(새 스냅샷만), 보고서 SM_METRIC_KO jd·js·bf·fi.
+   tests/opt/test_load_source.py 8.
 7. [ ] 전체 pytest, 계약 부록 A.5, decisions, 커밋.
