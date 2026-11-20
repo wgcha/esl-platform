@@ -753,6 +753,112 @@ def _opt_cfg(L: dict) -> dict:
     return _attr("esl.opt", "settings")(L.get("cfg") or {})
 
 
+# ---------------------------------------------------------------- v0.24.4 P3: 하중 출처 선택(계약 esl_jig_case.md §9)
+# 작업 params `load_source`(출처 키 — 없으면 아래 함수가 전부 None/원래 경로 = v0.24.3 동작·산출물 바이트 동일). 출처 이름으로
+# 분기하지 않고 코어 검증 출처 계획 표(``esl.val_src.VAL_PLAN``)의 열만 읽는다: ``legacy``(= 항목 자신의 f — 항목 raw 그대로),
+# ``support == "jig"``(= 지그 계열 — 04_esl <file>.npz 의 bc 배열이 지지). 하중 찾기 = 코어 ``esl.library.source_load.find``
+# (A3 — ``find(key, meta, raw) -> (dir | None, doc | None, f | None, bc | None, why)``).
+def opt_source_row(L: dict) -> dict | None:
+    """작업이 고른 출처의 계획 행(없음 = None). 모르는 키 = INPUT_INVALID."""
+    key = L.get("load_source")
+    if not key:
+        return None
+    for r in val_src_plan()["rows"]:
+        if r["key"] == key:
+            return r
+    raise CoreError("INPUT_INVALID", f"모르는 하중 출처입니다: {key}")
+
+
+def jig_method_of_source(key: str) -> str | None:
+    """출처 키 → 지그 방식 이름(방식 표 ``esl.mech.jig_bc.METHODS`` 열 src 가 key 인 행, 없음 = None) — 스터디가 그 방식을 계산하게."""
+    for name, row in _mod("esl.mech.jig_bc").METHODS.items():
+        if row["src"] == key:
+            return str(name)
+    return None
+
+
+def jig_method_names() -> tuple[str, ...]:
+    """지그 방식 이름(방식 표 순서)."""
+    return tuple(str(n) for n in _mod("esl.mech.jig_bc").METHODS)
+
+
+def jig_support_reason(doc: dict | None) -> str | None:
+    """지그 ESL 진단 json(doc: method·tie_dofs)이 비드 최적화에 전달 가능한가 — 가능 = None, 아니면 사유 문구.
+    이번 버전 = 병진 구속(tie 방향 xyz) ∧ 값 0 ∧ 강체 고정(방식 표 tie_value zero·tie_stiff hard)만(전역 SPC 로 정확). 열 값만 읽음."""
+    jb = _mod("esl.mech.jig_bc")
+    d = doc or {}
+    m = jb.METHODS.get(str(d.get("method")))
+    td = jb.TIE_DOFS.get(str(d.get("tie_dofs")))
+    if m is None or td is None:
+        return "지그 ESL 의 방식·구속 성분을 알 수 없습니다"
+    if m["tie_value"] == "zero" and m["tie_stiff"] == "hard" and td["dirs"] == "xyz":
+        return None
+    return (f"비드 최적화는 병진 구속 + 고정 지그만 전달합니다(이 ESL = {td['text']} · {m['name']}) — "
+            "국부 구속·강제 변위·스프링은 후속")
+
+
+def opt_jig_supports(doc: dict | None, bc: dict | None) -> list[tuple[int, str]]:
+    """지그 ESL(doc, bc 배열) → 대상 지지 [(노드 ID, "123")](tie 노드, 정렬). 전달 불가 = LOAD_SOURCE_UNSUPPORTED."""
+    import numpy as np
+
+    why = jig_support_reason(doc)
+    if why is not None:
+        raise CoreError("LOAD_SOURCE_UNSUPPORTED", why)
+    jb = _mod("esl.mech.jig_bc")
+    if not bc:
+        raise CoreError("LOAD_SOURCE_UNAVAILABLE", "지그 ESL 의 구속(bc) 배열이 없습니다")
+    kind = np.asarray(bc["bc_kind"]).astype(np.int64)
+    sel = kind == int(jb.KIND_TIE)
+    nodes = np.unique(np.asarray(bc["bc_node"], dtype=np.int64)[sel])
+    if nodes.size == 0 or np.any(np.asarray(bc["bc_val"], dtype=np.float64)[sel] != 0.0):
+        raise CoreError("LOAD_SOURCE_UNSUPPORTED", "지그 tie 구속이 없거나 값이 0 이 아닙니다")
+    return [(int(n), "123") for n in nodes.tolist()]
+
+
+def _opt_source_find(L: dict, row: dict, e):
+    """항목 e(raw 읽음) 의 출처 하중 → (f (N,3) 원본 노드 순서, 04_esl 폴더, doc, bc). 하중 없음 = LOAD_SOURCE_UNAVAILABLE."""
+    sl = _mod("esl.library.source_load")
+    d, doc, f, bc, why = sl.find(row["key"], e.meta, e.raw)
+    if f is None:
+        raise CoreError("LOAD_SOURCE_UNAVAILABLE", f"{e.meta.get('entry_id')}: {row['key']} 하중을 찾을 수 없음 — {why}")
+    return f, d, doc, bc
+
+
+def _opt_source_supports(L: dict, row: dict, t, echo) -> list[tuple[int, str]]:
+    """S1 지그 계열 출처: 모든 항목이 같은 지지(노드 집합)여야 한다 — 덱은 지지 하나. 반환 = 대상 지지."""
+    en = _mod("esl.library.entry")
+    tg = _mod("esl.opt.target")
+    sets: dict[str, list] = {}
+    for it in L["entries"]:
+        e = en.load(it["dir"], raw=True)
+        _f, _d, doc, bc = _opt_source_find(L, row, e)
+        sets[it["id"]] = opt_jig_supports(doc, bc)
+        del e
+    first_id = next(iter(sets))
+    sup = sets[first_id]
+    diff = [i for i, v in sets.items() if v != sup]
+    if diff:
+        raise CoreError("LOAD_SOURCE_UNSUPPORTED", f"항목마다 지그 지지가 다릅니다(기준 {first_id} 와 다른 항목 {len(diff)}개) — "
+                        "한 최적화는 지지 하나만 씁니다")
+    sr = tg.support_check(t.mesh, sup)    # 대상 메시에 없는 노드 → NODE_NOT_IN_PART
+    if sr["rank"] < 6:
+        raise CoreError("SUPPORT_DEGENERATE", f"지그 지지가 강체 6모드를 구속하지 못함(rank {sr['rank']})")
+    echo(f"[opt_prep] 하중 출처 {row['key']}: 지그 지지 {len(sup)}개 노드(병진 123) — 3-2-1 대신 사용")
+    return sup
+
+
+def _opt_source_summary(e, f) -> dict:
+    """S2 셀 매핑용: 출처 하중 f 로 셀 요약을 다시 만든다(등록 때와 같은 함수·인수, 항목의 격자·프레임)."""
+    nz = _mod("esl.library.normalize")
+    en = _mod("esl.library.entry")
+    g = e.meta["grid"]
+    top_n = int(len(e.summary["top_node_id"])) if "top_node_id" in e.summary else 50
+    gs = nz.grid_summary(e.raw["x0"], f, int(g["nx"]), int(g["ny"]), e.meta["frame"], top_n=top_n,
+                         node_id=e.raw["node_id"])
+    return {**e.summary, **{k: gs[k] for k in en.SUMMARY_KEYS}, "nx": g["nx"], "ny": g["ny"], "frame": e.meta["frame"]}
+
+
+
 def _opt_prep(spec: dict, echo) -> dict:
     """OR-1: 대상(S1 parse_rad 제자리 / S2 template.npz) → 동일성·크기 → 3-2-1 → 금지 영역·비설계 → target/."""
     import os
@@ -834,6 +940,15 @@ def _opt_prep(spec: dict, echo) -> dict:
         prog(60)
         echo(f"[opt_prep] S2 템플릿 {tp['id']}: 노드 {t.n_nodes} · 요소 {t.n_elems}, 크기 검사 통과(ESL {len(rows)}개)"
              + (f", 법선 정렬 {t.normals.get('normals_flipped')}개" if t.normals.get("normals_flipped") else ""))
+    srow = opt_source_row(L)
+    if srow is not None:                                    # v0.24.4 P3: 하중 출처 — 지그 계열이면 지지를 그 지그로 바꿈
+        t.source["load_source"] = {"key": srow["key"]}
+        if srow["support"] == "jig":
+            if L["scenario"] != "S1":
+                raise CoreError("LOAD_SOURCE_UNSUPPORTED", f"{srow['key']}: 지그 하중은 기존 형상 최적화(S1)에서만 씁니다 — "
+                                "템플릿(셀 매핑)은 후속")
+            t.supports = _opt_source_supports(L, srow, t, echo)
+            t.source["load_source"]["support"] = "jig"
     des_cfg = L.get("design") or {}
     k = ko.compute(t.mesh, t.frame, des_cfg.get("keepout"), cfg["keepout"])
     warns += list(k["warnings"])
@@ -847,6 +962,8 @@ def _opt_prep(spec: dict, echo) -> dict:
     summ = {"scenario": t.scenario, "n_nodes": t.n_nodes, "n_elems": t.n_elems, "keepout": c, "design": dinfo,
             "normals": t.normals, "supports": meta["supports"], "topo_sha256": t.topo_sha256,
             "size": None if size_info is None else U.jsonable(size_info)}
+    if srow is not None:
+        summ["load_source"] = U.jsonable(t.source["load_source"])
     U.write_json(w.fresh_file(os.path.join(tdir, "prep.json"), out),
                  {"summary": U.jsonable(summ), "rects": U.jsonable(k["rects"]), "auto": k["auto"], "warnings": warns})
     echo(f"[opt_prep] 금지 영역 요소: 구멍 {c['n_elems_auto_hole']} · 가장자리 {c['n_elems_auto_edge']} · 사각형 "
@@ -884,13 +1001,28 @@ def _opt_load(spec: dict, echo) -> dict:
         m = U.read_json(os.path.join(e["dir"], "entry.json"))
         cands.append({"entry_id": e["id"], "mode": e.get("mode"), "scene": _scene_label(m)})
 
+    srow = opt_source_row(L)
+    own = srow is None or bool(srow["legacy"])             # 출처 없음·legacy 출처 = 항목 자신의 f(지금 경로 그대로)
+    src_dirs: dict[str, str] = {}
+
     def load_fn(eid: str):
+        if own:
+            if t.scenario == "S1":
+                e = en.load(dirs[eid], raw=True)
+                f, _info = tg.entry_load(t, e.raw)
+            else:
+                e = en.load(dirs[eid], raw=False)
+                f, _info = tg.entry_load(t, None, e.summary_for_mapping())
+            return f
+        e = en.load(dirs[eid], raw=True)                    # v0.24.4 P3: 출처 하중(Case 04_esl <file>.npz) 으로 바꿔 넣음
+        fs, sdir, _doc, _bc = _opt_source_find(L, srow, e)
+        src_dirs[eid] = sdir
         if t.scenario == "S1":
-            e = en.load(dirs[eid], raw=True)
-            f, _info = tg.entry_load(t, e.raw)
+            f, _info = tg.entry_load(t, {"node_id": e.raw["node_id"], "f": fs})
         else:
-            e = en.load(dirs[eid], raw=False)
-            f, _info = tg.entry_load(t, None, e.summary_for_mapping())
+            if srow["support"] == "jig":
+                raise CoreError("LOAD_SOURCE_UNSUPPORTED", f"{srow['key']}: 지그 하중은 템플릿(셀 매핑) 최적화에서 쓸 수 없음")
+            f, _info = tg.entry_load(t, None, _opt_source_summary(e, fs))
         return f
 
     def progress(k: int, K: int) -> None:
@@ -902,6 +1034,8 @@ def _opt_load(spec: dict, echo) -> dict:
     ms = eo.load_method_sources()
     strategy = o.get("load_strategy") or cfg["loads"]["default_strategy"]
     norm = o.get("objective_norm") or cfg["loads"]["default_objective_norm"]
+    if srow is not None:
+        echo(f"[opt_load] 하중 출처 {srow['key']}" + (" (항목 자신의 하중)" if own else " — Case 04_esl 출처 하중으로 교체"))
     echo(f"[opt_load] 후보 ESL {len(cands)}개, 전략 {strategy}"
          + (f" k={o.get('k')}" if strategy == "C" else "") + f", 목표 기준 {norm}, 대상 쉘 모델 조립·분해 1회")
     u_store = os.path.join(ldir, "u_cand.npy") if strategy in ("A", "C") else None
@@ -932,6 +1066,8 @@ def _opt_load(spec: dict, echo) -> dict:
          + (f", 제외 모드 {sel['excluded_modes']}" if sel.get("excluded_modes") else ""))
     summ = {"strategy": sel["strategy"], "objective_norm": sel["objective_norm"], "n_selected_esl": sel["n_selected_esl"],
             "n_cases": sel["n_cases"], "C_ref": sel["C_ref"], "solver": comp["stats"]}
+    if srow is not None:
+        summ["load_source"] = {"key": srow["key"], "entries": dict(sorted(src_dirs.items()))}
     U.write_json(w.fresh_file(os.path.join(ldir, "load.json"), out),
                  {"summary": U.jsonable(summ), "C": np.asarray(comp["C"]).tolist(),
                   "umax": np.asarray(comp["umax"]).tolist(), "entry_ids": comp["entry_ids"],
