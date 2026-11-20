@@ -1,5 +1,6 @@
 // ④ 검증(v0.10.0 재번호 — 옛 ⑤; 주 버튼 = 검증 실행 / 라이브러리에 등록, esl_menu_restructure.md §7.1)(v0.5.7, 계약 esl_disp_primary.md §9): 판정 = 변위 4지표. 위→아래:
 //   판정 카드 → 변위 카드(컨투어·log 히스토그램·상위 노드·단면 차트) → 변형률 카드(참고, 판정 아님) → hotspot·제외 표 → 검증 이력.
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
 import { history } from "../api/history";
@@ -16,6 +17,8 @@ import { ErrHistogram } from "../components/ErrHistogram";
 import { ReportLink } from "../components/ReportLink";
 import { LibraryRegister, REGISTER_LABEL, useRegistration } from "../components/LibraryRegister";
 import { stepPath, stepState } from "../shell/StageStepper";
+import { SourceTabs } from "../view3d/SourceTabs";
+import { defaultValSource, isLegacySource, sourceRow, unavailText, valRowOf, valTabItems } from "../view3d/sources";
 import { usePolling } from "../lib/usePolling";
 import { dt, fmt, pct, pv, sci, spv } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -162,16 +165,24 @@ function TopTable({ f }: { f: FieldSummary }) {
 
 const num = (x: unknown) => (typeof x === "number" ? x : undefined);
 
+const INFO_REACTION_SUB = "정보 — 지지 반력";
+/** 변위 비교 설명(legacy = v0.24.2 문구 그대로, 출처 탭 = 행 note) */
+const CONSISTENCY_NOTE = "ESL 재해석 변위와 Radioss 변위의 차이 — 계산·경계조건·저장 정밀도의 수치 일관성을 봅니다(물리적 차이가 아닙니다).";
+/** 출처 탭의 판정 배지 title — 등록·내보내기 기준은 legacy(전 노드 ESL) 판정 */
+const SRC_BADGE_TITLE = "이 출처 판정 — 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정";
+const STRAIN_NEED_FULL = "전체 재해석이 없어 변형률 비교를 표시할 수 없습니다";
+
 /** 판정 Stat 한 칸: 값 > 기준이면 bad, 이하이면 ok. 값이 없으면 사유에 따라 "생략"/"–" */
-function JudgeStat({ label, value, crit, skipped, hint }: { label: string; value: number | null | undefined; crit: number | undefined; skipped?: boolean; hint?: string }) {
+function JudgeStat({ label, value, crit, skipped, hint, info }: { label: string; value: number | null | undefined; crit: number | undefined; skipped?: boolean; hint?: string; info?: boolean }) {
   const has = value !== null && value !== undefined;
-  const bad = has && (!Number.isFinite(value) || (crit !== undefined && value > crit));
+  // info(v0.24.3 criteria.reaction_role = "info"): 과잉 구속 지지의 반력 = 지지력 — 기준·색 없이 값만(판정 제외)
+  const bad = !info && has && (!Number.isFinite(value) || (crit !== undefined && value > crit));
   return (
     <Stat
       label={label}
       value={has ? sci(value) : skipped ? "생략" : "–"}
-      sub={crit !== undefined ? `기준 ≤ ${sci(crit)}` : undefined}
-      tone={has && crit !== undefined ? (bad ? "bad" : "ok") : undefined}
+      sub={info ? INFO_REACTION_SUB : crit !== undefined ? `기준 ≤ ${sci(crit)}` : undefined}
+      tone={!info && has && crit !== undefined ? (bad ? "bad" : "ok") : undefined}
       hint={has ? hint : skipped ? "전체 재해석 생략(validation.full_solve)" : hint}
     />
   );
@@ -196,46 +207,94 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   // 검증 완료는 Case version 을 바꾸지 않으므로 ⑤ 상태(job_id·state)가 바뀌면 다시 읽는다
   const run = usePolling(() => (runId ? api.eslRun(runId) : Promise.resolve(null)), 0, [runId, c.version, st5?.state, st5?.job_id]);
   const vid = pastVal ?? run.data?.latest_validation_id ?? null;
-  const val = usePolling(() => (vid ? api.validation(vid) : Promise.resolve(null)), 0, [vid]);
+  const val = usePolling(() => (vid ? api.validation(vid) : Promise.resolve(null)), 0, [vid]); // legacy(전 노드) = 옛 URL 그대로
   const vHistory = usePolling(() => (pastVal ? Promise.resolve(null) : api.validations(c.id)), 0, [c.id, vid, c.version, st5?.state]);
   const act = useAction(reload);
-  const v = val.data;
-  const pastJobId = pastVal ? v?.job_id ?? null : null;
+  const v0 = val.data; // 등록·주 버튼·이력 기준 = legacy(전 노드) 검증
+  const pastJobId = pastVal ? v0?.job_id ?? null : null;
   const review = usePolling(() => (pastJobId ? history.review(pastJobId) : Promise.resolve(null)), 0, [pastJobId]);
   const filesGone = !!pastVal && review.data?.result.availability !== "full";
-  // 단면 위치·축·추천은 변위 컨투어, 겹쳐보기, 단면 차트가 함께 쓴다
-  const sectionOn = !!v && !!v.field && !filesGone;
-  const ctl = useSectionCtl(v?.id ?? null, sectionOn);
 
   const prereq = !runId ? "③ ESL을 먼저 계산하세요" : run.data?.stale ? "③ ESL을 다시 계산하세요(입력이 바뀜)" : null;
+  // v0.24.3 출처 탭(esl_validate_sources.md §8): 옛 서버(sources 실패)는 null → 탭 없이 v0.24.2 화면 그대로
+  const srcs = usePolling(() => (vid ? api.validationSources(vid).catch(() => null) : Promise.resolve(null)), 0, [vid]);
+  const sources = srcs.data;
+  const items = useMemo(() => valTabItems(sources, !pastVal && allowed), [sources, pastVal, allowed]);
+  const [pick, setPick] = useState<string | null>(null);
+  useEffect(() => setPick(null), [vid]);
+  const def = defaultValSource(sources);
+  const cur = sources ? (pick && items?.find((i) => i.key === pick && (i.ok || i.add)) ? pick : def) : null;
+  const src = cur && !isLegacySource(cur) ? cur : undefined; // legacy 탭 = src 없음(옛 URL)
+  const curRow = valRowOf(sources, cur);
+  const notRun = !!src && !!curRow && !curRow.available; // 결과 없는 선택 가능 탭(VAL_SRC_NOT_RUN)
+  const srcVal = usePolling(() => (vid && src && curRow?.available ? api.validation(vid, src) : Promise.resolve(null)), 0, [vid, src, curRow?.available]);
+  const v = src ? (notRun ? null : srcVal.data) : v0;
+  // 단면 위치·축·추천은 변위 컨투어, 겹쳐보기, 단면 차트가 함께 쓴다
+  const sectionOn = !!v && !!v.field && !filesGone;
+  const ctl = useSectionCtl(v?.id ?? null, sectionOn, src);
+  const histSrc = usePolling(() => (!pastVal && src ? api.validationsSources(c.id).catch(() => null) : Promise.resolve(null)), 0, [c.id, src, vid, c.version, st5?.state]);
   // §7.1 주 버튼 1개: 최신 검증 PASS(현재 기준) ∧ 미등록 → '라이브러리에 등록', 그 외 '검증 실행'
-  const reg = useRegistration(c.project_id, pastVal ? null : v ?? null, allowed);
+  const reg = useRegistration(c.project_id, pastVal ? null : v0 ?? null, allowed);
   const registerMode = !pastVal && reg.canRegister && st5?.state !== "running";
   const crit = v?.criteria ?? {};
   const status = v ? statusOf(v) : null;
   const skipped = !!v && v.undetermined_reason === "NO_FULL_SOLVE";
   const hsMax = num(crit.hotspot_strain_rel_err_max);
+  const reactInfo = crit.reaction_role === "info";
+  const tabsEl = items ? <SourceTabs items={items} tab={cur ?? ""} setTab={setPick} label="검증 출처" prefix="val-src" testId="val-src-tab" whyTestId="val-src-tab-why" /> : null;
+  const headRight = (vv: ValidationOut | null) => (
+    <span className="inline-actions">
+      {tabsEl}
+      {vv && (src ? <span title={SRC_BADGE_TITLE}><StatusBadge v={vv} /></span> : <StatusBadge v={vv} />)}
+      {!pastVal && v0 && <ReportLink url={api.caseReportUrl(c.id)} dep={`${v0.id}:${st5?.state}`} />}
+      {!pastVal && v0 && <LibraryRegister projectId={c.project_id} reg={reg} />}
+    </span>
+  );
+  const curLabel = sourceRow(cur)?.label ?? cur ?? "";
+  const rerunWhy = blockReason(allowed, c, 4, prereq);
+  const histCell = (h: ValidationOut) => {
+    if (!src) return <StatusBadge v={h} />;
+    const row = histSrc.data?.items.find((i) => i.validation_id === h.id)?.rows.find((r) => r.key === cur);
+    if (row?.available && row.status) return <StatusBadge v={{ status: row.status, verdict: h.verdict }} />;
+    return (
+      <span className="muted" title={row ? unavailText(curLabel, row.reason) : undefined}>
+        –
+      </span>
+    );
+  };
 
   const content = (
     <>
-      {!v ? (
+      {!v0 ? (
         <Empty>{pastVal ? "불러오는 중…" : runId ? "아직 검증하지 않았습니다" : "③ ESL을 먼저 계산하세요"}</Empty>
+      ) : !v ? (
+        <div className="wide2">
+          <Card title="판정" right={headRight(null)}>
+            {notRun ? (
+              <div data-testid="val-src-notrun">
+                <div className="small muted" role="status">
+                  {unavailText(curLabel, curRow?.reason)}
+                </div>
+                <button type="button" className="btn small" data-testid="val-src-rerun" disabled={!!rerunWhy || act.busy} title={rerunWhy ?? undefined} onClick={() => act.run(() => submitJob(c, "VALIDATE", { esl_run_id: runId }))}>
+                  검증 다시 실행
+                </button>
+              </div>
+            ) : srcVal.error ? (
+              <div className="small error-text" role="alert">
+                {srcVal.error}
+              </div>
+            ) : (
+              <Empty>불러오는 중…</Empty>
+            )}
+          </Card>
+        </div>
       ) : (
         <div className="wide2">
-          <Card
-            title="판정"
-            right={
-              <span className="inline-actions">
-                <StatusBadge v={v} />
-                {!pastVal && <ReportLink url={api.caseReportUrl(c.id)} dep={`${v.id}:${st5?.state}`} />}
-                {!pastVal && <LibraryRegister projectId={c.project_id} reg={reg} />}
-              </span>
-            }
-          >
+          <Card title="판정" right={headRight(v)}>
             <div className="stats" data-testid="judge-stats">
               <JudgeStat label="변위 RMS (상대)" value={v.disp_rms_rel} crit={num(crit.disp_rms_rel_max)} skipped={skipped} />
               <JudgeStat label="변위 최대 오차 (상대)" value={v.disp_max_rel} crit={num(crit.disp_max_rel_max)} skipped={skipped} />
-              <JudgeStat label="반력 (상대)" value={v.reaction_rel} crit={num(crit.reaction_rel_max)} skipped={skipped} />
+              <JudgeStat label="반력 (상대)" value={v.reaction_rel} crit={num(crit.reaction_rel_max)} skipped={skipped} info={reactInfo} />
               <JudgeStat label="변위 잡음 바닥" value={v.disp_noise_rel} crit={num(crit.disp_noise_rel_max)} hint="저장 정밀도가 만드는 노드 변위 잡음 δ ÷ U" />
             </div>
             {status === "UNDETERMINED" && (
@@ -258,8 +317,8 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           <Card title="변위 비교 (전 노드)">
             {v.disp ? (
               <>
-                <div className="small muted">ESL 재해석 변위와 Radioss 변위의 차이 — 계산·경계조건·저장 정밀도의 수치 일관성을 봅니다(물리적 차이가 아닙니다).</div>
-                {!filesGone && <DispOverlay vid={v.id} disp={v.disp} sec={ctl.map} />}
+                <div className="small muted">{src ? curRow?.note ?? CONSISTENCY_NOTE : CONSISTENCY_NOTE}</div>
+                {!filesGone && <DispOverlay vid={v.id} disp={v.disp} sec={ctl.map} src={src} />}
                 <div className="grid2 disp-grid">
                   <div className="subblock">
                     <h4 className="sub-title">변위 오차 분포 (log10 e/U)</h4>
@@ -290,9 +349,13 @@ export function Stage5({ c, reload, allowed }: StageProps) {
             {v.field && !filesGone ? (
               <div className="subblock">
                 <h4 className="sub-title">겹쳐보기 — 요소 변형률 (PCA 평면)</h4>
-                <FieldOverlay vid={v.id} hotspots={v.hotspots} summary={v.field} strainRef={v.strain_ref} sec={ctl.map} />
+                <FieldOverlay vid={v.id} hotspots={v.hotspots} summary={v.field} strainRef={v.strain_ref} sec={ctl.map} src={src} />
               </div>
-            ) : pastVal ? null : (
+            ) : pastVal ? null : src && v.undetermined_reason ? (
+              <div className="small muted" role="status" data-testid="strain-note">
+                {STRAIN_NEED_FULL}
+              </div>
+            ) : (
               <div className="warn-box" role="status">
                 전 요소 비교 자료가 없는 예전 검증입니다 — ④ 검증을 다시 실행하면 겹쳐보기를 볼 수 있습니다.
               </div>
@@ -374,9 +437,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                     {vHistory.data.map((h) => (
                       <tr key={h.id} className={h.id === v.id ? "hl" : undefined}>
                         <td className="num">{dt(h.created_at)}</td>
-                        <td data-testid="hist-status">
-                          <StatusBadge v={h} />
-                        </td>
+                        <td data-testid="hist-status">{histCell(h)}</td>
                         <td className="mono small">{h.esl_run_id}</td>
                         <td>{h.stale ? <span className="muted">이전 입력</span> : ""}</td>
                       </tr>

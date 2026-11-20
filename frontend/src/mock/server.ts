@@ -24,6 +24,7 @@ import { ScxMock } from "./scxmock";
 import { VerifyMock } from "./verifymock";
 import { ItemDeleteMock } from "./deletemock";
 import { stopCodeText } from "../api/client";
+import { valSourceOut, valSourceRows, type ValSourcesMode } from "./valsrcmock";
 
 interface MockResponse {
   status: number;
@@ -91,6 +92,8 @@ export class MockServer {
       { key: "fint", available: false, code: "V3D_SRC_NOT_RUN", reason: "이 ESL 결과에는 없습니다(v0.24.0 이전 계산) — ESL 을 다시 계산하면 생깁니다", resp: false, resp_code: "V3D_SRC_NOT_RUN", resp_reason: "이 ESL 결과에는 없습니다(v0.24.0 이전 계산) — ESL 을 다시 계산하면 생깁니다", rigid: null },
     ],
   };
+  /** v0.24.3 ④ 검증 출처별: ok = 출처 행·?src= 응답 · notrun = 이 검증에 출처 결과 없음 · old = 404(옛 서버 — 출처 탭 없이 v0.24.2 화면). 기본 old(기존 시험 DOM 불변) */
+  valSourcesMode: ValSourcesMode = "old";
   /** v0.24.1 재현 오류 시연: 응답 없음(409 V3D_RECON_UNAVAILABLE) */
   v3dReconFail = false;
   cases: CaseOut[] = [];
@@ -529,6 +532,21 @@ export class MockServer {
     return { ...rest, stale: inputs !== this.inputsKey(c), is_current: c.current_esl_run_id === run.id };
   }
 
+  private isLatestValidation(v: ValidationOut) {
+    const vs = this.validations.filter((x) => x.case_id === v.case_id);
+    return vs[vs.length - 1]?.id === v.id;
+  }
+
+  /** ?src= 검증: 모르는 출처 404 · 결과 없음 409 VAL_SOURCE_UNAVAILABLE(옛 서버는 src 를 무시하므로 old 모드는 통과) */
+  private valSrcError(v: ValidationOut, src: string | null): MockResponse | null {
+    if (!src || src === "full" || this.valSourcesMode === "old") return null;
+    const rows = valSourceRows(this.validationOut(v), this.valSourcesMode, this.isLatestValidation(v));
+    const row = rows.find((x) => x.key === src);
+    if (!row) return err(404, "SOURCE_NOT_FOUND", "모르는 검증 출처입니다.", { src, keys: rows.map((x) => x.key) });
+    if (!row.available) return err(409, "VAL_SOURCE_UNAVAILABLE", `${src} 검증 결과 없음 — ${row.reason}`, { src, reason_code: row.code, reason: row.reason });
+    return null;
+  }
+
   private validationOut(v: ValidationOut): ValidationOut {
     const run = this.runs.find((x) => x.id === v.esl_run_id)!;
     const c = this.findCase(run.case_id)!;
@@ -790,33 +808,44 @@ export class MockServer {
       if (r[2]) return { status: 200, body: { esl_run_id: run.id, n_nodes: N_NODES, rows: makeForces().slice(0, Number(query.get("top") ?? 50)) } };
       return { status: 200, body: this.runOut(run) };
     }
+    if ((r = m(/^\/validations\/([^/]+)\/sources$/)) && method === "GET") {
+      const vv = this.validations.find((x) => x.id === r![1]);
+      if (!vv) return err(404, "VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
+      if (this.valSourcesMode === "old") return err(404, "NOT_FOUND", "Not Found");
+      return { status: 200, body: { validation_id: vv.id, default: "full", rows: valSourceRows(this.validationOut(vv), this.valSourcesMode, this.isLatestValidation(vv)) } };
+    }
     if ((r = m(/^\/validations\/([^/]+)\/(field|section|disp-field)$/)) && method === "GET") {
       const vv = this.validations.find((x) => x.id === r![1]);
       if (!vv) return err(404, "VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
+      const sErr = this.valSrcError(vv, query.get("src"));
+      if (sErr) return sErr;
       // 전체 재해석 해(compare_disp.npz)가 있는가: 새 체계이고 UNDETERMINED 가 아닐 때
       const hasVal = !!vv.scheme && vv.status !== "UNDETERMINED";
       if (r[2] === "field") {
         const layer = (query.get("layer") ?? "rad") as FieldLayer;
         if (!["rad", "esl", "err"].includes(layer)) return err(422, "INVALID_PARAMS", "layer: rad|esl|err");
-        return { status: 200, body: makeField(r[1], layer, Number(query.get("max_points") ?? 20000) || 20000) };
+        return { status: 200, body: makeField(r[1] + (query.get("src") ? `:${query.get("src")}` : ""), layer, Number(query.get("max_points") ?? 20000) || 20000) };
       }
       if (r[2] === "disp-field") {
         const layer = (query.get("layer") ?? "err") as DispLayer;
         if (!["err", "rel", "val"].includes(layer)) return err(422, "INVALID_PARAMS", "layer: err|rel|val");
         if (!hasVal) return err(409, "PREREQUISITE_MISSING", "변위 비교 자료가 없습니다.", { missing: ["disp_compare"] });
-        return { status: 200, body: makeDispField(r[1], layer, Number(query.get("max_points") ?? 20000) || 20000) };
+        return { status: 200, body: makeDispField(r[1] + (query.get("src") ? `:${query.get("src")}` : ""), layer, Number(query.get("max_points") ?? 20000) || 20000) };
       }
       const axis = (query.get("axis") ?? "eta") as SectionAxis;
       if (!["xi", "eta"].includes(axis)) return err(422, "INVALID_PARAMS", "axis: xi|eta");
       const at = Number(query.get("at") ?? 0.5);
       if (!(at >= 0 && at <= 1)) return err(422, "INVALID_PARAMS", "at: 0~1");
-      return { status: 200, body: makeSection(r[1], axis, at, hasVal) };
+      return { status: 200, body: makeSection(r[1] + (query.get("src") ? `:${query.get("src")}` : ""), axis, at, hasVal) };
     }
     if (path.startsWith("/library/")) return this.library(method, path, query, b);
     if ((r = m(/^\/validations\/([^/]+)$/)) && method === "GET") {
       const v = this.validations.find((x) => x.id === r![1]);
       if (!v) return err(404, "VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
-      return { status: 200, body: this.validationOut(v) };
+      const src = query.get("src");
+      const sErr = this.valSrcError(v, src);
+      if (sErr) return sErr;
+      return { status: 200, body: src && src !== "full" ? valSourceOut(this.validationOut(v), src) : this.validationOut(v) };
     }
     if ((r = m(/^\/artifacts\/([^/]+)\/download$/)) && method === "GET") {
       const a = this.findArtifact(r[1]);
@@ -1209,6 +1238,12 @@ export class MockServer {
     }
     if (sub === "esl-runs" && method === "GET")
       return { status: 200, body: this.runs.filter((x) => x.case_id === c.id).reverse().map((x) => this.runOut(x)) };
+    if (sub === "validations/sources" && method === "GET") {
+      if (this.valSourcesMode === "old") return err(404, "NOT_FOUND", "Not Found");
+      const mode = this.valSourcesMode;
+      const vs = this.validations.filter((v) => v.case_id === c.id).reverse();
+      return { status: 200, body: { case_id: c.id, items: vs.map((v, i) => ({ validation_id: v.id, rows: valSourceRows(this.validationOut(v), mode, i === 0) })) } };
+    }
     if (sub === "validations" && method === "GET")
       return { status: 200, body: this.validations.filter((v) => v.case_id === c.id).reverse().map((v) => this.validationOut(v)) };
     if (sub === "artifacts" && method === "GET") return { status: 200, body: this.artifacts[c.id] ?? [] };

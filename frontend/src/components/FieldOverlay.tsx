@@ -116,17 +116,20 @@ export function FieldOverlay({
   summary,
   strainRef,
   sec,
+  src,
 }: {
   vid: string;
   hotspots: ValidationHotspot[];
   summary: FieldSummary | null | undefined;
   strainRef?: StrainRef | null;
   sec?: SectionMap;
+  /** 검증 출처 키(legacy 는 안 넘김 — 옛 URL 그대로, v0.24.3) */
+  src?: string;
 }) {
   const data = usePolling(
-    () => Promise.all((["rad", "esl", "err"] as FieldLayer[]).map((l) => api.field(vid, l))).then(([rad, esl, err]) => ({ rad, esl, err })),
+    () => Promise.all((["rad", "esl", "err"] as FieldLayer[]).map((l) => api.field(vid, l, undefined, src))).then(([rad, esl, err]) => ({ rad, esl, err })),
     0,
-    [vid],
+    [vid, src],
   );
   const [mode, setMode] = useState<Mode>("eps");
   const [op, setOp] = useState(0); // ESL 불투명도 %
@@ -142,8 +145,8 @@ export function FieldOverlay({
   // 자동 범위 = 서버 color_range_robust(P99), 없으면 예전 color_range. 수동 범위는 레전드 입력(localStorage 기억)
   const autoEps = useMemo(() => (d ? autoRange("minmax", d.rad.color_range_robust, null) ?? rangeOf([d.rad, d.esl]) : { min: 0, max: 1 }), [d]);
   const autoErr = useMemo(() => (d ? autoRange("sym", d.err.color_range_robust, null) ?? errRangeOf(d.err) : { min: -1, max: 1 }), [d]);
-  const epsLg = useLegendRange(vid, "field", "eps", "minmax", autoEps);
-  const errLg = useLegendRange(vid, "field", "err", "sym", autoErr);
+  const epsLg = useLegendRange(src ? `${vid}|${src}` : vid, "field", "eps", "minmax", autoEps);
+  const errLg = useLegendRange(src ? `${vid}|${src}` : vid, "field", "err", "sym", autoErr);
   const epsRange = epsLg.range;
   const errRange = errLg.range;
   const geo = useMemo(() => (d ? geometry(d.rad, width) : null), [d, width]);
