@@ -4,7 +4,7 @@ import { mockView3d } from "./view3dmock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, RunAllOut, StageState, StepKey, StepStatus, SupportAuto, SupportProblem,
-  SupportSetOut, ValidationOut, View3dSourcesOut,
+  SupportSetOut, ValidationOut, View3dSourceRow, View3dSourcesOut,
 } from "../api/types";
 import type { ExportBatchItem, ExportBatchOut, ExportBatchState, ExportBatchSummary, ExportOptions } from "../api/library";
 import {
@@ -94,6 +94,8 @@ export class MockServer {
   };
   /** v0.24.3 ④ 검증 출처별: ok = 출처 행·?src= 응답 · notrun = 이 검증에 출처 결과 없음 · old = 404(옛 서버 — 출처 탭 없이 v0.24.2 화면). 기본 old(기존 시험 DOM 불변) */
   valSourcesMode: ValSourcesMode = "old";
+  /** v0.24.4 지그 3행(jig·jig_disp·jig_spring — esl_jig_case.md §5.4·5.5): false = 옛 서버·옛 Case(새 행 없음, 4행 그대로 — 기존 시험 DOM 불변) */
+  jigRows = false;
   /** v0.24.1 재현 오류 시연: 응답 없음(409 V3D_RECON_UNAVAILABLE) */
   v3dReconFail = false;
   cases: CaseOut[] = [];
@@ -538,9 +540,18 @@ export class MockServer {
   }
 
   /** ?src= 검증: 모르는 출처 404 · 결과 없음 409 VAL_SOURCE_UNAVAILABLE(옛 서버는 src 를 무시하므로 old 모드는 통과) */
+  /** v0.24.1 출처 행 응답(jigRows 면 지그 3행: 고정·변위 가능, 스프링 = JIG_NOT_RUN) */
+  private v3dSourcesOut(): View3dSourcesOut {
+    if (!this.jigRows) return this.v3dSources;
+    const na = (key: string, code: string, reason: string): View3dSourceRow => ({ key, available: false, code, reason, resp: false, resp_code: code, resp_reason: reason, rigid: null });
+    const ok = (key: string): View3dSourceRow => ({ key, available: true, code: null, reason: null, resp: true, resp_code: null, resp_reason: null, rigid: "kabsch" });
+    const rest = this.v3dSources.rows.filter((r) => r.key !== "jig");
+    return { ...this.v3dSources, rows: [ok("jig"), ok("jig_disp"), na("jig_spring", "JIG_NOT_RUN", "이 ESL 결과에는 지그 스프링 계산이 없습니다(v0.24.4 이전 계산) — ESL 을 다시 계산하면 생깁니다"), ...rest] };
+  }
+
   private valSrcError(v: ValidationOut, src: string | null): MockResponse | null {
     if (!src || src === "full" || this.valSourcesMode === "old") return null;
-    const rows = valSourceRows(this.validationOut(v), this.valSourcesMode, this.isLatestValidation(v));
+    const rows = valSourceRows(this.validationOut(v), this.valSourcesMode, this.isLatestValidation(v), this.jigRows);
     const row = rows.find((x) => x.key === src);
     if (!row) return err(404, "SOURCE_NOT_FOUND", "모르는 검증 출처입니다.", { src, keys: rows.map((x) => x.key) });
     if (!row.available) return err(409, "VAL_SOURCE_UNAVAILABLE", `${src} 검증 결과 없음 — ${row.reason}`, { src, reason_code: row.code, reason: row.reason });
@@ -776,13 +787,13 @@ export class MockServer {
       const run = this.runs.find((x) => x.id === r![1]);
       if (!run) return err(404, "ESL_RUN_NOT_FOUND", "ESL 결과를 찾을 수 없습니다.");
       if (this.view3dSourcesMode === "old") return err(404, "NOT_FOUND", "Not Found");
-      return { status: 200, body: { ...this.v3dSources, esl_run_id: run.id } };
+      return { status: 200, body: { ...this.v3dSourcesOut(), esl_run_id: run.id } };
     }
     if ((r = m(/^\/esl-runs\/([^/]+)\/view3d\/recon$/)) && method === "GET") {
       const run = this.runs.find((x) => x.id === r![1]);
       if (!run) return err(404, "ESL_RUN_NOT_FOUND", "ESL 결과를 찾을 수 없습니다.");
       const src = query.get("src") ?? "full";
-      const row = this.v3dSources.rows.find((x) => x.key === src);
+      const row = this.v3dSourcesOut().rows.find((x) => x.key === src);
       if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src });
       if (this.v3dReconFail || !row.resp) return err(409, "V3D_RECON_UNAVAILABLE", row.resp_reason ?? "응답 변위 없음", { src, reason_code: row.resp_code, reason: row.resp_reason });
       return { status: 200, body: mockView3d().recon(run.id, query.get("src"), row.rigid ?? "kabsch") };
@@ -796,8 +807,8 @@ export class MockServer {
       if (this.view3dMode === "disabled") return err(404, "VIEW3D_DISABLED", "3D 보기가 꺼져 있습니다.");
       const src = query.get("src");
       if (src) {
-        const row = this.v3dSources.rows.find((x) => x.key === src);
-        if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src, keys: this.v3dSources.rows.map((x) => x.key) });
+        const row = this.v3dSourcesOut().rows.find((x) => x.key === src);
+        if (!row) return err(404, "SOURCE_NOT_FOUND", "알 수 없는 하중 출처입니다.", { src, keys: this.v3dSourcesOut().rows.map((x) => x.key) });
         if (!row.available) return err(409, "V3D_SOURCE_UNAVAILABLE", row.reason ?? "출처 없음", { src, reason_code: row.code, reason: row.reason });
       }
       return { status: 200, body: mockView3d().manifest(run.id, src) };
@@ -812,7 +823,7 @@ export class MockServer {
       const vv = this.validations.find((x) => x.id === r![1]);
       if (!vv) return err(404, "VALIDATION_NOT_FOUND", "검증 결과를 찾을 수 없습니다.");
       if (this.valSourcesMode === "old") return err(404, "NOT_FOUND", "Not Found");
-      return { status: 200, body: { validation_id: vv.id, default: "full", rows: valSourceRows(this.validationOut(vv), this.valSourcesMode, this.isLatestValidation(vv)) } };
+      return { status: 200, body: { validation_id: vv.id, default: "full", rows: valSourceRows(this.validationOut(vv), this.valSourcesMode, this.isLatestValidation(vv), this.jigRows) } };
     }
     if ((r = m(/^\/validations\/([^/]+)\/(field|section|disp-field)$/)) && method === "GET") {
       const vv = this.validations.find((x) => x.id === r![1]);
@@ -1242,7 +1253,7 @@ export class MockServer {
       if (this.valSourcesMode === "old") return err(404, "NOT_FOUND", "Not Found");
       const mode = this.valSourcesMode;
       const vs = this.validations.filter((v) => v.case_id === c.id).reverse();
-      return { status: 200, body: { case_id: c.id, items: vs.map((v, i) => ({ validation_id: v.id, rows: valSourceRows(this.validationOut(v), mode, i === 0) })) } };
+      return { status: 200, body: { case_id: c.id, items: vs.map((v, i) => ({ validation_id: v.id, rows: valSourceRows(this.validationOut(v), mode, i === 0, this.jigRows) })) } };
     }
     if (sub === "validations" && method === "GET")
       return { status: 200, body: this.validations.filter((v) => v.case_id === c.id).reverse().map((v) => this.validationOut(v)) };

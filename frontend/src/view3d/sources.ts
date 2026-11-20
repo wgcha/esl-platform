@@ -12,10 +12,25 @@ export interface SourceRow {
   legacy: boolean;
   /** manifest 실패 시 `/forces?top=100` 표 폴백 허용(전 노드 전용 자료라 legacy 행만) */
   fallback: boolean;
+  /** v0.24.4 짧은 이름(그룹 안 탭 글자 — 전체 이름 = label). 없으면 label */
+  short?: string;
+  /** v0.24.4 그룹 키(GROUPS) — 같은 값 ≥ 2 행이 응답에 있을 때만 그룹으로 그림. 없으면 단독 탭 */
+  group?: string;
+  /** v0.24.4 true = 옛 서버·옛 Case 응답에 이 행이 없으면 탭을 그리지 않음(화면 = 이전 버전과 같음) */
+  optional?: boolean;
+  /** v0.24.4 주의 표식 문구(탭에 ⚠ + 툴팁) — 이 출처 값의 뜻에 대한 한 줄 경고 */
+  caution?: string;
 }
 
+/** v0.24.4 그룹 표(esl_jig_case.md §2.1 — 화면 거울): 그룹 머리 글자·그룹이 하나뿐일 때(옛 응답) 쓰는 단독 탭 설명 */
+export const GROUPS: Readonly<Record<string, { label: string; title: string }>> = {
+  jig: { label: "지그 ESL", title: "지그 ESL: 체결부(tie) 고정 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도" },
+};
+
 export const SOURCE_ROWS: readonly SourceRow[] = [
-  { key: "jig", label: "지그 ESL", title: "지그 ESL: 체결부(tie) 고정 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
+  { key: "jig", label: "지그 고정", short: "고정", group: "jig", title: "지그 고정: 체결부(tie)를 고정(법선 구속 + 3-2-1 면내) + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
+  { key: "jig_disp", label: "지그 변위", short: "변위", group: "jig", optional: true, caution: "tie 변위를 낙하 결과에서 그대로 강제", title: "지그 변위: 체결부(tie)에 낙하 결과의 변위(강체 제외 순수 변위)를 강제 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도 — tie 변위를 낙하 결과에서 그대로 강제", legacy: false, fallback: false },
+  { key: "jig_spring", label: "지그 스프링", short: "스프링", group: "jig", optional: true, title: "지그 스프링: 체결부(tie)를 낙하 결과 변위를 바닥으로 하는 스프링으로 지지 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
   { key: "full", label: "전 노드 ESL", title: "전 노드 ESL(기존): 전 노드 ESL 하중·3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도", legacy: true, fallback: true },
   { key: "bforce", label: "경계력 ESL", title: "경계력 ESL: 낙하 해석의 접촉력·관성(·tie 체결력)으로 만든 자기평형 하중, 3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
   { key: "fint", label: "내력 ESL", title: "내력 ESL: 낙하 해석의 노드 내력(FINT — 부품 요소 내력, 자기평형)을 하중으로 3-2-1 지지 재풀이해 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
@@ -44,6 +59,12 @@ export interface SourceTabItem {
   why: string | null;
   /** true = 자료를 만들 수 있는 빈 탭 — 선택 가능(흐린 글자 + "+" 접미), title = why */
   add?: boolean;
+  /** v0.24.4 그룹 키(GROUPS) — 있으면 SourceTabs 가 그룹으로 그림(≥2201px 한 줄 펼침 · 이하 접힘 + 팝오버). 없으면 DOM 이 v0.24.3 과 같음 */
+  group?: string;
+  /** v0.24.4 그룹 안 탭 글자(전체 이름 = label → aria-label) */
+  short?: string;
+  /** v0.24.4 주의 표식 문구(탭에 ⚠ — mark 가 있으면 mark 가 한계를 보임) */
+  caution?: string;
   /** v0.24.3 ④ 검증: 탭 라벨 뒤 판정·한계 표식(선택 속성 — 없으면 DOM 이 v0.24.2 와 같음) */
   mark?: TabMark;
 }
@@ -57,11 +78,32 @@ export interface TabMark {
 /** 출처 탭 상태(순수 — Case ③·④ 검증 공용): 표 순서·이름 + 행의 가능 여부·사유. rows 없음 = null(탭을 그리지 않음) */
 export function tabItemsOf(rows: readonly { key: string; available: boolean; reason: string | null }[] | null): SourceTabItem[] | null {
   if (!rows) return null;
-  return SOURCE_ROWS.map((r) => {
+  // optional 열 행은 응답에 없으면 그리지 않는다(옛 서버·옛 Case = 이전 화면). 그룹은 응답에 같은 group 이 ≥ 2 행일 때만(1 행 = 단독 탭, 이름 = 그룹 이름)
+  const shown = SOURCE_ROWS.filter((r) => !r.optional || rows.some((x) => x.key === r.key));
+  const count = (g: string) => shown.filter((r) => r.group === g).length;
+  return shown.map((r) => {
     const row = rows.find((x) => x.key === r.key);
     const ok = !!row?.available;
-    return { key: r.key, label: r.label, title: r.title, ok, why: ok ? null : unavailText(r.label, row?.reason ?? "이 ESL 결과에서 출처 정보를 받지 못했습니다") };
+    const grouped = !!r.group && count(r.group) >= 2;
+    const g = r.group ? GROUPS[r.group] : undefined;
+    const label = r.group && !grouped && g ? g.label : r.label;
+    const title = r.group && !grouped && g ? g.title : r.title;
+    const item: SourceTabItem = { key: r.key, label, title, ok, why: ok ? null : unavailText(label, row?.reason ?? "이 ESL 결과에서 출처 정보를 받지 못했습니다") };
+    if (grouped) {
+      item.group = r.group;
+      item.short = r.short ?? r.label;
+    }
+    if (r.caution) item.caution = r.caution;
+    return item;
   });
+}
+
+/** 스터디 하중 정의 탭용(항상 SOURCE_ROWS 전체): 표 행 → 그룹·짧은 이름·주의 속성(열만 읽음) */
+export function groupFieldsOf(key: string, keys: readonly string[] = SOURCE_KEYS): Pick<SourceTabItem, "group" | "short" | "caution"> {
+  const r = SOURCE_ROWS.find((x) => x.key === key);
+  if (!r) return {};
+  const grouped = !!r.group && SOURCE_ROWS.filter((x) => x.group === r.group && keys.includes(x.key)).length >= 2;
+  return { ...(grouped ? { group: r.group, short: r.short ?? r.label } : {}), ...(r.caution ? { caution: r.caution } : {}) };
 }
 
 /** Case 출처 탭 상태(순수): 표 순서·이름 + 응답 행의 가능 여부·사유. sources 없음 = null(탭을 그리지 않음) */

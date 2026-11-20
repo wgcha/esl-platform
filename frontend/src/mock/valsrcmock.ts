@@ -14,7 +14,22 @@ export const VAL_SRC_NOTE_RECON = "이 하중으로 정적 풀이한 변위와 R
 const blank = (key: string): ValidationSourceRow => ({ key, available: false, code: null, reason: null, status: null, fail_reasons: [], undetermined_reason: null, reaction_role: null, reaction_tol: null, reaction_tol_key: null, reaction_warn: null, reaction_warned: null, cond_text: null, note: null, limits: [], limit_text: [], comparable: null });
 
 /** 검증 v 의 출처 행(KEYS 순서). full = v 자신(DB 기준) */
-export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "old">, latest = true): ValidationSourceRow[] {
+export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "old">, latest = true, jigRows = false): ValidationSourceRow[] {
+  const rows = valSourceRows4(v, mode, latest);
+  if (!jigRows) return rows;
+  // v0.24.4(esl_jig_case.md §5.5): 지그 3행(KEYS 순서 jig·jig_disp·jig_spring) — jig 고정 PASS · jig_disp PASS ⚠(JIG_DISP_FROM_TARGET) · jig_spring = 이 검증에 없음
+  const run = mode === "ok" && latest;
+  const jigCond = (val: string) => `하중 지그 맞춤 · 지지 tie 면외(법선) 128 + 3-2-1 면내 3 · 값 ${val} · 목표 u_rel · 응답 = 검증 풀이`;
+  const info = { reaction_role: "info" as const, reaction_tol_key: "validation.sources.reaction_tol", note: VAL_SRC_NOTE_RECON };
+  const jig: ValidationSourceRow = run ? { ...blank("jig"), available: true, status: "PASS", ...info, cond_text: jigCond("0"), comparable: true } : { ...blank("jig"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN };
+  const disp: ValidationSourceRow = run
+    ? { ...blank("jig_disp"), available: true, status: "PASS", ...info, cond_text: jigCond("낙하 변위"), limits: ["JIG_DISP_FROM_TARGET"], limit_text: ["tie 변위를 낙하 결과에서 그대로 강제 — 순수 지그 비교로는 주의"], comparable: true }
+    : { ...blank("jig_disp"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN };
+  const spring: ValidationSourceRow = { ...blank("jig_spring"), code: "JIG_NOT_RUN", reason: "이 ESL 결과에는 지그 스프링 계산이 없습니다(v0.24.4 이전 계산) — ESL 을 다시 계산하면 생깁니다" };
+  return [jig, disp, spring, ...rows.filter((r) => r.key !== "jig")];
+}
+
+function valSourceRows4(v: ValidationOut, mode: Exclude<ValSourcesMode, "old">, latest = true): ValidationSourceRow[] {
   const jig = { ...blank("jig"), code: "V3D_STUDY_ONLY", reason: STUDY_ONLY };
   const full: ValidationSourceRow = { ...blank("full"), available: true, status: statusOf(v), fail_reasons: v.fail_reasons, undetermined_reason: v.undetermined_reason, cond_text: COND("기준 형상 F = K₀·u_rel", "자기평형(구성상)"), comparable: true };
   if (mode === "notrun" || !latest) {

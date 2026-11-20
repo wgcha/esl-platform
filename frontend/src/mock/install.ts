@@ -40,6 +40,8 @@ export function installMockFetch() {
   // v0.24.3 ④ 검증 출처별 시연: ?demoValSrc=ok(출처 탭·판정 표식·한계) | notrun(출처 결과 없음 — 빈 탭 + [검증 다시 실행])
   const dvs = params.get("demoValSrc");
   if (dvs === "ok" || dvs === "notrun") server.valSourcesMode = dvs;
+  // v0.24.4 지그 3방식 시연: ?demoJigRows=1 — ③ 3D·④ 검증 출처 행에 jig·jig_disp·jig_spring(고정·변위 가능, 스프링 = JIG_NOT_RUN). 없으면 옛 Case(4행)
+  if (params.get("demoJigRows") === "1") server.jigRows = true;
   // v0.12.0 검증 낙하 시연: ?demoVerify=1 doe-1 에 완료·실행 중·결과 모름 검증 낙하, ?verifyMode=disabled|writes_off
   if (params.get("demoVerify") === "1") server.verify.seedDemo("doe-1");
   const vm = params.get("verifyMode");
