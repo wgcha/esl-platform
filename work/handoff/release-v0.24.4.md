@@ -59,7 +59,9 @@
 4. [x] Case _jig_esl(공유 단계·방식·파일·요약·격리) + ④ _SUPPORT_FN jig·묶음 키(지지 패턴) — tests/pipeline/test_jig_case.py 14
 5. [x] 골든: tests/doe/test_jig_move.py 를 "새 코드 + 옛 출처 표 = 골든 전부, 새 출처 표 = 의도 2파일" 로 확장
 6. [x] 계약 부록 A·decisions -19·-20
-7. 전체 pytest tests/ — 반환 메시지 참고
+7. [x] 전체 pytest tests/: 1530 passed · 193 skipped · 3 failed(허용 3건만). skip 중 1 = test_v4_labels_equal_frontend_source_rows(C2 병합 전).
+   ruff·mypy: 바뀐 파일에 새 지적 0(기존 지적은 그대로). 범위 밖 기대값(KEYS 4) = worker/tests/test_val_src_e2e.py(W2)·
+   backend/tests/test_view3d_src_api.py·test_val_src_api.py(B2) — 병합 때 갱신.
 
 ## 다음(P2c·병합)
 - B2: DEFAULTS["rank"]["jig"]·pydantic·yaml 2·backend RANK_DEFAULT 에 JIG_NEW_KEYS 9개(spring_alpha 0.01), services/view3d.py
