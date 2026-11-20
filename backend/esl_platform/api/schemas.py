@@ -637,6 +637,9 @@ class EntrySourceRow(ValidationSourceRow):
     load_reason: str | None = None
     grade: LoadGradeLit
     flags: list[LoadGradeLit]
+    # 비드 최적화로는 전달할 수 없는 하중이면 코드 LOAD_SOURCE_UNSUPPORTED + 사유(생성 때 422 와 같은 규칙 — 미리 안내, 선택 차단은 화면)
+    opt_code: str | None = None
+    opt_reason: str | None = None
 
 
 class EntrySourcesItem(_Out):

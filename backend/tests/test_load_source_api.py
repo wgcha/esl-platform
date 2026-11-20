@@ -124,6 +124,9 @@ def test_entries_sources_bundle(client, engine, world):
     assert by["jig_disp"]["unavailable_entry_ids"] == [world["a"], world["b"]]               # 파일 없음 = 하중 없음
     row = d["items"][0]["rows"][4]
     assert row["load_available"] is True and row["grade"] == "FAIL" and row["flags"] == ["FAIL"] and row["status"] == "FAIL"
+    assert row["opt_code"] is None and row["opt_reason"] is None                              # 지그 아닌 행 = 전달 불가 안내 없음
+    jrow = d["items"][0]["rows"][0]
+    assert jrow["opt_code"] is None                                                           # 병진 구속 + 고정 지그 = 비드 최적화로 전달 가능
     fi = d["items"][0]["rows"][5]
     assert fi["load_available"] is False and fi["load_code"] == "V3D_SRC_NOT_RUN" and fi["load_reason"]
     assert client.get(f"{API}/library/entries/sources", params={"ids": "nope"}, headers=R).status_code == 404
@@ -264,6 +267,22 @@ def test_opt_jig_translation_fixed_only(client, engine, world):
               loads={"jig": {"method": "fixed", "tie_dofs": "normal", "status": "ok"}})
     r = create_opt(client, world, load_source="jig")
     assert r.status_code == 422 and _code(r) == "LOAD_SOURCE_UNSUPPORTED"
+
+
+def test_entries_sources_pre_announces_opt_unsupported(client, engine, world):
+    """tie_dofs=normal 지그는 비드 최적화 생성 때 422 UNSUPPORTED — 같은 규칙을 묶음 응답이 미리 알린다(opt_code·opt_reason). 스터디용 필드(load_*)는 불변."""
+    link_both(engine, world, loads={"jig": {"method": "fixed", "tie_dofs": "normal", "status": "ok"},
+                                    "jig_disp": {"method": "prescribed", "tie_dofs": "translation", "status": "ok"}})
+    r = client.get(f"{API}/library/entries/sources", params={"ids": f"{world['a']},{world['b']}"}, headers=R)
+    assert r.status_code == 200, r.text
+    for it in r.json()["items"]:
+        jig, disp, full = it["rows"][0], it["rows"][1], it["rows"][3]
+        assert jig["load_available"] is True and jig["opt_code"] == "LOAD_SOURCE_UNSUPPORTED" and "법선" in jig["opt_reason"]
+        assert disp["opt_code"] == "LOAD_SOURCE_UNSUPPORTED" and "병진 구속 + 고정" in disp["opt_reason"]   # 강제 변위 = 항상 미지원
+        assert full["opt_code"] is None and full["opt_reason"] is None
+    # 생성 때 서버 판정(422)과 같은 사유
+    r2 = create_opt(client, world, load_source="jig", load_source_ack=True)
+    assert r2.json()["detail"]["reason"] == r.json()["items"][0]["rows"][0]["opt_reason"]
 
 
 def test_opt_retry_keeps_load_source(client, engine, world):

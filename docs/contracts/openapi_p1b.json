@@ -7407,6 +7407,28 @@
             ],
             "title": "Note"
           },
+          "opt_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt Code"
+          },
+          "opt_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opt Reason"
+          },
           "reaction_role": {
             "anyOf": [
               {

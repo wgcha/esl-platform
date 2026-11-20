@@ -38,7 +38,7 @@ const SEV_UNDET = 4;
 const SEV_NOT_COMP = 3;
 const SEV_CAUTION = 2;
 
-function cellOf(item: EntrySourcesItem, key: string, label: string): Cell {
+function cellOf(item: EntrySourcesItem, key: string, label: string, ctx: LoadSourceCtx): Cell {
   const entryId = item.entry_id;
   const row: EntrySourceRow | undefined = item.rows.find((r) => r.key === key);
   // 검증 자체가 없는 항목(rows 비어 있음) = 결과 없음 → 경고(차단 아님)
@@ -46,6 +46,8 @@ function cellOf(item: EntrySourcesItem, key: string, label: string): Cell {
   if (!row) return { entryId, blocked: unavailText(label, "이 ESL 결과에서 출처 정보를 받지 못했습니다"), mark: null, sev: 0 };
   // 서버가 본 출처 하중 존재(B3 load_available) — 없으면 선택 불가(서버 422 LOAD_SOURCE_UNAVAILABLE 과 같은 기준)
   if (row.load_available === false) return { entryId, blocked: unavailText(label, row.load_reason ?? row.reason ?? row.load_code ?? "하중 없음"), mark: null, sev: 0 };
+  // 비드 최적화로 전달 불가(서버가 미리 알림: opt_code) — 선택 불가, 사유 = 서버 문구(생성 때 422 UNSUPPORTED 와 같은 규칙)
+  if (ctx === "opt" && row.opt_code) return { entryId, blocked: unavailText(label, row.opt_reason ?? row.opt_code), mark: null, sev: 0 };
   if (!row.available) {
     if (row.code === VAL_NOT_RUN_CODE) return { entryId, blocked: null, mark: MARK_NOT_RUN, sev: SEV_UNDET };
     return { entryId, blocked: unavailText(label, row.reason), mark: null, sev: 0 };
@@ -66,7 +68,7 @@ export function loadSourceOptions(data: readonly EntrySourcesItem[] | null, ctx:
     const colWhy = ctx === "opt" && r.optUnsupported ? unavailText(r.label, r.optUnsupported) : null;
     if (colWhy) return { ...base, disabled: true, why: colWhy, mark: null, warn: false, text: `${r.label} — 선택 불가: ${r.optUnsupported}`, title: colWhy };
     if (!data) return { ...base, disabled: false, why: null, mark: null, warn: false, text: r.label, title: r.title };
-    const cells = data.map((it) => cellOf(it, r.key, r.label));
+    const cells = data.map((it) => cellOf(it, r.key, r.label, ctx));
     const blocked = cells.filter((c) => c.blocked);
     if (blocked.length) {
       const why = blocked[0].blocked!;

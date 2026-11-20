@@ -789,6 +789,7 @@ def analysis_report(ctx: AppContext, aid: str) -> str:
 # 같은 후보 순서 — 노드 ID·변형 일치는 워커가 다시 확인).
 LOAD_GRADES = ("PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT")     # 나쁜 쪽이 뒤
 GRADE_OF_STATUS = {"PASS": "PASS", "FAIL": "FAIL", "UNDETERMINED": "UNDETERMINED"}
+UNSUPPORTED_CODE = "LOAD_SOURCE_UNSUPPORTED"
 
 
 def _case_load_dirs(ctx: AppContext, case: dict[str, Any], e: dict[str, Any]) -> list[str]:
@@ -892,10 +893,13 @@ def entries_sources(ctx: AppContext, ids: list[str]) -> dict[str, Any]:
         dirs = _case_load_dirs(ctx, case, e)
         out_rows = []
         for row, pr in zip(rows, plan["rows"]):
-            ok, lcode, ltext = _load_state(pr, dirs)
+            fdir, fdoc, lcode, ltext = _find_load(pr, dirs)
+            ok = fdir is not None
             grade, flags = _row_grade(row, plan["limit_class"])
+            # 비드 최적화 전달 불가 사전 안내(check_load_source 의 doc_check 와 같은 규칙 — 지지 열 jig 인 행만): 스터디는 영향 없음
+            owhy = core_adapter.jig_support_reason(fdoc) if ok and pr["support"] == "jig" else None
             out_rows.append({**row, "load_available": ok, "load_code": lcode, "load_reason": ltext, "grade": grade,
-                             "flags": flags})
+                             "flags": flags, "opt_code": UNSUPPORTED_CODE if owhy else None, "opt_reason": owhy})
         items.append({"entry_id": i, "validation_id": e.get("validation_id"), "rows": out_rows})
     sources = []
     for k, pr in enumerate(plan["rows"]):
@@ -952,7 +956,7 @@ def check_load_source(ctx: AppContext, key: str, entry_ids: list[str], ack: bool
             if why:
                 bad[i] = why
         if bad:
-            raise unprocessable("LOAD_SOURCE_UNSUPPORTED", f"{key} 하중을 이 최적화에 쓸 수 없는 ESL {len(bad)}개",
+            raise unprocessable(UNSUPPORTED_CODE, f"{key} 하중을 이 최적화에 쓸 수 없는 ESL {len(bad)}개",
                                 load_source=key, entry_ids=list(bad), reasons=bad, reason=next(iter(bad.values())))
     ents_c = [{k: e[k] for k in ("entry_id", "status", "comparable", "validation_id")} for e in sm["entries"]]
     chk = {"key": key, "entries": ents_c, "worst": sm["worst"]}

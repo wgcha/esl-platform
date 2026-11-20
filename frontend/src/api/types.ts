@@ -1957,6 +1957,9 @@ export interface EntrySourceRow extends ValidationSourceRow {
   load_reason?: string | null;
   grade: LoadGrade;
   flags: LoadGrade[];
+  /** 비드 최적화로 전달 불가한 하중이면 "LOAD_SOURCE_UNSUPPORTED" + 사유(생성 422 와 같은 규칙 — 미리 안내). 옛 서버 = 없음 */
+  opt_code?: string | null;
+  opt_reason?: string | null;
 }
 /** v0.24.4 P3 묶음 판정 GET /library/entries/sources?ids= (검증 없는 항목 = 모든 행 available false·code VAL_SRC_NOT_RUN, validation_id null) */
 export interface EntrySourcesItem {

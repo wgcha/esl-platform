@@ -52,6 +52,19 @@ describe("출처 옵션(순수)", () => {
     expect(o2.full.disabled).toBe(true);
     expect(o2.full.why).toContain("하중 파일 없음");
   });
+  it("서버가 미리 알린 비드 최적화 전달 불가(opt_code) = 비드 최적화에서만 선택 불가 + 서버 사유, 스터디는 그대로", () => {
+    const why = "비드 최적화는 병진 구속 + 고정 지그만 전달합니다(이 ESL = 국부 면외 + 3-2-1 면내 · fixed)";
+    const rows = rowsOk().map((r) => (r.key === "jig" ? pass("jig", { opt_code: "LOAD_SOURCE_UNSUPPORTED", opt_reason: why }) : r));
+    const opt = byKey(loadSourceOptions([item("a", rows)], "opt"));
+    expect(opt.jig.disabled).toBe(true);
+    expect(opt.jig.why).toBe(`지그 고정 불가 — ${why}`);
+    expect(opt.jig.text).toBe(`지그 고정 — 선택 불가: ${why}`);
+    const doe = byKey(loadSourceOptions([item("a", rows)], "doe"));
+    expect(doe.jig.disabled).toBe(false);
+    expect(doe.jig.mark!.text).toBe("PASS");
+    // 옛 서버(opt_code 없음) = 이전과 같음
+    expect(byKey(loadSourceOptions([item("a")], "opt")).jig.disabled).toBe(false);
+  });
   it("비드 최적화: 지그 변위·스프링 = 열(optUnsupported) 사유로 선택 불가, 스터디는 가능", () => {
     const o = byKey(loadSourceOptions([item("a", rowsOk().map((r) => (r.key === "jig_spring" ? pass("jig_spring") : r)))], "opt"));
     expect(o.jig_disp.disabled).toBe(true);
