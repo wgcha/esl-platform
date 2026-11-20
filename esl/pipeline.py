@@ -23,7 +23,9 @@
   04_esl/      u_rel.npz, u_rel.csv, f_eq.npz, f_eq.csv, esl_summary.json
   05_val/      validation.json(schema esl/validation/3, 판정 = 변위 4지표; + field: 전 요소 재현 정확도 요약,
                strain_ref, disp), validation.csv, compare.csv, compare_field.npz (계약 esl_p2_library.md §7.2),
-               compare_disp.npz (full_solve 수행 시, 계약 esl_disp_primary.md §4)
+               compare_disp.npz (full_solve 수행 시, 계약 esl_disp_primary.md §4);
+               v0.24.3 출처별(esl_validate_sources.md §4.5·§6): sources.json(esl/val_sources/1 인덱스),
+               <출처 dir>/(bforce·fint — 같은 파일 세트, validation.json 끝 src 블록). 루트 = 전 노드(legacy) 그대로
   06_export/   esl_cload.inc, esl_bcs.inc, esl_force.fem, f_eq.csv, u_rel.csv, reactions_321.csv,
                tstar_candidates.csv, hotspots.csv, validation.csv
   07_report/   report.html (자체 완결 Case 보고서, §5·§7.3)
@@ -47,6 +49,8 @@ import numpy as np
 import esl
 from esl import config as _config
 from esl import cumulative as _cum
+from esl import val_metrics as _vm
+from esl import val_src as _vs
 from esl.errors import EslError
 from esl.export import AUTO_BASE, all_ids, dof_flags, force_mask, plan_ids
 from esl.export import csvout, optistruct, radioss
@@ -61,8 +65,6 @@ from esl.mech.shell import ShellModel, solver_check_kwargs
 from esl.rad import parse_rad, scan_includes
 from esl.rad.parser import max_line_bytes_of
 from esl.report import field as _field
-from esl import val_metrics as _vm
-from esl import val_src as _vs
 
 STAGES = ("extract", "tstar", "esl", "validate", "export", "report")
 # v0.12.0 검증 낙하(esl_scx_relay.md SR6): Case 파이프라인 밖 단계 — 워커가 esl.verify.stages.run_stage 로 실행
@@ -1654,7 +1656,7 @@ def _val_solve(ctx: Context, model: StoredModel, sm: ShellModel, legacy: dict, s
             continue
         g: dict[str, Any] = {"support": sup, "keys": [], "factor_s": None, "solve_s": {}}
         srec["groups"].append(g)
-        h = None
+        h: Any = None
         if is_leg:
             t0 = _time.perf_counter()
             sm.keep_factor = bool(mem)

@@ -121,8 +121,9 @@ def check_plan(plan=VAL_PLAN) -> None:
             if r["balance"] is None:
                 raise EslError("CONFIG_INVALID", f"검증 출처 계획 {r['key']}: load 가 있으면 balance 가 있어야 합니다")
             dirs.append(r["dir"])
-        if r["legacy"] and (r["load"] is None or r["dir"] != "" or not r["required"]):
-            raise EslError("CONFIG_INVALID", "검증 출처 계획 legacy 행은 load·required 가 있고 dir = '' (05_val 루트)")
+        if r["legacy"] and (r["load"] is None or r["dir"] != "" or not r["required"] or r["fallback"] is None):
+            raise EslError("CONFIG_INVALID",
+                           "검증 출처 계획 legacy 행은 load·required·fallback 이 있고 dir = '' (05_val 루트)")
         if not r["legacy"] and r["dir"] == "":
             raise EslError("CONFIG_INVALID", f"검증 출처 계획 {r['key']}: 05_val 루트(dir '')는 legacy 행만")
     if tuple(keys) != KEYS:

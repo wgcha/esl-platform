@@ -18,10 +18,10 @@ from typing import Any
 import numpy as np
 
 import esl
+from esl import val_src as _vs
 from esl.display import display_path
 from esl.report import field as F
 from esl.report import html as H
-from esl import val_src as _vs
 
 D_EXTRACT, D_TSTAR, D_BC, D_ESL, D_VAL, D_EXPORT, D_REPORT = (
     "01_extract", "02_tstar", "03_bc", "04_esl", "05_val", "06_export", "07_report")
@@ -398,7 +398,7 @@ def _sec_val_sources(c: _Case) -> str:
                                                         "reason": _vs.reason_text("VAL_SRC_NOT_RUN")})
         m = r.get("metrics") or {}
         if r.get("status") == "done":
-            st = r.get("verdict")
+            st = str(r.get("verdict") or "")
             cell = (H.badge(st) if st in ("PASS", "FAIL") else
                     f'<span class="badge na">{H.esc(STATUS_TEXT.get(st, st or "—"))}</span>')
             if r.get("fail_reasons"):
@@ -407,7 +407,8 @@ def _sec_val_sources(c: _Case) -> str:
                 cell += f' <span class="small muted">{H.esc(r["undetermined_reason"])}</span>'
             why = r.get("cond_text") or ""
         else:
-            cell = f'<span class="badge na">{H.esc(VAL_SRC_STATUS_TEXT.get(r.get("status"), r.get("status") or "—"))}</span>'
+            sx = str(r.get("status") or "")
+            cell = f'<span class="badge na">{H.esc(VAL_SRC_STATUS_TEXT.get(sx, sx or "—"))}</span>'
             why = r.get("reason") or r.get("code") or ""
         lim = "; ".join(r.get("limit_text") or [])
         if r.get("comparable") is False:

@@ -207,7 +207,9 @@ def evaluate(c: dict[str, Any], *, F, u_val6, R, eps_val, reaction_role: str, no
         d_rel, d_val = dm["d_rel"], dm["d_val"]
     else:
         d_rel = d_val = c["u_rel"]
-    hots, excluded, farr, fsum, sref = [], [], None, None, None
+    hots: list[dict] = []
+    excluded: list[dict] = []
+    farr, fsum, sref = None, None, None
     h1 = f_max = f_p90 = None
     if eps_val is not None:
         hots, excluded = hotspot_rows(c["hs"], c["eps_rad"], eps_val)
