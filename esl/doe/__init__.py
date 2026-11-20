@@ -88,8 +88,8 @@ DEFAULTS: dict = {
     # metric 기본 solve(재풀이 C — 2026-11-13 사용자 결정 D-0.20.0-SM-11), lin(ritz|taylor) 은 선택·보조 열
     # v0.23.0 지그 순위(esl_jig_rank.md §6): metric 기본 jig(새 스터디), rank.jig = 새 스냅샷 doe.rank.jig 로 고정되는 지그 설정
     # v0.24.4: rank.jig 값 = esl.mech.jig.JIG_DEFAULTS 의 같은 이름 값(거울 — 시험 test_jig_move 가 같음 확인. esl.doe 가 scipy 를
-    # 끌어오지 않게 import 대신 거울). 새 키(tie_dofs·methods… JIG_NEW_KEYS)는 pydantic·yaml 2개와 함께 더함(P2b B2 — 그 전 새 스냅샷
-    # = 옛 키만 = LEGACY_ABSENT 동작, 결과 불변)
+    # 끌어오지 않게 import 대신 거울). 새 키 9개(JIG_NEW_KEYS — 세 방식·tie 구속 성분·법선·3-2-1 면내·스프링)는 pydantic·yaml 2개와
+    # 함께 같은 이름·값(P2b 통합). 옛 스냅샷(키 없음) = LEGACY_ABSENT 동작, 해시 = HASH_EXCLUDE_V0244 밖의 새 키만 해시 안
     "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
              "imbalance_warn": 0.02,
              # v0.24.0 보완(esl_fint.md §6.2): 보조 지표 umax(평가 영역) — 새 스냅샷 doe.rank.eval_region 으로 고정(옛 스냅샷 = 없음)
@@ -100,7 +100,13 @@ DEFAULTS: dict = {
                      "basis_tangential": True, "n_modes": 4, "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8,
                      "modes_maxiter": 2000, "modes_ref321": False, "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0,
                      "ridge": 1e-8, "active_tol": 1e-3, "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1,
-                     "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02}},
+                     "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02,
+                     "tie_dofs": "normal", "methods": ["fixed", "prescribed", "spring"], "normal_kink_deg": 45.0,
+                     "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto", "spring_alpha": 0.01,
+                     "spring_k_value": None, "spring_alpha_scan": []}},
+    # v0.24.4 Case ③ 지그 3방식(esl_jig_case.md §5.1·§11): 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더에 준비.
+    # enabled false = 준비 호출 0, timeout_s null = bead_doe.paicad.timeout_s.fixed_scan(pydantic BeadDoeCaseJigCfg·yaml 2개 거울)
+    "case_jig": {"enabled": True, "timeout_s": None},
     "settings_cache_s": 300,
     # v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4): mesh = bead_doe.mesh 를 키별 덮어씀(SC-D-5 — 낙하 메시 기준 3 mm,
     # 곡률 끔, 최소 0.8 h, 경계 확장 끔, OCC 작은 모서리·면 정리). 형상 frame 정렬 허용(SC-D-7b).

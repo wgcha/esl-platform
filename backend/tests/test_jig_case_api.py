@@ -146,6 +146,8 @@ def _jig_plan() -> tuple[tuple[str, ...], tuple[dict, ...]]:
 def jig_plan(monkeypatch):
     from esl import view3d_src as vs
 
+    if all(k in vs.KEYS for k in JIG_KEYS):                    # v0.24.4 통합 후: 코어 CASE_PLAN 이 이미 지그 3행 — 실제 표 그대로(덮어쓰지 않음)
+        return vs.KEYS
     keys, plan = _jig_plan()
     monkeypatch.setattr(vs, "KEYS", keys)
     monkeypatch.setattr(vs, "CASE_PLAN", plan)

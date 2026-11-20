@@ -512,7 +512,7 @@ def test_esl_solve_case_jig_disabled_zero_calls_and_unchanged_files(client, synt
     assert not (cd / "01_extract" / "jig_prep.json").exists() and not (cd / "01_extract" / "jig_fixed").exists()
     assert not (cd / "_jig").exists()
     assert "jig_prep" not in _esl_outputs(engine, j) and "jig_prep" not in (j["result"] or {})
-    assert not any("지그 tie" in ln for ln in _log(client, j, _esl_step_no(j)))
+    assert not any(ln.startswith("[esl-worker] 지그 tie") for ln in _log(client, j, _esl_step_no(j)))
 
 
 def test_esl_solve_paicad_failure_keeps_esl_succeeding(client, synth_inputs, worker_factory, esl_root, fake_paicad, engine):

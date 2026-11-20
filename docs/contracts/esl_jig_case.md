@@ -573,3 +573,20 @@ D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 �
   spring 분해+기저 0.23, 방식 맞춤 0.01~0.03 s, ESL 전체 ≈ 1.4 s. ④ 묶음 3(bc321 · jig+jig_disp 분해 0.16 s · jig_spring 0.16 s).
 - 골든: 옛 스터디 41 파일·Case 36 파일 = v0.24.3 기록(`tests/doe/test_jig_move.py` — 새 코드 + 옛 출처 표 재실행 = 골든 전부, 새 출처 표 =
   의도된 05_val/sources.json·07_report/report.html 2파일만 다름). V-0243-VAL-1 골든(05_val 루트·full) 통과.
+
+### A.4 P2b 통합 메모 (2026-11-20 — 코어 A2b+S2-min · 워커·백엔드 W2+B2 · 프런트 C2 병합 뒤)
+
+고친 것
+- 설정 일치: `esl.doe.DEFAULTS["rank"]["jig"]` 새 키 9개(JIG_NEW_KEYS, spring_alpha 0.01)·`DEFAULTS["case_jig"] = {enabled true, timeout_s null}` — pydantic·yaml 2개·`esl.example.yaml`·`esl.mech.jig.JIG_DEFAULTS` 와 같은 이름·값. `test_rank_defaults_mirror`·`test_defaults_mirror_core` 의 "코어에 없으면 건너뜀" 예외를 없애 전체 대조.
+- 해시: `jig.HASH_EXCLUDE` 에 `HASH_EXCLUDE_V0244`(aux_reaction_warn·spring_alpha_scan)를 지금 더함. 옛 스냅샷(키 없음) 해시 불변(골든 41 파일 통과), 새 스냅샷은 이 둘 밖의 새 키 7개(계산을 바꾸는 값)가 해시 안. `test_hash_view_drops_thresholds` 기대 집합에 두 키 추가(근거 §7·§11).
+- 백엔드: `doe.RANK_VIEWS` 에 jig_disp·jig_spring(사이드카는 jig_view.json 하나). `view3d.SUPPORT_FILES["jig"]` 은 B2 에 이미 있었음 — 스프링 행은 tie 가 구속이 아니라 스프링이라 `bc_node` 에 tie 가 없으므로 `sp_node` 도 tie 표식으로 더함(세 행 모두 tie "123"·3-2-1 면내 "ij").
+- 워커: `register_esl` 이 `forces` 에 지그 세 행 요약을 옮기지 않던 것(bforce·fint·plastic 만) → 출처 표 `summary` 열이 정한 키를 모두 옮김. 이 누락으로 3D·검증 출처 행이 요약(사유 코드·recon)을 못 읽어 JIG_FIXED_SKIPPED 등이 JIG_NOT_RUN 으로 보였음.
+- 시험 기대값: 출처 표 KEYS 4 → 6(worker test_val_src_e2e, backend test_view3d_src_api·test_val_src_api·test_jig_case_api 의 가짜 계획 표는 코어 표가 이미 지그 3행이면 덮어쓰지 않음), jig 행 사유 V3D_STUDY_ONLY → JIG_NOT_RUN(Case), `view3d.case_src_default` 에 jig* 허용.
+- 형식 대조(실제 응답으로 확인): 워커 `jig_prep.json` 은 단일 사전 `{schema, job_id, status, code, cause, detail, …}`(코어 `_jig_prep_note` 가 attempts 목록·단일 사전 둘 다 읽음, job_id = 작업 id = 코어 tag), `jig_fixed/{shell_scan.json, fixed_nodes.npz}` 는 코어 `esl.io.fixed_scan.read_fixed` 가 그대로 읽음. 프런트 `supportSymbol("123")` = 채움 ▲, `("ij")` = 반 채움 ◭(글자 2개). 요약 fit_mac·recon·seconds*·JIG_AUX_REACTION(info+limits)·sources.json 지그 묶음 pattern·JIG_NOT_RUN 문구(view3d_src.REASON_TEXT 한 곳)를 B2·C2 가 읽음. 화면 이름 시험 `test_v4_labels_equal_frontend_source_rows` 는 skip 없이 비교.
+- 실연동 시험 `worker/tests/test_jig_case_e2e.py`(가짜 paicad → ESL_SOLVE → 코어 지그 3방식 → VALIDATE → API) + 응답 픽스처 `frontend/src/__tests__/fixtures/real_v0244.json`(재생성 `JIG_E2E_DUMP=<경로>`)·`v0244_real_backend.test.ts`. paicad 없는 환경: ESL 성공·기존 산출물 그대로·세 행 JIG_FIXED_SKIPPED·`[esl-worker] 지그 tie 준비 생략` 로그 1줄·산출물 등록에 jig_prep.json.
+
+남은 것
+- P3(load_source)·P2c(스터디 세 방식 계산 — `_rank_views` 는 need 가 없으면 jd·js 보기를 만들지 않음, 지금 스터디는 jig 만).
+- 가짜 paicad 는 RBE2 종류 클러스터를 돌려주므로 연동 시험은 코어 `jig.fix_kinds: [RBE2]` 로 연다(실제 paicad = INTER_TYPE2_*).
+- Q-JIGC-1(α)·2(kink 45°)·3(3-2-1 면내 값) 사용자 확인 대기. A.2 의 `jig_prep.json` 형식 설명(attempts 목록)은 코어 읽기 쪽 허용 형식이고 워커는 단일 사전을 씀.
+

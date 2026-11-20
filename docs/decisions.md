@@ -451,3 +451,8 @@
 - (0.24.4 D-0.24.4-JIG-19, 2026-11-20 메인 결정 — P2a 합성 Q-JIGC-1: α = 1 은 노드 자기 강성이라 spring ≈ prescribed ‖Δu‖/‖u‖ 2.4e-5, α ≲ 1e-2 에서야 구분) spring 기본 α = 0.01(키 이름 spring_alpha 그대로, 값은 esl.mech.jig.JIG_DEFAULTS 한 곳 — jig_bc.spring_k(alpha=None) = 그 값, 플랫폼 거울 B2). 사용자 확인 대기(Q-JIGC-1 유지).
 - (0.24.4 D-0.24.4-JIG-20, 2026-11-20 메인 결정 — P2a 관찰 normal tie 면내 하중이 3-2-1 면내 3자유도로만 가 prescribed 반력비 1.19) 지그 맞춤에 3-2-1 면내 반력 0 등식 제약: r_aux(a) = r_aux,g + Σ a_k r_aux,k = 0(같은 분해 기저 열의 면내 행 반력, 평판·정정이면 면내 합력·면내 모멘트 = 0 과 같음), jig.fit_loads(eq) = SVD 행 축소 + 하한 없는 열 피벗 QR 소거 + 같은 BVLS(법선 ≥ 0 유지), 소거 불가 = 제약 없이 + 사유. 3-2-1 면내 행 없음(translation)·옛 스터디 = 제약 없음(산술·바이트 불변). 합성: 반력비 1.19 → < 1e-10, 재현 MAC 저하 없음(led)·고정 −0.014(Case 합성).
 - (0.24.4 미결) Q-JIGC-1 spring 기본 α = 1, Q-JIGC-2 kink_deg 45°, Q-JIGC-3 3-2-1 면내 값 = 목표값(fixed 포함). 후속 R-JIGC-1~8, R-VAL-7.
+- (0.24.4 D-0.24.4-JIG-21, 2026-11-20 P2b 통합) 설정 거울: DEFAULTS rank.jig 새 키 9개·case_jig 를 pydantic·yaml 2·esl.example.yaml 과 같은 이름·값으로 더하고 거울 시험의 "코어에 없으면 건너뜀" 예외 제거(근거 AGENTS.md 하드코딩 금지).
+- (0.24.4 D-0.24.4-JIG-22, 2026-11-20) 해시: jig.HASH_EXCLUDE += HASH_EXCLUDE_V0244(aux_reaction_warn·spring_alpha_scan) — 옛 스냅샷 해시 불변, 새 스냅샷은 계산을 바꾸는 새 키 7개가 해시 안(계약 §7·§11). test_hash_view_drops_thresholds 기대 갱신.
+- (0.24.4 D-0.24.4-JIG-23, 2026-11-20) 워커 register_esl 은 출처 표 summary 열의 키를 모두 ESL 실행 forces 에 옮긴다(이름 분기 없음) — 3D·검증 출처 상태가 지그 요약·사유 코드를 읽음. 지그 스프링 3D 표식은 sp_node 를 tie 로 더함.
+- (0.24.4 D-0.24.4-JIG-24, 2026-11-20) 출처 표 KEYS 6·Case 의 지그 행 사유 JIG_NOT_RUN(이전 V3D_STUDY_ONLY) — 계약 §12-6 의도 변경, 기대값 갱신. RANK_VIEWS 에 jig_disp·jig_spring.
+

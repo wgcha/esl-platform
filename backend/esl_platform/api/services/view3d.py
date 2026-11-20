@@ -44,7 +44,7 @@ SUPPORT_FILES = {"bc": (co.D_BC, "support.json"),   # 계획 열 support 값 →
                  "jig": None}                       # v0.24.4 지그 3방식: 행 load npz 의 구속 배열(bc_node·bc_kind)이 곧 지지(esl_jig_case.md §5.4)
 JIG_BC_KEYS = ("bc_node", "bc_kind")
 JIG_KIND_TIE, JIG_KIND_AUX = 1, 2                   # esl.mech.jig_bc.KIND_TIE·KIND_AUX 와 같은 값(백엔드는 scipy 를 끄는 모듈을 import 하지 않음)
-JIG_TIE_DOF, JIG_AUX_DOF = "123", "ij"              # 표식 dof 문자열(supportSymbol — 숫자 = 채움 기호, 그 밖 = 글자 수로 빈 기호): tie · 3-2-1 면내
+JIG_TIE_DOF, JIG_AUX_DOF = "123", "ij"              # 표식 dof 문자열(supportSymbol — 숫자 = 채움 기호·축 선분, 그 밖 = 글자 수로 기호("ij" 2자 = 반 채움, 축 선분 없음)): tie · 3-2-1 면내
 _PREREQ_TEXT = "ESL 산출물(04_esl/f_eq.npz·u_rel.npz 또는 01_extract/model.npz)이 없습니다"
 
 
@@ -301,19 +301,21 @@ def jig_support_sample(x0: np.ndarray, idx: np.ndarray, m: int) -> np.ndarray:
 
 
 def _jig_supports(inp: Inputs, node_id: np.ndarray, x0: np.ndarray) -> list[dict[str, Any]]:
-    """지그 행: load npz 의 bc_node(노드 인덱스)·bc_kind → tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드(전부, 최대 3개).
+    """지그 행: load npz 의 bc_node(노드 인덱스)·bc_kind·sp_node(스프링) → tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드(전부, 최대 3개).
     읽지 못하면 빈 목록(표식 없음 — 3D 자체는 계속)."""
     try:
         with np.load(inp.support_npz or "", allow_pickle=False) as z:
             bn = np.asarray(z["bc_node"], dtype=np.int64)
             bk = np.asarray(z["bc_kind"]).astype(np.int64)
+            sp = np.asarray(z["sp_node"], dtype=np.int64) if "sp_node" in z.files else np.zeros(0, np.int64)
     except (OSError, ValueError, KeyError):
         return []
     n = int(node_id.size)
     ok = (bn >= 0) & (bn < n)
     bd = getattr(inp.ctx.settings, "bead_doe", None)
     m = int((bd.view3d if bd is not None else BeadDoeView3dCfg()).jig_support_max)
-    tie = jig_support_sample(x0, np.unique(bn[ok & (bk == JIG_KIND_TIE)]), m)
+    # tie = 구속 행의 tie + 스프링 행(sp_node — 스프링 방식은 tie 가 구속이 아니라 스프링이라 bc_node 에 없음)
+    tie = jig_support_sample(x0, np.unique(np.r_[bn[ok & (bk == JIG_KIND_TIE)], sp[(sp >= 0) & (sp < n)]]), m)
     aux = np.unique(bn[ok & (bk == JIG_KIND_AUX)])
     shown = set(tie.tolist())
     return ([{"node_id": int(node_id[i]), "dof": JIG_TIE_DOF} for i in tie]

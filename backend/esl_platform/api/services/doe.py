@@ -73,7 +73,7 @@ VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-bin
                 "recon.json": "application/json",        # v0.24.1 노드 힘 출처 재현 진단(esl_view3d_sources.md §5.2 — d000_<pe>_e<kk> 만)
                 "recon.bin": "application/octet-stream"}
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
-RANK_VIEWS = ("jig", "full", "bforce", "fint")
+RANK_VIEWS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")   # v0.24.4: 코어 RANK_SOURCES 키(jig_disp·jig_spring 도 사이드카 jig_view.json)
 BF_VIEW_JSON = "bforce_view.json"                         # v0.24.0 사이드카 post/bforce_view.json(esl_bforce.md §5.4)
 # v0.24.0 노드 힘 출처 표(코어 esl/doe/stages.py NODAL_SOURCES 거울 — esl_fint.md §5): 사이드카·응답 블록·3D 키·추가 계산 열.
 # 호출부는 열만 읽음(출처 이름 분기 없음). 행이 없는 출처 = 응답 키 null·추가 계산 404.

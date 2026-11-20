@@ -196,7 +196,11 @@ def register_esl(conn: Connection, job: dict[str, Any], case: dict[str, Any], cd
         "noise": {"force_rel": _f(noise.get("force_rel")), "hotspot_strain_rel": _f(noise.get("hotspot_strain_rel")),
                   "disp_precision": noise.get("disp_precision")},
     }
-    for k in ("bforce", "fint", "plastic"):      # v0.24.0 경계력·내력 ESL·소성 진단 요약(esl_bforce.md §4·esl_fint.md §3·§4 — forces JSON 새 키, DB 스키마 불변)
+    # v0.24.0 경계력·내력 ESL·소성 진단 요약(esl_bforce.md §4·esl_fint.md §3·§4 — forces JSON 새 키, DB 스키마 불변) + v0.24.4 지그 세 행 요약
+    # (출처 표 summary 열 — 이름 분기 없이 표가 정한 키: 3D·검증 출처 상태가 읽음, esl_jig_case.md §5.4)
+    from .core_adapter import view3d_src_plan
+    plan_keys = [r["summary"] for r in view3d_src_plan()["rows"] if r.get("summary")]
+    for k in dict.fromkeys(["bforce", "fint", "plastic", *plan_keys]):
         v = (rec.get("summary") or {}).get(k)
         if isinstance(v, dict):
             forces[k] = _jsonable(v)

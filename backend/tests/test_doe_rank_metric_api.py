@@ -57,13 +57,10 @@ def test_rank_defaults_mirror():
         assert y["bead_doe"]["rank"] == RANK_DEFAULT, p
     from esl.doe import DEFAULTS
 
-    # 코어 DEFAULTS 거울(jig 절 포함). v0.24.4 새 키(JIG_NEW_KEYS)는 코어 DEFAULTS 에 통합 때 더해진다 — 있는 키는 값이 같아야 하고
-    # (spring_alpha 만 코어 JIG_DEFAULTS 가 1.0 → 0.01 로 바뀌기 전 값을 허용), 없는 키는 건너뜀(test_jig_case_api 가 이름·값 거울을 따로 확인)
+    # 코어 DEFAULTS 전체 거울(jig 절 새 키 9개 포함 — v0.24.4 통합 후 예외 없음)
     core = DEFAULTS["rank"]
     assert {k: v for k, v in core.items() if k != "jig"} == {k: v for k, v in RANK_DEFAULT.items() if k != "jig"}
-    for k, v in core["jig"].items():
-        assert v == JIG_DEFAULT[k] or (k == "spring_alpha" and v == 1.0), k
-    assert all(k in core["jig"] or k in NEW_JIG for k in JIG_DEFAULT)
+    assert core["jig"] == JIG_DEFAULT
 
 
 @pytest.mark.parametrize("bad", [

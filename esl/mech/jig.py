@@ -35,10 +35,11 @@ TIE_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN")   # 문서용 — 비�
 REGION_CONTACT = 1
 REGION_PATCH = 2
 KIND_NAME = {REGION_CONTACT: "contact", REGION_PATCH: "patch"}
-HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "rho_t_mm3",
-                "modes_ref321", "tie_spread_min")   # 해시 밖(D-JIG-11)
-# v0.24.4 새 키 중 해시 밖(esl_jig_case.md §7·§11) — 스터디 세 방식 계산(P2c)이 HASH_EXCLUDE 에 더함(옛 스냅샷엔 키 없음 → 해시 불변)
+# v0.24.4 새 키 중 해시 밖(esl_jig_case.md §7·§11 — 보고용 임계·스캔). 옛 스냅샷엔 키 없음 → 해시 불변. 새 스냅샷은 이 둘만 빼고
+# 나머지 새 키(tie_dofs·methods·… 계산을 바꾸는 값)가 해시 안
 HASH_EXCLUDE_V0244 = ("aux_reaction_warn", "spring_alpha_scan")
+HASH_EXCLUDE = ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "rho_t_mm3",
+                "modes_ref321", "tie_spread_min") + HASH_EXCLUDE_V0244   # 해시 밖(D-JIG-11 + v0.24.4)
 TIE_REL = 1e-12            # 최근접 삼각형 동률 폭(× gap)
 SIGN_FREE_REL = 1e-9       # 접촉 법선 부호 자유 판정(× ΣA·max(gap, 1))
 

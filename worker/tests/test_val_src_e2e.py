@@ -69,17 +69,19 @@ def test_val_src_real_core_end_to_end(client, synth_inputs, worker_factory, esl_
     val_dir = os.path.join(str(esl_root), "case01", "05_val")
     sj = json.load(open(os.path.join(val_dir, "sources.json"), encoding="utf-8"))
     st = {r["key"]: r for r in sj["rows"]}
-    assert [r["key"] for r in sj["rows"]] == ["jig", "full", "bforce", "fint"]
-    assert st["full"]["status"] == st["bforce"]["status"] == st["fint"]["status"] == "done" and st["jig"]["status"] == "na"
+    assert [r["key"] for r in sj["rows"]] == ["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]
+    assert st["full"]["status"] == st["bforce"]["status"] == st["fint"]["status"] == "done"
+    for k in ("jig", "jig_disp", "jig_spring"):      # v0.24.4: paicad 없는 시험 환경 = 지그 tie 준비 생략 → 세 행 불가(JIG_FIXED_SKIPPED)
+        assert st[k]["status"] == "unavailable" and st[k]["code"] == "JIG_FIXED_SKIPPED", st[k]
     assert st["jig"]["dir"] is None and st["full"]["dir"] == ""
 
     # ---- 출처 행: KEYS 순서·상태·사유 문구·한계
     s = client.get(f"{API}/validations/{vid}/sources", headers=R).json()
     out["sources_bf"] = s
     rows = {r["key"]: r for r in s["rows"]}
-    assert s["default"] == "full" and list(rows) == ["jig", "full", "bforce", "fint"]
-    assert [rows[k]["available"] for k in rows] == [False, True, True, True]
-    assert rows["jig"]["code"] == "V3D_STUDY_ONLY" and rows["jig"]["reason"]
+    assert s["default"] == "full" and list(rows) == ["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]
+    assert [rows[k]["available"] for k in rows] == [False, False, False, True, True, True]
+    assert [rows[k]["code"] for k in ("jig", "jig_disp", "jig_spring")] == ["JIG_FIXED_SKIPPED"] * 3 and rows["jig"]["reason"]
     assert rows["bforce"]["note"] == st["bforce"]["note"] and "수치 일관성" not in (rows["bforce"]["note"] or "")
     assert rows["bforce"]["cond_text"] == st["bforce"]["cond_text"] and rows["bforce"]["limits"] == st["bforce"]["limits"]
     assert rows["bforce"]["comparable"] is False                  # BF_TIE_MISSING = 비교용 아님
