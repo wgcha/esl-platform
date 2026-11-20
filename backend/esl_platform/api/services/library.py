@@ -30,6 +30,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ...core import core_outputs as co
+from ...core import safe_fs
 from ...core.auth import Principal
 from ...core.config import opt_settings
 from ...core.db.tables import cases as cases_t
@@ -72,6 +73,11 @@ def _core_error(exc: core_adapter.CoreError) -> DomainError:
 def _stash(lib_root: str, d: str) -> None:
     """실패한 등록의 새 항목 폴더를 _library/_backup/<ts>_<id> 로 옮긴다(삭제 없음)."""
     if not os.path.isdir(d):
+        return
+    try:
+        safe_fs.checked_path(lib_root, d)              # 링크·라이브러리 밖이면 옮기지 않고 사유만 남김(실패 처리 중 호출)
+    except safe_fs.UnsafePath as exc:
+        logging.getLogger(__name__).warning("library _stash 거부(옮기지 않음): %s", exc)
         return
     ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
     dst = os.path.join(lib_root, "_backup", f"{ts}_{os.path.basename(d)}")

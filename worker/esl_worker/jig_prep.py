@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from esl_platform.core import safe_fs
+
 from . import core_adapter, doe_jobs, inproc, paicad_proc
 
 SCHEMA = "esl/jig_fixed/1"
@@ -181,20 +183,28 @@ def write_record(cdir: str, rec: dict[str, Any]) -> None:
     from esl_platform.core.atomic import write_text_atomic
 
     d = os.path.join(cdir, EXTRACT)
+    safe_fs.checked_path(cdir, d)                       # 01_extract 가 심링크·Case 밖이면 UnsafePath(OSError)
     os.makedirs(d, exist_ok=True)
     write_text_atomic(os.path.join(d, RECORD), json.dumps(rec, ensure_ascii=False, indent=1, sort_keys=True) + "\n")
 
 
 # ---------------------------------------------------------------- 쓰기 경로 검사(Case 폴더 안 허용 위치만)
 def make_guard(cdir: str) -> Callable[[str], str]:
-    """``_jig/`` 와 ``01_extract/jig_fixed``·``01_extract/jig_prep.json`` 아래만 쓰기 허용(입력·다른 산출물 쓰기 거부)."""
-    allowed = [os.path.realpath(os.path.join(cdir, WORK)), os.path.realpath(fixed_dir(cdir)),
-               os.path.realpath(os.path.join(cdir, EXTRACT, RECORD))]
+    """``_jig/`` 와 ``01_extract/jig_fixed``·``01_extract/jig_prep.json`` 아래만 쓰기 허용(입력·다른 산출물 쓰기 거부).
+
+    허용 위치는 Case 폴더 기준 문자열 경로로 정하고, 대상은 Case 폴더 realpath 안이며 Case 폴더 아래 모든 구성 요소가 심링크가 아닐 때만
+    통과한다(``_jig`` 가 Case 밖을 가리키는 링크여도 거부 — 삭제·이동 전에 안전 공용 함수 safe_fs.checked_path)."""
+    allowed = [os.path.abspath(os.path.join(cdir, WORK)), os.path.abspath(fixed_dir(cdir)),
+               os.path.abspath(os.path.join(cdir, EXTRACT, RECORD))]
 
     def guard(p: str) -> str:
-        rp = os.path.realpath(p)
-        if not any(rp == a or rp.startswith(a.rstrip(os.sep) + os.sep) for a in allowed):
+        ap = os.path.abspath(p)
+        if not any(ap == a or ap.startswith(a.rstrip(os.sep) + os.sep) for a in allowed):
             raise core_adapter.CoreError("PATH_OUTSIDE_ROOT", f"지그 준비 쓰기 경로가 허용 폴더 밖입니다: {os.path.basename(p)}")
+        try:
+            safe_fs.checked_path(cdir, p)
+        except safe_fs.UnsafePath as exc:
+            raise core_adapter.CoreError("PATH_OUTSIDE_ROOT", f"지그 준비 쓰기 경로가 안전하지 않아 거부했습니다: {exc}") from exc
         return p
     return guard
 
@@ -209,8 +219,10 @@ def _backup_move(cdir: str, rel: str) -> str | None:
     p = os.path.join(cdir, *rel.split("/"))
     if not os.path.lexists(p):
         return None
+    safe_fs.checked_path(cdir, p)                           # 심링크·Case 밖이면 UnsafePath(이동 안 함)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     dest = os.path.join(cdir, "_backup", ts, *rel.split("/"))
+    safe_fs.checked_path(cdir, os.path.dirname(dest))
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     shutil.move(p, dest)
     return dest
@@ -342,6 +354,7 @@ def _fill(ex, inp: dict[str, Any], jcfg: dict[str, Any], echo) -> tuple[str | No
         cfg = json.loads(json.dumps(full))
         cfg.setdefault("bead_doe", {}).setdefault("paicad", {}).setdefault("timeout_s", {})["fixed_scan"] = float(tmo)
     limit = float(((cfg.get("bead_doe") or {}).get("paicad") or {}).get("timeout_s", {}).get("fixed_scan") or 3600)
+    guard(work)                                         # _jig 가 심링크·Case 밖이면 여기서 거부(만들기·쓰기·삭제 전)
     os.makedirs(work, exist_ok=True)
     opts = None
     if pc.get("options"):

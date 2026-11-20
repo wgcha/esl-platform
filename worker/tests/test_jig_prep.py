@@ -533,3 +533,82 @@ def test_esl_solve_paicad_failure_keeps_esl_succeeding(client, synth_inputs, wor
     j2 = _esl(client, worker, case)
     assert j2["state"] == "SUCCEEDED" and len(calls(fake_paicad, "fixed-scan")) == 2
     assert json.loads((cd / "01_extract" / "jig_prep.json").read_text())["status"] == "ok"
+
+
+# ================================================================ 심링크 탈출(Verifier 지적) — 삭제·이동 거부
+def _victim(tmp_path: Path) -> Path:
+    v = tmp_path / "victim"
+    (v / "assem_full").mkdir(parents=True)
+    (v / "assem_full" / "keep.rad").write_text("keep")
+    (v / "_tmp_fixed").mkdir()
+    (v / "_tmp_fixed" / "keep2").write_text("keep")
+    return v
+
+
+def test_guard_rejects_symlinked_jig_dir_pointing_outside(tmp_path):
+    from esl_worker import core_adapter, jig_prep as jp
+
+    cdir = tmp_path / "case"
+    cdir.mkdir()
+    victim = _victim(tmp_path)
+    os.symlink(victim, cdir / "_jig")
+    g = jp.make_guard(str(cdir))
+    for p in ("_jig", "_jig/assem_full", "_jig/assem_full/keep.rad"):
+        with pytest.raises(core_adapter.CoreError) as ei:
+            g(str(cdir / p))
+        assert ei.value.code == "PATH_OUTSIDE_ROOT"
+    # Case 안을 가리키는 링크도(상위 구성 요소가 링크) 거부
+    (cdir / "other").mkdir()
+    (cdir / "01_extract").mkdir()
+    os.symlink(cdir / "other", cdir / "01_extract" / "jig_fixed")
+    with pytest.raises(core_adapter.CoreError):
+        g(str(cdir / "01_extract" / "jig_fixed" / "x"))
+
+
+def test_backup_move_rejects_symlink_and_keeps_target(tmp_path):
+    from esl_platform.core import safe_fs
+    from esl_worker import jig_prep as jp
+
+    cdir = tmp_path / "case"
+    (cdir / "01_extract").mkdir(parents=True)
+    victim = _victim(tmp_path)
+    os.symlink(victim, cdir / "01_extract" / "jig_fixed")
+    with pytest.raises(safe_fs.UnsafePath):
+        jp._backup_move(str(cdir), "01_extract/jig_fixed")
+    assert (victim / "assem_full" / "keep.rad").read_text() == "keep" and not (cdir / "_backup").exists()
+
+
+def test_run_with_symlinked_jig_dir_deletes_nothing_and_records_reason(tmp_path, patched, monkeypatch):
+    from esl_worker import core_adapter, doe_jobs, jig_prep as jp
+
+    ex = _fake_ex(tmp_path)
+    victim = _victim(tmp_path)
+    os.symlink(victim, os.path.join(ex.cdir, "_jig"))
+    rad = ex.case["rad_path"]
+    monkeypatch.setattr(jp.doe_jobs.inproc, "call", lambda ex_, fn, **kw: fn())
+    monkeypatch.setattr(core_adapter, "jig_model_files", lambda starter, roots, **k: [rad])
+    monkeypatch.setattr(doe_jobs, "_fixed_scan", _scan_ok(patched))
+    logs: list[str] = []
+    out = jp.run(ex, None, logs.append)
+    assert out["status"] != "ok" and out["cause"] == "EXCEPTION" and "PATH_OUTSIDE_ROOT" in (out["detail"] or "") + str(out)
+    assert patched.scan_calls == []
+    assert sorted(p.name for p in victim.iterdir()) == ["_tmp_fixed", "assem_full"]
+    assert (victim / "assem_full" / "keep.rad").read_text() == "keep" and (victim / "_tmp_fixed" / "keep2").read_text() == "keep"
+    assert not os.path.lexists(os.path.join(ex.cdir, "_backup"))
+
+
+def test_safe_fs_checked_path_cases(tmp_path):
+    from esl_platform.core import safe_fs
+
+    root = tmp_path / "r"
+    (root / "a" / "b").mkdir(parents=True)
+    assert safe_fs.checked_path(str(root), str(root / "a" / "b")) == str(root / "a" / "b")
+    assert safe_fs.checked_path(str(root), str(root)) == str(root)
+    with pytest.raises(safe_fs.UnsafePath):
+        safe_fs.checked_path(str(root), str(tmp_path / "other"))
+    os.symlink(root / "a", root / "ln")
+    with pytest.raises(safe_fs.UnsafePath):
+        safe_fs.checked_path(str(root), str(root / "ln" / "b"))
+    # root 자신이 링크 아래여도(예: /data → 다른 디스크) 통과
+    os.symlink(root, tmp_path / "rootlink")
+    assert safe_fs.checked_path(str(tmp_path / "rootlink"), str(tmp_path / "rootlink" / "a")) 

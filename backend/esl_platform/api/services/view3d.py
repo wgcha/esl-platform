@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 
 from ...core import core_outputs as co
+from ...core import safe_fs
 from ...core.atomic import atomic_replace
 from ...core.config import BeadDoeView3dCfg
 from ...core.errors import DomainError, conflict, not_found
@@ -351,6 +352,11 @@ def _backup_dir(cdir: str, run_id: str, name: str) -> str:
 
 def _publish(tmp: str, dest: str, cdir: str, run_id: str, name: str, valid) -> bool:
     """tmp → dest(이전 폴더는 _backup 이동 — 삭제 금지). 다른 프로세스가 이미 같은 키로 만들었으면(valid()) False(tmp 그대로)."""
+    try:
+        safe_fs.checked_path(cdir, dest)           # Case 폴더 밖·심링크 경유면 옮기지도 덮지도 않음
+        safe_fs.checked_path(cdir, os.path.dirname(_backup_dir(cdir, run_id, name)))
+    except safe_fs.UnsafePath as exc:
+        raise DomainError("PATH_UNSAFE", f"3D 보기 저장 위치가 안전하지 않아 거부했습니다: {exc}", status=422) from exc
     if os.path.isdir(dest) or os.path.islink(dest):
         if valid():
             return False

@@ -15,6 +15,7 @@ import shutil
 from typing import Any
 
 from esl_platform.core import core_outputs as co
+from esl_platform.core import safe_fs
 from esl_platform.core.atomic import atomic_replace
 
 
@@ -26,6 +27,7 @@ def _copy_tree(src: str, dst: str) -> None:
 
 
 def _inside(cdir: str, path: str) -> str:
+    safe_fs.checked_path(cdir, path)       # Case 아래 심링크 구성 요소 거부(UnsafePath 는 OSError)
     real_c = os.path.realpath(cdir)
     real_p = os.path.realpath(path)
     if os.path.commonpath([real_c, real_p]) != real_c:
