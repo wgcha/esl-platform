@@ -276,6 +276,9 @@ SCHEMA: dict[str, Any] = {
         "disp_noise_rel_max": _num(0.0, lo_open=True),    # 0.5.7 신규(판정)
         "disp_top_n": _int(1, 1000),                      # 0.5.7 신규
         "disp_hist_bins": _int(2, 200),                   # 0.5.7 신규
+        # 선택(OPTIONAL_KEYS, v0.24.3 esl_validate_sources.md §11): ④ 검증 출처별(경계력·내력 …). 없으면
+        # VALIDATION_SOURCES_DEFAULTS(cfg 에 주입 안 함 — 설정 해시 불변)
+        "sources": {"enabled": _bool},
     },
     "compare": {                                # 전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2)
         "min_rel": _num(0.0, 1.0),
@@ -353,6 +356,8 @@ SCHEMA: dict[str, Any] = {
 COORD_CHECK_DEFAULTS = {"max_rel": 0.005}
 # 0.5.7 신규 validation 키(계약 esl_disp_primary.md §5): 이전 설정 파일에 없으면 이 값으로 채운다. 기준 숫자의 단일 출처.
 VALIDATION_DEFAULTS = {"disp_max_rel_max": 0.05, "disp_noise_rel_max": 1.0e-3, "disp_top_n": 20, "disp_hist_bins": 20}
+# v0.24.3 ④ 검증 출처별(계약 esl_validate_sources.md §11 — D-0.24.3-VAL-13) 기본값 단일 출처 — 선택 키, cfg 에 주입 안 함.
+VALIDATION_SOURCES_DEFAULTS = {"enabled": True}
 # 0.8.0 누적 씬 키(계약 esl_cumulative_input.md §11): 이전 설정 파일에 없으면 이 값으로 채운다(기본값 단일 출처).
 CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg": "auto", "h3d_epsp_mode": "auto",
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
@@ -403,7 +408,8 @@ OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumula
                            *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
                            "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS),
                            *(f"bforce.{k}" for k in BFORCE_DEFAULTS), "bforce.signs.cont", "bforce.signs.cont2",
-                           "bforce.signs.fint", *(f"bforce.fint.{k}" for k in BFORCE_DEFAULTS["fint"])})
+                           "bforce.signs.fint", *(f"bforce.fint.{k}" for k in BFORCE_DEFAULTS["fint"]),
+                           "validation.sources", *(f"validation.sources.{k}" for k in VALIDATION_SOURCES_DEFAULTS)})
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
 
@@ -463,6 +469,16 @@ def bforce_settings(cfg: dict | None) -> dict:
                 out[k].update({kk: copy.deepcopy(vv) for kk, vv in v.items() if kk in out[k]})
             else:
                 out[k] = copy.deepcopy(v)
+    return out
+
+
+def validation_sources_settings(cfg: dict | None) -> dict:
+    """validation.sources(없거나 일부만 있으면 VALIDATION_SOURCES_DEFAULTS 로 채운 사본). cfg 는 바꾸지 않는다."""
+    out = dict(VALIDATION_SOURCES_DEFAULTS)
+    vc = cfg.get("validation") if isinstance(cfg, dict) else None
+    sc = vc.get("sources") if isinstance(vc, dict) else None
+    if isinstance(sc, dict):
+        out.update({k: v for k, v in sc.items() if k in VALIDATION_SOURCES_DEFAULTS and v is not None})
     return out
 
 

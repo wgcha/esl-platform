@@ -61,6 +61,8 @@ from esl.mech.shell import ShellModel, solver_check_kwargs
 from esl.rad import parse_rad, scan_includes
 from esl.rad.parser import max_line_bytes_of
 from esl.report import field as _field
+from esl import val_metrics as _vm
+from esl import val_src as _vs
 
 STAGES = ("extract", "tstar", "esl", "validate", "export", "report")
 # v0.12.0 검증 낙하(esl_scx_relay.md SR6): Case 파이프라인 밖 단계 — 워커가 esl.verify.stages.run_stage 로 실행
@@ -1464,10 +1466,9 @@ def full_solve_decision(ctx: Context, sm: ShellModel, n_elems: int) -> dict:
     return {**rec, "run": True, "reason": "auto: 직접법, 메모리 충분" if avail is not None else "auto: 가용 메모리 모름"}
 
 
-VERDICT_SCHEME = "disp_primary/1"      # 계약 esl_disp_primary.md: 판정 = 변위 4지표, 변형률은 참고
-VALIDATION_SCHEMA = "esl/validation/3"
-_FAIL_REASON = {"disp_rms_rel": "DISP_RMS", "disp_max_rel": "DISP_MAX", "reaction_rel": "REACTION",
-                "disp_noise_rel": "DISP_NOISE"}
+VERDICT_SCHEME = _vm.VERDICT_SCHEME          # 계약 esl_disp_primary.md: 판정 = 변위 4지표, 변형률은 참고(값 원본 = val_metrics)
+VALIDATION_SCHEMA = _vm.VALIDATION_SCHEMA
+_FAIL_REASON = _vm.FAIL_REASON
 
 
 def _disp_noise_delta(ctx: Context, noise: dict | None, model: StoredModel, frame_index: int):
@@ -1493,12 +1494,13 @@ def _disp_noise_delta(ctx: Context, noise: dict | None, model: StoredModel, fram
     return 0.5 * float(np.finfo(_PRECISION[prec]).eps) * xmax, "recomputed"
 
 
-def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, eps_esl, d_rel, d_val):
-    """전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2) → (npz 배열 dict, validation.json field 요약).
+def _field_base(ctx: Context, model: StoredModel, frame_index: int, eps_rad) -> dict:
+    """전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2)의 Radioss 쪽(출처 무관 — v0.24.3 검증 출처마다 같은 값):
+    상승 중 마스크·valid·사유·소성 영역·기하(PCA 평면·단면 띠). IO·경고는 여기서 1회, 출처 해와의 비교는 순수
+    ``val_metrics.field_compare``.
 
-    eps_rad = t* 프레임 Max_Strain ε_eq(전단 규약 보정, strain_frames), eps_esl = 검증 해 ε_eq(extract.layers, 기본 막).
+    eps_rad = t* 프레임 Max_Strain ε_eq(전단 규약 보정, strain_frames).
     상승 중 마스크: strain_frames.npz 의 prev_*(직전 프레임) → 없으면(예전 TCL 출력) history.npz 의 H 요소만.
-    d_rel·d_val (N,3): 단면선용 변위(전체 solve 면 양쪽 미소 강체 제거, 아니면 둘 다 u_rel).
     """
     meta = _frames_meta(ctx)
     factor = _shear_factor(ctx, meta)
@@ -1551,152 +1553,238 @@ def _field_compare(ctx: Context, model: StoredModel, frame_index: int, eps_rad, 
                             f"요소 {int(known.sum())}개만, 나머지는 비교 불가(NO_PREV). TCL 을 다시 실행할 것")
     ex = _exclude_mask(ctx, model.elem_id)
     valid, reason, max_rad, imax = _field.classify(eps_rad, rising, ccfg["min_rel"], exclude=ex, known=known)
-    rel = _field.rel_error(eps_esl, eps_rad)
-    sref = _field.strain_reference(rel, valid, epsp, E, ccfg["max_err_pct_max"])
 
     # 기하: PCA 평면 실좌표(ξ, η), 면외 n, 단면선
     C3 = model.centroids()
     pl = _field.plane_coords(model.x0, C3)
     c2 = np.stack([pl["xi"], pl["eta"]], axis=1)
-    n = pl["n"]
-    w_rel = _field.elem_mean(model.conn, model.elem_type, np.asarray(d_rel) @ n)
-    w_val = _field.elem_mean(model.conn, model.elem_type, np.asarray(d_val) @ n)
     size = _field.elem_size(model.x0, model.conn, model.elem_type)
     bx, by = _field.section_band(ccfg["section_band"], size, pl["xi_range"], pl["eta_range"])
     xin = _field.normalize(pl["xi"], pl["xi_range"])
     etn = _field.normalize(pl["eta"], pl["eta_range"])
-    sec_xi = _field.section(xin, pl["eta"], pl["n0"], w_rel, w_val, 0.5, bx)      # ξ=0.5 고정, η 방향
-    sec_eta = _field.section(etn, pl["xi"], pl["n0"], w_rel, w_val, 0.5, by)     # η=0.5 고정, ξ 방향
+    return {"eps_rad": eps_rad, "rising": rising, "valid": valid, "reason": reason, "max_rad": max_rad, "imax": imax,
+            "epsp": epsp, "frame_index": int(frame_index), "prev_frame_index": pfi, "prev_source": prev_source,
+            "rtol": rtol, "plane": pl, "C3": C3, "c2": c2, "size": size, "band": (bx, by), "xin": xin, "etn": etn}
 
-    summ = _field.summarize(model.elem_id, eps_rad, eps_esl, rel, valid, reason, rising, imax,
-                            ccfg["top_n"], ccfg["hist_bins"], c2=c2)
-    summ.update(schema="esl/field/1", frame_index=int(frame_index), prev_frame_index=pfi, prev_source=prev_source,
-                rtol=rtol, min_rel=float(ccfg["min_rel"]), max_rad=max_rad,
-                reason_codes={str(k): v for k, v in _field.REASONS.items()}, reason_text=_field.REASON_TEXT,
-                definition={"rel_err": "(eps_esl - eps_rad)/eps_rad", "abs_err_pct": "100*|rel_err| (valid 요소)",
-                            "max_err_pct": "max.abs_err_pct: t* 상승 요소 중 ε_rad 최대 요소의 오차",
-                            "valid": "rising ∧ eps_rad ≥ min_rel·max_rad ∧ 제외 아님",
-                            "rising": "v[t*] > v[t*−1]·(1+rtol), t*=첫 프레임이면 v>0 (v = Max_Strain ε_eq)",
-                            "eps_esl": f"검증 해 ε_eq({'·'.join(_esl_layers(ctx, meta))}, 막 z=0 기본)"},
-                plane={k: pl[k].tolist() for k in ("origin", "e1", "e2", "n", "xi_range", "eta_range")},
-                sections={"xi": {"at": 0.5, "band": bx, "n_elems": sec_xi["n_elems"]},
-                          "eta": {"at": 0.5, "band": by, "n_elems": sec_eta["n_elems"]}},
-                note=_field.SEMANTIC_NOTE)
-    arrays = dict(
-        elem_id=model.elem_id.astype(np.int64), centroid2d=c2, centroid3d=C3,
-        eps_rad=np.asarray(eps_rad, np.float64), eps_esl=np.asarray(eps_esl, np.float64), rel_err=rel,
-        valid=valid, rising=rising, reason=reason.astype(np.int8), elem_size=size,
-        epsp=np.full(E, np.nan) if epsp is None else epsp,
-        plastic=np.zeros(E, bool) if sref["plastic"] is None else sref["plastic"], exceed=sref["exceed"],
-        n0=pl["n0"], w_rel=w_rel, w_val=w_val,
-        plane_origin=pl["origin"], plane_e1=pl["e1"], plane_e2=pl["e2"], plane_n=n,
-        xi_range=pl["xi_range"], eta_range=pl["eta_range"],
-        frame_index=np.int64(frame_index), prev_frame_index=np.int64(pfi),
-        **{f"sec_xi_{k}": sec_xi[k] for k in ("s", "n0", "w_rel", "w_val")},
-        **{f"sec_eta_{k}": sec_eta[k] for k in ("s", "n0", "w_rel", "w_val")},
-        sec_band=np.array([bx, by]))
-    summ["strain_ref_base"] = sref["ref"]
-    return arrays, summ
+
+_LOC_DIR = {"esl": D_ESL}             # 검증 계획 표(esl.val_src) 위치 토큰 → Case 폴더
+
+
+def _plan_file(ctx: Context, ref) -> str:
+    """계획 표 파일 열 (위치, 파일[, 배열]) → Case 경로."""
+    return ctx.p(_LOC_DIR[ref[0]], ref[1])
+
+
+def _plan_rel(ref) -> str:
+    return f"{_LOC_DIR[ref[0]]}/{ref[1]}"
+
+
+def _spc_bc321(ctx: Context, model: StoredModel) -> list:
+    """지지 집합 bc321 = 03_bc/support.json 3-2-1 → spc [(노드 인덱스, dof)]."""
+    sup = _read_json(ctx.p(D_BC, "support.json"))["supports"]
+    return [(int(i), s["dof"]) for i, s in zip(_ids_to_idx(model.node_id, [s["node_id"] for s in sup], "support.json"), sup)]
+
+
+# 계획 열 값 → 함수(출처 이름 분기 없음): support → spc(P2 = jig), fallback → 변형률 참고용 변위
+_SUPPORT_FN: dict[str, Callable] = {"bc321": _spc_bc321}
+_FALLBACK_FN: dict[str, Callable] = {"u_rel_condensed": lambda ctx, sm, u_rel: _solver_call(ctx, _with_rot, sm, u_rel)}
+
+
+def _err_code(exc: BaseException) -> str:
+    return exc.code if isinstance(exc, EslError) else type(exc).__name__
+
+
+def _err_text(exc: BaseException) -> str:
+    t = f"{exc.code}: {exc.message}" if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"
+    return t[:_vs.FAILED_DETAIL_MAX]
+
+
+def _val_src_failed(ctx: Context, ent: dict, exc: BaseException) -> None:
+    """출처 행 실패 격리(§6.1-6): 행 failed + VAL_SRC_FAILED, 단계 경고 1줄 — full·다른 출처 무영향."""
+    ent["st"] = _vs.failed_status(_err_text(exc))
+    ent["u6"] = ent["R"] = None
+    ctx.warnings.append(f"VAL_SRC_FAILED: {ent['row']['key']} {_err_code(exc)}")
+
+
+def _val_src_prepare(ctx: Context, model: StoredModel, enabled: bool) -> list[dict]:
+    """legacy 외 계획 행 준비(§6.1-2): 설정 끔 → disabled, 아니면 진단 json·하중(node_id 일치)·ESL 요약 forces.<summary>
+    로 ``val_src.row_status``(done 후보 | unavailable | na). 준비 중 예외(손상 파일·node_id 불일치) = 그 행 failed."""
+    esl_sum = (((ctx.record or {}).get("stages") or {}).get("esl") or {}).get("summary") or {}
+    out = []
+    for row in _vs.VAL_PLAN:
+        if row["legacy"]:
+            continue
+        ent: dict[str, Any] = {"row": row, "doc": None, "F": None, "u6": None, "R": None}
+        out.append(ent)
+        if not enabled:
+            ent["st"] = _vs.disabled_status()
+            continue
+        if row["load"] is None:
+            ent["st"] = _vs.row_status(row, False)
+            continue
+        try:
+            if row["doc"] is not None:
+                dp = _plan_file(ctx, row["doc"])
+                ent["doc"] = _read_json(dp) if os.path.isfile(dp) else None
+            lp = _plan_file(ctx, row["load"])
+            F_s = None
+            if os.path.isfile(lp):
+                z = _load_npz(lp)
+                if row["load"][2] in z:
+                    if "node_id" not in z or not np.array_equal(z["node_id"], model.node_id):
+                        raise EslError("ID_MISMATCH", f"{_plan_rel(row['load'])} node_id 가 model.npz 와 다름")
+                    F_s = np.asarray(z[row["load"][2]], dtype=np.float64)
+            s = esl_sum.get(row["summary"]) if row["summary"] else None
+            ent["st"] = _vs.row_status(row, F_s is not None, ent["doc"], s if isinstance(s, dict) else None)
+            ent["F"] = F_s
+        except Exception as exc:                                # noqa: BLE001 — 출처 때문에 검증 단계 실패 금지
+            _val_src_failed(ctx, ent, exc)
+    return out
+
+
+def _val_solve(ctx: Context, model: StoredModel, sm: ShellModel, legacy: dict, spc, F, ents: list, srec: dict):
+    """지지 집합마다 분해 1회 + 출처마다 해 1회(§4.1, D-0.24.3-VAL-3). legacy 묶음 먼저: legacy 해 = 지금과 같은
+    ``sm.solve``(그 분해를 ``keep_factor`` 로 남김 — 산술·통계 v0.24.2 그대로), 같은 묶음 출처 해 = 그 분해 재사용.
+    반환 (u_val, R, 단계 요약 solver = legacy 해 직후 solver_stats). 출처 해 예외 = 그 행 failed."""
+    out = None
+    for sup in (legacy["support"], *(s for s in _vs.SUPPORTS if s != legacy["support"])):
+        mem = [e for e in ents if e["st"]["status"] == "done" and e["row"]["support"] == sup]
+        is_leg = sup == legacy["support"]
+        if not mem and not is_leg:
+            continue
+        g: dict[str, Any] = {"support": sup, "keys": [], "factor_s": None, "solve_s": {}}
+        srec["groups"].append(g)
+        h = None
+        if is_leg:
+            t0 = _time.perf_counter()
+            sm.keep_factor = bool(mem)
+            try:
+                u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
+            finally:
+                sm.keep_factor = False
+                h, sm.kept_factor = sm.kept_factor, None
+            stats = solver_stats(sm)
+            out = (u_val, Rr, stats)
+            kff = stats.get("K_ff") or {}
+            fac, asm = float(kff.get("factor_s") or 0.0), float(stats.get("assembly_s") or 0.0)
+            g.update(factor_s=round(fac, 4), assembly_s=round(asm, 4))
+            g["solve_s"][legacy["key"]] = round(max(_time.perf_counter() - t0 - fac - asm, 0.0), 4)
+            g["keys"].append(legacy["key"])
+        if mem and h is None:
+            try:
+                t0 = _time.perf_counter()
+                h = _solver_call(ctx, sm.factorize, spc if is_leg else _SUPPORT_FN[sup](ctx, model))
+                g["factor_s"] = round((g["factor_s"] or 0.0) + _time.perf_counter() - t0, 4)
+            except Exception as exc:                            # noqa: BLE001
+                for e in mem:
+                    _val_src_failed(ctx, e, exc)
+                continue
+        for e in mem:
+            try:
+                t0 = _time.perf_counter()
+                e["u6"], e["R"] = _solver_call(ctx, h.solve, e["F"])
+                g["solve_s"][e["row"]["key"]] = round(_time.perf_counter() - t0, 4)
+                g["keys"].append(e["row"]["key"])
+            except Exception as exc:                            # noqa: BLE001
+                _val_src_failed(ctx, e, exc)
+        del h
+    return out
+
+
+def _cum_plastic(ctx: Context, model: StoredModel, frame_index: int) -> dict | None:
+    """누적 씬 소성 요약(strain_ref 에 더함 — Radioss 쪽, 출처 무관). 비누적 = None."""
+    cst = _cum_state(ctx, model)
+    if cst is None:
+        return None
+    with np.load(ctx.p(D_EXTRACT, "strain_frames.npz"), allow_pickle=False) as z:
+        fd_ = int(np.flatnonzero(z["frame_index"].astype(np.int64) == int(frame_index))[0])
+        ep_raw = np.asarray(z["epsp"][fd_], np.float64) if "epsp" in z.files else np.zeros(model.elem_id.size)
+    ep_cum, ep_inc = _cum.series(ep_raw, cst["prev"], cst["modes"]["plastic_strain"])
+    return {"basis": "increment", "n_plastic_cum": int(np.sum(ep_cum > 0)),
+            "n_plastic_inc": int(np.sum(ep_inc > CUM_EPSP_FLOOR)),
+            "cum_max": float(np.max(ep_cum)) if ep_cum.size else 0.0,
+            "inc_max": float(np.max(ep_inc)) if ep_inc.size else 0.0}
+
+
+def _write_val_files(ctx: Context, d: str, ev: dict, nid) -> None:
+    """검증 파일 세트(legacy 루트·출처 폴더 공통 — §4.5): validation.json·compare_field.npz·compare_disp.npz·validation.csv·
+    compare.csv(풀이 있을 때만). 쓰는 순서 = v0.24.2."""
+    _write_json(ctx.f(d, "validation.json"), ev["doc"])
+    if ev["field_arrays"] is not None:
+        np.savez_compressed(ctx.f(d, "compare_field.npz"), **ev["field_arrays"])
+    if ev["disp_arrays"] is not None:
+        np.savez_compressed(ctx.f(d, "compare_disp.npz"), **ev["disp_arrays"])
+    fmt = ctx.csvfmt()
+    csvout.write_validation_csv(ctx.f(d, "validation.csv"), ev["doc"], fmt)
+    if ev["compare"] is not None:
+        d_rel, d_val, dn = ev["compare"]
+        csvout.write_csv(ctx.f(d, "compare.csv"),
+                         ("node_id", "ux_rel", "uy_rel", "uz_rel", "ux_val", "uy_val", "uz_val", "d_mag"),
+                         ((int(nid[i]), *d_rel[i], *d_val[i], dn[i]) for i in range(nid.size)), fmt)
+
+
+def _src_tmp_cleanup(ctx: Context, path: str) -> None:
+    import shutil
+    if os.path.lexists(path):
+        shutil.rmtree(ctx.guard(path), ignore_errors=True)
 
 
 def stage_validate(ctx: Context) -> dict:
     """S5 검증 (계약 esl_disp_primary.md). 판정 = 변위 4지표(disp_rms_rel·disp_max_rel·reaction_rel·disp_noise_rel),
-    변형률 지표는 참고(role=reference, 초과 여부만). 전체 재해석을 못 하면 UNDETERMINED(변형률로 대신 판정하지 않음)."""
+    변형률 지표는 참고(role=reference, 초과 여부만). 전체 재해석을 못 하면 UNDETERMINED(변형률로 대신 판정하지 않음).
+
+    v0.24.3(esl_validate_sources.md §6): 계획 표 ``esl.val_src.VAL_PLAN`` 의 출처마다 같은 정의·같은 기준으로 검증 —
+    legacy(full) = 05_val 루트(v0.24.2 와 바이트 동일), 출처 = 05_val/<dir>/ 같은 파일 세트, 인덱스 05_val/sources.json.
+    응답 = 지지 집합마다 분해 1회 + 출처마다 해 1회. 출처 예외는 그 행만 failed(full 판정·다른 출처 무영향)."""
+    legacy = _vs.plan(None)
     _require(ctx.out, [f"{D_EXTRACT}/strain_frames.npz", f"{D_EXTRACT}/history.npz", f"{D_BC}/support.json",
-                       f"{D_ESL}/u_rel.npz", f"{D_ESL}/f_eq.npz", f"{D_ESL}/esl_summary.json"])
+                       _plan_rel(legacy["target"]), *(_plan_rel(r["load"]) for r in _vs.VAL_PLAN if r["required"]),
+                       f"{D_ESL}/esl_summary.json"])
     model = load_model(ctx.out)
     nid, X0 = model.node_id, model.x0
-    ur = _load_npz(ctx.p(D_ESL, "u_rel.npz"))
-    fz = _load_npz(ctx.p(D_ESL, "f_eq.npz"))
-    sup = _read_json(ctx.p(D_BC, "support.json"))["supports"]
+    ur = _load_npz(_plan_file(ctx, legacy["target"]))
+    fz = _load_npz(_plan_file(ctx, legacy["load"]))
     summ = _read_json(ctx.p(D_ESL, "esl_summary.json"))
     if not (np.array_equal(ur["node_id"], nid) and np.array_equal(fz["node_id"], nid)):
         raise EslError("ID_MISMATCH", "04_esl 산출물의 node_id 가 model.npz 와 다름")
-    u_rel, F = ur["u_rel"], fz["f"]
-    spc = [(int(i), s["dof"]) for i, s in zip(_ids_to_idx(nid, [s["node_id"] for s in sup], "support.json"), sup)]
+    u_rel, F = ur[legacy["target"][2]], fz[legacy["load"][2]]
+    spc = _SUPPORT_FN[legacy["support"]](ctx, model)
     frame_index = int(summ["frame"]["frame_index"])
     umax = float(np.max(np.linalg.norm(u_rel, axis=1))) if u_rel.size else 0.0      # 정규화 U = max|u_rel|
 
     sm = _shell(ctx, model)
     fs = full_solve_decision(ctx, sm, int(model.elem_id.size))
     solved = bool(fs["run"]) and umax > 0
-    disp_an = None
-    disp_rms_rel = disp_max_rel = reac_abs_rel = reac_sum_rel = lin_rigid_rel = None
+    enabled = bool(_config.validation_sources_settings(ctx.cfg)["enabled"])
+    ents = _val_src_prepare(ctx, model, enabled)
+    srec: dict[str, Any] = {"groups": [], "decision": {k: fs[k] for k in ("mode", "run", "reason")}, "eval_s": {}}
+    solver_sum = None
     Rr = None
     if solved:
         # 반복법이면 전체계는 rtol = min(설정, 1e-12) (직접법이면 영향 없음)
         sm.iter_opts["rtol"] = min(float(ctx.cfg["solver"]["iter_rtol"]), S5_ITER_RTOL_MAX)
-        u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
-        # 미소 강체 제거 후 비교(양쪽 독립 → 선형 왕복의 수치 일관성). 노드 집합 = 전 노드(3-2-1 포함)
-        d_val, _, _ = kabsch.remove_linear_rigid(X0, u_val[:, :3])
-        d_rel, a_rel, w_rel = kabsch.remove_linear_rigid(X0, u_rel)
-        delta = d_val - d_rel
-        dn = np.linalg.norm(delta, axis=1)
-        disp_rms_rel = float(np.sqrt(np.mean(dn ** 2)) / umax)
-        disp_max_rel = float(dn.max() / umax)
-        sum_abs = float(np.linalg.norm(F, axis=1).sum())
-        reac_abs_rel = float(np.linalg.norm(Rr, axis=1).sum() / sum_abs) if sum_abs > 0 else 0.0
-        reac_sum_rel = float(np.linalg.norm(Rr.sum(axis=0)) / sum_abs) if sum_abs > 0 else 0.0
-        lin_rigid_rel = float(np.max(np.linalg.norm(u_rel - d_rel, axis=1)) / umax)
-        eps_sol = sm.strains(u_val)
-        is_sup = np.zeros(nid.size, dtype=bool)
-        is_sup[[i for i, _ in spc]] = True
-        dcfg = ctx.cfg["validation"]
-        disp_an = _field.disp_analysis(nid, X0, d_rel, d_val, umax, is_sup, dcfg["disp_top_n"], dcfg["disp_hist_bins"])
+        u_val, Rr, solver_sum = _val_solve(ctx, model, sm, legacy, spc, F, ents, srec)
     else:
-        # 판정 불가(UNDETERMINED): 변형률은 참고용으로만 — u_rel + 응축 회전(rotations_for) 막 변형률
+        # 판정 불가(UNDETERMINED): 변형률은 참고용으로만 — u_rel + 응축 회전(rotations_for) 막 변형률(계획 열 fallback)
         if not fs["run"]:
             ctx.warnings.append(f"S5 전체 solve 생략({fs['reason']}) — 판정 불가(UNDETERMINED, NO_FULL_SOLVE). "
                                 "변형률 참고 지표만 계산")
         else:
             ctx.warnings.append("u_rel 이 전부 0 (변형 없음) — 판정 불가(UNDETERMINED, ZERO_DISP)")
-        u_val = _solver_call(ctx, _with_rot, sm, u_rel)
-        d_rel = d_val = u_rel
-        eps_sol = sm.strains(u_val)
+        u_val = None if legacy["fallback"] is None else _FALLBACK_FN[legacy["fallback"]](ctx, sm, u_rel)
+    eps_sol = None if u_val is None else sm.strains(u_val)
 
-    # hotspot ε_eq: Radioss(t* 프레임, Mid) vs 검증 해 막 변형률(extract.layers) — 참고
+    # Radioss 쪽 한 번(출처 무관): hotspot ε_eq(t* 프레임, Mid)·전 요소 비교 기반·잡음 — 경고 1회
     fmeta = _frames_meta(ctx)
     src = _source(fmeta)
     layers = _esl_layers(ctx, fmeta)
     hs, eps_rad = _eval_hotspots(ctx, model, frame_index)
-    eps_val = _solver_eq(eps_sol, layers)
+    excl = [h["elem_id"] for h in hs if not h["compared"] and not h["comparable"]]
+    if excl:
+        ctx.warnings.append(f"hotspot {len(excl)}개 비교 제외(상승 중 아님): {excl[:10]}")
+    base = _field_base(ctx, model, frame_index, eps_rad)
     vcfg = ctx.cfg["validation"]
-    hots, excluded = [], []
-    for h in hs:
-        e = h["elem_pos"]
-        rec = {"rank": h["rank"], "elem_id": h["elem_id"], "metric_value": h["value"], "centroid": h["centroid"]}
-        if h["compared"]:
-            er, ev = float(eps_rad[e]), float(eps_val[e])
-            rec.update(eps_rad=er, eps_val=ev, rel_err=abs(ev - er) / er if er > 0 else float("inf"))
-            hots.append(rec)
-        elif not h["comparable"]:
-            rec.update(reason=h["reason"], eps_rad=float(eps_rad[e]), eps_val=float(eps_val[e]))
-            excluded.append(rec)
-    if excluded:
-        ctx.warnings.append(f"hotspot {len(excluded)}개 비교 제외(상승 중 아님): "
-                            f"{[x['elem_id'] for x in excluded][:10]}")
-    h1 = hots[0]["rel_err"] if hots else float("inf")
-    if src == "max_stress":
-        h1 = None                                   # 응력 대체: 변형률 참고 지표 생략(§4)
-
-    # 전 요소 재현 정확도(참고)
     ccfg = ctx.cfg["compare"]
-    farr, fsum = _field_compare(ctx, model, frame_index, eps_rad, eps_val, d_rel, d_val)
-    f_max = fsum["max"]["abs_err_pct"] if fsum["max"] else float("inf")
-    f_p90 = fsum["abs_err_pct"]["p90"] if fsum["abs_err_pct"] else float("inf")
-    if src == "max_stress":
-        # 응력 대체: 변형률 참고 지표 전부 생략(None) — hotspot rel_err·전 요소 오차·기준 초과 비율(§4, Verifier Med1)
-        f_max = f_p90 = None
-        fsum["skipped"] = "STRAIN_FROM_STRESS"
-        fsum.update({"max": None, "abs_err_pct": None, "frac_within": None})
-        for rec in hots + excluded:
-            rec["rel_err"] = None
-    fsum["criteria"] = {"max_err_pct_max": ccfg["max_err_pct_max"], "p90_err_max": ccfg["p90_err_max"]}
-    sref = fsum.pop("strain_ref_base")
-    if src == "max_stress":
-        sref.update({k: None for k in ("n_exceed", "frac_exceed", "frac_exceed_valid", "p99_err_pct")})
-        sref["skipped"] = "STRAIN_FROM_STRESS"
-
     noise = summ.get("noise")
     if noise is None:
         ctx.warnings.append("esl_summary.json 에 잡음 바닥(noise) 없음 — esl 단계를 다시 실행 권장")
@@ -1721,79 +1809,36 @@ def stage_validate(ctx: Context) -> dict:
             "layers": list(layers), "metric": ctx.cfg["tstar"]["metric"], "full_solve": fs["mode"],
             "field_max_err_pct_max": ccfg["max_err_pct_max"], "field_p90_err_max": ccfg["p90_err_max"],
             "field_min_rel": ccfg["min_rel"]}
-
-    def judged(name, v, c):
-        if v is None:
-            return {"metric": name, "value": None, "criterion": c, "pass": None, "status": "skipped", "role": "judge"}
-        return {"metric": name, "value": v, "criterion": c, "pass": bool(v <= c), "role": "judge"}
-
-    def ref(name, v, c):
-        r = {"metric": name, "value": v, "criterion": c, "pass": None, "role": "reference",
-             "exceeded": bool(v is not None and not v <= c)}
-        if v is None:
-            r["status"] = "skipped"
-        return r
-
-    def info(name, v):
-        return {"metric": name, "value": v, "criterion": None, "pass": None, "role": "info"}
-
-    metrics = [
-        judged("disp_rms_rel", disp_rms_rel, crit["disp_rms_rel_max"]),
-        judged("disp_max_rel", disp_max_rel, crit["disp_max_rel_max"]),
-        judged("reaction_rel", reac_abs_rel, crit["reaction_rel_max"]),
-        judged("disp_noise_rel", disp_noise_rel, crit["disp_noise_rel_max"]),
-        ref("hotspot1_strain_rel_err", h1, crit["hotspot_strain_rel_err_max"]),
-        ref("field_max_err_pct", f_max, ccfg["max_err_pct_max"]),
-        ref("field_p90_err_pct", f_p90, ccfg["p90_err_max"]),
-        ref("noise_hotspot_strain_rel", n_strain, crit["noise_strain_rel_max"]),
-        info("reaction_sum_rel", reac_sum_rel),
-        info("u_rel_linear_rigid_rel", lin_rigid_rel),
-        info("noise_force_rel", n_force),
-    ]
-    sref["exceeded"] = any(m["exceeded"] for m in metrics if m["role"] == "reference")
-    sref["exceeded_metrics"] = [m["metric"] for m in metrics if m["role"] == "reference" and m["exceeded"]]
-    cst = _cum_state(ctx, model)
-    if cst is not None:
-        with np.load(ctx.p(D_EXTRACT, "strain_frames.npz"), allow_pickle=False) as z:
-            fd_ = int(np.flatnonzero(z["frame_index"].astype(np.int64) == int(frame_index))[0])
-            ep_raw = np.asarray(z["epsp"][fd_], np.float64) if "epsp" in z.files else np.zeros(model.elem_id.size)
-        ep_cum, ep_inc = _cum.series(ep_raw, cst["prev"], cst["modes"]["plastic_strain"])
-        sref.update(basis="increment", n_plastic_cum=int(np.sum(ep_cum > 0)),
-                    n_plastic_inc=int(np.sum(ep_inc > CUM_EPSP_FLOOR)),
-                    cum_max=float(np.max(ep_cum)) if ep_cum.size else 0.0,
-                    inc_max=float(np.max(ep_inc)) if ep_inc.size else 0.0)
-
     undetermined_reason = None
     if not fs["run"]:
         undetermined_reason = "NO_FULL_SOLVE"
     elif umax <= 0:
         undetermined_reason = "ZERO_DISP"
-    if undetermined_reason:
-        verdict, fail_reasons = "UNDETERMINED", []
-    else:
-        judge = [m for m in metrics if m["role"] == "judge"]
-        verdict = "PASS" if all(m["pass"] is True for m in judge) else "FAIL"
-        fail_reasons = [_FAIL_REASON[m["metric"]] for m in judge if m["pass"] is not True]
-    reactions = [] if Rr is None else [{"node_id": int(nid[i]), "dof": d, "r": Rr[i].tolist()} for i, d in spc]
-    val = {"schema": VALIDATION_SCHEMA, "frame": summ["frame"], "verdict": verdict, "verdict_scheme": VERDICT_SCHEME,
-           "undetermined_reason": undetermined_reason, "esl_ref": esl_ref(summ),
-           "fail_reasons": fail_reasons, "criteria": crit, "noise": noise, "noise_source": noise_source,
-           "metrics": metrics, "full_solve": fs, "hotspots": hots, "hotspots_excluded": excluded,
-           "reactions": reactions, "reaction_sum": None if Rr is None else Rr.sum(axis=0),
-           "disp": None if disp_an is None else disp_an["summary"], "strain_ref": sref, "field": fsum,
-           "strain_source": src, "created_at": _utcnow()}
+    common = {"X0": X0, "node_id": nid, "u_rel": u_rel, "U": umax, "solved": solved,
+              "undetermined_reason": undetermined_reason, "spc": spc, "hs": hs, "eps_rad": eps_rad, "base": base,
+              "model_arrays": {"elem_id": model.elem_id, "conn": model.conn, "elem_type": model.elem_type},
+              "layers_text": "·".join(_esl_layers(ctx, fmeta)), "strain_source": src,
+              "strain_skipped": src == "max_stress", "ccfg": ccfg, "crit": crit, "disp_top_n": vcfg["disp_top_n"],
+              "disp_hist_bins": vcfg["disp_hist_bins"], "noise": noise, "noise_source": noise_source,
+              "n_strain": n_strain, "n_force": n_force, "disp_noise_rel": disp_noise_rel,
+              "cum_plastic": _cum_plastic(ctx, model, frame_index), "frame": summ["frame"], "esl_ref": esl_ref(summ),
+              "full_solve": fs}
+
+    # ---- legacy(full) 행: 지표·문서·파일(05_val 루트, v0.24.2 와 같은 순서·경고·echo) — 이 시점에 full 결과 완결
+    t0 = _time.perf_counter()
+    ev = _vm.evaluate(common, F=F, u_val6=u_val if solved else None, R=Rr,
+                      eps_val=None if eps_sol is None else _solver_eq(eps_sol, layers),
+                      reaction_role=legacy["reaction_role"], noise_force=legacy["noise_force"], created_at=_utcnow())
+    val, metrics = ev["doc"], ev["doc"]["metrics"]
+    verdict, fail_reasons = val["verdict"], val["fail_reasons"]
+    hots, excluded, sref, fsum = ev["hots"], ev["excluded"], ev["sref"], ev["fsum"]
+    vv = ev["values"]
+    disp_rms_rel, disp_max_rel, reac_abs_rel = vv["disp_rms_rel"], vv["disp_max_rel"], vv["reaction_rel"]
+    h1, f_max, f_p90 = vv["hotspot1_strain_rel_err"], vv["field_max_err_pct"], vv["field_p90_err_pct"]
 
     d = ctx.fresh_dir(D_VAL)
-    _write_json(ctx.f(d, "validation.json"), val)
-    np.savez_compressed(ctx.f(d, "compare_field.npz"), **farr)
-    if disp_an is not None:
-        np.savez_compressed(ctx.f(d, "compare_disp.npz"), **disp_an["arrays"])
-    fmt = ctx.csvfmt()
-    csvout.write_validation_csv(ctx.f(d, "validation.csv"), val, fmt)
-    if solved:
-        csvout.write_csv(ctx.f(d, "compare.csv"),
-                         ("node_id", "ux_rel", "uy_rel", "uz_rel", "ux_val", "uy_val", "uz_val", "d_mag"),
-                         ((int(nid[i]), *d_rel[i], *d_val[i], dn[i]) for i in range(nid.size)), fmt)
+    _write_val_files(ctx, d, ev, nid)
+    srec["eval_s"][legacy["key"]] = round(_time.perf_counter() - t0, 4)
     if verdict == "FAIL":
         ctx.warnings.append("검증 FAIL: " + ", ".join(f"{m['metric']}({_FAIL_REASON[m['metric']]})"
                                                      for m in metrics if m["role"] == "judge" and m["pass"] is False))
@@ -1816,6 +1861,59 @@ def stage_validate(ctx: Context) -> dict:
              + f", valid {fsum['n_valid']}/{fsum['n_elems']} (상승 {fsum['n_rising']}, hold {fsum['n_hold']}, "
              f"low {fsum['n_low']})" + (f", ≤10% 비율 {fsum['frac_within']['10']:.1%}" if fa else "")
              + (" [참고 초과]" if sref["exceeded"] else ""))
+
+    # ---- 출처 행(§6.1-6): 같은 계산 → 05_val/<dir>.tmp → <dir>(원자적), 예외 = 그 행 failed(tmp 정리)
+    rows_out: list[dict] = []
+    ssum: dict[str, Any] = {}
+    for e in ents:
+        row = e["row"]
+        if e["st"]["status"] == "done":
+            tmp = ctx.guard(os.path.join(d, f"{row['dir']}.tmp"))
+            try:
+                t0 = _time.perf_counter()
+                if solved and e["u6"] is None:
+                    raise EslError("VAL_SRC_FAILED", "출처 응답 풀이 결과 없음")
+                eps_s = None
+                if solved:
+                    eps_s = _solver_eq(sm.strains(e["u6"]), layers)
+                sum_abs = float(np.linalg.norm(e["F"], axis=1).sum())
+                evs = _vm.evaluate(common, F=e["F"], u_val6=e["u6"], R=e["R"], eps_val=eps_s,
+                                   reaction_role=row["reaction_role"], noise_force=row["noise_force"],
+                                   created_at=_utcnow(), criteria={**crit, "reaction_role": row["reaction_role"]},
+                                   src=_vs.src_block(row, e["doc"], sum_abs))
+                _src_tmp_cleanup(ctx, tmp)
+                os.makedirs(tmp)
+                _write_val_files(ctx, tmp, evs, nid)
+                atomic_replace(tmp, ctx.guard(os.path.join(d, row["dir"])))
+                srec["eval_s"][row["key"]] = round(_time.perf_counter() - t0, 4)
+                e["ev"] = evs
+            except Exception as exc:                            # noqa: BLE001 — 출처 때문에 검증 단계 실패 금지
+                _src_tmp_cleanup(ctx, tmp)
+                _val_src_failed(ctx, e, exc)
+        if e["st"]["status"] == "done":
+            r = _vs.done_row(row, e["ev"]["doc"], e["doc"])
+            vs = e["ev"]["values"]
+            ctx.echo(f"[validate] {row['key']}: 변위 RMS={fmt_v(vs['disp_rms_rel'])}, 변위 최대={fmt_v(vs['disp_max_rel'])}, "
+                     f"반력 Σ|R|/Σ|F|={fmt_v(vs['reaction_rel'])}({row['reaction_role']}) → {r['verdict']}"
+                     + (f" {r['fail_reasons']}" if r["fail_reasons"] else "")
+                     + (f" ({r['undetermined_reason']})" if r["undetermined_reason"] else "")
+                     + (f" · 한계 {r['limits']}" if r["limits"] else ""))
+        else:
+            r = _vs.empty_row(row, e["st"])
+            ctx.echo(f"[validate] {row['key']}: 불가 {r['code']}")
+        rows_out.append(r)
+        ssum[row["key"]] = {"status": r["status"], "verdict": r["verdict"], "fail_reasons": r["fail_reasons"],
+                            "undetermined_reason": r["undetermined_reason"], "code": r["code"],
+                            **{k: (r["metrics"] or {}).get(k) for k in ("disp_rms_rel", "disp_max_rel", "reaction_rel")}}
+    leg_row = _vs.done_row(legacy, val, None)
+    rows_all = [leg_row if row["legacy"] else next(x for x in rows_out if x["key"] == row["key"])
+                for row in _vs.VAL_PLAN]
+    _write_json(ctx.f(d, _vs.SOURCES_JSON),
+                {"schema": _vs.SCHEMA_SOURCES, "esl_ref": esl_ref(summ), "default": legacy["key"], "enabled": enabled,
+                 "solve": srec, "rows": rows_all, "created_at": _utcnow()})
+
+    if solver_sum is None:
+        solver_sum = solver_stats(sm)
     field_short = {"max_err_pct": f_max, "p90_err_pct": f_p90, "n_valid": fsum["n_valid"],
                    "n_rising": fsum["n_rising"], "n_elems": fsum["n_elems"], "prev_source": fsum["prev_source"]}
     strain_short = {k: sref[k] for k in ("n_exceed", "frac_exceed", "frac_exceed_valid", "p99_err_pct", "exceeded")}
@@ -1827,10 +1925,10 @@ def stage_validate(ctx: Context) -> dict:
             "noise_hotspot_strain_rel": n_strain,
             "noise_force_rel": n_force, "disp_rms_rel": disp_rms_rel, "disp_max_rel": disp_max_rel,
             "disp_noise_rel": disp_noise_rel,
-            "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": reac_sum_rel,
+            "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": vv["reaction_sum_rel"],
             "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
-            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_stats(sm),
-            "strain_source": src}
+            "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_sum,
+            "strain_source": src, "sources": ssum}
 
 
 # ====================================================================== export

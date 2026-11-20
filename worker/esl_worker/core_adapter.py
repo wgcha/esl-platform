@@ -361,6 +361,28 @@ def view3d_case_status(**kw) -> dict:
     return _wrap(_attr("esl.view3d_src", "case_status"), **kw)
 
 
+def val_src_plan() -> dict:
+    """v0.24.3 ④ 검증 출처 표(``esl.val_src``, esl_validate_sources.md §2·§5): 행(VAL_PLAN 사본)·키·legacy 키·파일 이름·
+    문구 표 사본. 백엔드는 행 열만 읽고 출처 이름으로 분기하지 않는다."""
+    import copy
+
+    vs = _mod("esl.val_src")
+    return {"keys": tuple(vs.KEYS), "rows": copy.deepcopy(tuple(vs.VAL_PLAN)), "legacy": str(vs.legacy_key()),
+            "sources_json": str(vs.SOURCES_JSON), "schema": str(vs.SCHEMA_SOURCES),
+            "reason_text": dict(vs.REASON_TEXT), "note_text": dict(vs.NOTE_TEXT), "label": dict(vs.LABEL),
+            "limit_class": dict(vs.LIMIT_CLASS), "limit_class_text": dict(vs.LIMIT_CLASS_TEXT)}
+
+
+def val_row_status(**kw) -> dict:
+    """v0.24.3 ``esl.val_src.row_status``(row, have_load, doc, summary) — 순수 판정 {status, code, reason}."""
+    return _wrap(_attr("esl.val_src", "row_status"), **kw)
+
+
+def val_reason_text(code: str | None, detail: str | None = None) -> str | None:
+    """v0.24.3 ``esl.val_src.reason_text`` — 검증 출처 사유 문구(VAL_SRC_NOT_RUN·VALIDATION_FILES_GONE … 원본 한 곳)."""
+    return _wrap(_attr("esl.val_src", "reason_text"), code, detail)
+
+
 # ====================================================================== P2: 라이브러리(§1~§5, §11)
 def _lib_cfg(cfg: dict) -> dict:
     """JSON 왕복(작업 params) 뒤의 라이브러리 설정 정리: ISTA 6 면 번호 키를 정수로."""

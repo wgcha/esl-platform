@@ -79,6 +79,7 @@ validation:                          # 임시 값. 사내 확인 후 교체 (esl
   noise_samples: 3                   # 잡음 바닥 추정 섭동 표본 수(고정 시드)
   noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
   noise_strain_rel_max: 0.05         # [참고 기준, 판정 아님] hotspot |Δε_eq|/ε_eq (잡음)
+  # sources: {enabled: true}         # (선택, v0.24.3) ④ 검증 출처별 — 경계력·내력 ESL 도 같은 정의·기준으로 검증(05_val/<출처>/). 없으면 true, false = 전 노드만
 
 compare:                             # ESL 재현 정확도 전 요소 비교 (계약 esl_p2_library.md §7.2, 판정 기준은 임시값)
   min_rel: 0.1                       # valid = t* 에서 상승 중 ∧ ε_rad ≥ min_rel·max ε_rad(상승 요소)
