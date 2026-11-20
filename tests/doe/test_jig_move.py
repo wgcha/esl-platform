@@ -127,6 +127,7 @@ def study_snapshot(out: str, root: str) -> dict[str, str]:
 def run_case(t):
     import synth_case
     from test_bforce_stage import _add_bforce
+
     from esl import pipeline
 
     root = str(t)
@@ -179,3 +180,86 @@ def test_v0244_jig_1_golden_bytes(golden_runs):
     for k in ("study", "case"):
         diff = sorted(f for f in gold[k] if gold[k][f] != cur[k][f])
         assert not diff, (k, diff)
+
+
+# ---------------------------------------------------------------- V-0244-JIG-1 심·import 그래프·DEFAULTS
+def _public_and_used(mod) -> list[str]:
+    return [k for k, v in vars(mod).items() if not k.startswith("__")]
+
+
+def test_v0244_jig_1_shims_same_objects():
+    import importlib
+
+    import esl.doe.assem_full as af
+    import esl.doe.paicad_io as pio
+    import esl.io.fixed_scan as fs
+    import esl.mech.jig as mj
+    import esl.rad.solid_faces as sf
+    import esl.rad.surface as rs
+    from esl.doe import jig, jig_surf
+
+    assert jig is mj and jig_surf is rs                                       # 모듈 객체 자체(monkeypatch 포함 같은 객체)
+    assert importlib.import_module("esl.doe.jig") is mj and importlib.import_module("esl.doe.jig_surf") is rs
+    for k in _public_and_used(mj):
+        assert getattr(jig, k) is getattr(mj, k), k
+    for k in ("SCAN_JSON", "FIXED_NPZ", "FIXED_KINDS", "read_fixed", "read_json_limited"):
+        assert getattr(pio, k) is getattr(fs, k), k
+    for k in ("ELEM_NODES", "ELEM_TOTAL", "SHELL_KW", "SOLID_FACES", "_HEX", "_TET", "_PEN", "_lead_ints", "_faces", "_clean"):
+        assert getattr(af, k) is getattr(sf, k), k
+    assert rs.af is sf                                                        # 표면 읽기 = 이동한 면 계산
+
+
+def test_v0244_jig_1_shim_sources_pure():
+    """심 파일은 본체 import + 별칭 1줄뿐(esl.doe·파일 IO 없음 — V-JIG-15 와 같은 규칙)."""
+    for rel, target in (("esl/doe/jig.py", "esl.mech.jig"), ("esl/doe/jig_surf.py", "esl.rad.surface")):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+            tree = ast.parse(fh.read())
+        mods = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+        assert mods == {target}, rel
+        assert not any(isinstance(n, ast.Import) for n in ast.walk(tree))
+
+
+def test_v0244_jig_1_import_graph_no_esl_doe():
+    """esl.pipeline·esl.mech.*·esl.rad.*·esl.io.*·esl.val_src·esl.view3d_src → esl.doe 0(새 프로세스)."""
+    code = ("import sys, pkgutil, importlib, esl.mech, esl.rad, esl.io\n"
+            "mods = ['esl.pipeline', 'esl.val_src', 'esl.view3d_src']\n"
+            "for pkg in (esl.mech, esl.rad, esl.io):\n"
+            "    mods += [pkg.__name__ + '.' + m.name for m in pkgutil.iter_modules(pkg.__path__)]\n"
+            "for m in mods:\n"
+            "    importlib.import_module(m)\n"
+            "assert 'esl.mech.jig' in mods and 'esl.rad.surface' in mods and 'esl.io.fixed_scan' in mods\n"
+            "bad = [m for m in sys.modules if m.startswith('esl.doe')]\n"
+            "print(','.join(bad))\n")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, check=False,
+                       env={**os.environ, "PYTHONPATH": ROOT + os.pathsep + os.environ.get("PYTHONPATH", "")})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
+
+
+def test_v0244_jig_1_defaults_old_keys_unchanged():
+    """DEFAULTS["rank"]["jig"] 의 옛 키 값 = 변경 전, JIG_DEFAULTS 의 같은 이름 = 같은 값(거울), 새 키 = JIG_NEW_KEYS."""
+    from esl.doe import DEFAULTS
+    from esl.mech import jig as mj
+
+    dj = DEFAULTS["rank"]["jig"]
+    assert {k: dj[k] for k in OLD_JIG} == OLD_JIG
+    assert {k: mj.JIG_DEFAULTS[k] for k in dj} == dj                          # 거울(새 키는 B2 가 pydantic·yaml 과 함께 더함)
+    assert {k: mj.JIG_DEFAULTS[k] for k in OLD_JIG} == OLD_JIG
+    assert set(mj.JIG_DEFAULTS) - set(OLD_JIG) == set(mj.JIG_NEW_KEYS)
+    assert mj.hash_view(OLD_JIG) == {k: v for k, v in OLD_JIG.items() if k not in mj.HASH_EXCLUDE}   # 옛 해시 불변
+
+
+def test_v0244_jig_1_messages_same_source_as_study():
+    from esl.doe import load_messages
+    from esl.doe import stages as stg
+    from esl.io import messages as msg
+
+    assert msg.messages() == load_messages()["messages"]
+    for code, kw in (("JIG_REGION_FALLBACK", {"reason": "few_contact", "n_contact": 1, "n_patch": 2}),
+                     ("JIG_FAILED", {"stage": "basis"}), ("JIG_AUX_REACTION", {"aux_reaction_rel": 0.1,
+                                                                              "aux_reaction_warn": 0.05}),
+                     ("NO_SUCH_CODE", {})):
+        assert msg.text(code, **kw) == stg._cmp_text(code, **kw)
+    for code in ("JIG_DISABLED", "JIG_NOT_PREPARED", "JIG_FIXED_SKIPPED", "JIG_FIXED_FAILED", "JIG_FAILED",
+                 "JIG_METHOD_NOT_RUN", "JIG_AUX_REACTION", "JIG_DISP_FROM_TARGET"):
+        assert msg.template(code) != code, code

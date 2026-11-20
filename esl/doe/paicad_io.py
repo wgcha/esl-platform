@@ -20,10 +20,17 @@ import numpy as np
 from esl.doe import FAILED, SKIPPED, commands, load_messages
 from esl.errors import EslError
 
+# v0.24.4 이동(esl/io/fixed_scan.py — Case 지그 공용 읽기): 옛 이름 재수출(같은 객체)
+from esl.io.fixed_scan import (  # noqa: F401
+    FIXED_KINDS,
+    FIXED_NPZ,
+    SCAN_JSON,
+    read_fixed,
+    read_json_limited,
+)
+
 # paicad 보고 파일 이름(0.14.0 소스 확인값 — 0.15.4 동일)
 EXTRACT_JSON = "shell_features.json"
-SCAN_JSON = "shell_scan.json"
-FIXED_NPZ = "fixed_nodes.npz"
 TAG_JSON = "shell_tag.json"
 TAG_NPZ = "shell_tag_nodes.npz"              # shell tag 노드 표(paicad shell/tag.py — files.nodes 가 우선)
 TAG_KIND_FACE, TAG_KIND_EDGE, TAG_KIND_VERTEX = 1, 2, 3   # paicad tag kind: -1 unmatched, 0 interior, 1 face, 2 edge, 3 vertex
@@ -39,7 +46,6 @@ REPORT_OF = {"fixed_scan": SCAN_JSON, "extract": EXTRACT_JSON, "tag": TAG_JSON, 
              "run": RUN_JSON, "grid": GRID_MANIFEST}
 
 TYPE_LETTER = {"BEAD_DEPTH": "D", "BEAD_WIDTH": "W", "BEAD_POS_U": "U", "BEAD_POS_V": "V"}
-FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")
 EXIT_ARGS, EXIT_INTERNAL, EXIT_INTERRUPTED = 2, 20, 130
 PATH_KEYS = ("assem_dir", "out_dir", "cad", "features", "fixed_dir", "tag_dir", "values", "cells", "thumb",
              "options", "body_map", "update_dir", "morph_dir", "check_dir", "out_files_dir")
@@ -159,23 +165,6 @@ def classify(stage: str, exit_code: int | None, code: str | None = None, *, time
 
 
 # ---------------------------------------------------------------- 보고 JSON
-def read_json_limited(path: str, max_mb: float) -> dict:
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        raise EslError("PAICAD_FAILED", f"paicad 보고 파일이 없음: {os.path.basename(path)}") from None
-    if size > float(max_mb) * 1024 * 1024:
-        raise EslError("PAICAD_FAILED", f"paicad 보고 파일이 상한 {max_mb} MB 를 넘음: {os.path.basename(path)}")
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError) as exc:
-        raise EslError("PAICAD_FAILED", f"paicad 보고 파일을 읽지 못함: {os.path.basename(path)}: {exc}") from None
-    if not isinstance(doc, dict):
-        raise EslError("PAICAD_FAILED", f"paicad 보고 파일 최상위가 객체가 아님: {os.path.basename(path)}")
-    return doc
-
-
 def judge(stage: str, exit_code: int | None, stdout: str, report_path: str | None, *, timeout: bool = False,
           max_mb: float = 64) -> dict:
     """§6.2 판정 → {ok, code, status, message, result, report(doc|None), warnings[]}.
@@ -336,20 +325,6 @@ def extract_warnings(doc: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------- fixed-scan
-def read_fixed(d: str, max_mb: float = 64) -> dict:
-    """{doc, node_id, part, kind_mask, cluster, xyz, clusters[{id, center, kinds, nodes}]}."""
-    doc = read_json_limited(os.path.join(d, SCAN_JSON), max_mb)
-    if doc.get("status") != "OK":
-        raise EslError("FIXED_PARSE_FAILED", f"fixed-scan 상태 {doc.get('status')} {doc.get('code')}")
-    p = os.path.join(d, FIXED_NPZ)
-    if not os.path.isfile(p):
-        raise EslError("PAICAD_FAILED", "fixed_nodes.npz 가 없음")
-    with np.load(p, allow_pickle=False) as z:
-        arr = {k: np.asarray(z[k]) for k in ("node_id", "part", "kind_mask", "cluster", "xyz")}
-    fx = doc.get("fixed") or {}
-    return {"doc": doc, **arr, "clusters": list(fx.get("clusters") or [])}
-
-
 def kind_labels(mask: int) -> list[str]:
     return [k for b, k in enumerate(FIXED_KINDS) if int(mask) & (1 << b)]
 

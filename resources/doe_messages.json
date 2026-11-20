@@ -1,5 +1,5 @@
 {
- "version": "2026-11-15.1",
+ "version": "2026-11-20.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -276,6 +276,14 @@
   "JIG_DESIGN_FAILED": "안 {did} 의 지그 재풀이에 실패했습니다({err}) — 지그 순위에서 빠집니다. (Jig re-solve failed for design.)",
   "JIG_MODES_FAILED": "지그 모드 계산이 완전하지 않습니다({stage} {err}, 수렴 {n_conv}개) — 수렴한 모드만(없으면 모드 기저 없이) 진행합니다. (Jig modes incomplete.)",
   "JIG_LOAD_CANCEL": "맞춤 하중이 하는 일에 비해 과대합니다({label}: 일 효율 {work_eff}, 하중 절댓값 합 {F_sum_abs} N) — 서로 상쇄하는 하중일 수 있어 순위는 산출했지만 기준 재현 하중을 확인하세요. (Fitted loads are large relative to the work they do.)",
+  "JIG_DISABLED": "지그 ESL 계산이 설정에서 꺼져 있습니다({detail}). (Jig ESL disabled by settings.)",
+  "JIG_NOT_PREPARED": "지그 tie 노드 준비 기록이 없어 지그 ESL 을 계산하지 않았습니다(워커 구버전 또는 코어 단독 실행). (Jig tie nodes not prepared.)",
+  "JIG_FIXED_SKIPPED": "지그 tie 노드 준비(paicad fixed-scan)를 건너뛰어 지그 ESL 을 계산하지 않았습니다({detail}). (Jig fixed-scan skipped.)",
+  "JIG_FIXED_FAILED": "지그 tie 노드 준비(paicad fixed-scan)가 실패해 지그 ESL 을 계산하지 못했습니다({detail}). (Jig fixed-scan failed.)",
+  "JIG_FAILED": "지그 ESL 계산 중 오류가 났습니다({stage} {err}) — 이 출처는 결과가 없습니다(다른 출처는 그대로). (Jig ESL computation failed.)",
+  "JIG_METHOD_NOT_RUN": "이 스터디는 지그 {name}을 계산하지 않았습니다 — 새 스터디·복제에서 계산(rank.jig.methods). (Jig method not computed in this study.)",
+  "JIG_AUX_REACTION": "3-2-1 면내 지지가 받는 반력이 큽니다({aux_reaction_rel} > {aux_reaction_warn}, 맞춤 하중 대비) — 면내 맞춤 하중이 평형이 아닐 수 있습니다(결과는 산출). (Large in-plane 3-2-1 reaction.)",
+  "JIG_DISP_FROM_TARGET": "tie 노드 변위를 낙하 결과에서 그대로 강제했습니다 — 재현 지표가 유리하게 나옵니다(쓰는 정보량이 다름). (Tie displacements prescribed from the drop result.)",
   "SM_CROSS_MESH": "다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 순위를 매겼습니다(결과 metric_effective = solve). (Cross-mesh comparison: ranked by re-solved compliance, lower precision.)",
   "BG_W_PARTIAL": "비드 {bead}: 폭(W)은 폭 정보가 있는 구간 {n_w}/{n_seg}개(길이 {cover})에만 적용되고 나머지 구간은 깊이(D)만 바뀝니다. (Info: bead {bead} width applies to {n_w} of {n_seg} segments only.)",
   "RG_RANGE_LIMITED": "{var} 기본 범위를 {from} → {to} mm 로 줄였습니다({side} 쪽, 사유 {reason}). 미리 모핑해 본 안이 이 끝에서 요소 품질 기준을 넘었습니다. (Info: default range of {var} limited by element-quality probe.)",

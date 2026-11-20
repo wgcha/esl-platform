@@ -87,6 +87,9 @@ DEFAULTS: dict = {
     # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일).
     # metric 기본 solve(재풀이 C — 2026-11-13 사용자 결정 D-0.20.0-SM-11), lin(ritz|taylor) 은 선택·보조 열
     # v0.23.0 지그 순위(esl_jig_rank.md §6): metric 기본 jig(새 스터디), rank.jig = 새 스냅샷 doe.rank.jig 로 고정되는 지그 설정
+    # v0.24.4: rank.jig 값 = esl.mech.jig.JIG_DEFAULTS 의 같은 이름 값(거울 — 시험 test_jig_move 가 같음 확인. esl.doe 가 scipy 를
+    # 끌어오지 않게 import 대신 거울). 새 키(tie_dofs·methods… JIG_NEW_KEYS)는 pydantic·yaml 2개와 함께 더함(P2b B2 — 그 전 새 스냅샷
+    # = 옛 키만 = LEGACY_ABSENT 동작, 결과 불변)
     "rank": {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
              "imbalance_warn": 0.02,
              # v0.24.0 보완(esl_fint.md §6.2): 보조 지표 umax(평가 영역) — 새 스냅샷 doe.rank.eval_region 으로 고정(옛 스냅샷 = 없음)
