@@ -54,7 +54,10 @@ JIG_DEFAULTS = {
     "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02,
     # v0.24.4 (D-0.24.4-JIG-3·4·5·7·16)
     "tie_dofs": "normal", "methods": ["fixed", "prescribed", "spring"], "normal_kink_deg": 45.0,
-    "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto", "spring_alpha": 1.0,
+    "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto",
+    # 스프링 α 기본 0.01(메인 결정 2026-11-20 — P2a 합성: α = 1 은 노드 자기 강성이라 spring ≈ prescribed(‖Δu‖/‖u‖ 2.4e-5),
+    # α ≲ 1e-2 에서야 구분됨, Q-JIGC-1 사용자 확인 대기 — 값은 여기 한 곳, D-0.24.4-JIG-19)
+    "spring_alpha": 0.01,
     "spring_k_value": None, "spring_alpha_scan": [],
 }
 JIG_NEW_KEYS = ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reaction_warn", "spring_k_mode",
@@ -163,6 +166,22 @@ def select_jig_nodes(mesh, node_id, *, kind_mask=None, kind_bits=0) -> dict:
         detail["bad_comp_jig"] = [d["n_jig"] for d in bad]
     detail["n_comp"] = int(comps.size)
     return out
+
+
+def max_edge(mesh) -> float:
+    """대상 최대 요소 변 길이(deck 표면 읽기 상자 여유 — 스터디 ``stages._jig_hmax`` 와 같은 식, v0.24.4 Case 공용)."""
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    C = np.asarray(mesh["conn"], dtype=np.int64)
+    quad = np.asarray(mesh["elem_type"]) != 3
+    h = 0.0
+    for a, b, only_quad in ((0, 1, False), (1, 2, False), (2, 3, True), (3, 0, True)):
+        ok = (C[:, a] >= 0) & (C[:, b] >= 0) & (quad if only_quad else True)
+        if np.any(ok):
+            h = max(h, float(np.linalg.norm(X[C[ok, a]] - X[C[ok, b]], axis=1).max()))
+    tri = (~quad) & (C[:, 2] >= 0)
+    if np.any(tri):
+        h = max(h, float(np.linalg.norm(X[C[tri, 2]] - X[C[tri, 0]], axis=1).max()))
+    return h
 
 
 def support_spread(x, jig_idx, part_mask=None) -> dict:
@@ -761,12 +780,48 @@ def _weighted(V, a, n, w_ip):
     return a[:, None] * (w_ip * V + (1.0 - w_ip) * vn[..., None] * n)
 
 
-def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force, reg_modes=0.0, drop_kinds=()) -> dict:
+def _eq_reduce(Cb, cb, lb):
+    """등식 C_b b = c_b(b = 정규화 계수)를 b = T b_i + t0 로 소거(v0.24.4 — 3-2-1 면내 반력 0 제약, D-0.24.4-JIG-20).
+    행 축소 = SVD(특이값 > 1e-10·최대), 종속 열 = 하한 없는(−∞) 열 중 피벗 QR 앞 r 개(경계 b ≥ 0 은 독립 열에 그대로 남음).
+    반환 (T, t0, ind, r, None) 또는 소거 불가 = (None, None, None, r, 사유)."""
+    from scipy.linalg import qr as _qr
+    Cb = np.asarray(Cb, dtype=np.float64)
+    if Cb.size == 0:
+        return None, None, None, 0, "empty"
+    Uc, sc, Vt = np.linalg.svd(Cb, full_matrices=False)
+    r = int(np.sum(sc > 1e-10 * sc[0])) if sc.size and sc[0] > 0 else 0
+    if r == 0:
+        return None, None, None, 0, "zero"
+    Cr = Vt[:r]
+    cr = (Uc[:, :r].T @ np.asarray(cb, dtype=np.float64)) / sc[:r]
+    unb = np.flatnonzero(np.isinf(lb))
+    if unb.size < r:
+        return None, None, None, r, "few_free_columns"
+    _q, Rq, piv = _qr(Cr[:, unb], pivoting=True, mode="economic")
+    dg = np.abs(np.diag(Rq))
+    if dg.size < r or not dg[0] > 0 or dg[r - 1] <= 1e-8 * dg[0]:
+        return None, None, None, r, "rank"
+    dep = np.sort(unb[piv[:r]])
+    n = Cb.shape[1]
+    ind = np.setdiff1d(np.arange(n), dep)
+    Cd, Ci = Cr[:, dep], Cr[:, ind]
+    T = np.zeros((n, ind.size))
+    T[ind, np.arange(ind.size)] = 1.0
+    T[dep] = -np.linalg.solve(Cd, Ci)
+    t0 = np.zeros(n)
+    t0[dep] = np.linalg.solve(Cd, cr)
+    return T, t0, ind, r, None
+
+
+def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force, reg_modes=0.0, drop_kinds=(),
+              eq=None) -> dict:
     """법선/면내 가중 최소제곱 + 하중 Tikhonov(D-JIG-5·16):
     min (Ua − u)ᵀW(Ua − u) + ḡ_N·(reg_force·Σ_{col_kind ∈ 2,3} a² + reg_modes·Σ_{col_kind = 4} a²) (D-JIG-17 분리),
     W_n = (A_n/mean A)(nnᵀ + w_ip(I − nnᵀ)), ḡ_N = mean_{법선 열} G_kk. 법선 열 = ridge 만.
     정규화 b = D_s a: Ĝ = D_s⁻¹GD_s⁻¹ + λI + diag(ρ_k·ḡ_N/G_kk) = LLᵀ (ρ_k = reg_force | reg_modes | 0),
-    b* = BVLS argmin ‖Lᵀb − L⁻¹D_s⁻¹h‖² (접촉 법선 b ≥ 0). drop_kinds 열은 a = 0(모드 제외 맞춤 = (4,))."""
+    b* = BVLS argmin ‖Lᵀb − L⁻¹D_s⁻¹h‖² (접촉 법선 b ≥ 0). drop_kinds 열은 a = 0(모드 제외 맞춤 = (4,)).
+    v0.24.4 eq = (C (k, nb), c (k,)): 등식 C a = c 를 하한 없는 열 소거로 정확히 둔 같은 BVLS(D-0.24.4-JIG-20 — 3-2-1 면내 반력
+    0). None = 이전 경로 그대로(산술 불변). 반환에 eq{n, applied, resid, reason}(eq 를 준 때만)."""
     U = np.asarray(U, dtype=np.float64)
     nb = U.shape[0]
     ut = np.asarray(u_tgt_fit, dtype=np.float64)
@@ -797,6 +852,7 @@ def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force,
         if int(basis["reg_sign"][r]) > 0:
             lo[nc * r] = 0.0
     n_bound = 0
+    eq_info: dict = {}
     if act.size:
         d = s[act]
         rho = np.where(np.isin(ck[act], (COL_TANGENT, COL_BODY)), float(reg_force),
@@ -810,7 +866,26 @@ def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force,
             raise EslError("SOLVER_SINGULAR", "지그 보정 정규방정식 특이 — jig.ridge > 0 필요") from e
         rhs = np.linalg.solve(L, hv[act] / d)
         lb = lo[act]
-        if np.all(np.isinf(lb)):
+        red = None
+        if eq is not None:
+            C = np.asarray(eq[0], dtype=np.float64).reshape(-1, nb)
+            T, t0, ind, r_eq, why = _eq_reduce(C[:, act] / d[None, :], np.asarray(eq[1], dtype=np.float64).reshape(-1), lb)
+            eq_info = {"n": int(r_eq), "applied": T is not None, "reason": why}
+            if T is not None:
+                red = (T, t0, ind)
+        if red is not None:
+            T, t0, ind = red
+            A2 = L.T @ T
+            r2 = rhs - L.T @ t0
+            lb2 = lb[ind]
+            if np.all(np.isinf(lb2)):
+                bi = np.linalg.lstsq(A2, r2, rcond=None)[0]
+            else:
+                bi = lsq_linear(A2, r2, bounds=(lb2, np.full(ind.size, np.inf)), method="bvls", tol=1e-12).x
+                bi = np.where(np.isfinite(lb2) & (bi < 0), 0.0, bi)
+                n_bound = int(np.sum(np.isfinite(lb2) & (bi <= 0.0)))
+            b = T @ bi + t0
+        elif np.all(np.isinf(lb)):
             b = np.linalg.solve(L.T, rhs)
         else:
             res = lsq_linear(L.T, rhs, bounds=(lb, np.full(act.size, np.inf)), method="bvls", tol=1e-12)
@@ -818,10 +893,19 @@ def fit_loads(U, u_tgt_fit, w_fit, n_fit, basis, *, ridge, w_inplane, reg_force,
             b = np.where(np.isfinite(lb) & (b < 0), 0.0, b)
             n_bound = int(np.sum(np.isfinite(lb) & (b <= 0.0)))
         a[act] = b / d
+    elif eq is not None:
+        eq_info = {"n": 0, "applied": False, "reason": "no_active_columns"}
     r = np.einsum("k,kmi->mi", a, U) - ut
     den = float(np.sum(_weighted(ut, aw, nn, wip) * ut))
     resid = float(np.sqrt(np.sum(_weighted(r, aw, nn, wip) * r) / den)) if den > 0 else 0.0
-    return {"a": a, "resid_rel": resid, "n_bound_active": n_bound, "g_N": gN}
+    out = {"a": a, "resid_rel": resid, "n_bound_active": n_bound, "g_N": gN}
+    if eq is not None:
+        C = np.asarray(eq[0], dtype=np.float64).reshape(-1, nb)
+        c = np.asarray(eq[1], dtype=np.float64).reshape(-1)
+        sc_ = float(np.abs(C).sum(axis=1).max(initial=0.0) * np.abs(a).max(initial=0.0)) + float(np.abs(c).max(initial=0.0))
+        eq_info["resid"] = float(np.abs(C @ a - c).max(initial=0.0) / sc_) if sc_ > 0 else 0.0
+        out["eq"] = eq_info
+    return out
 
 
 def respond(h, loads, *, umax_mask=None, keep_u=False, ev_mask=None) -> list[dict]:

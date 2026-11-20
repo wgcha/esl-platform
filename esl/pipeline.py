@@ -1112,7 +1112,8 @@ def stage_esl(ctx: Context) -> dict:
     plastic = _plastic_diag(ctx, model, int(sel["frame_index"]))       # v0.24.0 소성 진단(esl_fint.md §4 — 계산 변경 없음)
     bshort = _bforce_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F, plastic)   # v0.24.0 경계력 ESL(기존 파일 불변 — 새 파일만)
     fshort = _fint_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F, plastic)     # v0.24.0 내력 ESL(esl_fint.md §3)
-    return {"bforce": bshort, "fint": fshort, "plastic": plastic, "noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
+    jshort = _jig_esl(ctx, model, d, sel, u_rel, sup, sm)                         # v0.24.4 지그 ESL 3방식(esl_jig_case.md §5.2)
+    return {**jshort, "bforce": bshort, "fint": fshort, "plastic": plastic, "noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
             "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,
             "solver": solver_stats(sm), "strain_source": summ["strain_source"]}
@@ -1420,6 +1421,479 @@ def _fint_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u, u_rel, R, 
             "limit_text": bfm.limit_text(doc["limits"]), "sign": doc["signs"]["fint"]}
 
 
+# ====================================================================== v0.24.4 지그 ESL 3방식 (esl_jig_case.md §5)
+JIG_FIXED_DIR, JIG_PREP_JSON, JIG_SURF_NPZ, JIG_BASIS_NPZ = "jig_fixed", "jig_prep.json", "jig_surf.npz", "jig_basis.npz"
+CASE_JIG_SCHEMA, CASE_JIG_BASIS_SCHEMA, JIG_SURF_SCHEMA = "esl/case_jig/1", "esl/case_jig_basis/1", "esl/case_jig_surf/1"
+JIG_PREP_CODE = {"failed": "JIG_FIXED_FAILED", "skipped": "JIG_FIXED_SKIPPED", "disabled": "JIG_DISABLED"}
+_JIG_SURF_ARRAYS = ("x", "node_id", "tri", "tri_part", "tri_thick")
+
+
+class _JigStop(Exception):
+    """공유 단계에서 세 행을 같은 code 로 멈춤(unavailable — 계산 예외 JIG_FAILED 와 구별). files = 진단 json 을 쓸지."""
+
+    def __init__(self, code: str, reason: str, files: bool, extra: dict | None = None):
+        super().__init__(code)
+        self.code, self.reason, self.files, self.extra = code, reason, files, extra or {}
+
+
+def _jig_text(code: str, **kw) -> str:
+    from esl.io import messages as _msg
+    return _msg.text(code, **kw)
+
+
+def _jig_reason(code: str, **kw) -> str:
+    """문구(resources/doe_messages.json — 스터디와 같은 원본)의 사유 부분(코드 접두 없음)."""
+    return _jig_text(code, **kw)[len(code) + 2:]
+
+
+def _jig_prep_note(ctx: Context) -> dict | None:
+    """워커 tie 준비 시도 기록(01_extract/jig_prep.json — esl_jig_case.md §5.1, bf_ondemand 기록과 같은 형식
+    {attempts: [{job_id, status, code, detail}]}, 단일 사전도 허용). 이 작업(tag — 없으면 마지막 시도)의 마지막 시도가 ok 가 아니면
+    {code, detail}(code = 기록 code, 없으면 status → JIG_PREP_CODE), 아니면 None."""
+    p = ctx.p(D_EXTRACT, JIG_PREP_JSON)
+    if not os.path.isfile(p):
+        return None
+    try:
+        doc = _read_json(p)
+    except (OSError, ValueError):
+        return None
+    atts = doc.get("attempts") if isinstance(doc, dict) else None
+    atts = [a for a in (atts if isinstance(atts, list) else [doc]) if isinstance(a, dict)]
+    if ctx.tag is not None:
+        atts = [a for a in atts if str(a.get("job_id", a.get("tag"))) == str(ctx.tag)]
+    if not atts or atts[-1].get("status") == "ok":
+        return None
+    a = atts[-1]
+    code = str(a.get("code") or JIG_PREP_CODE.get(str(a.get("status")), "JIG_FIXED_FAILED"))
+    return {"code": code, "detail": str(a.get("detail") or a.get("status") or "")}
+
+
+def _jig_mesh(model: StoredModel) -> dict:
+    return {"x0": model.x0, "conn": model.conn, "elem_type": model.elem_type, "thickness": model.thickness, "E": model.E,
+            "nu": model.nu, "node_id": model.node_id}
+
+
+def _jig_surface(ctx: Context, model: StoredModel, J: dict, fit, warns: list):
+    """deck 다른 부품 표면(``esl.rad.surface.other_surfaces`` — 읽기만) + 캐시 01_extract/jig_surf.npz(키 = starter·include stat·
+    part·상자·여유·상한). 읽기 실패·상한 초과 = 경고 후 패치로(스터디 _jig_surface 와 같은 규칙). 반환 (surf | None, 사유, 요약)."""
+    from esl.mech import jig as jg
+    from esl.rad import surface as srf
+    t0 = _time.perf_counter()
+    X = model.x0[np.asarray(fit, bool)]
+    pad = float(J["contact_gap_mm"]) + jg.max_edge(_jig_mesh(model))
+    cc = ctx.cfg["case"]
+    files = []
+    for f in [ctx.rad, *model.includes]:
+        try:
+            st = os.stat(f)
+            files.append([os.path.abspath(f), int(st.st_size), int(st.st_mtime_ns)])
+        except OSError:
+            files.append([os.path.abspath(f), None, None])
+    key = json.dumps({"schema": JIG_SURF_SCHEMA, "files": files, "part": int(model.part_id),
+                      "lo": [float(v) for v in X.min(axis=0)], "hi": [float(v) for v in X.max(axis=0)], "pad": pad,
+                      "max_tris": int(J["max_surf_tris"]), "include_path_map": cc.get("include_path_map") or None,
+                      "depth": int(cc["rad_include_max_depth"])}, sort_keys=True, ensure_ascii=False)
+    cpath = ctx.p(D_EXTRACT, JIG_SURF_NPZ)
+    surf, cached = None, False
+    if os.path.isfile(cpath):
+        try:
+            with np.load(cpath, allow_pickle=False) as z:
+                if str(z["key"]) == key:
+                    surf = {k: np.asarray(z[k]) for k in _JIG_SURF_ARRAYS}
+                    surf.update(json.loads(str(z["meta"])))
+                    cached = True
+        except (OSError, ValueError, KeyError):
+            surf = None
+    if surf is None:
+        try:
+            surf = srf.other_surfaces(ctx.rad, int(model.part_id), X.min(axis=0), X.max(axis=0),
+                                      include_path_map=cc.get("include_path_map") or None,
+                                      max_include_depth=int(cc["rad_include_max_depth"]),
+                                      max_line_bytes=max_line_bytes_of(cc), max_tris=int(J["max_surf_tris"]), pad_mm=pad)
+        except EslError as exc:
+            code = "JIG_SURF_TOO_LARGE" if exc.code == "JIG_SURF_TOO_LARGE" else "JIG_SURF_UNAVAILABLE"
+            warns.append(_jig_text(code, err=exc.code))
+            return None, "surf_failed", {"status": "failed", "code": code, "err": exc.code}
+        except (OSError, KeyError, ValueError) as exc:
+            warns.append(_jig_text("JIG_SURF_UNAVAILABLE", err=type(exc).__name__))
+            return None, "surf_failed", {"status": "failed", "code": "JIG_SURF_UNAVAILABLE", "err": type(exc).__name__}
+        try:                                               # 캐시 쓰기(실패해도 계산은 계속 — 다음 ESL 이 다시 읽음)
+            tmp = ctx.guard(ctx.p(D_EXTRACT, "jig_surf.tmp.npz"))
+            meta = {k: surf[k] for k in ("thickness_known", "n_parts", "n_shell", "n_solid_faces", "n_skipped", "seconds")
+                    if k in surf}
+            np.savez_compressed(tmp, key=np.asarray(key), meta=np.asarray(json.dumps(_jsonable(meta))),
+                                **{k: np.asarray(surf[k]) for k in _JIG_SURF_ARRAYS})
+            atomic_replace(tmp, ctx.guard(cpath))
+        except OSError as exc:
+            ctx.warnings.append(f"지그 deck 표면 캐시를 쓰지 못함({type(exc).__name__}) — 다음 ESL 때 다시 읽음")
+    info = {"status": "ok", "cached": cached, "n_tris": int(np.asarray(surf["tri"]).shape[0]),
+            "n_parts": surf.get("n_parts"), "n_shell": surf.get("n_shell"), "n_solid_faces": surf.get("n_solid_faces"),
+            "thickness_known": surf.get("thickness_known"), "seconds": round(_time.perf_counter() - t0, 3)}
+    return surf, None, info
+
+
+def _arr_sha(z: dict) -> str:
+    h = hashlib.sha256()
+    for k in sorted(z):
+        a = np.ascontiguousarray(z[k])
+        h.update(f"{k}|{a.dtype.str}|{a.shape}|".encode())
+        h.update(a.tobytes())
+    return h.hexdigest()
+
+
+def _jig_shared(ctx: Context, model: StoredModel, J: dict, sup, sm: ShellModel, warns: list, infos: list,
+                tm: dict) -> dict:
+    """공유 단계(§5.2-2·3): tie 노드 J → 구속 법선·3-2-1 면내 → rigid_free → deck 표면·영역 → 공유 분해(열 factor own ∧ hard)·모드·
+    하중 기저·기저 응답(+ 3-2-1 면내 반력) → 04_esl/jig_basis.npz 배열. 세 행 공통으로 멈출 사유 = _JigStop."""
+    from esl.io import fixed_scan as fxs
+    from esl.mech import jig as jg
+    from esl.mech import jig_bc
+    t0 = _time.perf_counter()
+    mesh = _jig_mesh(model)
+    X0, nid = model.x0, model.node_id
+    N = nid.size
+    fdir = ctx.p(D_EXTRACT, JIG_FIXED_DIR)
+    if not os.path.isfile(os.path.join(fdir, fxs.SCAN_JSON)):
+        note = _jig_prep_note(ctx)
+        if note is None:
+            raise _JigStop("JIG_NOT_PREPARED", _jig_reason("JIG_NOT_PREPARED"), False)
+        raise _JigStop(note["code"], _jig_reason(note["code"], detail=note["detail"]), False)
+    try:
+        fx = fxs.read_fixed(fdir)
+    except EslError as exc:
+        raise _JigStop("JIG_FIXED_FAILED", _jig_reason("JIG_FIXED_FAILED", detail=f"{exc.code}: {exc.message}"[:300]),
+                       False) from None
+    bits = 0
+    for k in J["fix_kinds"]:
+        bits |= 1 << fxs.FIXED_KINDS.index(k)
+    selj = jg.select_jig_nodes(mesh, np.asarray(fx["node_id"], dtype=np.int64),
+                               kind_mask=np.asarray(fx["kind_mask"], dtype=np.int64), kind_bits=bits)
+    det = selj["detail"] or {}
+    fix = {"source": "fixed_scan", "kinds": list(J["fix_kinds"]), "n_jig": int(selj["idx"].size),
+           "n_comp": int(selj["n_comp"]), "n_missing": int(det.get("n_missing", 0))}
+    if selj["code"] is not None:
+        raise _JigStop(selj["code"], _jig_reason(selj["code"], n_comp=det.get("n_comp", selj["n_comp"]),
+                                                 bad_comp_nodes=det.get("bad_comp_nodes", [])), True, {"fix": fix})
+    Jidx = np.asarray(selj["idx"], dtype=np.int64)
+    spread = jg.support_spread(X0, Jidx)
+    fix.update(jig_std=spread["jig_std"], part_std=spread["part_std"])
+    omega = np.ones(N, bool)
+    fit = omega.copy()
+    fit[Jidx] = False
+    td = str(J["tie_dofs"])
+    tie = jig_bc.tie_rows(mesh, Jidx, td, kink_deg=float(J["normal_kink_deg"]))
+    aux = jig_bc.aux_rows(X0, [(int(i), str(dd)) for i, dd in sup], tie, td, dup_deg=float(J["aux321_dup_deg"]))
+    bm = jig_bc.basis_method()
+    BC0 = jig_bc.build_bc(jig_bc.METHODS[bm], tie, aux, np.zeros((N, 3)))
+    rf = jig_bc.rigid_free(X0, jig_bc.components(mesh), BC0)
+    if rf["rigid_free"] > 0:
+        bad = [c for c in rf["per_comp"] if c["free"] > 0]
+        raise _JigStop("JIG_SUPPORT_DEGENERATE",
+                       _jig_reason("JIG_SUPPORT_DEGENERATE", n_comp=len(rf["per_comp"]),
+                                   bad_comp_nodes=[c["n_nodes"] for c in bad]) + f" — rigid_free {rf['rigid_free']}",
+                       True, {"fix": fix, "rigid_free": int(rf["rigid_free"])})
+    tm["tie"] = round(_time.perf_counter() - t0, 3)
+    if spread["tie_spread"] is not None and spread["tie_spread"] < float(J["tie_spread_min"]):
+        warns.append(_jig_text("JIG_SUPPORT_WEAK", tie_spread=f"{spread['tie_spread']:.3g}",
+                               tie_spread_min=f"{float(J['tie_spread_min']):g}"))
+    surf, why, surf_info = _jig_surface(ctx, model, J, fit, warns)
+    tm["surf"] = (surf_info or {}).get("seconds")
+    t1 = _time.perf_counter()
+    wts = jg.node_weights(mesh)
+    rs = jg.select_regions(mesh, fit, Jidx, surf, gap_mm=float(J["contact_gap_mm"]), knn=int(J["knn"]),
+                           chunk_nodes=int(J["chunk_nodes"]), max_regions=int(J["max_regions"]),
+                           min_regions=int(J["min_regions"]), min_nodes=int(J["min_region_nodes"]),
+                           min_area_mm2=float(J["min_region_area_mm2"]), patch_count=int(J["patch_count"]), weights=wts,
+                           surf_reason=why)
+    tm["regions"] = round(_time.perf_counter() - t1, 3)
+    if rs["fill_reason"] is not None:
+        warns.append(_jig_text("JIG_REGION_FALLBACK", reason=rs["fill_reason"], n_contact=rs["n_contact"],
+                               n_patch=rs["n_patch"]))
+    t1 = _time.perf_counter()
+    h0 = _solver_call(ctx, jig_bc.factorize, sm, BC0)
+    tm["factor"] = round(_time.perf_counter() - t1, 3)
+    t1 = _time.perf_counter()
+    n_req = int(J["n_modes"])
+    mdoc: dict[str, Any] = {"n_req": n_req, "n_conv": 0, "sigma": float(J["modes_sigma"]), "lam": [], "hz": [],
+                            "rho_t_used": float(J["rho_t_mm3"]), "hz_321": None, "hz_ratio": None, "ok": True}
+    g = lam = None
+    if n_req > 0:
+        try:
+            md = _solver_call(ctx, lambda: jig_bc.modes(h0, wts, n_req, float(J["rho_t_mm3"]), sigma=float(J["modes_sigma"]),
+                                                        tol=float(J["modes_tol"]), maxiter=int(J["modes_maxiter"])))
+            g, lam = md["g"], np.asarray(md["lam"], dtype=np.float64)
+            mdoc.update(n_conv=int(md["n_conv"]), lam=[float(v) for v in lam], hz=[float(v) for v in md["hz"]])
+            if not md.get("ok", True):
+                mdoc.update(ok=False, err=str(md.get("err")))
+                infos.append(_jig_text("JIG_MODES_FAILED", stage="jig", err=md.get("err"), n_conv=int(md["n_conv"])))
+        except EslError as exc:
+            if exc.code != "JIG_MODES_FAILED":
+                raise
+            d_ = getattr(exc, "detail", None) or {}
+            mdoc.update(ok=False, err=str(d_.get("err") or exc.code))
+            infos.append(_jig_text("JIG_MODES_FAILED", stage="jig", err=d_.get("err") or exc.code,
+                                   n_conv=int(d_.get("n_conv", 0))))
+    if bool(J["modes_ref321"]) and lam is not None and lam.size:
+        try:                                               # 정보: 3-2-1 구속 모드 대비 지그 모드 주파수(스터디 _jig_modes 와 같은 뜻)
+            m_ = jg.lumped_mass(wts, float(J["rho_t_mm3"]))
+            f3 = np.unique(np.asarray([6 * int(p) + int(ch) - 1 for p, dd in sup for ch in str(dd)], dtype=np.int64))
+            m3 = jg.jig_modes(sm.K(), jg.mass_diag6(m_), f3, n_req, float(J["modes_sigma"]), tol=float(J["modes_tol"]),
+                              maxiter=int(J["modes_maxiter"]))
+            mdoc["hz_321"] = [float(v) for v in m3["hz"]]
+            mdoc["hz_ratio"] = float(mdoc["hz"][0] / mdoc["hz_321"][0]) if mdoc["hz"] and mdoc["hz_321"][0] > 0 else None
+        except EslError as exc:
+            if exc.code != "JIG_MODES_FAILED":
+                raise
+            infos.append(_jig_text("JIG_MODES_FAILED", stage="321", err=exc.code, n_conv=0))
+    tm["modes"] = round(_time.perf_counter() - t1, 3)
+    t1 = _time.perf_counter()
+    basis = jg.load_basis(mesh, rs["regions"], wts, omega, body_force=bool(J["body_force"]),
+                          tangential=bool(J["basis_tangential"]), modes=g)
+    BR0 = _solver_call(ctx, jig_bc.basis_response, h0, basis, fit, BC0)
+    tm["basis"] = round(_time.perf_counter() - t1, 3)
+    if basis["n_normal_free"]:
+        infos.append(_jig_text("JIG_NORMAL_FREE", n=int(basis["n_normal_free"])))
+    if BR0["null_cols"]:
+        infos.append(_jig_text("JIG_BASIS_NULL", n=len(BR0["null_cols"])))
+    z = {"node_id": nid, "jig_idx": Jidx, "omega": omega, "tie_node": np.asarray(tie["node"], dtype=np.int64),
+         "tie_dir": np.asarray(tie["dir"], dtype=np.float64).reshape(-1, 3),
+         "aux_node": np.asarray(aux["node"], dtype=np.int64), "aux_dir": np.asarray(aux["dir"], dtype=np.float64).reshape(-1, 3),
+         "col_kind": np.asarray(basis["col_kind"], dtype=np.int8), "reg_ptr": basis["reg_ptr"], "reg_node": basis["reg_node"],
+         "reg_w": basis["reg_w"], "reg_dir": basis["reg_dir"], "reg_sign": basis["reg_sign"], "reg_kind": basis["reg_kind"],
+         "reg_part": basis["reg_part"], "node_area": np.asarray(wts["area"], dtype=np.float64)}
+    if basis["body_w"] is not None:
+        z["body_w"] = np.asarray(basis["body_w"], dtype=np.float64)
+    if basis["mode_f"] is not None:
+        z["mode_f"] = np.asarray(basis["mode_f"], dtype=np.float64)
+        z["mode_lam"] = np.asarray(lam, dtype=np.float64)
+        z["mode_rho_t"] = np.asarray([float(J["rho_t_mm3"])], dtype=np.float64)
+    regs = []
+    for k, rg in enumerate(rs["regions"]):
+        contact = int(rg["kind"]) == jg.REGION_CONTACT
+        regs.append({"id": k, "kind": jg.KIND_NAME.get(int(rg["kind"]), str(rg["kind"])),
+                     "part": int(rg["part"]) if contact else None, "n_nodes": int(np.asarray(rg["nodes"]).size),
+                     "area_mm2": float(rg["area"]), "center": [float(v) for v in rg["center"]],
+                     "normal": [float(v) for v in basis["reg_dir"][k][0]], "sign": int(basis["reg_sign"][k])})
+    an = np.asarray(aux["node"], dtype=np.int64)
+    shared = {
+        "fix": fix, "tie_spread": spread["tie_spread"], "normals": tie["normals"],
+        "aux321": {"nodes": [int(nid[i]) for i in aux["nodes"]], "rows": [[int(nid[n]), [float(v) for v in dd]]
+                                                                           for n, dd in zip(an, np.asarray(aux["dir"]))],
+                   "n_dup": int(aux["n_dup"]), "plane": aux["plane"]},
+        "rigid_free": int(rf["rigid_free"]), "regions_from": rs["regions_from"], "n_contact": int(rs["n_contact"]),
+        "n_patch": int(rs["n_patch"]),
+        "surf": None if surf_info is None else {**surf_info, "n_contact_nodes": int(rs["n_contact_nodes"]),
+                                                "n_found": int(rs.get("n_found", rs["n_contact"]))},
+        "fill_reason": rs["fill_reason"], "regions": regs, "nb": int(basis["nb"]), "modes": mdoc,
+        "basis_cfg": {"body_force": bool(J["body_force"]), "tangential": bool(J["basis_tangential"]),
+                      "w_inplane": float(J["w_inplane"]), "reg_force": float(J["reg_force"]),
+                      "reg_modes": float(J["reg_modes"]), "ridge": float(J["ridge"])}}
+    return {"mesh": mesh, "J": Jidx, "fit": fit, "omega": omega, "tie": tie, "aux": aux, "BC0": BC0, "h0": h0, "BR0": BR0,
+            "basis": basis, "wts": wts, "z": z, "doc": shared, "td": td}
+
+
+def _jig_bc_text(td: str, sh: dict) -> dict:
+    """진단 json bc 블록(④ 조건 문구 SUPPORT_TEXT["jig"] 자리 값 — val_src.support_text)."""
+    from esl.mech import jig_bc
+    return {"tie_dofs": td, "tie_text": jig_bc.TIE_DOFS[td]["text"], "n_jig": int(sh["J"].size),
+            "n_tie_rows": int(np.asarray(sh["tie"]["node"]).size), "n_aux": int(np.asarray(sh["aux"]["node"]).size)}
+
+
+def _jig_method(ctx: Context, model: StoredModel, d: str, J: dict, m: str, sh: dict, u_rel, sm: ShellModel,
+                h, BR, BC, tg: dict, k) -> tuple[dict, dict]:
+    """한 방식(§5.2-4·5): 맞춤(3-2-1 면내 반력 0 제약)·응답·재현(파트 Kabsch vs u_rel)·판정 → 04_esl/<src>.json·.npz. 반환 (요약, doc)."""
+    from esl.mech import bforce as bfm
+    from esl.mech import jig_bc
+    t0 = _time.perf_counter()
+    row = jig_bc.METHODS[m]
+    src = row["src"]
+    X0, nid = model.x0, model.node_id
+    r = _solver_call(ctx, lambda: jig_bc.run_method(
+        h, sh["basis"], BR["U"], tg["u_tgt"], BC, sh["fit"], sh["wts"], jig_idx=sh["J"], ridge=float(J["ridge"]),
+        w_inplane=float(J["w_inplane"]), reg_force=float(J["reg_force"]), reg_modes=float(J["reg_modes"]),
+        active_tol=float(J["active_tol"]), rc_basis=BR["rc_aux"]))
+    t_fit = _time.perf_counter() - t0
+    u_val, _, _, _ = kabsch.remove_rigid(X0, r["u"][:, :3])
+    Rt = np.array(r["R"], dtype=np.float64, copy=True)
+    if np.asarray(BC["sp_node"]).size:
+        np.add.at(Rt, np.asarray(BC["sp_node"], dtype=np.int64), np.asarray(r["fs"])[:, None] * np.asarray(BC["sp_dir"]))
+    rec = bfm.recon_report(u_rel, u_val, Rt, r["F"])
+    rep = r["report"]
+    fl = jig_bc.flags(m, rep, aux_rel=float(r["aux_reaction_rel"]), th=J)
+    label = _vs.LABEL.get(src, src)
+    limits = list(fl["limits"]) + [c for c in fl["info"] if _vs.LIMIT_CLASS.get(c)]
+    lkw = {"aux_reaction_rel": f"{r['aux_reaction_rel']:.3g}", "aux_reaction_warn": f"{float(J['aux_reaction_warn']):g}"}
+    limit_text = [_jig_reason(c, **lkw) for c in limits]
+    texts = []
+    for w in fl["warnings"]:
+        if w == "JIG_FIT_POOR":
+            texts.append(_jig_text(w, detail=f"{label}: MAC {rep['mac']:.3f}(기준 ≥ {float(J['mac_min']):g}), umax 오차 "
+                                             f"{rep['umax_err']:.1%}(기준 ≤ {float(J['umax_err_max']):g})"))
+        elif w == "JIG_TIE_RELATIVE":
+            texts.append(_jig_text(w, tie_rel=f"{rep['tie_rel']:.3g}", tie_rel_warn=f"{float(J['tie_rel_warn']):g}"))
+        else:
+            texts.append(_jig_text(w, label=label, work_eff=f"{rep['work_eff']:.3g}", F_sum_abs=f"{rep['F_sum_abs']:.4g}"))
+    info = [_jig_text(c, **lkw) for c in fl["info"]]
+    en = {**r["energy"], "aux_reaction_rel": float(r["aux_reaction_rel"])}
+    sp = None
+    if row["tie_stiff"] == "spring":
+        kk = np.asarray(BC["sp_k"], dtype=np.float64)
+        sp = {"k_mode": J["spring_k_mode"], "alpha": float(J["spring_alpha"]), "k_value": J["spring_k_value"],
+              "k_stats": {"min": float(kk.min()), "median": float(np.median(kk)), "max": float(kk.max())} if kk.size else None,
+              "alpha_scan": []}
+    fit = {kk_: rep[kk_] for kk_ in ("mac", "umax_tgt", "umax_fit", "umax_err", "err_p95", "resid_rel", "work_eff",
+                                      "cancel_rel", "F_sum_abs", "n_active")}
+    fit.update(tie_rel=rep["tie_rel"] if row["tie_rel_warn"] else None, rot_deg=float(tg["rot_deg"]),
+               with_modes=rep["with_modes"], without_modes=rep["without_modes"], modes=rep["modes"], body=rep["body"],
+               forces=[{kk_: f[kk_] for kk_ in ("region", "F_n", "F_t1", "F_t2", "F", "active")} for f in rep["forces"]],
+               aux_eq=r["aux_eq"], n_bound_active=int(r["fit"]["n_bound_active"]))
+    recon = {"status": "ok" if (rec["mac"] is not None and rec["mac"] >= float(J["mac_min"]) and rec["umax_err"] is not None
+                                and abs(rec["umax_err"]) <= float(J["umax_err_max"])) else "poor",
+             "mac_min": float(J["mac_min"]), **rec,
+             "support_rel": float(np.linalg.norm(Rt, axis=1).sum() / max(float(np.linalg.norm(r["F"], axis=1).sum()), 1e-300))}
+    t_tot = round(_time.perf_counter() - t0, 3)
+    doc = {"schema": CASE_JIG_SCHEMA, "source": src, "method": m, "method_name": row["name"], "tie_dofs": sh["td"],
+           "status": "ok", "code": None, "reason": None, **sh["doc"], "bc": _jig_bc_text(sh["td"], sh),
+           "fit": fit, "recon": recon, "energy": en, "spring": sp, "limits": limits, "limit_text": limit_text,
+           "warnings": [t.split(":", 1)[0] for t in texts], "warning_text": texts, "info": [t.split(":", 1)[0] for t in info],
+           "info_text": info, "seconds": {"fit": round(t_fit, 3), "total": t_tot}}
+    _write_json(ctx.f(d, f"{src}.json"), doc)
+    zz = {"node_id": nid, "f": np.asarray(r["F"], dtype=np.float64), "a": np.asarray(r["a"], dtype=np.float64),
+          "u_val": np.asarray(u_val, dtype=np.float64), **jig_bc.save_bc(BC), "jig_idx": sh["J"],
+          "basis_sha": np.asarray(sh["basis_sha"])}
+    np.savez_compressed(ctx.f(d, f"{src}.npz"), **zz)
+    ctx.warnings.extend(texts)
+    ctx.echo(f"[esl] {label}({jig_bc.TIE_DOFS[sh['td']]['text']} {int(sh['J'].size)} + 3-2-1 면내 "
+             f"{int(np.asarray(sh['aux']['node']).size)}): 맞춤 MAC {rep['mac']:.3f}, 재현 MAC "
+             f"{'–' if rec['mac'] is None else format(rec['mac'], '.3f')}, umax 오차 "
+             f"{'–' if rec['umax_err'] is None else format(rec['umax_err'], '+.1%')}, 3-2-1 면내 반력비 "
+             f"{r['aux_reaction_rel']:.2e}, C_mix {en['C_mix']:.4g}" + (f" · 한계 {limits}" if limits else ""))
+    summ = {"status": "ok", "code": None, "reason": None, "method": m, "tie_dofs": sh["td"], "n_jig": int(sh["J"].size),
+            "n_regions": len(sh["doc"]["regions"]), "n_contact": sh["doc"]["n_contact"], "n_patch": sh["doc"]["n_patch"],
+            "mac": rec["mac"], "umax_err": rec["umax_err"], "fit_mac": rep["mac"], "work_eff": rep["work_eff"],
+            "rigid_free": sh["doc"]["rigid_free"], "aux_reaction_rel": float(r["aux_reaction_rel"]),
+            "C_mix": en["C_mix"], "E": en["E"], "recon": recon["status"], "limits": limits, "limit_text": limit_text,
+            "seconds": t_tot}
+    return summ, doc
+
+
+def _jig_unavail(code: str, reason: str, *, m: str, td: str | None) -> dict:
+    return {"status": "unavailable", "code": code, "reason": reason, "method": m, "tie_dofs": td}
+
+
+def _jig_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u_rel, sup, sm: ShellModel) -> dict:
+    """Case 지그 ESL 3방식(esl_jig_case.md §5.2): 설정·tie 준비 → 공유 단계(J·법선·3-2-1 면내·영역·분해·모드·기저) → 방식마다
+    (METHODS 열로 BC·분해 선택 — 같은 구속 패턴이면 공유 분해) → 04_esl/jig_basis.npz·<src>.json·<src>.npz. 반환 = {src: 요약}
+    (ESL 실행 forces.<src>). 실패 격리: 준비·공유 단계 = 세 행 같은 code, 방식 단계 = 그 행만 JIG_FAILED, 예외가 ESL 단계·
+    full·bforce·fint 를 바꾸지 않는다(새 파일만)."""
+    from esl.mech import jig_bc
+    t_all = _time.perf_counter()
+    J = _config.jig_settings(ctx.cfg)
+    rows = list(jig_bc.METHODS)
+    td = str(J.get("tie_dofs"))
+    if not J["enabled"]:
+        rs_ = _jig_reason("JIG_DISABLED", detail="jig.enabled")
+        return {jig_bc.METHODS[m]["src"]: _jig_unavail("JIG_DISABLED", rs_, m=m, td=td) for m in rows}
+    methods = [m for m in jig_bc.methods_of(J) if m in jig_bc.METHODS]
+    out: dict[str, dict] = {}
+    for m in rows:
+        if m not in methods:
+            out[jig_bc.METHODS[m]["src"]] = _jig_unavail("JIG_DISABLED", _jig_reason("JIG_DISABLED", detail="jig.methods"),
+                                                         m=m, td=td)
+    if not methods:
+        return {jig_bc.METHODS[m]["src"]: out[jig_bc.METHODS[m]["src"]] for m in rows}
+    warns: list[str] = []
+    infos: list[str] = []
+    tm: dict[str, Any] = {}
+    sh = None
+    try:
+        jig_bc.check_cfg(J)
+        sh = _jig_shared(ctx, model, J, sup, sm, warns, infos, tm)
+    except _JigStop as st:
+        ctx.warnings.extend(warns)
+        for m in methods:
+            src = jig_bc.METHODS[m]["src"]
+            out[src] = _jig_unavail(st.code, st.reason, m=m, td=td)
+            if st.files:
+                _write_json(ctx.f(d, f"{src}.json"), {"schema": CASE_JIG_SCHEMA, "source": src, "method": m,
+                                                      "tie_dofs": td, "status": "unavailable", "code": st.code,
+                                                      "reason": st.reason, **st.extra, "warnings": [], "info": []})
+        ctx.echo(f"[esl] 지그 ESL 불가 {st.code}: {st.reason}")
+        return {jig_bc.METHODS[m]["src"]: out[jig_bc.METHODS[m]["src"]] for m in rows}
+    except Exception as exc:                                    # noqa: BLE001 — 지그 때문에 ESL 단계 실패 금지
+        err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
+        reason = _jig_reason("JIG_FAILED", stage="shared", err=err)
+        ctx.warnings.extend(warns)
+        ctx.warnings.append(_jig_text("JIG_FAILED", stage="shared", err=err))
+        for m in methods:
+            src = jig_bc.METHODS[m]["src"]
+            out[src] = _jig_unavail("JIG_FAILED", reason, m=m, td=td)
+            _write_json(ctx.f(d, f"{src}.json"), {"schema": CASE_JIG_SCHEMA, "source": src, "method": m, "tie_dofs": td,
+                                                  "status": "unavailable", "code": "JIG_FAILED", "reason": reason,
+                                                  "warnings": [], "info": []})
+        return {jig_bc.METHODS[m]["src"]: out[jig_bc.METHODS[m]["src"]] for m in rows}
+    ctx.warnings.extend(warns)
+    z = sh.pop("z")
+    sh["basis_sha"] = _arr_sha(z)
+    np.savez_compressed(ctx.f(d, JIG_BASIS_NPZ), schema=np.asarray(CASE_JIG_BASIS_SCHEMA), **z,
+                        sha256=np.asarray(sh["basis_sha"]))
+    sh["doc"]["info"] = infos
+    sh["doc"]["shared_warnings"] = [t.split(":", 1)[0] for t in warns]
+    sh["doc"]["seconds_shared"] = tm
+    sha0 = jig_bc.pattern_sha(sh["BC0"])
+    prep = []
+    for m in methods:                                          # BC(값·스프링) 먼저 — 공유 분해를 쓰는 방식부터 풀고 분해를 놓음
+        row = jig_bc.METHODS[m]
+        try:
+            tg = jig_bc.target(row["frame"], model.x0, u_rel, sh["J"], sh["fit"])
+            k = None
+            if row["tie_stiff"] == "spring":
+                k = jig_bc.spring_k(sm, sh["tie"], mode=str(J["spring_k_mode"]), alpha=float(J["spring_alpha"]),
+                                    value=J["spring_k_value"])
+            BC = jig_bc.build_bc(row, sh["tie"], sh["aux"], tg["u_tgt"], k=k)
+            prep.append((m, tg, BC, k, jig_bc.pattern_sha(BC) == sha0, None))
+        except Exception as exc:                                # noqa: BLE001
+            prep.append((m, None, None, None, True, exc))
+    prep.sort(key=lambda x: 0 if x[4] else 1)
+    for m, tg, BC, k, shared, err0 in prep:
+        src = jig_bc.METHODS[m]["src"]
+        h = None
+        try:
+            if err0 is not None:
+                raise err0
+            if shared:
+                h, BR = sh["h0"], sh["BR0"]
+            else:
+                if sh.get("h0") is not None:                   # 공유 분해 방식은 끝남 — 메모리 피크 = 분해 1개
+                    sh["h0"] = None
+                t1 = _time.perf_counter()
+                h = _solver_call(ctx, jig_bc.factorize, sm, BC)
+                BR = _solver_call(ctx, jig_bc.basis_response, h, sh["basis"], sh["fit"], BC)
+                tm[f"factor_{src}"] = round(_time.perf_counter() - t1, 3)
+            out[src], _doc = _jig_method(ctx, model, d, J, m, sh, u_rel, sm, h, BR, BC, tg, k)
+        except Exception as exc:                                # noqa: BLE001 — 그 방식 행만
+            err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
+            reason = _jig_reason("JIG_FAILED", stage=m, err=err)
+            ctx.warnings.append(_jig_text("JIG_FAILED", stage=m, err=err))
+            out[src] = _jig_unavail("JIG_FAILED", reason, m=m, td=sh["td"])
+            for f_ in (f"{src}.npz",):                         # 부분 파일 없음(json 이 상태 원본)
+                p_ = ctx.p(D_ESL, f_)
+                if os.path.isfile(p_):
+                    os.remove(ctx.guard(p_))
+            _write_json(ctx.f(d, f"{src}.json"), {"schema": CASE_JIG_SCHEMA, "source": src, "method": m,
+                                                  "tie_dofs": sh["td"], "status": "unavailable", "code": "JIG_FAILED",
+                                                  "reason": reason, **{k_: sh["doc"][k_] for k_ in ("fix", "rigid_free")},
+                                                  "warnings": [], "info": []})
+        finally:
+            h = None
+    sh["h0"] = None
+    tot = round(_time.perf_counter() - t_all, 3)
+    for m in methods:
+        out[jig_bc.METHODS[m]["src"]]["seconds_shared"] = tm
+        out[jig_bc.METHODS[m]["src"]]["seconds_all"] = tot
+    return {jig_bc.METHODS[m]["src"]: out[jig_bc.METHODS[m]["src"]] for m in rows}
+
+
 # ====================================================================== S5 validate
 DIRECT_BYTES_PER_ELEM = 80e3     # 직접법 인수분해 메모리 추정(SuperLU 실측 10만 요소 7.3 GB → 73 KB/요소, 보수적)
 FULL_SOLVE_MEM_FRAC = 0.8
@@ -1587,8 +2061,48 @@ def _spc_bc321(ctx: Context, model: StoredModel) -> list:
     return [(int(i), s["dof"]) for i, s in zip(_ids_to_idx(model.node_id, [s["node_id"] for s in sup], "support.json"), sup)]
 
 
-# 계획 열 값 → 함수(출처 이름 분기 없음): support → spc(P2 = jig), fallback → 변형률 참고용 변위
-_SUPPORT_FN: dict[str, Callable] = {"bc321": _spc_bc321}
+@dataclass
+class _Support:
+    """검증 지지 집합(계획 열 support 값 → ``_SUPPORT_FN``): key = 분해 묶음 키(같으면 분해 1회 공유 — bc321 = "bc321",
+    jig = ("jig", 구속 패턴 sha) — §3.9), show = [(노드 인덱스, 표시 dof)](검증 문서 reactions·지지 표시), factor(sm) → 분해,
+    solve(분해, F) → (u (N,6), R (N,3) 지지력 — 스프링 힘 포함). 분해는 패턴만으로 정해지고 값·바닥은 solve 가 행마다 넣는다."""
+    key: Any
+    show: list
+    factor: Callable
+    solve: Callable
+
+
+def _sup_bc321(ctx: Context, model: StoredModel, row=None) -> _Support:
+    spc = _spc_bc321(ctx, model)
+    return _Support("bc321", spc, lambda sm: sm.factorize(spc), lambda h, F: h.solve(F))
+
+
+def _sup_jig(ctx: Context, model: StoredModel, row) -> _Support:
+    """지지 집합 jig = 행 load 파일(04_esl/<src>.npz)의 bc 배열(tie 구속·스프링 + 3-2-1 면내 — esl_jig_case.md §3.9). 응답 = 같은
+    경계(값·바닥·k)로 재풀이, 지지력 = 구속 반력 + 스프링 힘."""
+    from esl.mech import jig_bc
+    z = _load_npz(_plan_file(ctx, row["load"]))
+    if "node_id" not in z or not np.array_equal(z["node_id"], model.node_id):
+        raise EslError("ID_MISMATCH", f"{_plan_rel(row['load'])} node_id 가 model.npz 와 다름")
+    BC = jig_bc.load_bc(z)
+    kind = np.asarray(BC["bc_kind"]).astype(np.int64)
+    seen: dict[int, str] = {}
+    for n, kk in zip(np.asarray(BC["bc_node"], dtype=np.int64).tolist(), kind.tolist()):
+        seen.setdefault(int(n), "tie" if kk == jig_bc.KIND_TIE else "aux321")
+    for n in np.asarray(BC["sp_node"], dtype=np.int64).tolist():
+        seen.setdefault(int(n), "spring")
+
+    def solve(h, F):
+        u, R, _rc, fs = jig_bc.solve(h, F, BC)
+        Rt = np.array(R, dtype=np.float64, copy=True)
+        if np.asarray(BC["sp_node"]).size:
+            np.add.at(Rt, np.asarray(BC["sp_node"], dtype=np.int64), np.asarray(fs)[:, None] * np.asarray(BC["sp_dir"]))
+        return u, Rt
+    return _Support(("jig", jig_bc.pattern_sha(BC)), sorted(seen.items()), lambda sm: jig_bc.factorize(sm, BC), solve)
+
+
+# 계획 열 값 → 함수(출처 이름 분기 없음): support → 지지 집합(_Support), fallback → 변형률 참고용 변위
+_SUPPORT_FN: dict[str, Callable] = {"bc321": _sup_bc321, "jig": _sup_jig}
 _FALLBACK_FN: dict[str, Callable] = {"u_rel_condensed": lambda ctx, sm, u_rel: _solver_call(ctx, _with_rot, sm, u_rel)}
 
 
@@ -1649,51 +2163,72 @@ def _val_src_prepare(ctx: Context, model: StoredModel, enabled: bool) -> list[di
 
 
 def _val_solve(ctx: Context, model: StoredModel, sm: ShellModel, legacy: dict, spc, F, ents: list, srec: dict):
-    """지지 집합마다 분해 1회 + 출처마다 해 1회(§4.1, D-0.24.3-VAL-3). legacy 묶음 먼저: legacy 해 = 지금과 같은
+    """지지 묶음마다 분해 1회 + 출처마다 해 1회(§4.1, D-0.24.3-VAL-3). legacy 묶음 먼저: legacy 해 = 지금과 같은
     ``sm.solve``(그 분해를 ``keep_factor`` 로 남김 — 산술·통계 v0.24.2 그대로), 같은 묶음 출처 해 = 그 분해 재사용.
-    반환 (u_val, R, 단계 요약 solver = legacy 해 직후 solver_stats). 출처 해 예외 = 그 행 failed."""
+    v0.24.4(esl_jig_case.md §3.9): 묶음 키 = 지지 집합 key(bc321 = 지지 이름, jig = (지지 이름, 구속 패턴 sha) — jig+jig_disp 1,
+    jig_spring 1). 지지 집합 읽기·분해·해 예외 = 그 행(묶음) failed. 반환 (u_val, R, 단계 요약 solver = legacy 해 직후 solver_stats)."""
     out = None
     for sup in (legacy["support"], *(s for s in _vs.SUPPORTS if s != legacy["support"])):
         mem = [e for e in ents if e["st"]["status"] == "done" and e["row"]["support"] == sup]
         is_leg = sup == legacy["support"]
         if not mem and not is_leg:
             continue
-        g: dict[str, Any] = {"support": sup, "keys": [], "factor_s": None, "solve_s": {}}
-        srec["groups"].append(g)
-        h: Any = None
-        if is_leg:
-            t0 = _time.perf_counter()
-            sm.keep_factor = bool(mem)
-            try:
-                u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
-            finally:
-                sm.keep_factor = False
-                h, sm.kept_factor = sm.kept_factor, None
-            stats = solver_stats(sm)
-            out = (u_val, Rr, stats)
-            kff = stats.get("K_ff") or {}
-            fac, asm = float(kff.get("factor_s") or 0.0), float(stats.get("assembly_s") or 0.0)
-            g.update(factor_s=round(fac, 4), assembly_s=round(asm, 4))
-            g["solve_s"][legacy["key"]] = round(max(_time.perf_counter() - t0 - fac - asm, 0.0), 4)
-            g["keys"].append(legacy["key"])
-        if mem and h is None:
-            try:
-                t0 = _time.perf_counter()
-                h = _solver_call(ctx, sm.factorize, spc if is_leg else _SUPPORT_FN[sup](ctx, model))
-                g["factor_s"] = round((g["factor_s"] or 0.0) + _time.perf_counter() - t0, 4)
-            except Exception as exc:                            # noqa: BLE001
-                for e in mem:
-                    _val_src_failed(ctx, e, exc)
-                continue
+        groups: dict[Any, list] = {}
         for e in mem:
             try:
-                t0 = _time.perf_counter()
-                e["u6"], e["R"] = _solver_call(ctx, h.solve, e["F"])
-                g["solve_s"][e["row"]["key"]] = round(_time.perf_counter() - t0, 4)
-                g["keys"].append(e["row"]["key"])
+                e["sup"] = _SUPPORT_FN[sup](ctx, model, e["row"])
+                e["show"] = e["sup"].show
             except Exception as exc:                            # noqa: BLE001
                 _val_src_failed(ctx, e, exc)
-        del h
+                continue
+            groups.setdefault(e["sup"].key, []).append(e)
+        keys = list(groups) or [sup]
+        if is_leg and sup not in groups:
+            keys = [sup, *keys] if groups else [sup]
+        for gk in keys:
+            gm = groups.get(gk, [])
+            g_leg = is_leg and gk == sup
+            if not gm and not g_leg:
+                continue
+            g: dict[str, Any] = {"support": sup, "keys": [], "factor_s": None, "solve_s": {}}
+            if isinstance(gk, tuple):
+                g["pattern"] = str(gk[1])[:16]
+            srec["groups"].append(g)
+            h: Any = None
+            if g_leg:
+                t0 = _time.perf_counter()
+                sm.keep_factor = bool(gm)
+                try:
+                    u_val, Rr = _solver_call(ctx, sm.solve, F, spc)
+                finally:
+                    sm.keep_factor = False
+                    h, sm.kept_factor = sm.kept_factor, None
+                stats = solver_stats(sm)
+                out = (u_val, Rr, stats)
+                kff = stats.get("K_ff") or {}
+                fac, asm = float(kff.get("factor_s") or 0.0), float(stats.get("assembly_s") or 0.0)
+                g.update(factor_s=round(fac, 4), assembly_s=round(asm, 4))
+                g["solve_s"][legacy["key"]] = round(max(_time.perf_counter() - t0 - fac - asm, 0.0), 4)
+                g["keys"].append(legacy["key"])
+            if gm and h is None:
+                try:
+                    t0 = _time.perf_counter()
+                    h = _solver_call(ctx, gm[0]["sup"].factor, sm)
+                    g["factor_s"] = round((g["factor_s"] or 0.0) + _time.perf_counter() - t0, 4)
+                except Exception as exc:                        # noqa: BLE001
+                    for e in gm:
+                        _val_src_failed(ctx, e, exc)
+                    continue
+            for e in gm:
+                try:
+                    t0 = _time.perf_counter()
+                    solve = e["sup"].solve if not g_leg else (lambda hh, FF: hh.solve(FF))
+                    e["u6"], e["R"] = _solver_call(ctx, solve, h, e["F"])
+                    g["solve_s"][e["row"]["key"]] = round(_time.perf_counter() - t0, 4)
+                    g["keys"].append(e["row"]["key"])
+                except Exception as exc:                        # noqa: BLE001
+                    _val_src_failed(ctx, e, exc)
+            del h
     return out
 
 
@@ -1754,7 +2289,7 @@ def stage_validate(ctx: Context) -> dict:
     if not (np.array_equal(ur["node_id"], nid) and np.array_equal(fz["node_id"], nid)):
         raise EslError("ID_MISMATCH", "04_esl 산출물의 node_id 가 model.npz 와 다름")
     u_rel, F = ur[legacy["target"][2]], fz[legacy["load"][2]]
-    spc = _SUPPORT_FN[legacy["support"]](ctx, model)
+    spc = _SUPPORT_FN[legacy["support"]](ctx, model, legacy).show
     frame_index = int(summ["frame"]["frame_index"])
     umax = float(np.max(np.linalg.norm(u_rel, axis=1))) if u_rel.size else 0.0      # 정규화 U = max|u_rel|
 
@@ -1891,7 +2426,8 @@ def stage_validate(ctx: Context) -> dict:
                     tol = crit["reaction_rel_max"]
                 warn = _config.source_reaction_tol(ctx.cfg, row["reaction_warn_key"], row["key"])
                 crit_s = {**crit, "reaction_rel_max": tol, **({} if warn is None else {"reaction_warn_rel": warn})}
-                evs = _vm.evaluate({**common, "crit": crit_s}, F=e["F"], u_val6=e["u6"], R=e["R"], eps_val=eps_s,
+                cs = {**common, "crit": crit_s, **({} if e.get("show") is None else {"spc": e["show"]})}
+                evs = _vm.evaluate(cs, F=e["F"], u_val6=e["u6"], R=e["R"], eps_val=eps_s,
                                    reaction_role=row["reaction_role"], noise_force=row["noise_force"],
                                    created_at=_utcnow(), criteria={**crit_s, "reaction_role": row["reaction_role"]},
                                    src=_vs.src_block(row, e["doc"], sum_abs))

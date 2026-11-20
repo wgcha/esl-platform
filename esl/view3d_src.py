@@ -1,7 +1,8 @@
 """v0.24.1 3D 보기 하중 출처 표(계약 docs/contracts/esl_view3d_sources.md §2.1·§2.3·§2.5) — 선언 + 순수 함수만.
 
-- 출처 키 하나 ``KEYS = ("jig", "full", "bforce", "fint")`` = 스터디 ``esl.doe.stages.RANK_SOURCES`` 키 순서 = 화면
-  ``frontend/src/view3d/sources.ts:SOURCE_ROWS`` (시험이 셋이 같음을 확인).
+- 출처 키 하나 ``KEYS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")`` = 스터디 ``esl.doe.stages.RANK_SOURCES`` 키
+  순서 = 화면 ``frontend/src/view3d/sources.ts:SOURCE_ROWS`` (시험이 셋이 같음을 확인). v0.24.4(esl_jig_case.md §2·§5.4): 지그 3방식
+  (jig = 고정·jig_disp = 강제 변위·jig_spring = 스프링 — 방식 표 ``esl.mech.jig_bc.METHODS`` 열 src)이 Case 행을 가짐.
 - Case 계획 표 ``CASE_PLAN``: 행 = 출처 1개, 모든 행이 모든 열(``COLUMNS``)을 가짐(누락 = CONFIG_INVALID, 값 None = "이 출처에 없음").
   호출부(백엔드 services/view3d.py)는 열만 읽고 출처 이름으로 분기하지 않는다(AGENTS.md). 새 출처 = 행 추가.
 - 파일 IO·설정 해석 없음. import 허용 = ``esl.errors`` 만(esl.doe·esl.pipeline·esl_platform·esl_worker 금지 — 시험 V-4).
@@ -15,7 +16,7 @@ from typing import Any
 
 from .errors import EslError
 
-KEYS = ("jig", "full", "bforce", "fint")
+KEYS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")
 COLUMNS = ("key", "legacy", "load", "target", "resp", "recon_tgt", "rigid", "support", "summary", "doc", "dir",
            "recon_dir", "na", "resp_na", "fallback")
 LOCS = ("esl", "val")
@@ -23,9 +24,20 @@ RIGIDS = ("kabsch", "linear")
 FILE_COLS = ("load", "target", "resp", "recon_tgt")         # (위치, 파일, 배열) 열 — 호출부 have 키
 
 CASE_PLAN: tuple[dict[str, Any], ...] = (
-    {"key": "jig", "legacy": False, "load": None, "target": None, "resp": None, "recon_tgt": None, "rigid": None,
-     "support": None, "summary": None, "doc": None, "dir": None, "recon_dir": None, "na": "V3D_STUDY_ONLY",
-     "resp_na": "V3D_STUDY_ONLY", "fallback": False},
+    # v0.24.4 지그 3방식(esl_jig_case.md §5.4): 하중 = 04_esl/<src>.npz f, 응답 = 같은 npz u_val(파트 Kabsch 제거), 지지 = 행 load
+    # 파일의 bc 배열(tie + 3-2-1 면내 — 백엔드 SUPPORT_FILES["jig"])
+    {"key": "jig", "legacy": False, "load": ("esl", "jig.npz", "f"), "target": ("esl", "u_rel.npz", "u_rel"),
+     "resp": ("esl", "jig.npz", "u_val"), "recon_tgt": ("esl", "u_rel.npz", "u_rel"), "rigid": "kabsch",
+     "support": "jig", "summary": "jig", "doc": ("esl", "jig.json"), "dir": "view3d_jig",
+     "recon_dir": "view3d_jig_recon", "na": "JIG_NOT_RUN", "resp_na": "V3D_RESP_SKIPPED", "fallback": False},
+    {"key": "jig_disp", "legacy": False, "load": ("esl", "jig_disp.npz", "f"), "target": ("esl", "u_rel.npz", "u_rel"),
+     "resp": ("esl", "jig_disp.npz", "u_val"), "recon_tgt": ("esl", "u_rel.npz", "u_rel"), "rigid": "kabsch",
+     "support": "jig", "summary": "jig_disp", "doc": ("esl", "jig_disp.json"), "dir": "view3d_jig_disp",
+     "recon_dir": "view3d_jig_disp_recon", "na": "JIG_NOT_RUN", "resp_na": "V3D_RESP_SKIPPED", "fallback": False},
+    {"key": "jig_spring", "legacy": False, "load": ("esl", "jig_spring.npz", "f"), "target": ("esl", "u_rel.npz", "u_rel"),
+     "resp": ("esl", "jig_spring.npz", "u_val"), "recon_tgt": ("esl", "u_rel.npz", "u_rel"), "rigid": "kabsch",
+     "support": "jig", "summary": "jig_spring", "doc": ("esl", "jig_spring.json"), "dir": "view3d_jig_spring",
+     "recon_dir": "view3d_jig_spring_recon", "na": "JIG_NOT_RUN", "resp_na": "V3D_RESP_SKIPPED", "fallback": False},
     {"key": "full", "legacy": True, "load": ("esl", "f_eq.npz", "f"), "target": ("esl", "u_rel.npz", "u_rel"),
      "resp": ("val", "compare_disp.npz", "d_val"), "recon_tgt": ("val", "compare_disp.npz", "d_rel"), "rigid": "linear",
      "support": "bc", "summary": None, "doc": None, "dir": "view3d", "recon_dir": "view3d_recon",
@@ -49,6 +61,8 @@ REASON_TEXT = {
     "PREREQUISITE_MISSING": "ESL 산출물(04_esl/f_eq.npz·u_rel.npz 또는 01_extract/model.npz)이 없습니다",
     "V3D_RESP_NEED_VAL": "응답 변위 없음 — ⑤ 검증에서 전체 풀이(validation.full_solve)를 하면 보입니다",
     "V3D_RESP_SKIPPED": "응답 변위 없음 — ESL 단계 재현 풀이 생략",
+    # v0.24.4(esl_jig_case.md §5.4 — val_src 에서 이동, 문구 = esl_validate_sources.md §2.3 그대로): 옛 ESL 결과(지그 파일·요약 없음)
+    "JIG_NOT_RUN": "이 ESL 결과에는 지그 ESL 이 없습니다(v0.24.4 이전 계산) — ③ ESL 을 다시 계산하면 생깁니다",
 }
 
 

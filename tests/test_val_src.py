@@ -38,7 +38,15 @@ def test_v4_plan_keys_columns_legacy_dirs():
                for r in vs.VAL_PLAN if r["load"] is not None)
     assert [r["key"] for r in vs.VAL_PLAN if r["noise_force"]] == ["full"]
     assert [r["key"] for r in vs.VAL_PLAN if r["fallback"]] == ["full"]
-    assert vs.plan("jig")["load"] is None and vs.plan("jig")["na"] == "V3D_STUDY_ONLY"      # P1: 자리만
+    # v0.24.4(esl_jig_case.md §5.5 — V-0243-VAL-4 의도 변경): 지그 3방식 행 = 행 load 파일 bc 지지·반력 정보·한계 = jig.json limits
+    for k in ("jig", "jig_disp", "jig_spring"):
+        r = vs.plan(k)
+        assert r["load"] == ("esl", f"{k}.npz", "f") and r["doc"] == ("esl", f"{k}.json") and r["summary"] == k
+        assert (r["support"], r["reaction_role"], r["load_frame"], r["balance"], r["dir"], r["na"], r["note"]) == (
+            "jig", "info", "ref_basis", k, k, "JIG_NOT_RUN", "VAL_NOTE_RECON")
+        assert r["limits"] == ("limits",) and r["reaction_tol_key"] is None and not r["required"]
+        assert vs.LABEL[k].startswith("지그 ") and vs.GROUP[k] == "jig" and vs.SHORT[k] in vs.LABEL[k]
+    assert vs.GROUP_LABEL == {"jig": "지그 ESL"} and vs.SUPPORTS == ("bc321", "jig")
     # CASE_PLAN(3D 표시 열)에 검증 열을 더하지 않음(D-0.24.3-VAL-2)
     assert not ({"reaction_role", "noise_force", "load_frame", "balance"} & set(view3d_src.COLUMNS))
     with pytest.raises(EslError) as ei:
@@ -50,7 +58,8 @@ def test_v4_plan_keys_columns_legacy_dirs():
                                  "dup_dir", "bad_loc", "legacy_dir", "root_dir", "legacy_fallback"])
 def test_v4_check_plan_rejects_invalid(mut):
     rows = [dict(r) for r in vs.VAL_PLAN]
-    b = rows[2]                                     # bforce
+    ix = {r["key"]: i for i, r in enumerate(rows)}
+    b = rows[ix["bforce"]]
     if mut == "drop_col":
         b.pop("note")
     elif mut == "extra_col":
@@ -72,9 +81,9 @@ def test_v4_check_plan_rejects_invalid(mut):
     elif mut == "bad_loc":
         b["load"] = ("disk", "bforce.npz", "f")
     elif mut == "legacy_dir":
-        rows[1]["dir"] = "full"
+        rows[ix["full"]]["dir"] = "full"
     elif mut == "legacy_fallback":
-        rows[1]["fallback"] = None
+        rows[ix["full"]]["fallback"] = None
     else:
         b["dir"] = ""
     with pytest.raises(EslError) as ei:
@@ -98,6 +107,10 @@ def test_v4_labels_equal_frontend_source_rows():
         ts = fh.read()
     blk = ts[ts.index("export const SOURCE_ROWS"):]
     blk = blk[:blk.index("];")]
+    if '"jig_disp"' not in blk:
+        # v0.24.4 P2b: 화면 행(C2 — frontend/src/view3d/sources.ts)은 다른 작업 트리에서 병행 — 병합 전 트리에서만 건너뜀
+        # (병합 후에는 이 조건이 거짓이라 항상 비교한다)
+        pytest.skip("frontend sources.ts 에 v0.24.4 지그 3방식 행이 아직 없음(C2 병합 전)")
     got = dict(re.findall(r'\{\s*key:\s*"(\w+)",\s*label:\s*"([^"]+)"', blk))
     assert got == vs.LABEL and tuple(got) == vs.KEYS
 
@@ -107,7 +120,7 @@ def test_v4_note_text_legacy_equals_stage5_text():
     v0242 = "ESL 재해석 변위와 Radioss 변위의 차이 — 계산·경계조건·저장 정밀도의 수치 일관성을 봅니다(물리적 차이가 아닙니다)."
     assert vs.NOTE_TEXT["VAL_NOTE_CONSISTENCY"] == v0242
     assert vs.note_text(vs.plan(None)) == vs.NOTE_TEXT["VAL_NOTE_CONSISTENCY"]
-    assert vs.note_text(vs.plan("fint")) == vs.NOTE_TEXT["VAL_NOTE_RECON"] and vs.note_text(vs.plan("jig")) is None
+    assert vs.note_text(vs.plan("fint")) == vs.NOTE_TEXT["VAL_NOTE_RECON"] == vs.note_text(vs.plan("jig_spring"))
 
 
 # ---------------------------------------------------------------- V-5 row_status(순수)
@@ -131,7 +144,13 @@ BF, FI, JIG = vs.plan("bforce"), vs.plan("fint"), vs.plan("jig")
      "FINT_NO_DATA", "내력 출력 없음"),
     # 옛 ESL(파일·요약 없음) → 행 na
     (BF, False, None, None, "V3D_SRC_NOT_RUN", view3d_src.REASON_TEXT["V3D_SRC_NOT_RUN"]),
-    (JIG, True, None, None, "V3D_STUDY_ONLY", view3d_src.REASON_TEXT["V3D_STUDY_ONLY"]),
+    # v0.24.4 지그 행: 하중 있음 → done, 옛 ESL → JIG_NOT_RUN, 준비 없음·실패 = 요약·진단 code·reason
+    (JIG, True, None, None, None, None),
+    (JIG, False, None, None, "JIG_NOT_RUN", view3d_src.REASON_TEXT["JIG_NOT_RUN"]),
+    (JIG, False, None, {"status": "unavailable", "code": "JIG_NOT_PREPARED", "reason": "준비 기록 없음"}, "JIG_NOT_PREPARED",
+     "준비 기록 없음"),
+    (JIG, False, {"status": "unavailable", "code": "JIG_FAILED", "reason": "공유 단계 x"},
+     {"code": "JIG_FAILED", "reason": "y"}, "JIG_FAILED", "공유 단계 x"),
 ])
 def test_v5_row_status_table(row, have, doc, summ, exp_code, exp_reason):
     st = vs.row_status(row, have, doc, summ)

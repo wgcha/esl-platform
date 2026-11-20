@@ -4076,9 +4076,18 @@ VIEW_DROP_BF = ("C", "C_solve", "C_jig", "C_bf", "score_solve", "score_jig", "sc
 # v0.24.0 보완(esl_fint.md §5.1·§6.2): 행 fint(내력 ESL — 사이드카 post/fint_view.json(_ns_post)), 열 uev_pe(umax(평가 영역)을 바꿀
 # per_esl 키 — 새 스냅샷만 값이 있음, 없으면 행에서 umax_ev 를 뺌 — 다른 출처 값 섞임 금지).
 VIEW_DROP_NODAL = VIEW_DROP_BF
+# v0.24.4(esl_jig_case.md §6.1 — S2-min): 지그 강제 변위(jd)·스프링(js) 행. 사이드카 jig(post/jig_view.json rank_views 키), need 가
+# 베이스라인 per_esl 에 없으면(옛 스냅샷·P2c 전 — 스터디가 그 방식을 계산하지 않음) 보기를 만들지 않음(화면 비활성 JIG_METHOD_NOT_RUN).
+_JIG_DROP_PE = ("C_solve", "rho", "imbalance_rel", "umax_def")
+VIEW_DROP_JD = tuple(dict.fromkeys(VIEW_DROP_JIG + ("C_jig", "umax_jig", "C_js", "umax_js")))
+VIEW_DROP_JS = tuple(dict.fromkeys(VIEW_DROP_JIG + ("C_jig", "umax_jig", "C_jd", "umax_jd")))
 RANK_SOURCES = (
-    {"key": "jig", "metric": "jig", "drop": VIEW_DROP_JIG, "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def"),
+    {"key": "jig", "metric": "jig", "drop": VIEW_DROP_JIG, "drop_pe": _JIG_DROP_PE,
      "umax_pe": "umax_jig", "eps_pe": None, "need": "C_jig", "sidecar": "jig", "uev_pe": "umax_jig_ev"},
+    {"key": "jig_disp", "metric": "jd", "drop": VIEW_DROP_JD, "drop_pe": _JIG_DROP_PE,
+     "umax_pe": "umax_jd", "eps_pe": None, "need": "C_jd", "sidecar": "jig", "uev_pe": "umax_jd_ev"},
+    {"key": "jig_spring", "metric": "js", "drop": VIEW_DROP_JS, "drop_pe": _JIG_DROP_PE,
+     "umax_pe": "umax_js", "eps_pe": None, "need": "C_js", "sidecar": "jig", "uev_pe": "umax_js_ev"},
     {"key": "full", "metric": "effective", "drop": VIEW_DROP_FULL, "drop_pe": (), "umax_pe": None, "eps_pe": None,
      "need": "C_jig", "sidecar": "jig", "uev_pe": "umax_ev"},
     {"key": "bforce", "metric": "bf", "drop": VIEW_DROP_NODAL,
@@ -4302,6 +4311,8 @@ def _rank_views(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: 
     for src in RANK_SOURCES:                                   # 출처 표 행마다(§2.1) — 이 사이드카(jig_view) 행만
         if src["sidecar"] != "jig":
             continue
+        if not _src_ready(b, src):                             # v0.24.4: need 없음 = 이 스터디가 계산하지 않은 방식(jd·js — 보기 없음).
+            continue                                           # jig·full(need C_jig)은 위 _jig_ref 와 같은 조건이라 항상 통과
         views[src["key"]], pv = _rank_view_one(c, m, results, noise, S_, labels, src)
         if pv is not None:
             per[src["key"]] = pv

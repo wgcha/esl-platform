@@ -25,7 +25,9 @@ SOURCES_JSON = "sources.json"
 COLUMNS = ("key", "legacy", "load", "required", "load_frame", "balance", "support", "reaction_role", "reaction_tol_key", "reaction_warn_key", "target",
            "rigid", "resp", "fallback", "noise_force", "summary", "doc", "limits", "dir", "na", "note")
 LOCS = ("esl",)
-SUPPORTS = ("bc321", "jig")                   # bc321 = 03_bc/support.json 3-2-1, jig = 04_esl/jig.npz 지그 노드 123(P2)
+# bc321 = 03_bc/support.json 3-2-1, jig = 출처 load 파일(04_esl/<src>.npz)의 bc 배열(지그 세 방식 공통 — tie 구속·스프링 +
+# 3-2-1 면내, esl_jig_case.md §5.5). 분해 묶음 = (support, 구속 패턴 sha — jig_bc.pattern_sha)(§3.9)
+SUPPORTS = ("bc321", "jig")
 REACTION_ROLES = ("judge", "info")
 RIGIDS = ("linear",)                          # 비교 강체 제거 규칙 — 전부 linear(§3.1·§4.2)
 RESPS = ("solve",)                            # 응답 = 검증 단계 풀이(D-0.24.3-VAL-3)
@@ -40,10 +42,22 @@ WARN_KEY = "validation.sources.reaction_warn"
 WARN_CODE = "REACTION_ABOVE_WARN"             # 반력 주의 표식(한계 코드와 같은 자리, 등급 caution)
 
 VAL_PLAN: tuple[dict[str, Any], ...] = (
-    {"key": "jig", "legacy": False, "load": None, "required": False, "load_frame": None, "balance": None,
-     "support": None, "reaction_role": None, "reaction_tol_key": None, "reaction_warn_key": None, "target": None, "rigid": "linear", "resp": "solve", "fallback": None,
-     "noise_force": False, "summary": None, "doc": None, "limits": None, "dir": None, "na": "V3D_STUDY_ONLY",
-     "note": None},
+    # v0.24.4 지그 3방식(esl_jig_case.md §5.5): 응답 = 행 load 파일 bc 배열로 재풀이, 반력 = 지지력(정보), 한계 = jig.json limits
+    {"key": "jig", "legacy": False, "load": ("esl", "jig.npz", "f"), "required": False, "load_frame": "ref_basis",
+     "balance": "jig", "support": "jig", "reaction_role": "info", "reaction_tol_key": None, "reaction_warn_key": None,
+     "target": ("esl", "u_rel.npz", "u_rel"), "rigid": "linear", "resp": "solve", "fallback": None, "noise_force": False,
+     "summary": "jig", "doc": ("esl", "jig.json"), "limits": ("limits",), "dir": "jig", "na": "JIG_NOT_RUN",
+     "note": "VAL_NOTE_RECON"},
+    {"key": "jig_disp", "legacy": False, "load": ("esl", "jig_disp.npz", "f"), "required": False,
+     "load_frame": "ref_basis", "balance": "jig_disp", "support": "jig", "reaction_role": "info",
+     "reaction_tol_key": None, "reaction_warn_key": None, "target": ("esl", "u_rel.npz", "u_rel"), "rigid": "linear",
+     "resp": "solve", "fallback": None, "noise_force": False, "summary": "jig_disp", "doc": ("esl", "jig_disp.json"),
+     "limits": ("limits",), "dir": "jig_disp", "na": "JIG_NOT_RUN", "note": "VAL_NOTE_RECON"},
+    {"key": "jig_spring", "legacy": False, "load": ("esl", "jig_spring.npz", "f"), "required": False,
+     "load_frame": "ref_basis", "balance": "jig_spring", "support": "jig", "reaction_role": "info",
+     "reaction_tol_key": None, "reaction_warn_key": None, "target": ("esl", "u_rel.npz", "u_rel"), "rigid": "linear",
+     "resp": "solve", "fallback": None, "noise_force": False, "summary": "jig_spring", "doc": ("esl", "jig_spring.json"),
+     "limits": ("limits",), "dir": "jig_spring", "na": "JIG_NOT_RUN", "note": "VAL_NOTE_RECON"},
     {"key": "full", "legacy": True, "load": ("esl", "f_eq.npz", "f"), "required": True, "load_frame": "ref_k0",
      "balance": "self", "support": "bc321", "reaction_role": "judge", "reaction_tol_key": None, "reaction_warn_key": None, "target": ("esl", "u_rel.npz", "u_rel"),
      "rigid": "linear", "resp": "solve", "fallback": "u_rel_condensed", "noise_force": True, "summary": None,
@@ -63,22 +77,29 @@ VAL_PLAN: tuple[dict[str, Any], ...] = (
 
 # ---------------------------------------------------------------- 문구(원본 한 곳 — §2.2·§2.3·§10)
 # 보고서(07_report)·echo 용 출처 이름 = 화면 frontend/src/view3d/sources.ts:SOURCE_ROWS label 과 같은 값(시험이 확인).
-LABEL = {"jig": "지그 ESL", "full": "전 노드 ESL", "bforce": "경계력 ESL", "fint": "내력 ESL"}
+LABEL = {"jig": "지그 고정", "jig_disp": "지그 변위", "jig_spring": "지그 스프링", "full": "전 노드 ESL", "bforce": "경계력 ESL",
+         "fint": "내력 ESL"}
+# v0.24.4(esl_jig_case.md §2.1): 그룹(화면 sources.ts GROUPS·SOURCE_ROWS group·short 와 같은 값) — 그룹 없는 출처는 표에 없음
+SHORT = {"jig": "고정", "jig_disp": "변위", "jig_spring": "스프링"}
+GROUP = {"jig": "jig", "jig_disp": "jig", "jig_spring": "jig"}
+GROUP_LABEL = {"jig": "지그 ESL"}
 # 새 사유 문구(사유 부분만 — 화면 unavailText 가 "<이름> 불가 — <사유>" 로 붙임). 없는 코드는 view3d_src.reason_text.
 REASON_TEXT = {
     "VAL_SRC_NOT_RUN": "이 검증에는 출처별 결과가 없습니다(v0.24.3 이전 검증) — ④ 검증을 다시 실행하면 생깁니다",
     "VAL_SRC_FAILED": "출처 검증 계산 실패({detail}) — 다른 출처 결과는 그대로",
     "VAL_SRC_DISABLED": "설정에서 꺼짐(validation.sources.enabled)",
     "VALIDATION_FILES_GONE": "이 검증의 산출물이 이후 검증으로 바뀌었습니다(같은 ESL 결과로 다시 검증)",
-    "JIG_NOT_RUN": "이 ESL 결과에는 지그 ESL 이 없습니다(v0.24.4 이전 계산) — ③ ESL 을 다시 계산하면 생깁니다",
-}
+}                                               # JIG_NOT_RUN 은 view3d_src.REASON_TEXT(v0.24.4 이동 — reason_text 가 그쪽을 읽음)
 FAILED_DETAIL_MAX = 300
 LOAD_FRAME_TEXT = {"ref_k0": "기준 형상 F = K₀·u_rel",
                    "ref_rot": "기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R)",
                    "ref_basis": "기준 형상 F = Σ a_k·기저(지그 맞춤)"}
-BALANCE_TEXT = {"self": "자기평형(구성상)", "jig": "지그 지지(tie 노드 123)가 받음", "inertia_relief": "관성 이완",
-                "none": "균형 보정 없음 — 불평형은 지지 반력으로"}
-SUPPORT_TEXT = {"bc321": "3-2-1(03_bc/support.json)", "jig": "지그 노드 123(04_esl/jig.npz)"}
+BALANCE_TEXT = {"self": "자기평형(구성상)", "jig": "지그 지지(tie 구속·3-2-1 면내)가 받음",
+                "jig_disp": "tie 강제 변위·3-2-1 면내가 받음", "jig_spring": "tie 스프링·3-2-1 면내가 받음",
+                "inertia_relief": "관성 이완", "none": "균형 보정 없음 — 불평형은 지지 반력으로"}
+# 지지 문구 — {이름} 자리는 진단 json 의 bc 블록 값(SUPPORT_FIELDS 경로)으로 채움(없으면 "–")
+SUPPORT_TEXT = {"bc321": "3-2-1(03_bc/support.json)", "jig": "지그 경계({tie_text} {n_jig} + 3-2-1 면내 {n_aux})"}
+SUPPORT_FIELDS = ("bc",)
 NOTE_TEXT = {
     "VAL_NOTE_CONSISTENCY": "ESL 재해석 변위와 Radioss 변위의 차이 — 계산·경계조건·저장 정밀도의 수치 일관성을 봅니다"
                             "(물리적 차이가 아닙니다).",
@@ -87,9 +108,10 @@ NOTE_TEXT = {
 }
 COND_TAIL = "목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이"
 # 한계 등급(§10): not_comparable = "비교용 아님", caution = 주의. 표에 없는 코드 = caution(보수적 — 비교 가능 표시 유지).
-LIMIT_CLASS = {"BF_TIE_MISSING": "not_comparable", "FINT_ROT_LINKS": "caution", "JIG_REGION_FALLBACK": "caution"}
+LIMIT_CLASS = {"BF_TIE_MISSING": "not_comparable", "FINT_ROT_LINKS": "caution", "JIG_REGION_FALLBACK": "caution",
+               "JIG_DISP_FROM_TARGET": "caution", "JIG_AUX_REACTION": "caution"}
 LIMIT_CLASS_TEXT = {"not_comparable": "비교용 아님", "caution": "주의"}
-LIMIT_TEXT = {**_BF_LIMIT_TEXT}               # 한계 문구 원본 = esl.mech.bforce.LIMIT_TEXT(P2 jig 문구는 jig.json 에서)
+LIMIT_TEXT = {**_BF_LIMIT_TEXT}               # 한계 문구 원본 = esl.mech.bforce.LIMIT_TEXT(jig 문구는 진단 json limit_text 에서 — §5.7)
 
 
 def check_plan(plan=VAL_PLAN) -> None:
@@ -222,11 +244,25 @@ def cond_of(row: dict[str, Any], doc: dict[str, Any] | None) -> dict[str, Any]:
             "rigid": row["rigid"], "resp": row["resp"]}
 
 
+class _Fill(dict):
+    def __missing__(self, k):                     # 진단 json 에 없는 값 = "–"
+        return "–"
+
+
+def support_text(support: str | None, doc: dict[str, Any] | None) -> str:
+    """지지 문구(SUPPORT_TEXT) — {이름} 자리를 진단 json bc 블록 값으로(없으면 "–"). 자리 없는 문구는 그대로."""
+    t = SUPPORT_TEXT.get(support or "", support or "–")
+    if "{" not in t:
+        return t
+    v = doc_get(doc, SUPPORT_FIELDS)
+    return t.format_map(_Fill(v if isinstance(v, dict) else {}))
+
+
 def cond_text(row: dict[str, Any], doc: dict[str, Any] | None) -> str:
     """조건 한 줄: "하중 <load_frame> · 지지 <support> · 균형 <balance> · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이"."""
     c = cond_of(row, doc)
     lf = LOAD_FRAME_TEXT.get(c["load_frame"], c["load_frame"] or "–")
-    sp = SUPPORT_TEXT.get(c["support"], c["support"] or "–")
+    sp = support_text(c["support"], doc)
     bl = BALANCE_TEXT.get(c["balance"], c["balance"] or "–")
     return f"하중 {lf} · 지지 {sp} · 균형 {bl} · {COND_TAIL}"
 
@@ -243,14 +279,28 @@ def limit_codes(row: dict[str, Any], doc: dict[str, Any] | None) -> list[str]:
     return [str(x) for x in v] if isinstance(v, (list, tuple)) else []
 
 
+def limit_doc_text(row: dict[str, Any], doc: dict[str, Any] | None) -> dict[str, str]:
+    """진단 json 의 한계 문구 {코드: 문구} — limits 와 같은 자리의 ``limit_text``(같은 순서, v0.24.4 지그: 문구 원본 =
+    resources/doe_messages.json 을 ESL 단계가 채움). LIMIT_TEXT 에 있는 코드는 그 문구가 우선(기존 출처 바이트 불변)."""
+    if row["limits"] is None:
+        return {}
+    codes = doc_get(doc, row["limits"])
+    texts = doc_get(doc, tuple(row["limits"][:-1]) + ("limit_text",))
+    if not isinstance(codes, (list, tuple)) or not isinstance(texts, (list, tuple)) or len(codes) != len(texts):
+        return {}
+    return {str(c): str(t) for c, t in zip(codes, texts)}
+
+
 def limit_class(code: str) -> str:
     return LIMIT_CLASS.get(code, "caution")
 
 
-def limit_info(codes) -> dict[str, Any]:
-    """한계 코드 → {limits, limit_text, comparable}. comparable = not any(not_comparable) (§10)."""
+def limit_info(codes, texts: dict[str, str] | None = None) -> dict[str, Any]:
+    """한계 코드 → {limits, limit_text, comparable}. comparable = not any(not_comparable) (§10). 문구 = LIMIT_TEXT → texts(진단 json
+    문구 — ``limit_doc_text``) → 코드."""
     cs = [str(x) for x in (codes or [])]
-    return {"limits": cs, "limit_text": [LIMIT_TEXT.get(x, x) for x in cs],
+    tx = texts or {}
+    return {"limits": cs, "limit_text": [LIMIT_TEXT.get(x) or tx.get(x) or x for x in cs],
             "comparable": not any(limit_class(x) == "not_comparable" for x in cs)}
 
 
@@ -259,7 +309,7 @@ def src_block(row: dict[str, Any], doc: dict[str, Any] | None, sum_abs_f: float 
     c = cond_of(row, doc)
     loc_file = None if row["load"] is None else f"04_esl/{row['load'][1]}"
     return {"key": row["key"], "load": loc_file, "sum_abs_f": sum_abs_f, **c, "cond_text": cond_text(row, doc),
-            "note": note_text(row), **limit_info(limit_codes(row, doc))}
+            "note": note_text(row), **limit_info(limit_codes(row, doc), limit_doc_text(row, doc))}
 
 
 def empty_row(row: dict[str, Any], st: dict[str, Any]) -> dict[str, Any]:
@@ -280,7 +330,7 @@ def done_row(row: dict[str, Any], doc_val: dict[str, Any], diag: dict[str, Any] 
     tol, warn, reac = crit.get("reaction_rel_max"), crit.get("reaction_warn_rel"), vals.get("reaction_rel")
     warned = bool(row["reaction_role"] == "judge" and warn is not None and reac is not None and tol is not None
                   and warn < reac <= tol)
-    lim = limit_info(limit_codes(row, diag))
+    lim = limit_info(limit_codes(row, diag), limit_doc_text(row, diag))
     if warned:                                  # PASS 유지 + 주의(한계와 같은 자리에 표시 — 화면 탭·보고서)
         lim["limits"].append(WARN_CODE)
         lim["limit_text"].append(f"반력 {reac * 100:.3g} % — {warn * 100:g} % 초과, 받침점 주변 국부 변형 확인")

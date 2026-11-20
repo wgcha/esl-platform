@@ -71,6 +71,8 @@ def check_plan() -> None:
                 raise EslError("CONFIG_INVALID", f"jig_bc.TIE_DOFS[{name}].{c} = {row[c]!r} ∉ {ok}")
     if len({r["src"] for r in METHODS.values()}) != len(METHODS):
         raise EslError("CONFIG_INVALID", "jig_bc.METHODS src 중복")
+    if sum(1 for r in METHODS.values() if r["factor"] == "own" and r["tie_stiff"] == "hard") != 1:
+        raise EslError("CONFIG_INVALID", "jig_bc.METHODS: 공유 기저 분해(factor own ∧ tie_stiff hard) 행은 정확히 1개")
 
 
 def tie_dofs_of(jig_cfg: dict) -> str:
@@ -119,6 +121,15 @@ def check_cfg(jig_cfg: dict) -> None:
     if not isinstance(sc, (list, tuple)) or any(isinstance(a, bool) or not isinstance(a, (int, float)) or
                                                  not np.isfinite(a) or a < SPRING_ALPHA_MIN for a in sc):
         bad(f"spring_alpha_scan = {sc!r}(α ≥ {SPRING_ALPHA_MIN} 목록)")
+
+
+def basis_method() -> str:
+    """하중 기저·모드를 계산하는 공유 분해의 방식(열로 고름: factor = own ∧ tie_stiff = hard — 세 방식 공통 구속 집합, §3.4
+    "모드 기저는 fixed 구속(값 0)으로 1회"). 표에 정확히 1행(check_plan)."""
+    rows = [m for m, r in METHODS.items() if r["factor"] == "own" and r["tie_stiff"] == "hard"]
+    if len(rows) != 1:
+        raise EslError("CONFIG_INVALID", f"jig_bc.METHODS: 공유 기저 분해(factor own ∧ tie_stiff hard) 행이 1개가 아님 {rows}")
+    return rows[0]
 
 
 def factor_groups(methods) -> dict[str, list[str]]:
@@ -327,10 +338,11 @@ def build_bc(method_row: dict, tie: dict, aux: dict, u_tgt, *, k=None) -> dict:
             "sp_node": tn.copy(), "sp_dir": td.copy(), "sp_k": kk.copy(), "sp_g": tv.astype(np.float64)}
 
 
-def spring_k(K0, tie: dict, *, mode: str, alpha: float = 1.0, value=None) -> np.ndarray:
+def spring_k(K0, tie: dict, *, mode: str, alpha: float | None = None, value=None) -> np.ndarray:
     """스프링 강성(§3.5, D-0.24.4-JIG-7): auto = α·d̂ᵀK₀[n]d̂(K₀[n] = 기준 설계 노드 병진 3×3 대각 블록 — 파트 자기 국부 강성),
     value = 모든 행 같은 값(N/mm). K0 = ShellModel(기준 설계) 또는 6N×6N 희소 행렬. α < 1e-3·value ≤ 0 = CONFIG_INVALID.
-    기준 설계에서 한 번 계산해 저장하고 안은 재계산하지 않는다(§3.7)."""
+    α None = ``jig.JIG_DEFAULTS["spring_alpha"]``(기본값 한 곳 — D-0.24.4-JIG-19). 기준 설계에서 한 번 계산해 저장하고 안은
+    재계산하지 않는다(§3.7)."""
     tn = np.asarray(tie["node"], dtype=np.int64).reshape(-1)
     td = np.asarray(tie["dir"], dtype=np.float64).reshape(-1, 3)
     if mode == "value":
@@ -339,7 +351,7 @@ def spring_k(K0, tie: dict, *, mode: str, alpha: float = 1.0, value=None) -> np.
         return np.full(tn.size, float(value))
     if mode != "auto":
         raise EslError("CONFIG_INVALID", f"spring_k_mode {mode!r} ∉ {SPRING_K_MODES}")
-    a = float(alpha)
+    a = float(jig.JIG_DEFAULTS["spring_alpha"] if alpha is None else alpha)
     if not np.isfinite(a) or a < SPRING_ALPHA_MIN:
         raise EslError("CONFIG_INVALID", f"spring_alpha = {alpha!r} < {SPRING_ALPHA_MIN}")
     if hasattr(K0, "_diag_blocks"):
@@ -485,6 +497,41 @@ def solve(h, F, BC: dict, *, homogeneous: bool = False):
                    ground=np.asarray(BC["sp_g"], dtype=np.float64) if np.asarray(BC["sp_node"]).size else None)
 
 
+def aux_index(BC: dict) -> np.ndarray:
+    """BC 구속 행 중 3-2-1 면내 행(bc_kind = KIND_AUX)의 위치(rc 순서)."""
+    return np.flatnonzero(np.asarray(BC["bc_kind"]).astype(np.int64) == KIND_AUX)
+
+
+def basis_response(h, basis: dict, fit_mask, BC: dict) -> dict:
+    """하중 기저 응답(동차 — 값·바닥 0): ``jig.basis_response`` 와 같은 해(같은 하중·같은 solve — U 비트 동일) + 열마다 3-2-1 면내
+    행 반력 rc_aux (nb, n_aux)(맞춤의 면내 반력 0 등식 제약용 — D-0.24.4-JIG-20). 반환 {U (nb, M, 3), null_cols, rc_aux}."""
+    nb = int(basis["nb"])
+    N = int(h.model.n_nodes)
+    fm = np.asarray(fit_mask, bool)
+    ia = aux_index(BC)
+    U = np.zeros((nb, int(fm.sum()), 3))
+    rca = np.zeros((nb, ia.size))
+    null = []
+    for k in range(nb):
+        u, _R, rc, _fs = solve(h, jig.forces(basis, jig._unit(nb, k), N), BC, homogeneous=True)
+        U[k] = u[fm, :3]
+        rca[k] = np.asarray(rc, dtype=np.float64)[ia]
+        if not np.any(U[k]):
+            null.append(k)
+    return {"U": U, "null_cols": null, "rc_aux": rca}
+
+
+def aux_eq(BC: dict, rc_aux_basis, rc_aux_ground=None):
+    """3-2-1 면내 반력 0 등식(D-0.24.4-JIG-20): r_aux(a) = r_aux,g + Σ_k a_k r_aux,k = 0 → (C (n_aux, nb), c (n_aux,)) =
+    (rc_aux_basisᵀ, −r_aux,g). 3-2-1 면내 행이 없으면(translation) None — 맞춤은 옛 경로 그대로. 평판·정정(면내 3자유도)이면
+    면내 합력 2·면내 모멘트 1 = 0 과 같다(면외 tie 반력은 면내 강체 일을 하지 않음)."""
+    rb = np.asarray(rc_aux_basis, dtype=np.float64)
+    if rb.ndim != 2 or rb.shape[1] == 0 or aux_index(BC).size == 0:
+        return None
+    g = np.zeros(rb.shape[1]) if rc_aux_ground is None else np.asarray(rc_aux_ground, dtype=np.float64).reshape(-1)
+    return rb.T.copy(), -g
+
+
 def modes(h, weights, n_modes: int, rho_t: float, *, sigma: float = 0.0, tol: float = 0.0, maxiter=None) -> dict:
     """지그 구속 저차 모드(D-JIG-15 — σ = 0 이면 지그 분해 재사용, 아니면 (K − σM)_ff 분해) → {phi (m,N,6) 전역, lam, hz,
     n_conv, ok, err, g (m,N,3) 관성 하중}. 변환 공간 해법(BcSolve)은 K̃·fixed_t 로 풀고 φ = to_global(φ̃)(질량 = 병진 등방
@@ -549,24 +596,32 @@ def aux_reaction_rel(F, BC: dict, rc) -> float:
 
 # ====================================================================== (7) 한 방식 맞춤 — §3.4
 def run_method(h, basis: dict, U, u_tgt, BC: dict, fit_mask, weights: dict, *, jig_idx, ridge: float, w_inplane: float,
-               reg_force: float, reg_modes: float, active_tol: float, nomodes: bool = True) -> dict:
+               reg_force: float, reg_modes: float, active_tol: float, nomodes: bool = True, rc_basis=None) -> dict:
     """응답 분해 u = u_g + Σ a_k U_k(u_g = F 0·값/바닥만, U = ``jig.basis_response(h, …)`` 동차 해), 맞춤 a* = ``jig.fit_loads``
     (U, (u_tgt − u_g)[M], …)(가중·정규화·BVLS 그대로), F = Σ a*_k f_k, 응답 u = BC 값·바닥으로 1회 해(= u_g + U a* — 선형).
-    품질 = ``jig.fit_report``(u_fit vs u_tgt, 맞춤 노드 M), 지표 = ``mixed_compliance``. 반환 {a, F, u (N,6), u_fit (N,3), u_g (N,3),
-    R, rc, fs, fit, report, energy, aux_reaction_rel}."""
+    품질 = ``jig.fit_report``(u_fit vs u_tgt, 맞춤 노드 M), 지표 = ``mixed_compliance``.
+    rc_basis = ``basis_response`` 의 rc_aux(같은 분해) — 주면 3-2-1 면내 반력 0 등식 제약(``aux_eq`` — D-0.24.4-JIG-20, 면내 행이
+    없으면 제약 없음 = 옛 경로). 반환 {a, F, u (N,6), u_fit (N,3), u_g (N,3), R, rc, fs, fit, report, energy, aux_reaction_rel,
+    aux_eq(제약 정보 | None)}."""
     fm = np.asarray(fit_mask, bool)
     N = fm.size
     ut = np.asarray(u_tgt, dtype=np.float64)[:, :3]
+    rcg = np.zeros(aux_index(BC).size)
     if needs_ground(BC):
-        ug = np.asarray(solve(h, np.zeros((N, 3)), BC)[0], dtype=np.float64)[:, :3]
+        sg_ = solve(h, np.zeros((N, 3)), BC)
+        ug = np.asarray(sg_[0], dtype=np.float64)[:, :3]
+        rcg = np.asarray(sg_[2], dtype=np.float64)[aux_index(BC)]
     else:
         ug = np.zeros((N, 3))
+    eq = None if rc_basis is None else aux_eq(BC, rc_basis, rcg)
     area = np.asarray(weights["area"], dtype=np.float64)
     w_fit = area[fm] / max(float(area[fm].mean()), 1e-300)
     n_fit = np.asarray(weights["normal"], dtype=np.float64)[fm]
     rhs = (ut - ug)[fm]
     kw = {"ridge": float(ridge), "w_inplane": float(w_inplane), "reg_force": float(reg_force),
           "reg_modes": float(reg_modes)}
+    if eq is not None:
+        kw["eq"] = eq
     fr = jig.fit_loads(U, rhs, w_fit, n_fit, basis, **kw)
     a = fr["a"]
     F = jig.forces(basis, a, N)
@@ -578,7 +633,8 @@ def run_method(h, basis: dict, U, u_tgt, BC: dict, fit_mask, weights: dict, *, j
     rep = jig.fit_report(u[:, :3], ut, fm, weights, basis, a, jig_idx=jig_idx, active_tol=float(active_tol),
                          u_fit_nomodes=unm)
     return {"a": a, "F": F, "u": u, "u_fit": u[:, :3].copy(), "u_g": ug, "R": R, "rc": rc, "fs": fs, "fit": fr,
-            "report": rep, "energy": mixed_compliance(F, u, BC, rc, fs), "aux_reaction_rel": aux_reaction_rel(F, BC, rc)}
+            "report": rep, "energy": mixed_compliance(F, u, BC, rc, fs), "aux_reaction_rel": aux_reaction_rel(F, BC, rc),
+            "aux_eq": fr.get("eq")}
 
 
 def respond(h, F, BC: dict) -> dict:

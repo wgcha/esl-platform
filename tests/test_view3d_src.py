@@ -114,8 +114,18 @@ def test_build_recon_writes_bin_then_json(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- V-4 계획 표
 def test_keys_equal_rank_sources_and_plan_columns():
     from esl.doe import stages as stg
+    from esl.mech import jig_bc
 
     assert vs.KEYS == tuple(r["key"] for r in stg.RANK_SOURCES)
+    # v0.24.4(V-0244-JIG-10): KEYS 6 — 지그 3방식 행(방식 표 열 src) + full·bforce·fint, 지그 행 = 행 load 파일 bc 지지·kabsch 재현
+    assert vs.KEYS == ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")
+    srcs = [r["src"] for r in jig_bc.METHODS.values()]
+    assert srcs == list(vs.KEYS[:3])
+    for k in srcs:
+        r = vs.plan(k)
+        assert r["load"] == ("esl", f"{k}.npz", "f") and r["resp"] == ("esl", f"{k}.npz", "u_val")
+        assert r["doc"] == ("esl", f"{k}.json") and r["summary"] == k and r["support"] == "jig" and r["rigid"] == "kabsch"
+        assert (r["dir"], r["recon_dir"], r["na"]) == (f"view3d_{k}", f"view3d_{k}_recon", "JIG_NOT_RUN")
     assert tuple(r["key"] for r in vs.CASE_PLAN) == vs.KEYS
     assert all(set(r) == set(vs.COLUMNS) for r in vs.CASE_PLAN)
     leg = [r for r in vs.CASE_PLAN if r["legacy"]]
@@ -188,8 +198,15 @@ def test_case_status_table_bforce(have, summ, doc_reason, exp):
 
 
 def test_case_status_jig_full_and_old_run():
-    j = vs.case_status(vs.plan("jig"), None, HAVE_ALL)
-    assert (j["available"], j["code"], j["reason"]) == (False, "V3D_STUDY_ONLY", vs.REASON_TEXT["V3D_STUDY_ONLY"])
+    # v0.24.4(esl_jig_case.md §5.4 — V-0241-V3D-5 의도 변경): 지그 3방식이 Case 행 — 파일이 있으면 보기, 옛 ESL = JIG_NOT_RUN
+    for k in ("jig", "jig_disp", "jig_spring"):
+        j = vs.case_status(vs.plan(k), None, HAVE_ALL)
+        assert (j["available"], j["code"], j["resp"]) == (True, None, True)
+        old = vs.case_status(vs.plan(k), None, {"model": True, "load": False, "target": True})
+        assert (old["available"], old["code"], old["reason"]) == (False, "JIG_NOT_RUN", vs.REASON_TEXT["JIG_NOT_RUN"])
+        st = vs.case_status(vs.plan(k), {"status": "unavailable", "code": "JIG_NOT_PREPARED", "reason": "준비 기록 없음"},
+                            {"model": True, "load": False, "target": True})
+        assert (st["code"], st["reason"]) == ("JIG_NOT_PREPARED", "준비 기록 없음")             # 요약 reason 그대로
     f = vs.case_status(vs.plan("full"), None, {**HAVE_ALL, "resp": False, "recon_tgt": False})
     assert f["available"] and not f["resp"] and f["resp_code"] == "V3D_RESP_NEED_VAL"
     f = vs.case_status(vs.plan("full"), None, HAVE_ALL)

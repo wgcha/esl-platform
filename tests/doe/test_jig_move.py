@@ -149,14 +149,37 @@ def case_snapshot(out: str, root: str) -> dict[str, str]:
                                                                     "07_report"))
 
 
+# v0.24.4 P2b(esl_jig_case.md §12-6 의도 변경): 검증 출처 표 KEYS 6(지그 3방식 행) → 05_val/sources.json(행 목록)·07_report(출처별 판정 표)만
+# 바뀜. 같은 새 코드(Case _jig_esl·검증 묶음 키·지지 집합)를 v0.24.3 출처 표(VAL_PLAN 4행·jig 이름)로 돌린 실행 = 골든 전부(아래
+# old_plan_case) → 새 실행의 차이는 출처 표 행뿐임을 확인한다.
+CASE_PLAN_CHANGED = ("05_val/sources.json", "07_report/report.html")
+OLD_JIG_VAL_ROW = {"key": "jig", "legacy": False, "load": None, "required": False, "load_frame": None, "balance": None,
+                   "support": None, "reaction_role": None, "reaction_tol_key": None, "reaction_warn_key": None,
+                   "target": None, "rigid": "linear", "resp": "solve", "fallback": None, "noise_force": False,
+                   "summary": None, "doc": None, "limits": None, "dir": None, "na": "V3D_STUDY_ONLY", "note": None}
+
+
+def run_case_old_plan(t):
+    """v0.24.3 출처 표(VAL_PLAN = 옛 jig 행 + full·bforce·fint, 보고서 이름 '지그 ESL')로 새 코드 실행."""
+    from esl import val_src
+    old = (OLD_JIG_VAL_ROW, *(r for r in val_src.VAL_PLAN if r["key"] in ("full", "bforce", "fint")))
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(val_src, "VAL_PLAN", old)
+        mp.setitem(val_src.LABEL, "jig", "지그 ESL")
+        return run_case(t)
+
+
 @pytest.fixture(scope="module")
 def golden_runs(tmp_path_factory):
     t = tmp_path_factory.mktemp("jigmove")
     (t / "s").mkdir()
     (t / "c").mkdir()
+    (t / "o").mkdir()
     out, _post, _ids = run_study(t / "s")
     cout, croot = run_case(t / "c")
-    return {"study": study_snapshot(out, str(t)), "case": case_snapshot(cout, croot)}
+    oout, oroot = run_case_old_plan(t / "o")
+    return {"study": study_snapshot(out, str(t)), "case": case_snapshot(cout, croot),
+            "case_old_plan": case_snapshot(oout, oroot)}
 
 
 def test_v0244_jig_1_golden_bytes(golden_runs):
@@ -171,15 +194,19 @@ def test_v0244_jig_1_golden_bytes(golden_runs):
     with open(GOLDEN, encoding="utf-8") as fh:
         gold = json.load(fh)
     for k in ("study", "case"):
-        assert set(gold[k]) == set(cur[k]), k                                     # 파일 목록(새 파일 없음 — P2a)
+        assert set(gold[k]) == set(cur[k]), k                                     # 파일 목록(새 파일 없음 — tie 준비 없는 Case)
+    assert set(gold["case"]) == set(cur["case_old_plan"])
     assert {"prep/jig.json", "prep/jig.npz", "post/jig_view.json", "post/ranking.csv"} <= set(gold["study"])
     assert any("jigdiag" in k for k in gold["study"]) and any(k.endswith("_jig/values.bin") for k in gold["study"])
     assert {"04_esl/f_eq.npz", "04_esl/bforce.npz", "04_esl/fint.npz", "05_val/sources.json"} <= set(gold["case"])
     if gold["env"] != env_sig():
         pytest.skip(f"환경 서명이 골든과 다름({env_sig()} ≠ {gold['env']})")
-    for k in ("study", "case"):
-        diff = sorted(f for f in gold[k] if gold[k][f] != cur[k][f])
-        assert not diff, (k, diff)
+    diff = sorted(f for f in gold["study"] if gold["study"][f] != cur["study"][f])
+    assert not diff, ("study", diff)                                          # 옛 스냅샷 스터디(RANK_SOURCES 2행 추가 후에도)
+    diff = sorted(f for f in gold["case"] if gold["case"][f] != cur["case_old_plan"][f])
+    assert not diff, ("case_old_plan", diff)                                  # 새 코드 + 옛 출처 표 = 골든 전부
+    diff = sorted(f for f in gold["case"] if gold["case"][f] != cur["case"][f])
+    assert diff == sorted(CASE_PLAN_CHANGED), ("case", diff)                  # 새 출처 표: 의도된 2파일만(04_esl·05_val 루트·full 등 불변)
 
 
 # ---------------------------------------------------------------- V-0244-JIG-1 심·import 그래프·DEFAULTS
