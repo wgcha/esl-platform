@@ -64,6 +64,8 @@ solver:
   # (선택, v0.14.0) 자체 쉘 솔버 해 수용 검사(없으면 아래 기본값, opt_run.solver 에도 같은 키)
   # resid_rel_cap: 1.0e-4            # 후방 오차 η 로 수용할 때도 ‖Ku−F‖/‖F‖ 상한
   # equilibrium_tol_rel: 1.0e-6      # 반력 평형 |ΣR+ΣF|/max(|ΣF|,Σ|F|) 허용값(넘으면 SOLVER_SINGULAR)
+  # (선택, v0.24.4) 새 지그 경로 SuperLU 분해 순서 — node_mmd(기본: 노드 블록 순서, tie 가 흩어진 큰 모델에서 분해 수 배 빠름) | default(예전 MMD)
+  # jig_factor_order: node_mmd
 
 validation:                          # 임시 값. 사내 확인 후 교체 (esl.md Q1). 판정(PASS/FAIL) = 변위 4지표만 (계약 esl_disp_primary.md)
   disp_rms_rel_max: 0.01             # [판정 DISP_RMS] RMS(u_val−u_rel)/max|u_rel| (전 노드, 미소 강체 제거 후)

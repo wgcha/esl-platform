@@ -293,6 +293,8 @@ SCHEMA: dict[str, Any] = {
         # 선택(OPTIONAL_KEYS, v0.14.0 D-0.14-RESID): 자체 쉘 솔버 해 수용 검사. 없으면 SOLVER_CHECK_DEFAULTS
         "resid_rel_cap": _num(0.0, 1.0, lo_open=True, hi_open=True),      # 후방 오차로 수용할 때도 ‖Ku−F‖/‖F‖ 상한
         "equilibrium_tol_rel": _num(0.0, 1.0, lo_open=True, hi_open=True),  # 반력 평형 |ΣR+ΣF|/max(|ΣF|,Σ|F|) 허용값(넘으면 SOLVER_SINGULAR)
+        # 선택(v0.24.4 검증 수정, 계약 esl_jig_case.md 부록 A.7): 새 지그 경로(jig_bc.factorize) SuperLU 분해 순서. 없으면 SOLVER_JIG_DEFAULTS
+        "jig_factor_order": _enum("node_mmd", "default"),
     },
     "validation": {
         "disp_rms_rel_max": _num(0.0, lo_open=True),
@@ -455,11 +457,14 @@ EXTRACT_SOURCE_DEFAULTS = {
 }
 # v0.14.0 자체 쉘 솔버 해 수용 검사(D-0.14-RESID) 기본값 단일 출처 — esl solver 절·opt_run.solver 공통, cfg 에는 주입 안 함.
 SOLVER_CHECK_DEFAULTS = {"resid_rel_cap": 1.0e-4, "equilibrium_tol_rel": 1.0e-6}
+# v0.24.4 지그 분해 순서(solver.jig_factor_order): node_mmd = 노드 그래프 MMD 를 6dof 블록으로 펼친 순서(구속이 흩어진 tie 에서 59.7→9.2 s,
+# 메모리 −19 %, 결과 ≤1e-11 상대), default = 예전 SuperLU MMD_AT_PLUS_A. 새 지그 경로에만 적용(옛 3-2-1·spc 경로 불변). cfg 에는 주입 안 함.
+SOLVER_JIG_DEFAULTS = {"jig_factor_order": "node_mmd"}
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
                            *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS),
                            *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
-                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS),
+                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS), *(f"solver.{k}" for k in SOLVER_JIG_DEFAULTS),
                            *(f"bforce.{k}" for k in BFORCE_DEFAULTS), "bforce.signs.cont", "bforce.signs.cont2",
                            "bforce.signs.fint", *(f"bforce.fint.{k}" for k in BFORCE_DEFAULTS["fint"]),
                            "validation.sources", *(f"validation.sources.{k}" for k in VALIDATION_SOURCES_DEFAULTS),

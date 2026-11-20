@@ -47,7 +47,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.sparse.csgraph import connected_components
 
-from esl.config import SOLVER_CHECK_DEFAULTS, solver_check_settings
+from esl.config import SOLVER_CHECK_DEFAULTS, SOLVER_JIG_DEFAULTS, solver_check_settings
 from esl.errors import EslError
 from esl.mech import _elements as el
 
@@ -223,12 +223,18 @@ RESID_REL_TOL = 1e-8
 RESID_BACKWARD_TOL = 1e-9
 RESID_REL_CAP = float(SOLVER_CHECK_DEFAULTS["resid_rel_cap"])
 EQUIL_TOL_REL = float(SOLVER_CHECK_DEFAULTS["equilibrium_tol_rel"])
+JIG_FACTOR_ORDERS = ("node_mmd", "default")        # 설정 solver.jig_factor_order 값(esl.config.SOLVER_JIG_DEFAULTS)
+JIG_FACTOR_ORDER = str(SOLVER_JIG_DEFAULTS["jig_factor_order"])
 
 
 def solver_check_kwargs(solver_cfg: dict | None) -> dict:
-    """설정 solver 절(esl solver·opt_run.solver)에서 ShellModel 해 검사 인자(resid_rel_cap·equil_tol_rel). 없으면 기본값."""
+    """설정 solver 절(esl solver·opt_run.solver)에서 ShellModel 해 검사 인자(resid_rel_cap·equil_tol_rel). 없으면 기본값.
+    solver.jig_factor_order 가 지정돼 있으면 그 값도(jig 분해 순서 — 없으면 ShellModel 기본 JIG_FACTOR_ORDER)."""
     c = solver_check_settings(solver_cfg)
-    return {"resid_rel_cap": float(c["resid_rel_cap"]), "equil_tol_rel": float(c["equilibrium_tol_rel"])}
+    out = {"resid_rel_cap": float(c["resid_rel_cap"]), "equil_tol_rel": float(c["equilibrium_tol_rel"])}
+    if isinstance(solver_cfg, dict) and solver_cfg.get("jig_factor_order") is not None:     # 지정했을 때만(없으면 ShellModel 기본)
+        out["jig_factor_order"] = str(solver_cfg["jig_factor_order"])
+    return out
 
 
 def _norm_inf(A) -> float:
@@ -403,13 +409,38 @@ def _oom_guard(what: str):
     return deco
 
 
+def node_block_order(A, node_of: np.ndarray) -> np.ndarray:
+    """K_ff 의 dof → 노드 그래프(노드당 1 정점) MMD_AT_PLUS_A 순서를 6dof 블록으로 펼친 순열 p (A[p][:, p] 를 NATURAL 로 분해).
+    일반 dof 단위 MMD 는 구속이 흩어져 있을 때(tie 노드) 같은 채움(nnz)에도 분해가 3~6배 느려진다(v0.24.4 실측) —
+    노드 단위로 순서를 정하면 (구속 dof 가 빠져도) 블록 구조가 유지돼 시간·메모리가 모두 줄어든다. 결정적(같은 입력 = 같은 순서)."""
+    node_of = np.asarray(node_of, dtype=np.int64)
+    un, inv = np.unique(node_of, return_inverse=True)
+    A = sp.csc_matrix(A)
+    cols = np.repeat(inv, np.diff(A.indptr))
+    G = sp.coo_matrix((np.ones(A.indices.size), (inv[A.indices], cols)), shape=(un.size, un.size)).tocsc()
+    G.sum_duplicates()
+    G = (G + sp.identity(un.size, format="csc") * float(G.shape[0] + 1)).tocsc()   # 대각 우세 — 순서 계산용(값 무의미)
+    tg = spla.splu(G, permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0, options={"SymmetricMode": True})
+    rank = np.empty(un.size, dtype=np.int64)
+    rank[np.argsort(tg.perm_c, kind="stable")] = np.arange(un.size)
+    return np.lexsort((np.arange(node_of.size), rank[inv])).astype(np.int64)    # 노드 순서 → 같은 노드의 dof 는 원래 순서
+
+
 class _SuperLU:
     name = "superlu"
 
-    def __init__(self, A):
+    def __init__(self, A, node_of=None):
+        """node_of(길이 n, 각 dof 의 노드 번호)가 있으면 노드 블록 순서(node_block_order)로 미리 순열해 NATURAL 로 분해
+        (v0.24.4 jig 경로 전용·옵션). 없으면 예전 그대로(MMD_AT_PLUS_A) — 기존 경로 바이트 불변."""
         A = sp.csc_matrix(A)
+        self._perm = None
+        permc = "MMD_AT_PLUS_A"
+        if node_of is not None:
+            self._perm = node_block_order(A, node_of)
+            A = sp.csc_matrix(A[self._perm][:, self._perm])
+            permc = "NATURAL"
         try:
-            self._lu = spla.splu(A, permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0,
+            self._lu = spla.splu(A, permc_spec=permc, diag_pivot_thresh=0.0,
                                  options={"SymmetricMode": True})
         except RuntimeError as exc:   # "Factor is exactly singular"
             if _is_oom(exc):
@@ -419,7 +450,13 @@ class _SuperLU:
         self.mem_est_mb = self.nnz_L * 12 / 2 ** 20
 
     def solve(self, b):
-        return self._lu.solve(b)
+        if self._perm is None:
+            return self._lu.solve(b)
+        b = np.asarray(b)
+        y = self._lu.solve(b[self._perm])
+        x = np.empty_like(y)
+        x[self._perm] = y
+        return x
 
 
 class _Cholmod:
@@ -591,7 +628,7 @@ _IMPL = {"superlu": _SuperLU, "cholmod": _Cholmod, "pardiso": _Pardiso}
 @_oom_guard("희소 분해")
 def _factorize(A, backend: str = "superlu", stats: dict | None = None, label: str = "A", *,
                auto: bool = False, dof_per_node: int = 6, iter_opts: dict | None = None,
-               iter_setup=None):
+               iter_setup=None, node_of=None):
     """대칭 양정치 희소행렬 분해(또는 반복 해법 준비).
 
     - auto=True: 직접법 예상 메모리(estimate_direct_bytes)가 가용 메모리의 _MEM_SAFETY 배를 넘으면
@@ -599,6 +636,7 @@ def _factorize(A, backend: str = "superlu", stats: dict | None = None, label: st
     - 비양정치(분해 중 0/음 피벗): SuperLU 예상 메모리가 가용 메모리 안이면 SuperLU 폴백 + 경고,
       아니면 SOLVER_SINGULAR.
     - iter_setup(): 반복법 전처리 정보 dict(blocks, near_null) 를 지연 생성.
+    - node_of: 각 dof 의 노드 번호(있으면 SuperLU 만 노드 블록 순서 — jig 경로 옵션, 없으면 이전과 같음).
     """
     n = A.shape[0]
     t0 = time.perf_counter()
@@ -627,7 +665,7 @@ def _factorize(A, backend: str = "superlu", stats: dict | None = None, label: st
         info["maxiter"] = f.maxiter
     else:
         try:
-            f = _IMPL[backend](A)
+            f = _SuperLU(A, node_of=node_of) if (backend == "superlu" and node_of is not None) else _IMPL[backend](A)
         except _NotPD as exc:
             need = estimate_direct_bytes(n, A.nnz, "superlu", dof_per_node)
             if avail is not None and need > _MEM_SAFETY * avail:
@@ -678,7 +716,10 @@ class ShellModel:
     def __init__(self, x0, conn, elem_type, thickness, E, nu, drill_factor: float = 1e-4,
                  backend: str = "auto", iter_rtol: float = 1e-10, iter_maxiter: int | None = None,
                  resid_backward_tol: float = RESID_BACKWARD_TOL, resid_rel_cap: float = RESID_REL_CAP,
-                 equil_tol_rel: float = EQUIL_TOL_REL):
+                 equil_tol_rel: float = EQUIL_TOL_REL, jig_factor_order: str = JIG_FACTOR_ORDER):
+        if jig_factor_order not in JIG_FACTOR_ORDERS:
+            raise EslError("CONFIG_INVALID", f"solver.jig_factor_order = {jig_factor_order!r} ∉ {JIG_FACTOR_ORDERS}")
+        self.jig_factor_order = str(jig_factor_order)      # jig_bc.factorize 만 읽음(옛 factorize·solve 경로는 무관)
         self.x0 = np.ascontiguousarray(x0, dtype=np.float64)
         self.resid_backward_tol = float(resid_backward_tol)
         self.resid_rel_cap = float(resid_rel_cap)
@@ -983,8 +1024,9 @@ class ShellModel:
     # ------------------------------------------------------------------
     # 분해 재사용 (esl_opt_run.md OR-D-14: 후보 하중마다 같은 K_ff — 분해 1회·다중 RHS)
     @_oom_guard("정적 해 분해(K_ff)")
-    def factorize(self, spc) -> "FactorizedSolve":
-        """spc=[(node_idx, "123" 부분집합)] 로 K_ff 를 한 번 분해한 해법 객체. ``.solve(F)`` = ``solve(F, spc)`` 와 같은 결과."""
+    def factorize(self, spc, *, order: str | None = None) -> "FactorizedSolve":
+        """spc=[(node_idx, "123" 부분집합)] 로 K_ff 를 한 번 분해한 해법 객체. ``.solve(F)`` = ``solve(F, spc)`` 와 같은 결과.
+        order="node_mmd" = SuperLU 노드 블록 순서(``node_block_order`` — jig 경로가 설정 solver.jig_factor_order 로 지정), None = 예전 그대로."""
         cons = set()
         for node, dofs in spc:
             node = int(node)
@@ -1018,7 +1060,8 @@ class ShellModel:
         Kff = _principal_submatrix(K, free)
         norm_K = _norm_inf(Kff)
         lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
-                        iter_opts=self.iter_opts, iter_setup=iter_setup)
+                        iter_opts=self.iter_opts, iter_setup=iter_setup,
+                        node_of=(free // 6) if order == "node_mmd" else None)
         del Kff
         self.stats["n_factorizations"] = int(self.stats.get("n_factorizations", 0)) + 1
         return FactorizedSolve(self, K, lu, cons, free, norm_K)
@@ -1032,7 +1075,7 @@ class ShellModel:
     # ------------------------------------------------------------------
     # v0.24.4 경계 확장(esl_jig_case.md §4.2, D-0.24.4-JIG-10): 임의 단위 방향 구속(국부 틀) + 접지 스프링. 추가만 — 위 경로 불변.
     @_oom_guard("정적 해 분해(K̃_ff — 국부 구속·스프링)")
-    def factorize_bc(self, dirs, *, springs=None) -> BcSolve:
+    def factorize_bc(self, dirs, *, springs=None, order: str | None = None) -> BcSolve:
         """구속 행 dirs = (node, d̂)(d̂ᵀu_node = 값), 스프링 행 springs = (node, d̂, k)(접지 스프링 ½k(d̂ᵀu − g)²) → 분해 1회.
 
         구속 노드마다 국부 정규직교 틀 Q_n(첫 열들 = 그 노드 구속 방향을 입력 순서대로 Gram–Schmidt, 나머지 = 보완 축)으로
@@ -1138,7 +1181,8 @@ class ShellModel:
         Kff = _principal_submatrix(Kt, free)
         norm_K = _norm_inf(Kff)
         lu = _factorize(Kff, self.backend, self.stats, "K_ff", auto=self._auto, dof_per_node=6,
-                        iter_opts=self.iter_opts, iter_setup=iter_setup)
+                        iter_opts=self.iter_opts, iter_setup=iter_setup,
+                        node_of=(free // 6) if order == "node_mmd" else None)
         del Kff
         self.stats["n_factorizations"] = int(self.stats.get("n_factorizations", 0)) + 1
         return BcSolve(self, Kt, lu, free, fixed, norm_K, tnodes=tnodes, Q=Q, Rm=Rm, nk=nk, bc_node=cn, bc_dir=cd,

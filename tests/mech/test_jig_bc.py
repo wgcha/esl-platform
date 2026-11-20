@@ -547,3 +547,54 @@ def test_save_load_bc_and_pattern(led_runs, tmp_path):
     shas = {m: jig_bc.pattern_sha(runs[m]["BC"]) for m in METHODS}
     assert shas["fixed"] == shas["prescribed"] != shas["spring"]                  # ④ 묶음 = jig+jig_disp · jig_spring
     assert jig_bc.load_bc({})["bc_node"].size == 0
+
+
+# ====================================================================== v0.24.4 검증 수정 — 분해 순서(solver.jig_factor_order)
+def _order_case(n=14, tie_dofs="normal"):
+    P, C, et = rect_quads(300.0, 200.0, n, n)
+    P = np.asarray(P, dtype=np.float64).copy()
+    P[:, 2] = 8.0 * np.sin(np.pi * P[:, 0] / 300.0) * np.sin(np.pi * P[:, 1] / 200.0)
+    mesh = mesh_of(P, C, et)
+    N = len(P)
+    J = np.unique(np.random.default_rng(3).choice(N, size=max(8, N // 20), replace=False))
+    ny = n + 1
+    sup = [(0, "123"), (n * ny, "23"), (n, "3")]
+    tie = jig_bc.tie_rows(mesh, J, tie_dofs, kink_deg=45.0)
+    aux = jig_bc.aux_rows(P, sup, tie, tie_dofs, dup_deg=10.0)
+    BC = jig_bc.build_bc(jig_bc.METHODS["fixed"], tie, aux, np.zeros((N, 3)))
+    F = np.random.default_rng(1).standard_normal((N, 3))
+    F -= F.mean(axis=0)
+    return mesh, BC, F
+
+
+@pytest.mark.parametrize("tie_dofs", ["normal", "translation"])
+def test_jig_factor_order_same_result_both_branches(tie_dofs):
+    """node_mmd = default 결과(≤1e-9 상대) — factorize_bc(법선) 와 spc 가지(병진) 모두. 순서만 다르다."""
+    mesh, BC, F = _order_case(tie_dofs=tie_dofs)
+    out = {}
+    for order in ("default", "node_mmd"):
+        sm = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
+                        backend="superlu", jig_factor_order=order)
+        h = jig_bc.factorize(sm, BC)
+        out[order] = jig_bc.solve(h, F, BC)[0]
+        lu = (h.h if hasattr(h, "h") else h).lu                       # SpcSolve(.h = FactorizedSolve) 또는 BcSolve
+        assert (lu._perm is None) == (order == "default")
+    a, b = out["default"], out["node_mmd"]
+    assert np.abs(a - b).max() <= 1e-9 * np.abs(a).max()
+
+
+def test_jig_factor_order_does_not_touch_old_paths_and_validates():
+    from esl import config
+    from esl.mech.shell import JIG_FACTOR_ORDERS, solver_check_kwargs
+
+    mesh, _BC, F = _order_case()
+    sm = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"], backend="superlu")
+    assert sm.jig_factor_order == config.SOLVER_JIG_DEFAULTS["jig_factor_order"] == JIG_FACTOR_ORDERS[0]
+    h = sm.factorize([(0, "123"), (14 * 15, "23"), (14, "3")])          # 옛 3-2-1 호출 — order 안 줌 = 순열 없음(예전 MMD, 바이트 불변)
+    assert h.lu._perm is None
+    with pytest.raises(EslError) as ei:
+        ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"], jig_factor_order="x")
+    assert ei.value.code == "CONFIG_INVALID"
+    assert "jig_factor_order" not in solver_check_kwargs({"drill_factor": 1e-4})          # 지정 안 하면 인자 없음
+    assert solver_check_kwargs({"jig_factor_order": "default"})["jig_factor_order"] == "default"
+    assert "solver.jig_factor_order" in config.OPTIONAL_KEYS

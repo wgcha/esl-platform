@@ -463,7 +463,11 @@ class SpcSolve:
 
 def factorize(sm, BC: dict):
     """BC 구속 집합(값 제외)·스프링 → 분해 1회. 축 방향 구속만·스프링 없음 = ``SpcSolve``(옛 ``factorize`` 경로), 그 밖
-    ``sm.factorize_bc``. 고르는 기준은 자료(방향 행)뿐 — 방식 이름 분기 없음. SOLVER_SINGULAR → JIG_SUPPORT_DEGENERATE."""
+    ``sm.factorize_bc``. 고르는 기준은 자료(방향 행)뿐 — 방식 이름 분기 없음. SOLVER_SINGULAR → JIG_SUPPORT_DEGENERATE.
+    분해 순서 = 설정 solver.jig_factor_order(``sm.jig_factor_order`` — node_mmd 면 노드 블록 순서, default 면 예전 MMD). 이 함수
+    (새 지그 경로)에만 적용 — 옛 3-2-1·spc 호출(``sm.factorize(spc)``)은 order 를 안 줘 바이트 불변."""
+    order = getattr(sm, "jig_factor_order", None)
+    order = order if order == "node_mmd" else None
     exact, ax, _ = _axis_rows(BC)
     has_sp = np.asarray(BC["sp_node"]).size > 0
     bn = np.asarray(BC["bc_node"], dtype=np.int64)
@@ -472,12 +476,13 @@ def factorize(sm, BC: dict):
             spc: dict[int, str] = {}
             for n, a in zip(bn.tolist(), ax.tolist()):
                 spc[n] = spc.get(n, "") + str(a + 1)
-            h = sm.factorize([(n, "".join(sorted(d))) for n, d in sorted(spc.items())])
+            h = sm.factorize([(n, "".join(sorted(d))) for n, d in sorted(spc.items())], order=order)
             return SpcSolve(h, BC)
         return sm.factorize_bc((bn, np.asarray(BC["bc_dir"], dtype=np.float64).reshape(-1, 3)),
                                springs=(np.asarray(BC["sp_node"], dtype=np.int64),
                                         np.asarray(BC["sp_dir"], dtype=np.float64).reshape(-1, 3),
-                                        np.asarray(BC["sp_k"], dtype=np.float64)) if has_sp else None)
+                                        np.asarray(BC["sp_k"], dtype=np.float64)) if has_sp else None,
+                               order=order)
     except EslError as e:
         if e.code == "SOLVER_SINGULAR":
             raise EslError("JIG_SUPPORT_DEGENERATE", e.message) from e
