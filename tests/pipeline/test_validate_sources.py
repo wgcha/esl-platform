@@ -359,7 +359,7 @@ def _mut_summary(out, **sub):
     ("old_esl", {"bforce": ("unavailable", "V3D_SRC_NOT_RUN", None), "fint": ("unavailable", "V3D_SRC_NOT_RUN", None)}),
 ])
 def test_v0243_val_5_reasons_from_summary_and_diag(golden_runs, tmp_path, case, exp):
-    from esl import val_src, view3d_src
+    from esl import view3d_src
     r = copy_case(golden_runs, "bf", str(tmp_path))
     out = r["out"]
     _mut_drop_src(out)

@@ -529,7 +529,7 @@ def bforce_settings(cfg: dict | None) -> dict:
 def jig_settings(cfg: dict | None) -> dict:
     """Case 지그 ESL 설정(v0.24.4 esl_jig_case.md §11): 코어 선택 절 ``jig`` 를 ``esl.mech.jig.JIG_DEFAULTS``(단일 원본) 위에 덮은 사본.
     절이 없으면 기본값 그대로(새 기본 = normal·세 방식). cfg 는 바꾸지 않는다(검증은 validate_settings)."""
-    from esl.mech.jig import JIG_DEFAULTS            # scipy 를 쓰는 모듈 — 설정 로더 import 를 가볍게 두려고 여기서만
+    from esl.mech.jig import JIG_DEFAULTS  # scipy 를 쓰는 모듈 — 설정 로더 import 를 가볍게 두려고 여기서만
     out = copy.deepcopy(JIG_DEFAULTS)
     jc = cfg.get("jig") if isinstance(cfg, dict) else None
     if isinstance(jc, dict):

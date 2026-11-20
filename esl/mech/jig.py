@@ -16,6 +16,7 @@ N×T 배열 없음(V-JIG-8).
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
@@ -44,7 +45,7 @@ SIGN_FREE_REL = 1e-9       # 접촉 법선 부호 자유 판정(× ΣA·max(gap,
 # 지그 설정 기본값(esl_jig_case.md §11 — 코어 Case 절 ``jig.*`` 의 단일 원본). 위 절반 = v0.24.3 ``bead_doe.rank.jig`` 와 같은
 # 이름·값(esl.doe.DEFAULTS["rank"]["jig"]·pydantic·yaml 2개 거울 — 시험이 같음 확인), 아래 = v0.24.4 새 키
 # (세 방식·tie 구속 성분·법선·3-2-1 면내·스프링). 옛 스냅샷(새 키 없음)의 뜻 = ``jig_bc.LEGACY_ABSENT``(translation·fixed).
-JIG_DEFAULTS = {
+JIG_DEFAULTS: dict[str, Any] = {
     "enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"], "contact_gap_mm": 2.0,
     "knn": 8, "chunk_nodes": 65536, "max_surf_tris": 20000000, "max_regions": 8, "min_regions": 2,
     "min_region_nodes": 3, "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True,

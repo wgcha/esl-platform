@@ -1521,8 +1521,9 @@ def _jig_surface(ctx: Context, model: StoredModel, J: dict, fit, warns: list):
             tmp = ctx.guard(ctx.p(D_EXTRACT, "jig_surf.tmp.npz"))
             meta = {k: surf[k] for k in ("thickness_known", "n_parts", "n_shell", "n_solid_faces", "n_skipped", "seconds")
                     if k in surf}
-            np.savez_compressed(tmp, key=np.asarray(key), meta=np.asarray(json.dumps(_jsonable(meta))),
-                                **{k: np.asarray(surf[k]) for k in _JIG_SURF_ARRAYS})
+            arrs: dict[str, Any] = {"key": np.asarray(key), "meta": np.asarray(json.dumps(_jsonable(meta))),
+                                    **{k: np.asarray(surf[k]) for k in _JIG_SURF_ARRAYS}}
+            np.savez_compressed(tmp, **arrs)
             atomic_replace(tmp, ctx.guard(cpath))
         except OSError as exc:
             ctx.warnings.append(f"지그 deck 표면 캐시를 쓰지 못함({type(exc).__name__}) — 다음 ESL 때 다시 읽음")
@@ -1835,13 +1836,13 @@ def _jig_esl(ctx: Context, model: StoredModel, d: str, sel: dict, u_rel, sup, sm
     ctx.warnings.extend(warns)
     z = sh.pop("z")
     sh["basis_sha"] = _arr_sha(z)
-    np.savez_compressed(ctx.f(d, JIG_BASIS_NPZ), schema=np.asarray(CASE_JIG_BASIS_SCHEMA), **z,
-                        sha256=np.asarray(sh["basis_sha"]))
+    np.savez_compressed(ctx.f(d, JIG_BASIS_NPZ), **{"schema": np.asarray(CASE_JIG_BASIS_SCHEMA), **z,
+                                                    "sha256": np.asarray(sh["basis_sha"])})
     sh["doc"]["info"] = infos
     sh["doc"]["shared_warnings"] = [t.split(":", 1)[0] for t in warns]
     sh["doc"]["seconds_shared"] = tm
     sha0 = jig_bc.pattern_sha(sh["BC0"])
-    prep = []
+    prep: list[tuple[str, Any, Any, Any, bool, Exception | None]] = []
     for m in methods:                                          # BC(값·스프링) 먼저 — 공유 분해를 쓰는 방식부터 풀고 분해를 놓음
         row = jig_bc.METHODS[m]
         try:

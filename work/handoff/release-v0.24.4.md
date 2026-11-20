@@ -43,3 +43,29 @@
   (백엔드는 doe_select 지연 import 경로에서만).
 - 발견: k_auto(α=1) = 노드 자기 강성 → 패널 전체 강성보다 훨씬 커서 spring ≈ prescribed(‖Δu‖/‖u‖ 2.4e-5). α ≲ 1e-2 에서야 차이(Q-JIGC-1).
 - 발견: 평판(선형) 조립에서는 normal ≈ translation(굽힘·막 분리), 곡면에서 normal ≫ translation.
+
+# 이어받기 — P2b A2b(코어 Case)·S2-min (2026-11-20)
+
+- 범위: A2b(esl/pipeline.py _jig_esl·검증 지지 묶음, esl/view3d_src.py, esl/val_src.py, esl/config.py, config/esl.example.yaml) +
+  S2-min(esl/doe/stages.py RANK_SOURCES 2행·_rank_views need 확인, esl/doe/stiffness_metric.py VIEW_METRICS jd·js).
+  메인 결정 2개 = 계약 부록 A.1·D-0.24.4-JIG-19(α 0.01)·-20(면내 반력 0 등식 제약 — jig.fit_loads(eq)·jig_bc.basis_response/aux_eq/
+  run_method(rc_basis)).
+- 시험 환경: /tmp/rdenv_a2b.sh(= rdenv_main REPO_ROOT 교체), PG 는 pytest 와 같은 백그라운드 명령 안에서.
+
+## 진행
+1. [x] 출처 표 KEYS 6(CASE_PLAN·VAL_PLAN 지그 3행·문구), RANK_SOURCES jd·js, VIEW_METRICS — 기존 시험 기대값 갱신(§12-6)
+2. [x] 면내 반력 0 제약 + α 0.01(tests/mech/test_jig_aux_eq.py 5)
+3. [x] 코어 jig 설정 절·jig_settings
+4. [x] Case _jig_esl(공유 단계·방식·파일·요약·격리) + ④ _SUPPORT_FN jig·묶음 키(지지 패턴) — tests/pipeline/test_jig_case.py 14
+5. [x] 골든: tests/doe/test_jig_move.py 를 "새 코드 + 옛 출처 표 = 골든 전부, 새 출처 표 = 의도 2파일" 로 확장
+6. [x] 계약 부록 A·decisions -19·-20
+7. 전체 pytest tests/ — 반환 메시지 참고
+
+## 다음(P2c·병합)
+- B2: DEFAULTS["rank"]["jig"]·pydantic·yaml 2·backend RANK_DEFAULT 에 JIG_NEW_KEYS 9개(spring_alpha 0.01), services/view3d.py
+  SUPPORT_FILES["jig"](CASE_PLAN support "jig" = 행 load npz bc_node), services/doe.py RANK_VIEWS 에 jig_disp·jig_spring, backend
+  시험 기대값(KEYS 6·jig 행 JIG_NOT_RUN/JIG_NOT_PREPARED).
+- C2: SOURCE_ROWS label "지그 고정"·"지그 변위"·"지그 스프링"(val_src.LABEL 과 같음, `{ key, label` 순서) — 병합 후
+  test_v4_labels_equal_frontend_source_rows 가 skip 아닌 비교.
+- W2: 01_extract/jig_fixed/(shell_scan.json·fixed_nodes.npz) + 01_extract/jig_prep.json {attempts:[{job_id=tag, status, code, detail}]}
+  (계약 부록 A.2). worker/tests/test_val_src_e2e.py 기대값(KEYS 6) 갱신 필요.

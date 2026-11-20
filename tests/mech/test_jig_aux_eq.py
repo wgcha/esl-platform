@@ -114,7 +114,7 @@ def test_fit_loads_eq_none_unchanged_and_infeasible(runs, led):
 def test_spring_alpha_default_one_place(led):
     """α 기본 = JIG_DEFAULTS["spring_alpha"](0.01 — 한 곳), α = 0.01 에서 spring 이 prescribed 와 구별됨(같은 F)."""
     assert jig.JIG_DEFAULTS["spring_alpha"] == 0.01
-    tie, aux = T.shared(led, "normal")
+    tie, _aux = T.shared(led, "normal")
     assert np.array_equal(jig_bc.spring_k(led["sm"], tie, mode="auto"), jig_bc.spring_k(led["sm"], tie, mode="auto",
                                                                                          alpha=0.01))
     x = _runs(led, "normal", eq=True, alpha=0.01)

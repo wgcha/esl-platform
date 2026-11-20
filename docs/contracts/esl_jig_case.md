@@ -440,7 +440,7 @@ score(C_mix_d, C_mix_0, E_0) -> float;  pattern_sha(BC) -> str;  save_bc(dict)/l
 | `aux321_dup_deg` | 10.0 | 같음 | 〃 |
 | `aux_reaction_warn` | 0.05 | 같음 | HASH_EXCLUDE |
 | `spring_k_mode` | `"auto"` \| `"value"` | 같음 | 〃(안) |
-| `spring_alpha` | 1.0(> 0, ≥ 1e-3) | 같음 | 〃 |
+| `spring_alpha` | **0.01**(≥ 1e-3 — 원안 1.0, 부록 A.1·D-0.24.4-JIG-19) | 같음 | 〃 |
 | `spring_k_value` | null(value 모드에서 필수 N/mm) | 같음 | 〃 |
 | `spring_alpha_scan` | `[]` | 같음 | HASH_EXCLUDE |
 | `bead_doe.case_jig.{enabled, timeout_s}` | `true`, `null` | `esl/doe/__init__.py` DEFAULTS·pydantic `BeadDoeCaseJigCfg`·`config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml` | – |
@@ -516,7 +516,7 @@ score(C_mix_d, C_mix_0, E_0) -> float;  pattern_sha(BC) -> str;  save_bc(dict)/l
 
 ## 16. 결정 (요약 — 전문 `docs/decisions.md` 2026-11-20)
 
-D-0.24.4-JIG-1 범위·단계 · -2 세 방식 = 별도 출처 행·이름·공유 기저 · -3 tie 구속 성분 normal(새 기본)·translation · -4 법선 정의 · -5 3-2-1 면내 항상·중복·rigid_free · -6 prescribed · -7 spring·k · -8 설계 비교 고정 표 · -9 순위 지표 Π 기반 · -10 모듈 이동·jig_bc·ShellModel 확장 · -11 Case 통합·산출물·격리 · -12 출처 표 행·④ 묶음·한계 · -13 화면 그룹 탭·새 줄 없음 · -14 P3 · -15 질량 이름 · -16 설정 · -17 하위 호환 · -18 비용.
+D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 맞춤 3-2-1 면내 반력 0 등식) · -2 세 방식 = 별도 출처 행·이름·공유 기저 · -3 tie 구속 성분 normal(새 기본)·translation · -4 법선 정의 · -5 3-2-1 면내 항상·중복·rigid_free · -6 prescribed · -7 spring·k · -8 설계 비교 고정 표 · -9 순위 지표 Π 기반 · -10 모듈 이동·jig_bc·ShellModel 확장 · -11 Case 통합·산출물·격리 · -12 출처 표 행·④ 묶음·한계 · -13 화면 그룹 탭·새 줄 없음 · -14 P3 · -15 질량 이름 · -16 설정 · -17 하위 호환 · -18 비용.
 
 ## 17. 후속 (R-JIGC-n)
 
@@ -526,3 +526,50 @@ D-0.24.4-JIG-1 범위·단계 · -2 세 방식 = 별도 출처 행·이름·공�
 - R-JIGC-7 fixed·normal 목표 프레임을 점-면(법선 가중) Kabsch 로(지금 = 전 성분 Kabsch).
 - R-JIGC-8 기하 비선형(막) 강성 K_σ(u_rel) 추가 연구(가설 검증 후).
 - R-VAL-7(새) 비드 최적화 지그 경계 덱 전달(§9 사상). R-VAL-3(스터디가 Case 지그 재사용)·R-VAL-6 그대로.
+
+---
+
+## 부록 A. P2b A2b(코어 Case)·S2-min 구현 기록 (2026-11-20)
+
+### A.1 메인 결정 반영 (계약 본문과 다른 값 — 결정 1줄씩)
+
+- **spring 기본 α = 0.01**(§3.5·§11 의 1.0 대체, D-0.24.4-JIG-19): P2a 합성에서 α = 1 은 노드 자기 강성이라 패널 전체보다 훨씬 단단해
+  spring ≈ prescribed(‖Δu‖/‖u‖ 2.4e-5), α ≲ 1e-2 에서야 구분됨(Q-JIGC-1 사용자 확인 대기). 키 이름 그대로, 값은 `esl.mech.jig.JIG_DEFAULTS`
+  한 곳(`jig_bc.spring_k(alpha=None)` = 그 값). B2 의 DEFAULTS·pydantic·yaml 2 거울도 0.01.
+- **맞춤의 3-2-1 면내 반력 0 등식 제약**(§3.3 "평형이면 ≈ 0" 을 강제, D-0.24.4-JIG-20): P2a 관찰 — normal tie 의 면내 하중은 3-2-1 면내
+  3자유도만 받아 prescribed 반력비 1.19. 맞춤에 r_aux(a) = r_aux,g + Σ a_k r_aux,k = 0(같은 분해의 기저 열마다 3-2-1 면내 행 반력 —
+  `jig_bc.basis_response` rc_aux, `jig_bc.aux_eq`)을 등식으로 넣음. 평판·정정이면 면내 합력 2·면내 모멘트 1 = 0 과 같고(면외 tie 반력은
+  면내 강체 일을 하지 않음), 곡면에서도 반력 자체를 0 으로 둠. 풀이 = `jig.fit_loads(eq=(C, c))`: 등식 행 SVD 축소 → 하한 없는(접선·체적력·
+  모드) 열 중 피벗 QR 앞 r 개를 종속 열로 소거 → 같은 BVLS(법선 ≥ 0 그대로). 소거 불가(하한 없는 열 부족·계수 0) = 제약 없이 + `fit.aux_eq
+  {applied false, reason}`. 3-2-1 면내 행이 없으면(translation) 제약 없음 = 옛 산술 경로(시험 비트 동일). 스터디(P2c 전)는 jig_bc 를 쓰지
+  않으므로 바이트 불변.
+
+### A.2 계약과 다른 점·더한 것 (B2·C2·W2 가 맞출 것)
+
+| 항목 | 구현 |
+|---|---|
+| `04_esl/<src>.json` 추가 키 | `method_name`, `bc{tie_dofs, tie_text, n_jig, n_tie_rows, n_aux}`(④ 지지 문구 자리 값), `recon{status ok·poor, mac_min, mac, umax_ref, umax_val, umax_err, reaction_rel, reaction_max_rel, support_rel}`, `fit.aux_eq{n, applied, reason, resid}`·`fit.n_bound_active`·`fit.rot_deg`, `limit_text[]`(limits 와 같은 순서 — 문구 원본 resources/doe_messages.json), `warning_text[]`·`info_text[]`, `shared_warnings[]`, `seconds{fit, total}`·`seconds_shared{tie, surf, regions, factor, modes, basis, factor_<src>}`, `fill_reason`, `basis_cfg{…}`, `aux321{nodes(node_id), rows[[node_id, dir]], n_dup, plane}` |
+| 요약 `forces.<src>` | 계약 키 + `fit_mac`(맞춤 노드 MAC — `mac`·`umax_err` 는 재현 = 파트 Kabsch vs u_rel), `recon`(ok·poor), `seconds`·`seconds_shared`·`seconds_all`. 불가 = {status unavailable, code, reason, method, tie_dofs} |
+| 불가 때 파일 | 준비 전 코드(JIG_DISABLED·JIG_NOT_PREPARED·JIG_FIXED_SKIPPED·JIG_FIXED_FAILED) = 04_esl 에 쓰지 않음(옛 Case 와 같은 산출물 집합), JIG_NO_TIE·JIG_SUPPORT_DEGENERATE·JIG_FAILED = `<src>.json` {status unavailable, code, reason, fix…}(npz 없음 — ④ 행 code 는 진단 json 우선) |
+| `jig_basis.npz` | schema·node_id·jig_idx·omega·tie_node·tie_dir·aux_node·aux_dir·col_kind·reg_*·node_area·body_w·mode_f·mode_lam·mode_rho_t·sha256(앞 배열 이름순 내용 해시 = 방식 npz `basis_sha`). 계약의 tie_kind·reg_q·body_q·mode_q 는 저장 안 함(크기 — 스터디 전달용 밀도 키는 P2c 몫) |
+| `JIG_AUX_REACTION` | 정보(info) + 한계(limits — LIMIT_CLASS caution)에 함께(④ 탭 ⚠) |
+| 워커 기록 `01_extract/jig_prep.json` 읽기 | `{attempts: [{job_id, status ok·failed·skipped·disabled, code?, detail}]}`(bf_ondemand 형식, 단일 사전도 허용). 이 작업 tag 의 마지막 시도가 ok 아니면 code(없으면 status → JIG_FIXED_FAILED·JIG_FIXED_SKIPPED·JIG_DISABLED)·reason = 문구(detail). tag 시도 없음 = JIG_NOT_PREPARED. tie 자료 = `01_extract/jig_fixed/{shell_scan.json, fixed_nodes.npz}`(paicad 출력 그대로) |
+| deck 표면 캐시 `01_extract/jig_surf.npz` | key = {starter·include 경로·size·mtime_ns, part, 상자 lo·hi, pad, max_tris, include_path_map, depth} JSON 문자열, 배열 x·node_id·tri·tri_part·tri_thick + meta. 쓰기 = tmp → replace, 실패해도 계산 계속 |
+| ④ `sources.json solve.groups` | 지그 묶음에 `pattern`(구속 패턴 sha 앞 16자) 키(bc321 묶음엔 없음 — 옛 출력 불변). 지그 행 validation.json `reactions` = bc 노드(dof 표시 "tie"·"aux321"·"spring"), 반력 R = 구속 반력 + 스프링 힘 |
+| `val_src` 더함 | `SHORT`·`GROUP`·`GROUP_LABEL`(§2.1), `SUPPORT_FIELDS`·`support_text(support, doc)`(SUPPORT_TEXT 자리 = doc.bc), `limit_doc_text(row, doc)`·`limit_info(codes, texts=None)`(LIMIT_TEXT 우선 → 진단 json 문구 — 기존 출처 불변). `REASON_TEXT["JIG_NOT_RUN"]` → `view3d_src.REASON_TEXT` 로 이동 |
+| 스터디 S2-min | RANK_SOURCES jig_disp·jig_spring 행 = §6.1 그대로(drop 은 중복 제거 튜플 `VIEW_DROP_JD`·`VIEW_DROP_JS`), `_rank_views` 는 need 가 베이스라인에 없으면 그 행 보기를 만들지 않음(jig·full 은 기존 `_jig_ref` 와 같은 조건 — 옛 스터디 바이트 골든 통과) |
+| 코어 설정 `jig` 절 | `esl/config.py SCHEMA["jig"]`(범위 = pydantic BeadDoeRankJigCfg + 새 키 §11), 모든 키 선택(OPTIONAL_KEYS), `jig_settings(cfg)`(JIG_DEFAULTS 지연 import — 설정 로더가 scipy 를 끌지 않음), 키 사이 조건 min_regions ≤ max_regions·value ⇒ spring_k_value |
+| modes_ref321 | Case 도 계산(정보 hz_321·hz_ratio — 스터디와 같은 뜻) |
+| 화면 이름 시험 | `tests/test_val_src.py::test_v4_labels_equal_frontend_source_rows` 는 sources.ts 에 jig_disp 행이 없으면(C2 병합 전 트리) skip — 병합 후 항상 비교. C2 SOURCE_ROWS 는 `{ key: "…", label: "…"` 순서 유지 필요 |
+
+### A.3 합성 기록 (이 환경 — numpy·scipy 같은 서명)
+
+- 시험 `tests/mech/test_jig_aux_eq.py`(led 픽스처): 3-2-1 면내 반력비 fixed 0.051·prescribed 1.191·spring 1.191 → 제약 후 세 방식 < 1e-10.
+  맞춤 MAC fixed 0.65582 → 0.65578, prescribed 0.99973 → 0.99969, 파트 Kabsch 재현 MAC 0.63424·0.99981 그대로. α = 0.01 같은 F 에서
+  ‖u_s − u_p‖/‖u_p‖ ≈ 2.3e-3(α = 1 = 2.4e-5).
+- 시험 `tests/pipeline/test_jig_case.py`(synth_case 판 1107 노드 + 이웃 쉘 파트 9, tie 9, normal): 재현 MAC 고정 0.612 · 변위 0.997 ·
+  스프링 0.997(제약 전 0.626·0.997·0.997), 3-2-1 면내 반력비 제약 전 0.399·0.154·0.217 → 후 ≤ 1.2e-12. α = 0.01 spring vs prescribed
+  ‖Δu‖/‖u‖ = 3.9e-2(같은 F)·1.1e-2(각자 맞춤). 시간(2코어): 공유 단계 tie 0.003 s·표면 0.005·영역 0.005·분해 0.13·모드 0.12·기저 0.06,
+  spring 분해+기저 0.23, 방식 맞춤 0.01~0.03 s, ESL 전체 ≈ 1.4 s. ④ 묶음 3(bc321 · jig+jig_disp 분해 0.16 s · jig_spring 0.16 s).
+- 골든: 옛 스터디 41 파일·Case 36 파일 = v0.24.3 기록(`tests/doe/test_jig_move.py` — 새 코드 + 옛 출처 표 재실행 = 골든 전부, 새 출처 표 =
+  의도된 05_val/sources.json·07_report/report.html 2파일만 다름). V-0243-VAL-1 골든(05_val 루트·full) 통과.

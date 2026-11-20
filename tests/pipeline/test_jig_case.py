@@ -20,7 +20,6 @@ import shutil
 
 import numpy as np
 import pytest
-
 import synth_case
 from test_bforce_stage import _add_bforce
 
@@ -34,8 +33,8 @@ from esl.mech import jig, jig_bc, kabsch
 from esl.rad import writer as rw
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-CFG_TEXT = open(os.path.join(ROOT, "config", "esl.example.yaml"), encoding="utf-8").read().replace(
-    "disp_precision: float32", "disp_precision: float64")
+with open(os.path.join(ROOT, "config", "esl.example.yaml"), encoding="utf-8") as _fh:
+    CFG_TEXT = _fh.read().replace("disp_precision: float32", "disp_precision: float64")
 TAG = "jigcase-t1"
 SRCS = tuple(r["src"] for r in jig_bc.METHODS.values())
 NY = 26
@@ -90,8 +89,8 @@ def base(tmp_path_factory):
     with open(cfg, "w", encoding="utf-8") as fh:
         fh.write(CFG_TEXT)
     out = os.path.join(root, "tpl")
-    kw = dict(config_path=cfg, rad=c["rad"], results=c["csv"], out=out, frame=synth_case.T_STAR_FRAME,
-              echo=lambda *_: None, tag=TAG)
+    kw = {"config_path": cfg, "rad": c["rad"], "results": c["csv"], "out": out, "frame": synth_case.T_STAR_FRAME,
+          "echo": lambda *_: None, "tag": TAG}
     pipeline.run(stage="extract", **kw)
     pipeline.run(stage="tstar", **kw)
     return {"root": root, "c": c, "cfg": cfg, "tpl": out}
