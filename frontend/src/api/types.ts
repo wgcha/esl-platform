@@ -1928,6 +1928,12 @@ export interface ValidationSourceRow {
   undetermined_reason: string | null;
   /** judge = 반력도 판정 · info = 지지 반력(정보) */
   reaction_role: "judge" | "info" | null;
+  /** 이 출처의 반력 불합격 허용치(상대, 판정에 쓴 값 — 출처별 설정 validation.sources.reaction_tol, 없으면 공통 기준) */
+  reaction_tol: number | null;
+  reaction_tol_key: string | null;
+  /** 반력 주의 문턱(validation.sources.reaction_warn) — 초과 ~ 허용치 이하 = PASS + 주의 */
+  reaction_warn: number | null;
+  reaction_warned: boolean | null;
   /** 하중 프레임·지지·균형·응답 한 줄(탭 툴팁) */
   cond_text: string | null;
   /** 변위 비교 설명 줄 */

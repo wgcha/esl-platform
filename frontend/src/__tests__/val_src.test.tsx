@@ -2,6 +2,7 @@
 import STAGE5_SRC from "../stages/Stage5.tsx?raw";
 import TABS_SRC from "../view3d/SourceTabs.tsx?raw";
 import SOURCES_SRC from "../view3d/sources.ts?raw";
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +13,7 @@ import { valSourceRows } from "../mock/valsrcmock";
 import { SourceTabs } from "../view3d/SourceTabs";
 import { SOURCE_ROWS, caseTabItems, defaultValSource, markOf, tabItemsOf, unavailText, valTabItems } from "../view3d/sources";
 import type { ValidationSourcesOut } from "../api/types";
+import { REG_NOT_PASS } from "../components/LibraryRegister";
 
 const STAGE5 = "/p/p-body/c/c-demo/step/4";
 
@@ -284,5 +286,49 @@ describe("V-0243-VAL-20 SourceTabs mark·옛 서버", () => {
     expect(screen.queryByTestId("val-src-tab")).toBeNull();
     expect(screen.getByRole("region", { name: "변위 비교 (전 노드)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /라이브러리에 등록/ })).toBeTruthy();
+  });
+});
+
+
+describe("v0.24.3 Verifier — 판정 카드 머리 1줄(제목·탭·판정·버튼), 등록 불가 사유는 본문 첫 줄", () => {
+  it("FAIL 인데 출처 탭이 있어도: 머리 안에 사유 문구 없음 · 머리 직계 = 제목 + 오른쪽 묶음 1개 · 사유는 카드 본문 첫 줄(role=note, 마우스 없이 보임)", async () => {
+    const { server } = renderWith((s) => {
+      ok(s);
+      s.validations[0] = { ...s.validations[0], verdict: "FAIL", status: "FAIL", fail_reasons: ["DISP_RMS"] };
+    });
+    await tabs();
+    const reason = await screen.findByTestId("reg-reason");
+    expect(reason.textContent).toBe(REG_NOT_PASS);
+    expect(reason.getAttribute("role")).toBe("note");
+    const card = judge().closest(".card") as HTMLElement;
+    const head = card.querySelector(".card-head") as HTMLElement;
+    expect(head.contains(reason)).toBe(false); // 머리 밖
+    expect(card.querySelector(".card-body")!.firstElementChild).toBe(reason); // 본문 첫 줄
+    expect(head.textContent).not.toContain(REG_NOT_PASS);
+    // 머리 한 줄: 제목(h3) + 오른쪽 묶음(.inline-actions, 줄바꿈 없음 — CSS) 둘뿐, 탭·등록 버튼은 그 묶음 안
+    const kids = [...head.children].map((e) => e.tagName + "." + e.className);
+    expect(kids).toEqual(["H3.", "SPAN.inline-actions"]);
+    const right = head.lastElementChild as HTMLElement;
+    expect(right.querySelector("[data-testid=val-src-tab]")).toBeTruthy();
+    expect(within(right).getByRole("button", { name: "라이브러리에 등록" })).toBeTruthy();
+    expect(server.validations[0].verdict).toBe("FAIL");
+  });
+
+  it("머리 1줄 CSS 규칙: 제목은 줄어들지 않고(nowrap) 오른쪽 묶음은 줄바꿈 없음, 탭 단추 좌우 여백 축소", async () => {
+    const css = readFileSync(`${__dirname}/../styles.css`, "utf8");
+    expect(css).toMatch(/\.card-head:has\(\.val-src-tabwrap\) h3\s*\{[^}]*flex:\s*0 0 auto;[^}]*white-space:\s*nowrap/);
+    expect(css).toMatch(/\.card-head:has\(\.val-src-tabwrap\) > \.inline-actions\s*\{[^}]*flex-wrap:\s*nowrap/);
+  });
+
+  it("출처별 반력 허용치: fint 탭 툴팁·반력 칸 = 판정에 쓴 허용치(10 %)·주의(5 %); 전 노드 탭은 문구 없음", async () => {
+    renderWith(ok);
+    await tabs();
+    expect(tab("fint").title).toContain("반력 허용치 ≤ 10 % · 주의 > 5 %");
+    expect(tab("full").title).not.toContain("반력 허용치");
+    fireEvent.click(tab("fint"));
+    await waitFor(() => expect(tab("fint").getAttribute("aria-selected")).toBe("true"));
+    const stat = () => within(judge()).getByText("반력 (상대)").closest(".stat") as HTMLElement;
+    await waitFor(() => expect(within(stat()).getByText(/기준 ≤ 1\.00e-1 · 주의 > 5\.00e-2/)).toBeTruthy());
+    expect(stat().getAttribute("title")).toBe("반력 허용치 ≤ 10 % · 주의 > 5 %");
   });
 });

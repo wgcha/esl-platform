@@ -327,7 +327,7 @@ def test_openapi_new_paths_schemas_and_unchanged_validation_out():
     assert {"ValidationSourceRow", "ValidationSourcesOut", "ValidationSourcesHistItem",
             "ValidationSourcesHistOut"} <= set(sch)
     assert set(sch["ValidationSourceRow"]["properties"]) == {
-        "key", "available", "code", "reason", "status", "fail_reasons", "undetermined_reason", "reaction_role",
+        "key", "available", "code", "reason", "status", "fail_reasons", "undetermined_reason", "reaction_role", "reaction_tol", "reaction_tol_key", "reaction_warn", "reaction_warned",
         "cond_text", "note", "limits", "limit_text", "comparable"}
     assert set(sch["ValidationOut"]["properties"]) == {
         "id", "esl_run_id", "case_id", "job_id", "disp_rms_rel", "reaction_rel", "hotspots", "excluded", "verdict",

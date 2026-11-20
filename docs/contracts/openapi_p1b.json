@@ -14845,6 +14845,50 @@
             ],
             "title": "Reaction Role"
           },
+          "reaction_tol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Tol"
+          },
+          "reaction_tol_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Tol Key"
+          },
+          "reaction_warn": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Warn"
+          },
+          "reaction_warned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reaction Warned"
+          },
           "reason": {
             "anyOf": [
               {

@@ -417,10 +417,12 @@ def _sec_val_sources(c: _Case) -> str:
         role = r.get("reaction_role")
         rows.append((_vs.LABEL.get(pr["key"], pr["key"]) + (" (기준)" if pr["legacy"] else ""), cell,
                      m.get("disp_rms_rel"), m.get("disp_max_rel"),
-                     H.esc(H.fmt(reac)) + ("" if role in (None, "judge") else ' <span class="small muted">정보</span>'),
+                     H.esc(H.fmt(reac)) + ("" if role in (None, "judge") else ' <span class="small muted">정보</span>')
+                     + ("" if role not in (None, "judge") or r.get("reaction_tol") is None
+                        else f' <span class="small muted">(허용치 ≤{H.esc(H.fmt(r["reaction_tol"]))})</span>'),
                      lim or "—", why))
     cap = ('<p class="small muted">같은 정의(목표 u_rel·양쪽 선형 강체 제거·Σ‖R‖/Σ‖F‖)·같은 기준값으로 출처마다 검증한 결과. '
-           "라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다.</p>")
+           "반력 허용치는 출처마다 설정(validation.sources.reaction_tol)으로 정하며 표의 괄호 값이 판정에 쓴 값이다. 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다.</p>")
     return ("<!--val-src--><h3>출처별 판정</h3>" + cap
             + H.table(["출처", "판정", "변위 RMS/U", "변위 최대/U", "반력 Σ‖R‖/Σ‖F‖", "한계", "조건·사유"], rows,
                       num=(2, 3, 4), raw=(1, 4)) + "<!--/val-src-->")

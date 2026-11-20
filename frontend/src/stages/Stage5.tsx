@@ -15,10 +15,10 @@ import { StatusBadge, statusOf, undeterminedText } from "../components/VerdictSt
 import { SectionChart, useSectionCtl, type SectionCtl } from "../components/SectionChart";
 import { ErrHistogram } from "../components/ErrHistogram";
 import { ReportLink } from "../components/ReportLink";
-import { LibraryRegister, REGISTER_LABEL, useRegistration } from "../components/LibraryRegister";
+import { LibraryRegister, REGISTER_LABEL, RegisterReason, useRegistration } from "../components/LibraryRegister";
 import { stepPath, stepState } from "../shell/StageStepper";
 import { SourceTabs } from "../view3d/SourceTabs";
-import { defaultValSource, isLegacySource, sourceRow, unavailText, valRowOf, valTabItems } from "../view3d/sources";
+import { defaultValSource, isLegacySource, reactionTolText, sourceRow, unavailText, valRowOf, valTabItems } from "../view3d/sources";
 import { usePolling } from "../lib/usePolling";
 import { dt, fmt, pct, pv, sci, spv } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -173,7 +173,7 @@ const SRC_BADGE_TITLE = "이 출처 판정 — 라이브러리 등록·내보내
 const STRAIN_NEED_FULL = "전체 재해석이 없어 변형률 비교를 표시할 수 없습니다";
 
 /** 판정 Stat 한 칸: 값 > 기준이면 bad, 이하이면 ok. 값이 없으면 사유에 따라 "생략"/"–" */
-function JudgeStat({ label, value, crit, skipped, hint, info }: { label: string; value: number | null | undefined; crit: number | undefined; skipped?: boolean; hint?: string; info?: boolean }) {
+function JudgeStat({ label, value, crit, skipped, hint, info, warn }: { label: string; value: number | null | undefined; crit: number | undefined; skipped?: boolean; hint?: string; info?: boolean; warn?: number }) {
   const has = value !== null && value !== undefined;
   // info(v0.24.3 criteria.reaction_role = "info"): 과잉 구속 지지의 반력 = 지지력 — 기준·색 없이 값만(판정 제외)
   const bad = !info && has && (!Number.isFinite(value) || (crit !== undefined && value > crit));
@@ -181,7 +181,7 @@ function JudgeStat({ label, value, crit, skipped, hint, info }: { label: string;
     <Stat
       label={label}
       value={has ? sci(value) : skipped ? "생략" : "–"}
-      sub={info ? INFO_REACTION_SUB : crit !== undefined ? `기준 ≤ ${sci(crit)}` : undefined}
+      sub={info ? INFO_REACTION_SUB : crit !== undefined ? `기준 ≤ ${sci(crit)}${warn !== undefined ? ` · 주의 > ${sci(warn)}` : ""}` : undefined}
       tone={!info && has && crit !== undefined ? (bad ? "bad" : "ok") : undefined}
       hint={has ? hint : skipped ? "전체 재해석 생략(validation.full_solve)" : hint}
     />
@@ -247,7 +247,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
       {tabsEl}
       {vv && (src ? <span title={SRC_BADGE_TITLE}><StatusBadge v={vv} /></span> : <StatusBadge v={vv} />)}
       {!pastVal && v0 && <ReportLink url={api.caseReportUrl(c.id)} dep={`${v0.id}:${st5?.state}`} />}
-      {!pastVal && v0 && <LibraryRegister projectId={c.project_id} reg={reg} />}
+      {!pastVal && v0 && <LibraryRegister projectId={c.project_id} reg={reg} reasonBelow />}
     </span>
   );
   const curLabel = sourceRow(cur)?.label ?? cur ?? "";
@@ -270,6 +270,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
       ) : !v ? (
         <div className="wide2">
           <Card title="판정" right={headRight(null)}>
+            {!pastVal && v0 && <RegisterReason reg={reg} />}
             {notRun ? (
               <div data-testid="val-src-notrun">
                 <div className="small muted" role="status">
@@ -291,12 +292,18 @@ export function Stage5({ c, reload, allowed }: StageProps) {
       ) : (
         <div className="wide2">
           <Card title="판정" right={headRight(v)}>
+            {!pastVal && v0 && <RegisterReason reg={reg} />}
             <div className="stats" data-testid="judge-stats">
               <JudgeStat label="변위 RMS (상대)" value={v.disp_rms_rel} crit={num(crit.disp_rms_rel_max)} skipped={skipped} />
               <JudgeStat label="변위 최대 오차 (상대)" value={v.disp_max_rel} crit={num(crit.disp_max_rel_max)} skipped={skipped} />
-              <JudgeStat label="반력 (상대)" value={v.reaction_rel} crit={num(crit.reaction_rel_max)} skipped={skipped} info={reactInfo} />
+              <JudgeStat label="반력 (상대)" value={v.reaction_rel} crit={num(crit.reaction_rel_max)} skipped={skipped} info={reactInfo} hint={src ? reactionTolText(curRow) ?? undefined : undefined} warn={num(crit.reaction_warn_rel)} />
               <JudgeStat label="변위 잡음 바닥" value={v.disp_noise_rel} crit={num(crit.disp_noise_rel_max)} hint="저장 정밀도가 만드는 노드 변위 잡음 δ ÷ U" />
             </div>
+            {src && curRow?.reaction_warned && (
+              <div className="small warn-text" role="status" data-testid="reaction-warn">
+                {curRow.limit_text[curRow.limits.indexOf("REACTION_ABOVE_WARN")] ?? "반력이 주의 문턱을 넘었습니다"}
+              </div>
+            )}
             {status === "UNDETERMINED" && (
               <div className="small" role="status" data-testid="undetermined-reason">
                 {undeterminedText(v)}

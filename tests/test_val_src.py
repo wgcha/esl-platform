@@ -284,3 +284,41 @@ def test_core_adapter_val_wrappers():
     assert p["reason_text"]["VAL_SRC_NOT_RUN"] == vs.REASON_TEXT["VAL_SRC_NOT_RUN"] and p["label"] == vs.LABEL
     assert ca.val_row_status(row=vs.plan("bforce"), have_load=False, doc=None, summary=None)["code"] == "V3D_SRC_NOT_RUN"
     assert ca.val_reason_text("VAL_SRC_DISABLED") == vs.REASON_TEXT["VAL_SRC_DISABLED"]
+
+
+# ---- 출처별 반력 허용치·주의(D-0.24.3-VAL: fint 주의 5 %·불합격 10 %, 사용자 결정 2026-11-20) ----
+@pytest.mark.parametrize("reac,verdict,warned", [(3e-2, "PASS", False), (7e-2, "PASS", True), (1.2e-1, "FAIL", False)])
+def test_fint_reaction_two_stage(reac, verdict, warned):
+    ms_vals = {k: 1e-6 for k in ("disp_rms_rel", "disp_max_rel")}
+    row = vs.plan("fint")
+    from esl import config as ec
+    tol, warn = ec.source_reaction_tol(None, row["reaction_tol_key"], "fint"), ec.source_reaction_tol(None, row["reaction_warn_key"], "fint")
+    assert (tol, warn) == (0.10, 0.05)
+    crit = {**CRIT, "reaction_rel_max": tol}
+    ms = vm.metric_rows({**VALS, **ms_vals, "reaction_rel": reac, "disp_noise_rel": 1e-6}, crit, CCFG, reaction_role="judge")
+    v, why = vm.verdict_of(ms, None)
+    assert v == verdict and (why == ["REACTION"]) == (verdict == "FAIL")
+    r = vs.done_row(row, {"verdict": v, "fail_reasons": why, "metrics": ms, "criteria": {**crit, "reaction_warn_rel": warn}}, None)
+    assert r["reaction_tol"] == 0.10 and r["reaction_warn"] == 0.05 and r["reaction_warned"] is warned
+    assert (vs.WARN_CODE in r["limits"]) == warned and r["comparable"] is True
+    assert (any("5 % 초과" in t for t in r["limit_text"])) == warned
+
+
+@pytest.mark.parametrize("key", ["full", "bforce"])
+def test_full_bforce_reaction_criterion_unchanged(key):
+    from esl import config as ec
+    row = vs.plan(key)
+    assert ec.source_reaction_tol(None, row["reaction_tol_key"], key) is None   # 공통 기준 1e-6
+    assert ec.source_reaction_tol(None, row["reaction_warn_key"], key) is None
+
+
+def test_reaction_tol_config_override_and_hash_neutral():
+    from esl import config as ec
+    cfg = {"validation": {"sources": {"reaction_tol": {"fint": 0.2, "bforce": 0.3}, "reaction_warn": {"fint": 0.1}}}}
+    assert ec.source_reaction_tol(cfg, vs.TOL_KEY, "fint") == 0.2
+    assert ec.source_reaction_tol(cfg, vs.TOL_KEY, "bforce") == 0.3
+    assert ec.source_reaction_tol(cfg, vs.plan("full")["reaction_tol_key"], "full") is None
+    assert ec.validation_sources_settings(None)["reaction_tol"] == {"fint": 0.10}
+    assert ec.validation_sources_settings({})["reaction_warn"] == {"fint": 0.05}
+    for k in ("validation.sources.reaction_tol", "validation.sources.reaction_warn"):
+        assert k in ec.OPTIONAL_KEYS

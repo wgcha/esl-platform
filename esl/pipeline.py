@@ -1636,6 +1636,10 @@ def _val_src_prepare(ctx: Context, model: StoredModel, enabled: bool) -> list[di
                     if "node_id" not in z or not np.array_equal(z["node_id"], model.node_id):
                         raise EslError("ID_MISMATCH", f"{_plan_rel(row['load'])} node_id 가 model.npz 와 다름")
                     F_s = np.asarray(z[row["load"][2]], dtype=np.float64)
+                    if not np.all(np.isfinite(F_s)):
+                        bad = int(np.count_nonzero(~np.isfinite(F_s)))
+                        raise EslError("INPUT_INVALID", f"입력 하중 {_plan_rel(row['load'])} 에 비유한값(NaN·Inf) {bad}개 — "
+                                                        "ESL 단계 산출물을 확인")
             s = esl_sum.get(row["summary"]) if row["summary"] else None
             ent["st"] = _vs.row_status(row, F_s is not None, ent["doc"], s if isinstance(s, dict) else None)
             ent["F"] = F_s
@@ -1881,9 +1885,15 @@ def stage_validate(ctx: Context) -> dict:
                 if solved:
                     eps_s = _solver_eq(sm.strains(e["u6"]), layers)
                 sum_abs = float(np.linalg.norm(e["F"], axis=1).sum())
-                evs = _vm.evaluate(common, F=e["F"], u_val6=e["u6"], R=e["R"], eps_val=eps_s,
+                # 출처별 반력 허용치(계획 열 reaction_tol_key; None = 공통 기준) — 문서 criteria·판정 모두 이 값
+                tol = _config.source_reaction_tol(ctx.cfg, row["reaction_tol_key"], row["key"])
+                if tol is None:
+                    tol = crit["reaction_rel_max"]
+                warn = _config.source_reaction_tol(ctx.cfg, row["reaction_warn_key"], row["key"])
+                crit_s = {**crit, "reaction_rel_max": tol, **({} if warn is None else {"reaction_warn_rel": warn})}
+                evs = _vm.evaluate({**common, "crit": crit_s}, F=e["F"], u_val6=e["u6"], R=e["R"], eps_val=eps_s,
                                    reaction_role=row["reaction_role"], noise_force=row["noise_force"],
-                                   created_at=_utcnow(), criteria={**crit, "reaction_role": row["reaction_role"]},
+                                   created_at=_utcnow(), criteria={**crit_s, "reaction_role": row["reaction_role"]},
                                    src=_vs.src_block(row, e["doc"], sum_abs))
                 _src_tmp_cleanup(ctx, tmp)
                 os.makedirs(tmp)
@@ -1897,8 +1907,9 @@ def stage_validate(ctx: Context) -> dict:
         if e["st"]["status"] == "done":
             r = _vs.done_row(row, e["ev"]["doc"], e["doc"])
             vs = e["ev"]["values"]
+            wtxt = "" if r["reaction_warn"] is None else f", 주의 {r['reaction_warn']:g}"
             ctx.echo(f"[validate] {row['key']}: 변위 RMS={fmt_v(vs['disp_rms_rel'])}, 변위 최대={fmt_v(vs['disp_max_rel'])}, "
-                     f"반력 Σ|R|/Σ|F|={fmt_v(vs['reaction_rel'])}({row['reaction_role']}) → {r['verdict']}"
+                     f"반력 Σ|R|/Σ|F|={fmt_v(vs['reaction_rel'])}({row['reaction_role']}, 허용치 {r['reaction_tol']:g}{wtxt}) → {r['verdict']}"
                      + (f" {r['fail_reasons']}" if r["fail_reasons"] else "")
                      + (f" ({r['undetermined_reason']})" if r["undetermined_reason"] else "")
                      + (f" · 한계 {r['limits']}" if r["limits"] else ""))

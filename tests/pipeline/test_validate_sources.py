@@ -300,7 +300,9 @@ def test_v0243_val_3_7_source_metrics_independent_and_one_factorization(golden_r
             [(h["rank"], h["elem_id"], h["reason"], h["eps_rad"]) for h in root["hotspots_excluded"]]
         for k in ("esl_ref", "frame", "noise", "noise_source", "full_solve", "strain_source", "verdict_scheme", "schema"):
             assert v[k] == root[k], k
-        assert {k: x for k, x in v["criteria"].items() if k != "reaction_role"} == root["criteria"]
+        tolk = ("reaction_role", "reaction_rel_max", "reaction_warn_rel")        # 출처별 반력 허용치만 다름(D-0.24.3-VAL-18)
+        assert {k: x for k, x in v["criteria"].items() if k not in tolk} == {k: x for k, x in root["criteria"].items() if k not in tolk}
+        assert root["criteria"]["reaction_rel_max"] == 1e-6 and "reaction_warn_rel" not in root["criteria"]
         # 변형률 참고: ε_val = 이 응답의 막 변형률(extract.layers) — 전 요소 배열·hotspot 값
         fz = np.load(os.path.join(out, pipeline.D_VAL, key, "compare_field.npz"), allow_pickle=False)
         eps = pipeline._solver_eq(sm.strains(u6), v["criteria"]["layers"])
@@ -436,6 +438,8 @@ def test_v0243_val_6_failure_isolation(golden_runs, tmp_path, monkeypatch, how):
     other = "bforce" if bad == "fint" else "fint"
     assert rows[bad]["status"] == "failed" and rows[bad]["code"] == "VAL_SRC_FAILED"
     assert rows[bad]["reason"].startswith("출처 검증 계산 실패(") and rows[bad]["dir"] is None
+    if how == "nan_load":
+        assert "비유한값" in rows[bad]["reason"] and "SOLVER_SINGULAR" not in rows[bad]["reason"]
     assert rows[other]["status"] == "done" and rows[other]["verdict"] == "PASS"
     assert os.path.isfile(os.path.join(out, pipeline.D_VAL, other, "validation.json"))
     assert sorted(os.listdir(os.path.join(out, pipeline.D_VAL))) == sorted(
@@ -446,20 +450,34 @@ def test_v0243_val_6_failure_isolation(golden_runs, tmp_path, monkeypatch, how):
     assert st["summary"]["sources"][bad]["status"] == "failed"
 
 
-def test_v0243_val_q1_unbalanced_source_reaction_fail_shown(golden_runs, tmp_path):
-    """Q1 가정: 균형 보정 없는 출처도 공통 기준으로 반력 판정 — 불평형이면 REACTION FAIL 그대로(full 무영향)."""
+@pytest.mark.parametrize("scale,band", [(1e-4, "pass"), (4e-2, "pass"), (1e-1, "warn"), (2.5e-1, "fail")])
+def test_v0243_val_q1_fint_reaction_two_stage(golden_runs, tmp_path, scale, band):
+    """Q1 수정(D-0.24.3-VAL 출처별 반력 허용치 — fint 주의 5 %·불합격 10 %): 불평형 하중 주입 → 반력 ≤5 % PASS,
+    5~10 % PASS + 주의 표식, >10 % REACTION FAIL. full 은 공통 기준 1e-6 그대로(바이트 불변)."""
     r = copy_case(golden_runs, "bf", str(tmp_path))
     out = r["out"]
     p = os.path.join(out, pipeline.D_ESL, "fint.npz")
     z = dict(np.load(p, allow_pickle=False))
     z["f"] = z["f"].copy()
-    z["f"][100] += 1e-2 * np.abs(z["f"]).max()                                  # ‖ΣF‖/Σ‖F‖ ≫ 기준
+    z["f"][100] += scale * np.abs(z["f"]).max()
     np.savez_compressed(p, **z)
     _revalidate(r)
     v = _j(out, pipeline.D_VAL, "fint", "validation.json")
-    assert v["verdict"] == "FAIL" and "REACTION" in v["fail_reasons"]
-    assert _rows(out)["fint"]["fail_reasons"] == v["fail_reasons"]
+    reac = next(m["value"] for m in v["metrics"] if m["metric"] == "reaction_rel")
+    row = _rows(out)["fint"]
+    assert v["criteria"]["reaction_rel_max"] == 0.10 and v["criteria"]["reaction_warn_rel"] == 0.05
+    assert row["reaction_tol"] == 0.10 and row["reaction_warn"] == 0.05
+    assert (reac > 0.10, 0.05 < reac <= 0.10) == (band == "fail", band == "warn"), reac      # 주입 크기 → 구간(반력 ≈ 0.7·scale)
+    if reac > 0.10:
+        assert v["verdict"] == "FAIL" and "REACTION" in v["fail_reasons"] and not row["reaction_warned"]
+    else:
+        assert "REACTION" not in v["fail_reasons"]
+        assert row["reaction_warned"] is (reac > 0.05)
+        assert ("REACTION_ABOVE_WARN" in row["limits"]) is (reac > 0.05)
+    assert row["fail_reasons"] == v["fail_reasons"]
     assert _root_hashes(out, golden_runs["bf"]["root"]) == _gold("bf")
+    full = _j(out, pipeline.D_VAL, "validation.json")["criteria"]
+    assert full["reaction_rel_max"] == 1e-6 and "reaction_warn_rel" not in full
 
 
 # ====================================================================== V-8 설정
@@ -469,7 +487,7 @@ def test_v0243_val_8_settings(golden_runs, tmp_path, monkeypatch):
     rj = _j(golden_runs["bf"]["out"], pipeline.RUN_JSON)
     assert "sources" not in rj["config"]["snapshot"]["validation"]                # 키 없음 = 주입 없음(해시 불변)
     c0 = cfgm.load_config(golden_runs["bf"]["cfg"])
-    assert "sources" not in c0["validation"] and cfgm.validation_sources_settings(c0) == {"enabled": True}
+    assert "sources" not in c0["validation"] and cfgm.validation_sources_settings(c0) == {"enabled": True, "reaction_tol": {"fint": 0.10}, "reaction_warn": {"fint": 0.05}}
     base_txt = _read(golden_runs["bf"]["cfg"])
     anchor = "  noise_strain_rel_max: 0.05"
     assert anchor in base_txt

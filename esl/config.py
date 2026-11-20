@@ -133,6 +133,16 @@ def _name_map(keys: tuple[str, ...]):
     return chk
 
 
+def _tol_map(key, v):
+    """출처 키 → 양수 허용치 사전."""
+    if not isinstance(v, dict):
+        raise _bad(key, f"{{출처: 허용치}} 사전이어야 함 (값 {v!r})")
+    for k, x in v.items():
+        if not isinstance(k, str) or not k:
+            raise _bad(key, f"출처 키는 문자열 (값 {k!r})")
+        _num(0.0, lo_open=True)(f"{key}.{k}", x)
+
+
 def _vec_comps(key, v):
     """벡터 성분 이름 3개(각 원소는 '|' 로 대체 후보 — TCL bf_vec_comps)."""
     if not isinstance(v, list) or len(v) != 3:
@@ -278,7 +288,7 @@ SCHEMA: dict[str, Any] = {
         "disp_hist_bins": _int(2, 200),                   # 0.5.7 신규
         # 선택(OPTIONAL_KEYS, v0.24.3 esl_validate_sources.md §11): ④ 검증 출처별(경계력·내력 …). 없으면
         # VALIDATION_SOURCES_DEFAULTS(cfg 에 주입 안 함 — 설정 해시 불변)
-        "sources": {"enabled": _bool},
+        "sources": {"enabled": _bool, "reaction_tol": _tol_map, "reaction_warn": _tol_map},
     },
     "compare": {                                # 전 요소 재현 정확도 비교(계약 esl_p2_library.md §7.2)
         "min_rel": _num(0.0, 1.0),
@@ -357,7 +367,10 @@ COORD_CHECK_DEFAULTS = {"max_rel": 0.005}
 # 0.5.7 신규 validation 키(계약 esl_disp_primary.md §5): 이전 설정 파일에 없으면 이 값으로 채운다. 기준 숫자의 단일 출처.
 VALIDATION_DEFAULTS = {"disp_max_rel_max": 0.05, "disp_noise_rel_max": 1.0e-3, "disp_top_n": 20, "disp_hist_bins": 20}
 # v0.24.3 ④ 검증 출처별(계약 esl_validate_sources.md §11 — D-0.24.3-VAL-13) 기본값 단일 출처 — 선택 키, cfg 에 주입 안 함.
-VALIDATION_SOURCES_DEFAULTS = {"enabled": True}
+# reaction_tol: 출처 키 → 반력 불합격 문턱(없는 출처 = 공통 기준 validation.reaction_rel_max), reaction_warn: 출처 키 → 주의 문턱
+# (warn < 반력 ≤ tol = PASS + 주의 표식; 없는 출처 = 주의 없음). fint 주의 5 %·불합격 10 % = 사용자 결정 2026-11-20
+# (내력 ESL 은 공유 노드·회전 관성으로 실데이터 불평형 ~1e-3 — 공통 1e-6 이면 거의 항상 REACTION FAIL).
+VALIDATION_SOURCES_DEFAULTS = {"enabled": True, "reaction_tol": {"fint": 0.10}, "reaction_warn": {"fint": 0.05}}
 # 0.8.0 누적 씬 키(계약 esl_cumulative_input.md §11): 이전 설정 파일에 없으면 이 값으로 채운다(기본값 단일 출처).
 CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg": "auto", "h3d_epsp_mode": "auto",
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
@@ -472,13 +485,35 @@ def bforce_settings(cfg: dict | None) -> dict:
     return out
 
 
+SOURCE_TOL_KEYS = {"validation.sources.reaction_tol": "reaction_tol", "validation.sources.reaction_warn": "reaction_warn"}
+
+
+def source_reaction_tol(cfg: dict | None, tol_key: str | None, src_key: str) -> float | None:
+    """출처별 반력 허용치·주의 기준(계획 열 reaction_tol_key / reaction_warn_key 가 가리키는 설정 키 — 출처 키 → 값 사전:
+    ``validation.sources.reaction_tol``(불합격 문턱)·``validation.sources.reaction_warn``(주의 문턱)). 열이 None 이거나
+    그 출처가 사전에 없으면 None(허용치 = 공통 기준 validation.reaction_rel_max, 주의 = 없음)."""
+    if tol_key is None:
+        return None
+    name = SOURCE_TOL_KEYS.get(tol_key)
+    if name is None:
+        raise EslError("CONFIG_INVALID", f"모르는 반력 허용치 설정 키: {tol_key}")
+    v = validation_sources_settings(cfg)[name].get(src_key)
+    return None if v is None else float(v)
+
+
 def validation_sources_settings(cfg: dict | None) -> dict:
     """validation.sources(없거나 일부만 있으면 VALIDATION_SOURCES_DEFAULTS 로 채운 사본). cfg 는 바꾸지 않는다."""
-    out = dict(VALIDATION_SOURCES_DEFAULTS)
+    out = copy.deepcopy(VALIDATION_SOURCES_DEFAULTS)
     vc = cfg.get("validation") if isinstance(cfg, dict) else None
     sc = vc.get("sources") if isinstance(vc, dict) else None
     if isinstance(sc, dict):
-        out.update({k: v for k, v in sc.items() if k in VALIDATION_SOURCES_DEFAULTS and v is not None})
+        for k, v in sc.items():
+            if k not in out or v is None:
+                continue
+            if k in ("reaction_tol", "reaction_warn") and isinstance(v, dict):
+                out[k].update({kk: float(vv) for kk, vv in v.items()})
+            else:
+                out[k] = v
     return out
 
 

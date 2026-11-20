@@ -86,9 +86,16 @@ export function markOf(row: Pick<ValidationSourceRow, "available" | "status" | "
   return { text: base, tone: MARK_STATUS_TONE[row.status] };
 }
 
+/** 반력 허용치 문구(순수): 출처별 설정을 쓰는 행만 — "반력 허용치 ≤ 10 % · 주의 > 5 %"(판정에 쓴 값). 없으면 null */
+export function reactionTolText(row: Pick<ValidationSourceRow, "reaction_role" | "reaction_tol" | "reaction_tol_key" | "reaction_warn"> | null | undefined): string | null {
+  if (!row || row.reaction_role !== "judge" || row.reaction_tol == null || !row.reaction_tol_key) return null;
+  const p = (x: number) => `${Number((x * 100).toPrecision(3))} %`;
+  return `반력 허용치 ≤ ${p(row.reaction_tol)}${row.reaction_warn != null ? ` · 주의 > ${p(row.reaction_warn)}` : ""}`;
+}
+
 /** 탭 툴팁: 조건 한 줄(cond_text) + 한계 문구. 없으면 표의 정적 설명 */
 function valTitle(row: ValidationSourceRow | undefined, fallback: string): string {
-  const lines = [row?.cond_text, ...(row?.limit_text ?? [])].filter((x): x is string => !!x && x.trim() !== "");
+  const lines = [row?.cond_text, reactionTolText(row), ...(row?.limit_text ?? [])].filter((x): x is string => !!x && x.trim() !== "");
   return lines.length ? lines.join("\n") : fallback;
 }
 

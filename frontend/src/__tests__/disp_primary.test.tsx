@@ -108,7 +108,7 @@ describe("V-DP-13 ⑤ 화면 구성", () => {
 
   it("LibraryRegister(v0.10.0): UNDETERMINED·LEGACY 는 등록 불가 + 사유, 서버도 422", async () => {
     const { server, unmount } = renderWith("UNDETERMINED");
-    expect((await screen.findByTestId("reg-block")).textContent).toContain(REG_NOT_PASS);
+    expect((await screen.findByTestId("reg-reason")).textContent).toContain(REG_NOT_PASS);
     expect(screen.queryByRole("dialog")).toBeNull();
     const v = server.validations[0];
     const r = server.handle("POST", "/library/entries", new URLSearchParams(), { esl_run_id: v.esl_run_id, validation_id: v.id, force_reason: "사유" });
@@ -116,7 +116,7 @@ describe("V-DP-13 ⑤ 화면 구성", () => {
     expect((r.body as { detail: { code: string } }).detail.code).toBe("VALIDATION_NOT_PASS");
     unmount();
     const l = renderWith("LEGACY_FAIL");
-    expect((await screen.findByTestId("reg-block")).textContent).toContain(REG_LEGACY);
+    expect((await screen.findByTestId("reg-reason")).textContent).toContain(REG_LEGACY);
     const lv = l.server.validations[0];
     const r2 = l.server.handle("POST", "/library/entries", new URLSearchParams(), { esl_run_id: lv.esl_run_id, validation_id: lv.id });
     expect((r2.body as { detail: { code: string } }).detail.code).toBe("VALIDATION_LEGACY");

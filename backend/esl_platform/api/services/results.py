@@ -257,7 +257,8 @@ def _source_rows(ctx: AppContext, case: dict[str, Any], val: dict[str, Any], lat
         r = _sj_row(sj, row["key"])
         base: dict[str, Any] = {"key": row["key"], "available": False, "code": None, "reason": None, "status": None,
                                 "fail_reasons": [], "undetermined_reason": None, "reaction_role": None,
-                                "cond_text": None, "note": None, "limits": [], "limit_text": [], "comparable": None}
+                                "reaction_tol": None, "reaction_tol_key": None, "reaction_warn": None,
+                                "reaction_warned": None, "cond_text": None, "note": None, "limits": [], "limit_text": [], "comparable": None}
         if row["key"] == plan["legacy"]:       # 등록·DB 기준 — 상태 = DB(LEGACY 포함), 나머지 필드는 있으면 sources.json
             base.update(available=True, status=validation_status(val), fail_reasons=list(val.get("fail_reasons") or []),
                         undetermined_reason=val.get("undetermined_reason"))
@@ -279,6 +280,12 @@ def _fill(base: dict[str, Any], r: dict[str, Any], *, with_verdict: bool) -> Non
         base["fail_reasons"] = list(r.get("fail_reasons") or [])
         base["undetermined_reason"] = r.get("undetermined_reason")
     base["reaction_role"] = r.get("reaction_role")
+    tol = r.get("reaction_tol")
+    base["reaction_tol"] = float(tol) if isinstance(tol, (int, float)) and not isinstance(tol, bool) else None
+    base["reaction_tol_key"] = r.get("reaction_tol_key")
+    wn = r.get("reaction_warn")
+    base["reaction_warn"] = float(wn) if isinstance(wn, (int, float)) and not isinstance(wn, bool) else None
+    base["reaction_warned"] = r.get("reaction_warned") if isinstance(r.get("reaction_warned"), bool) else None
     base["cond_text"] = r.get("cond_text")
     base["note"] = r.get("note")
     base["limits"] = list(r.get("limits") or [])

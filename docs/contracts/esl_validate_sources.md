@@ -157,7 +157,7 @@ full F = K₀·u_rel(기준 형상 X0 에서 만든 응축 하중), bforce·fint
 
 ### 3.3 반력 역할 (`reaction_role`)
 
-3-2-1 은 정정 지지라 반력 = 하중 불평형의 척도(자기평형이면 ≈ 0) → judge. 지그(tie 노드 123, 수천 노드)는 과잉 구속이라 반력 = 부품을 붙잡는 지지력(물리량, 0 이 아님) → info(값·기준 표시, 판정·fail_reasons 제외, 판정 = 변위 3지표). 열 값으로 role 을 고른다(출처 이름 분기 없음). 미결 Q1(§17) = 균형 none 출처(fint 기본)의 반력 판정.
+3-2-1 은 정정 지지라 반력 = 하중 불평형의 척도(자기평형이면 ≈ 0) → judge. 지그(tie 노드 123, 수천 노드)는 과잉 구속이라 반력 = 부품을 붙잡는 지지력(물리량, 0 이 아님) → info(값·기준 표시, 판정·fail_reasons 제외, 판정 = 변위 3지표). 열 값으로 role 을 고른다(출처 이름 분기 없음). 미결 Q1(§17) = 균형 none 출처(fint 기본)의 반력 판정 → 구현 메모 "Verifier" 행(D-0.24.3-VAL-18)으로 해결.
 
 ### 3.4 ESL 단계 재현과의 관계 (정의 충돌 정리)
 
@@ -503,6 +503,9 @@ D-0.24.3-VAL-1 범위·단계 · -2 별도 계획 표 VAL_PLAN · -3 검증 단�
 | C | 목 서버 `?demoValSrc` | 기본 `old`(옛 서버 = 404 → 탭 없음), `ok`·`notrun` 은 시연 전용. 실제 응답과의 차이(경계력 반력 역할 info·내력 한계 등)는 목 데이터 값일 뿐 형식은 같음 |
 | C | `styles.css` | `.val-src-tabwrap .seg button` 패딩 4줄(+주석) — 판정 카드 머리 줄 높이 불변 |
 | C | §14.1 시험 21(DOM 높이 측정 vitest) | **미작성** — jsdom 은 레이아웃이 없어 측정 불가. 2560×1440 Playwright 로 v0.24.2·v0.24.3 높이를 B 가 확인(`/home/claude/shots/pw_v0243.mjs`, 높이 동일). 통합 때 실제 응답 스크린샷은 만들지 않고 아래 vitest 로 대체 |
+| Verifier | 미결 Q1 수정(D-0.24.3-VAL-18) | 계획 열 `reaction_tol_key`·`reaction_warn_key` 추가(열 값 = 선택 설정 키 `validation.sources.reaction_tol`·`reaction_warn` — 출처 키 → 값 사전). 기본 `{fint: 0.10}`·`{fint: 0.05}`(사용자 결정 2026-11-20), 사전에 없거나 열 None(full)이면 공통 기준 1e-6·주의 없음 → full·bforce 판정·바이트 불변. ≤5 % PASS, 5~10 % PASS + `REACTION_ABOVE_WARN`(한계 목록·화면 탭 ⚠·본문 한 줄·보고서), >10 % `REACTION` FAIL. 사용 허용치는 출처 `validation.json` `criteria.reaction_rel_max`(주의 = `reaction_warn_rel`)·`sources.json` 행 `reaction_tol`·`reaction_warn`·`reaction_warned`·API `ValidationSourceRow`·판정 문구(echo)·탭·반력 칸 툴팁·07_report 에 표시. 내력 불평형 경고 키는 건드리지 않음 |
+| Verifier | 화면: FAIL·판정 불가·LEGACY 에서 판정 카드 머리 2줄 | 등록 불가 사유 문구를 머리 밖(카드 본문 첫 줄 `RegisterReason`, `role=note`)으로. 머리 = 제목 + 오른쪽 묶음 1개(nowrap), 탭 단추 여백 축소. Playwright 2560·1920 머리 55·48 px(v0.24.2 와 같음), 카드 +23(2560)·+20(1920) px = 사유 줄 1개(v0.24.2 는 머리 안에 있었음) |
+| Verifier | NaN 하중 사유 | 준비 단계에서 비유한값 검사 → 행 failed(`VAL_SRC_FAILED` 유지), 사유 "입력 하중 … 비유한값(NaN·Inf) n개"(이전 "SOLVER_SINGULAR 잔차 0") |
 | 통합 | 실연동 시험 | `worker/tests/test_val_src_e2e.py`(실제 코어·워커 등록·API: 전부 done / 자료 없음 / 옛 검증 / full_solve never 판정 불가), 프런트 `v0243_real_backend.test.ts` ← `fixtures/real_v0243.json`(실제 응답 저장, 재생성 방법은 시험 머리말) |
 
 측정(A, 합성 평판 21,901 노드·2코어): 검증 출처 끔 9.5 s → 켬 12.2~12.4 s(+29~30 %), 05_val 5.2 MB → 15.5 MB.

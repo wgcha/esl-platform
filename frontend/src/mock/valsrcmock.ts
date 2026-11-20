@@ -11,7 +11,7 @@ const STUDY_ONLY = "강성 평가 스터디에서만 계산됩니다(Case 산출
 const COND = (frame: string, bal: string) => `하중 ${frame} · 지지 3-2-1 · 균형 ${bal} · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이`;
 export const VAL_SRC_NOTE_RECON = "이 하중으로 정적 풀이한 변위와 Radioss 변위(강체 제거)의 차이 — 하중이 낙하 변형을 얼마나 재현하는지(물리 차이 포함)를 봅니다.";
 
-const blank = (key: string): ValidationSourceRow => ({ key, available: false, code: null, reason: null, status: null, fail_reasons: [], undetermined_reason: null, reaction_role: null, cond_text: null, note: null, limits: [], limit_text: [], comparable: null });
+const blank = (key: string): ValidationSourceRow => ({ key, available: false, code: null, reason: null, status: null, fail_reasons: [], undetermined_reason: null, reaction_role: null, reaction_tol: null, reaction_tol_key: null, reaction_warn: null, reaction_warned: null, cond_text: null, note: null, limits: [], limit_text: [], comparable: null });
 
 /** 검증 v 의 출처 행(KEYS 순서). full = v 자신(DB 기준) */
 export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "old">, latest = true): ValidationSourceRow[] {
@@ -21,12 +21,12 @@ export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "o
     return [jig, { ...full, cond_text: null, comparable: null }, { ...blank("bforce"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN }, { ...blank("fint"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN }];
   }
   const bforce: ValidationSourceRow = {
-    ...blank("bforce"), available: true, status: "FAIL", fail_reasons: ["DISP_RMS"], reaction_role: "info",
+    ...blank("bforce"), available: true, status: "FAIL", fail_reasons: ["DISP_RMS"], reaction_role: "info", reaction_tol_key: "validation.sources.reaction_tol",
     cond_text: COND("기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R)", "관성 이완"), note: VAL_SRC_NOTE_RECON,
     limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"], comparable: false,
   };
   const fint: ValidationSourceRow = {
-    ...blank("fint"), available: true, status: "PASS", reaction_role: "judge",
+    ...blank("fint"), available: true, status: "PASS", reaction_role: "judge", reaction_tol: 0.1, reaction_tol_key: "validation.sources.reaction_tol", reaction_warn: 0.05, reaction_warned: false,
     cond_text: COND("기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R)", "균형 보정 없음 — 불평형은 지지 반력으로"), note: VAL_SRC_NOTE_RECON,
     limits: ["FINT_ROT_LINKS"], limit_text: ["회전 링크 요소 내력 포함"], comparable: true,
   };
@@ -37,5 +37,5 @@ export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "o
 export function valSourceOut(base: ValidationOut, key: string): ValidationOut {
   if (key === "bforce")
     return { ...base, verdict: "FAIL", status: "FAIL", disp_rms_rel: 3.4e-2, disp_max_rel: 7.9e-2, reaction_rel: 1.2e-3, fail_reasons: ["DISP_RMS", "DISP_MAX"], criteria: { ...base.criteria, reaction_role: "info" }, dir_rel: "05_val/bforce" };
-  return { ...base, verdict: "PASS", status: "PASS", disp_rms_rel: (base.disp_rms_rel ?? 1e-6) * 1.6, disp_max_rel: (base.disp_max_rel ?? 1e-5) * 1.4, reaction_rel: 3.1e-8, fail_reasons: [], criteria: { ...base.criteria, reaction_role: "judge" }, dir_rel: `05_val/${key}` };
+  return { ...base, verdict: "PASS", status: "PASS", disp_rms_rel: (base.disp_rms_rel ?? 1e-6) * 1.6, disp_max_rel: (base.disp_max_rel ?? 1e-5) * 1.4, reaction_rel: 3.1e-8, fail_reasons: [], criteria: { ...base.criteria, reaction_role: "judge", ...(key === "fint" ? { reaction_rel_max: 0.1, reaction_warn_rel: 0.05 } : {}) }, dir_rel: `05_val/${key}` };
 }

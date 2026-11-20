@@ -22,8 +22,8 @@ from .view3d_src import reason_text as _v3d_reason_text
 
 SCHEMA_SOURCES = "esl/val_sources/1"          # 05_val/sources.json
 SOURCES_JSON = "sources.json"
-COLUMNS = ("key", "legacy", "load", "required", "load_frame", "balance", "support", "reaction_role", "target", "rigid",
-           "resp", "fallback", "noise_force", "summary", "doc", "limits", "dir", "na", "note")
+COLUMNS = ("key", "legacy", "load", "required", "load_frame", "balance", "support", "reaction_role", "reaction_tol_key", "reaction_warn_key", "target",
+           "rigid", "resp", "fallback", "noise_force", "summary", "doc", "limits", "dir", "na", "note")
 LOCS = ("esl",)
 SUPPORTS = ("bc321", "jig")                   # bc321 = 03_bc/support.json 3-2-1, jig = 04_esl/jig.npz 지그 노드 123(P2)
 REACTION_ROLES = ("judge", "info")
@@ -33,23 +33,30 @@ FALLBACKS = ("u_rel_condensed",)              # 전체 풀이를 못 할 때 변
 STATUSES = ("done", "unavailable", "failed", "disabled", "na")
 FILE_COLS = ("load", "target")
 
+# 반력 허용치 설정 키(계획 열 reaction_tol_key): None = 공통 기준 validation.reaction_rel_max, 문자열 = 그 설정 키(출처 키 → 허용치
+# 사전, 사전에 없는 출처는 공통 기준). 값은 esl/config.py VALIDATION_SOURCES_DEFAULTS["reaction_tol"].
+TOL_KEY = "validation.sources.reaction_tol"
+WARN_KEY = "validation.sources.reaction_warn"
+WARN_CODE = "REACTION_ABOVE_WARN"             # 반력 주의 표식(한계 코드와 같은 자리, 등급 caution)
+
 VAL_PLAN: tuple[dict[str, Any], ...] = (
     {"key": "jig", "legacy": False, "load": None, "required": False, "load_frame": None, "balance": None,
-     "support": None, "reaction_role": None, "target": None, "rigid": "linear", "resp": "solve", "fallback": None,
+     "support": None, "reaction_role": None, "reaction_tol_key": None, "reaction_warn_key": None, "target": None, "rigid": "linear", "resp": "solve", "fallback": None,
      "noise_force": False, "summary": None, "doc": None, "limits": None, "dir": None, "na": "V3D_STUDY_ONLY",
      "note": None},
     {"key": "full", "legacy": True, "load": ("esl", "f_eq.npz", "f"), "required": True, "load_frame": "ref_k0",
-     "balance": "self", "support": "bc321", "reaction_role": "judge", "target": ("esl", "u_rel.npz", "u_rel"),
+     "balance": "self", "support": "bc321", "reaction_role": "judge", "reaction_tol_key": None, "reaction_warn_key": None, "target": ("esl", "u_rel.npz", "u_rel"),
      "rigid": "linear", "resp": "solve", "fallback": "u_rel_condensed", "noise_force": True, "summary": None,
      "doc": None, "limits": None, "dir": "", "na": "PREREQUISITE_MISSING", "note": "VAL_NOTE_CONSISTENCY"},
     {"key": "bforce", "legacy": False, "load": ("esl", "bforce.npz", "f"), "required": False, "load_frame": "ref_rot",
-     "balance": ("balance",), "support": "bc321", "reaction_role": "judge", "target": ("esl", "u_rel.npz", "u_rel"),
+     "balance": ("balance",), "support": "bc321", "reaction_role": "judge", "reaction_tol_key": TOL_KEY, "reaction_warn_key": WARN_KEY,
+     "target": ("esl", "u_rel.npz", "u_rel"),
      "rigid": "linear", "resp": "solve", "fallback": None, "noise_force": False, "summary": "bforce",
      "doc": ("esl", "bforce.json"), "limits": ("limits",), "dir": "bforce", "na": "V3D_SRC_NOT_RUN",
      "note": "VAL_NOTE_RECON"},
     {"key": "fint", "legacy": False, "load": ("esl", "fint.npz", "f"), "required": False, "load_frame": "ref_rot",
      "balance": ("fint", "balance_applied"), "support": "bc321", "reaction_role": "judge",
-     "target": ("esl", "u_rel.npz", "u_rel"), "rigid": "linear", "resp": "solve", "fallback": None,
+     "reaction_tol_key": TOL_KEY, "reaction_warn_key": WARN_KEY, "target": ("esl", "u_rel.npz", "u_rel"), "rigid": "linear", "resp": "solve", "fallback": None,
      "noise_force": False, "summary": "fint", "doc": ("esl", "fint.json"), "limits": ("limits",), "dir": "fint",
      "na": "V3D_SRC_NOT_RUN", "note": "VAL_NOTE_RECON"},
 )
@@ -109,6 +116,9 @@ def check_plan(plan=VAL_PLAN) -> None:
             raise EslError("CONFIG_INVALID", f"검증 출처 계획 {r['key']}.doc 형식 오류: {r['doc']!r}")
         if r["fallback"] is not None and r["fallback"] not in FALLBACKS:
             raise EslError("CONFIG_INVALID", f"검증 출처 계획 {r['key']}.fallback 값 오류: {r['fallback']!r}")
+        for c in ("reaction_tol_key", "reaction_warn_key"):
+            if r[c] is not None and not (isinstance(r[c], str) and r[c]):
+                raise EslError("CONFIG_INVALID", f"검증 출처 계획 {r['key']}.{c} 형식 오류: {r[c]!r}")
         if r["load"] is not None:
             if r["support"] not in SUPPORTS:
                 raise EslError("CONFIG_INVALID", f"검증 출처 계획 {r['key']}.support = {r['support']!r} ∉ {SUPPORTS}")
@@ -256,7 +266,7 @@ def empty_row(row: dict[str, Any], st: dict[str, Any]) -> dict[str, Any]:
     """sources.json 행 — 상태가 done 이 아닐 때(verdict 이하 null·빈 값, dir null)."""
     return {"key": row["key"], "status": st["status"], "code": st.get("code"), "reason": st.get("reason"), "dir": None,
             "verdict": None, "fail_reasons": [], "undetermined_reason": None, "metrics": None, "reaction_role": None,
-            "cond": None, "cond_text": None, "note": None, "limits": [], "limit_text": [], "comparable": None}
+            "reaction_tol": None, "reaction_tol_key": None, "reaction_warn": None, "reaction_warned": False, "cond": None, "cond_text": None, "note": None, "limits": [], "limit_text": [], "comparable": None}
 
 
 ROW_METRICS = ("disp_rms_rel", "disp_max_rel", "reaction_rel", "disp_noise_rel", "reaction_sum_rel",
@@ -266,12 +276,22 @@ ROW_METRICS = ("disp_rms_rel", "disp_max_rel", "reaction_rel", "disp_noise_rel",
 def done_row(row: dict[str, Any], doc_val: dict[str, Any], diag: dict[str, Any] | None) -> dict[str, Any]:
     """sources.json 행 — 검증한 출처(값 = 그 출처 validation.json)."""
     vals = {m["metric"]: m.get("value") for m in doc_val.get("metrics") or []}
+    crit = doc_val.get("criteria") or {}
+    tol, warn, reac = crit.get("reaction_rel_max"), crit.get("reaction_warn_rel"), vals.get("reaction_rel")
+    warned = bool(row["reaction_role"] == "judge" and warn is not None and reac is not None and tol is not None
+                  and warn < reac <= tol)
+    lim = limit_info(limit_codes(row, diag))
+    if warned:                                  # PASS 유지 + 주의(한계와 같은 자리에 표시 — 화면 탭·보고서)
+        lim["limits"].append(WARN_CODE)
+        lim["limit_text"].append(f"반력 {reac * 100:.3g} % — {warn * 100:g} % 초과, 받침점 주변 국부 변형 확인")
     return {"key": row["key"], "status": "done", "code": None, "reason": None, "dir": row["dir"],
             "verdict": doc_val["verdict"], "fail_reasons": list(doc_val.get("fail_reasons") or []),
             "undetermined_reason": doc_val.get("undetermined_reason"),
             "metrics": {k: vals.get(k) for k in ROW_METRICS}, "reaction_role": row["reaction_role"],
+            "reaction_tol": tol, "reaction_tol_key": row["reaction_tol_key"], "reaction_warn": warn,
+            "reaction_warned": warned,
             "cond": cond_of(row, diag), "cond_text": cond_text(row, diag), "note": note_text(row),
-            **limit_info(limit_codes(row, diag))}
+            **lim}
 
 
 check_plan()

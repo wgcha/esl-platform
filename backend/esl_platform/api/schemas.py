@@ -600,6 +600,10 @@ class ValidationSourceRow(_Out):
     fail_reasons: list[str]
     undetermined_reason: str | None = None
     reaction_role: Literal["judge", "info"] | None = None
+    reaction_tol: float | None = None
+    reaction_tol_key: str | None = None
+    reaction_warn: float | None = None
+    reaction_warned: bool | None = None
     cond_text: str | None = None
     note: str | None = None
     limits: list[str]
