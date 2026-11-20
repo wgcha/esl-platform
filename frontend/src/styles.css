@@ -4306,20 +4306,29 @@ details.card.fold > .fold-body {
   max-width: 24rem;
 }
 
-/* v0.24.4 P3 하중 출처 선택(타이틀 줄 안 — 세로 증가 없음) */
+/* v0.24.4 P3 하중 출처 선택(타이틀 줄 안 — 세로 증가 없음). 줄바꿈이 생기지 않게 select·표식 폭을 줄이고(말줄임) 전체 문구는 툴팁·드롭다운 항목에 둔다 */
 .ls-pick {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
   min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
 }
 .ls-pick select {
   height: 2.1rem;
-  max-width: 26rem;
-  min-width: 0;
+  width: 15rem;
+  max-width: 100%;
+  min-width: 6rem;
+  flex: 1 1 auto;
   text-overflow: ellipsis;
 }
 .ls-pick .ls-mark {
   font-weight: 650;
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
