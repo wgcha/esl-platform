@@ -20,6 +20,8 @@ export interface SourceRow {
   optional?: boolean;
   /** v0.24.4 주의 표식 문구(탭에 ⚠ + 툴팁) — 이 출처 값의 뜻에 대한 한 줄 경고 */
   caution?: string;
+  /** v0.24.4 P3 비드 최적화 불가 사유(열 — 있으면 최적화 생성 화면에서 선택 불가 + 이 사유). 지그 계열은 translation+fixed 만 지원(esl_jig_case.md §9) */
+  optUnsupported?: string;
 }
 
 /** v0.24.4 그룹 표(esl_jig_case.md §2.1 — 화면 거울): 그룹 머리 글자·그룹이 하나뿐일 때(옛 응답) 쓰는 단독 탭 설명 */
@@ -29,8 +31,8 @@ export const GROUPS: Readonly<Record<string, { label: string; title: string }>> 
 
 export const SOURCE_ROWS: readonly SourceRow[] = [
   { key: "jig", label: "지그 고정", short: "고정", group: "jig", title: "지그 고정: 체결부(tie)를 고정(법선 구속 + 3-2-1 면내) + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
-  { key: "jig_disp", label: "지그 변위", short: "변위", group: "jig", optional: true, caution: "tie 변위를 낙하 결과에서 그대로 강제", title: "지그 변위: 체결부(tie)에 낙하 결과의 변위(강체 제외 순수 변위)를 강제 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도 — tie 변위를 낙하 결과에서 그대로 강제", legacy: false, fallback: false },
-  { key: "jig_spring", label: "지그 스프링", short: "스프링", group: "jig", optional: true, title: "지그 스프링: 체결부(tie)를 낙하 결과 변위를 바닥으로 하는 스프링으로 지지 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
+  { key: "jig_disp", label: "지그 변위", short: "변위", group: "jig", optional: true, caution: "tie 변위를 낙하 결과에서 그대로 강제", optUnsupported: "비드 최적화는 지그 고정(병진 고정)만 지원 — 변위(prescribed) 강제는 후속", title: "지그 변위: 체결부(tie)에 낙하 결과의 변위(강체 제외 순수 변위)를 강제 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도 — tie 변위를 낙하 결과에서 그대로 강제", legacy: false, fallback: false },
+  { key: "jig_spring", label: "지그 스프링", short: "스프링", group: "jig", optional: true, optUnsupported: "비드 최적화는 지그 고정(병진 고정)만 지원 — 스프링 지지는 후속", title: "지그 스프링: 체결부(tie)를 낙하 결과 변위를 바닥으로 하는 스프링으로 지지 + 맞춤 가압 하중으로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
   { key: "full", label: "전 노드 ESL", title: "전 노드 ESL(기존): 전 노드 ESL 하중·3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도", legacy: true, fallback: true },
   { key: "bforce", label: "경계력 ESL", title: "경계력 ESL: 낙하 해석의 접촉력·관성(·tie 체결력)으로 만든 자기평형 하중, 3-2-1 지지 재풀이로 비교한 순위·표·3D·민감도", legacy: false, fallback: false },
   { key: "fint", label: "내력 ESL", title: "내력 ESL: 낙하 해석의 노드 내력(FINT — 부품 요소 내력, 자기평형)을 하중으로 3-2-1 지지 재풀이해 비교한 순위·표·3D·민감도", legacy: false, fallback: false },

@@ -1,7 +1,7 @@
 // v0.10.0 ESL 라이브러리 API(계약 esl_menu_restructure.md §6·§7.3): 다중 내보내기 묶음 · 재검증.
 // CaseOut·EntryOut 키는 types.ts, 이 파일은 새 엔드포인트의 요청·응답 타입과 호출만 둔다.
 import { API_PREFIX, request } from "./client";
-import type { ExportTarget, JobOut, JobState } from "./types";
+import type { EntrySourcesOut, ExportTarget, JobOut, JobState } from "./types";
 
 export type ExportIdPolicy = "per_model_sequential" | "independent";
 
@@ -99,6 +99,8 @@ export const library = {
   exportBatch: (batchId: string) => request<ExportBatchOut>("GET", `/library/exports/${batchId}`),
   exportBatches: (projectId: string, limit = 20) => request<ExportBatchSummary[]>("GET", "/library/exports", { query: { project_id: projectId, limit } }),
   exportBundleUrl: (batchId: string) => `${API_PREFIX}/library/exports/${batchId}/bundle`,
+  /** v0.24.4 P3 묶음 출처 판정(esl_jig_case.md §9 — 항목별 `/validations/{vid}/sources`) */
+  entriesSources: (ids: string[]) => request<EntrySourcesOut>("GET", "/library/entries/sources", { query: { ids: ids.join(",") } }),
   revalidate: (entryId: string) => request<JobOut>("POST", `/library/entries/${entryId}/revalidate`, { body: {} }),
 };
 

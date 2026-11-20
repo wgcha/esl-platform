@@ -54,6 +54,7 @@ export function normalizeOptSettings(raw: unknown): OptSettingsOut {
   };
   const num = (k: "max_rects" | "max_entries" | "template_max_elems" | "max_preview_points") => (typeof r[k] === "number" ? (r[k] as number) : DEFAULT_SETTINGS[k]);
   return {
+    ...(typeof r.load_source_default === "string" ? { load_source_default: r.load_source_default } : {}),
     enabled: r.enabled === true,
     solver_ready: r.solver_ready === true,
     solver_reason: typeof r.solver_reason === "string" ? r.solver_reason : null,

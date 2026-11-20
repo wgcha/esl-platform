@@ -4305,3 +4305,21 @@ details.card.fold > .fold-body {
   white-space: normal;
   max-width: 24rem;
 }
+
+/* v0.24.4 P3 하중 출처 선택(타이틀 줄 안 — 세로 증가 없음) */
+.ls-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.ls-pick select {
+  height: 2.1rem;
+  max-width: 26rem;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.ls-pick .ls-mark {
+  font-weight: 650;
+  white-space: nowrap;
+}

@@ -47,6 +47,8 @@ import { buildArrow, nearestEnabledStage, stageEnabled, stageMode, type ArrowSpe
 import { reconcile, visibleKeys, type Selection } from "../../view3d/selection";
 import type { V3 } from "../../view3d/pick";
 import { usePolling } from "../../lib/usePolling";
+import { LoadSourceChip, LoadSourceConfirmDialog, LoadSourcePicker } from "../../components/LoadSourcePicker";
+import { loadSourceBody, loadSourceChipOf, loadSourceErrorText, unconfirmedOf, type UnconfirmedDetail } from "../../view3d/loadSource";
 import { libPath } from "../library/common";
 import { scx } from "../../api/scx";
 import { VD_BUTTON, eligibleDesigns, isActiveDrop, verify, verifyButtonReason } from "../../api/verify";
@@ -182,6 +184,9 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** v0.24.4 P3 하중 출처("" = 기본 — 요청에 필드 없음) · 서버 확인 요청(422) 본문 */
+  const [loadSource, setLoadSource] = useState("");
+  const [lsConfirm, setLsConfirm] = useState<UnconfirmedDetail | null>(null);
   const blocked = st ? doeBlockedReason(st, scenario) : null;
   const isCompare = scenario === "compare";
   const isSelect = scenario === "select";
@@ -340,19 +345,22 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     return null;
   }
 
-  async function prepare() {
+  async function prepare(ack = false) {
     setBusy(true);
     setError(null);
+    setLsConfirm(null);
+    const ls = loadSourceBody(loadSource, ack);
     try {
       const title = form.title.trim() || null;
       const r = isCompare
-        ? await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, ...ltOpts, title, props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } })
+        ? await doe.createStudy({ project_id: projectId, scenario, entry_ids: ids, shapes: compareShapes, inch: inchVal, ...meshOpts, ...ltOpts, ...ls, title, props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } })
         : isSelect
           ? await doe.createStudy({
               project_id: projectId,
               scenario,
               entry_ids: ids,
               ...selectBody(),
+              ...ls,
               ...(meshBase ? { part_title: form.partTitle.trim() || null, inch: inchVal } : {}),
               ...(stepBase ? { props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } } : {}),
               title,
@@ -364,13 +372,16 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
               step_upload_id: stepId,
               inch: inchVal,
               ...ltOpts,
+              ...ls,
               title,
               props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) },
               mesh_size_mm: Number(form.meshSize),
             });
       nav(doePath(projectId, r.id));
     } catch (e) {
-      setError(isCompare ? compareErrorText(e) : errorText(e));
+      const uc = unconfirmedOf(e);
+      if (uc) setLsConfirm(uc);
+      else setError(loadSourceErrorText(e) ?? (isCompare ? compareErrorText(e) : errorText(e)));
       setBusy(false);
     }
   }
@@ -381,8 +392,10 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
         <h1 className="page-title">새 강성 평가 스터디</h1>
         <ScenarioRadio value={radio} source={source} onChange={setChosen} onSource={setSource} auto={auto} st={st} readOnly={false} />
         <span className="spacer" />
-        <PrimaryButton label="입력 준비" onClick={prepare} disabledReason={reason()} busy={busy} />
+        {ids.length > 0 && <LoadSourcePicker entryIds={ids} ctx="doe" value={loadSource} onChange={setLoadSource} defaultKey={st?.load_source_default} disabled={!allowed || busy} />}
+        <PrimaryButton label="입력 준비" onClick={() => prepare()} disabledReason={reason()} busy={busy} />
       </div>
+      {lsConfirm && <LoadSourceConfirmDialog sourceKey={loadSource} detail={lsConfirm} busy={busy} onConfirm={() => void prepare(true)} onCancel={() => setLsConfirm(null)} />}
       {blocked && (
         <div className="warn-box" role="alert" data-testid="doe-blocked">
           {blocked}
@@ -1531,6 +1544,9 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
     ? LOAD_SOURCES.filter((x) => !tabs.ok[x.key] && x.chips.length).map((x) => <StatusChipOnly key={x.key} result={result.data!} kind={x.chips[0]} />)
     : null;
 
+  /** v0.24.4 P3 사용 하중 출처 칩(스냅샷 load_source — 옛 스터디 = 칩 없음) */
+  const loadSourceChip = loadSourceChipOf(s?.inputs.load_source ?? s?.load_source, s?.inputs.load_source_check ?? s?.load_source_check);
+
   const [rows, setRows] = useState<ParamRow[] | null>(null);
   const [form, setForm] = useState<SpecForm | null>(null);
   const [matrix, setMatrix] = useState<DoeMatrixOut | null>(null);
@@ -2000,7 +2016,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           )}
           {result.data && tabR && !addTab && (
             <>
-              <StatusBand studyId={id} result={tabR} src={curSrc} lead={reasonChips} />
+              <StatusBand studyId={id} result={tabR} src={curSrc} lead={<><LoadSourceChip chip={loadSourceChip} />{reasonChips}</>} />
               {(() => {
                 const r = tabR;
                 const sensShown = !(isCompare || r.sensitivity_reason);
