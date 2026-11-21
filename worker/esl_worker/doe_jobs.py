@@ -41,6 +41,7 @@ import os
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from collections.abc import Callable
 from typing import Any
 
 from esl_platform.core.atomic import write_text_atomic
@@ -218,20 +219,40 @@ def fixed_hint(r: dict[str, Any], man: dict[str, Any] | None) -> str:
     return out
 
 
-def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = "") -> tuple[str, dict[str, Any]]:
-    """v0.12.1 모델 전체 사본 prep/<rel>/(paicad --assem-dir) + 스캔 정규화 → (폴더, 매니페스트 = prep/<rel>.json)."""
-    _, dcfg = _cfg(ex)
-    cc = ((ex.lib["doe"].get("core") or {}).get("case")) or {}
+def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = "", *, out: str | None = None,
+                guard: Callable[[str], str] | None = None, man_path: str | None = None, dcfg: dict | None = None,
+                cc: dict | None = None) -> tuple[str, dict[str, Any]]:
+    """v0.12.1 모델 전체 사본 prep/<rel>/(paicad --assem-dir) + 스캔 정규화 → (폴더, 매니페스트 = prep/<rel>.json).
+
+    v0.24.4(esl_jig_case.md §5.1) 공용 추출: ``out``·``guard``·``man_path`` 를 주면 연구 폴더(ex.lib["doe"]) 없이 그 폴더에 쓴다
+    (Case 지그 준비 = ``<case>/_jig/assem_full``, guard = 쓰기 경로 검사, 사본 폴더는 이미 비어 있어야 함; dcfg = 코어 bead_doe 설정,
+    cc = 코어 case 절 — Case 작업은 연구 lib 가 없어 호출부가 줌). 안 주면 지금 동작 그대로."""
+    if dcfg is None:
+        dcfg = _cfg(ex)[1]
+    if cc is None:
+        cc = ((ex.lib["doe"].get("core") or {}).get("case")) or {}
     # v0.12.3(#44): 22만 요소 모델 사본·정규화는 수 분 — 작업 스레드에서, 이 스레드는 lease 갱신·취소 확인
     stop = threading.Event()
     cnt = {"files": 0}
-    man = inproc.call(ex, lambda: core_adapter.doe_assem_full(
-        ex.cdir, ex.lib["doe"], starter, case_dir, _in_roots(ex), os.path.join("prep", rel),
-        max_mb=float(dcfg["same"]["max_assem_mb"]), max_depth=int(cc.get("rad_include_max_depth") or 8),
-        include_path_map=cc.get("include_path_map"), engine_rad=bool(dcfg["same"].get("engine_rad")),
-        fixed_scan=dcfg.get("fixed_scan"), guard_wrap=lambda g: inproc.stop_guard(stop, g, cnt)),
-        label=f"{label}모델 전체 사본 prep/{rel}", echo=echo, stop=stop, detail=lambda: f"파일 쓰기 {cnt['files']}건")
-    _write_json(os.path.join(ex.cdir, "prep", rel + ".json"), man)
+    if guard is None:
+        man = inproc.call(ex, lambda: core_adapter.doe_assem_full(
+            ex.cdir, ex.lib["doe"], starter, case_dir, _in_roots(ex), os.path.join("prep", rel),
+            max_mb=float(dcfg["same"]["max_assem_mb"]), max_depth=int(cc.get("rad_include_max_depth") or 8),
+            include_path_map=cc.get("include_path_map"), engine_rad=bool(dcfg["same"].get("engine_rad")),
+            fixed_scan=dcfg.get("fixed_scan"), guard_wrap=lambda g: inproc.stop_guard(stop, g, cnt)),
+            label=f"{label}모델 전체 사본 prep/{rel}", echo=echo, stop=stop, detail=lambda: f"파일 쓰기 {cnt['files']}건")
+        _write_json(os.path.join(ex.cdir, "prep", rel + ".json"), man)
+        dest = os.path.join(ex.cdir, "prep", rel)
+    else:
+        dest = os.path.join(out or ex.cdir, rel)
+        man = inproc.call(ex, lambda: core_adapter.assem_full_to(
+            dest, starter, case_dir, _in_roots(ex), max_mb=float(dcfg["same"]["max_assem_mb"]),
+            max_depth=int(cc.get("rad_include_max_depth") or 8), include_path_map=cc.get("include_path_map"),
+            engine_rad=bool(dcfg["same"].get("engine_rad")), fixed_scan=dcfg.get("fixed_scan"),
+            guard=inproc.stop_guard(stop, guard, cnt)),
+            label=f"{label}모델 전체 사본 {rel}", echo=echo, stop=stop, detail=lambda: f"파일 쓰기 {cnt['files']}건")
+        if man_path:
+            _write_json(guard(man_path), man)             # 호출부가 준 쓰기 검사(Case _jig 아래·비링크)를 매니페스트에도
     sm = core_adapter.doe_assem_summary(man)
     echo(f"[esl-worker] {label}모델 전체 사본 prep/{rel}: 파일 {sm['n_files']}개 {sm['total_mb']:.1f} MB "
          f"(Case 폴더 밖 {sm['n_outside']}개, 엔진 rad {'포함' if sm['engine_rad'] else '제외'}"
@@ -241,7 +262,19 @@ def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = ""
          f"{sf.get('used')}(설정 {sf.get('setting')})")
     echo(f"[esl-worker] {label}스캔 정규화 {sm['n_normalized']}건 "
          + json.dumps(sm["normalized"], ensure_ascii=False, sort_keys=True))
-    return os.path.join(ex.cdir, "prep", rel), man
+    return dest, man
+
+
+def _fixed_scan(ex, st, *, assem_dir: str, parts: str, out_dir: str, cwd: str, capture: str, opts: str | None, threads: int,
+                echo, progress=None, tick=None, label: str = "fixed-scan ", cfg: dict | None = None,
+                stage: str = "prep") -> dict[str, Any]:
+    """paicad ``shell fixed-scan`` 1회(공용 — 스터디 BD_GEOM 의 a_fixed·fixed 와 Case 지그 준비 jig_prep 이 같은 호출).
+    값 = {assem_dir, parts, out_dir, options, threads}, 보고 = out_dir/shell_scan.json. 결과 = ``_paicad`` 반환 그대로."""
+    pio = core_adapter.doe_paicad_io()
+    return _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem_dir, "parts": parts, "out_dir": out_dir,
+                                                 "options": opts, "threads": threads},
+                   cwd=cwd, capture=capture, report=os.path.join(out_dir, pio.SCAN_JSON), stage=stage, echo=echo,
+                   progress=progress, tick=tick, label=label, **({"cfg": cfg} if cfg is not None else {}))
 
 
 def _tick(ex):
@@ -250,8 +283,9 @@ def _tick(ex):
 
 
 def _paicad(ex, st, key: str, values: dict[str, Any], *, cwd: str, capture: str, report: str | None, stage: str,
-            echo, progress=None, tick=None, procs=None, relay: bool = True, label: str = "") -> dict[str, Any]:
-    full, _ = _cfg(ex)
+            echo, progress=None, tick=None, procs=None, relay: bool = True, label: str = "",
+            cfg: dict | None = None) -> dict[str, Any]:
+    full = cfg if cfg is not None else _cfg(ex)[0]       # cfg = Case 작업(연구 없음)의 워커 설정 스냅샷(jig_prep)
 
     def on_start(argv, pid):
         echo(f"[esl-worker] {label or key} argv: " + json.dumps(argv, ensure_ascii=False))
@@ -474,20 +508,17 @@ def _geom(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
     for step in plan:
         if step == "a_fixed":
             d = fresh(os.path.join("prep", "a_fixed"))
-            r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": a_case["case_dir"], "parts": str(a_case["part_id"]),
-                                                      "out_dir": d, "options": opts, "threads": threads},
-                        cwd=prep, capture=os.path.join(prep, "a_fixed.stdout.log"),
-                        report=os.path.join(d, pio.SCAN_JSON), stage="prep", echo=echo, progress=progress, tick=tick,
-                        label="fixed-scan(A) ")
+            r = _fixed_scan(ex, st, assem_dir=a_case["case_dir"], parts=str(a_case["part_id"]), out_dir=d, cwd=prep,
+                            capture=os.path.join(prep, "a_fixed.stdout.log"), opts=opts, threads=threads, echo=echo,
+                            progress=progress, tick=tick, label="fixed-scan(A) ")
             if not r["ok"]:
                 echo(f"[esl-worker] A Case fixed-scan 실패({r['code']}{fixed_hint(r, a_case.get('man'))}) — A 체결점은 "
                      "3-2-1 만(A_FASTENERS_UNKNOWN)")
         elif step == "fixed":
             d = fresh(os.path.join("prep", "fixed"))
-            r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem, "parts": pio.parts_arg([inp["part_id"]]),
-                                                      "out_dir": d, "options": opts, "threads": threads},
-                        cwd=prep, capture=os.path.join(prep, "fixed.stdout.log"), report=os.path.join(d, pio.SCAN_JSON),
-                        stage="prep", echo=echo, progress=progress, tick=tick, label="fixed-scan ")
+            r = _fixed_scan(ex, st, assem_dir=assem, parts=pio.parts_arg([inp["part_id"]]), out_dir=d, cwd=prep,
+                            capture=os.path.join(prep, "fixed.stdout.log"), opts=opts, threads=threads, echo=echo,
+                            progress=progress, tick=tick, label="fixed-scan ")
             if not r["ok"]:
                 raise _paicad_fail(r, "fixed-scan", man)
             fx = (r.get("report") or {}).get("fixed") or {}
@@ -737,20 +768,17 @@ def _geom_select(ex, st: dict[str, Any], log_path: str) -> dict[str, Any]:
         r = None
         if step == "a_fixed":
             d = fresh(os.path.join("prep", "a_fixed"))
-            r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": a_case["case_dir"], "parts": str(a_case["part_id"]),
-                                                      "out_dir": d, "options": opts, "threads": threads},
-                        cwd=prep, capture=os.path.join(prep, "a_fixed.stdout.log"),
-                        report=os.path.join(d, pio.SCAN_JSON), stage="prep", echo=echo, progress=progress, tick=tick,
-                        label="fixed-scan(A) ")
+            r = _fixed_scan(ex, st, assem_dir=a_case["case_dir"], parts=str(a_case["part_id"]), out_dir=d, cwd=prep,
+                            capture=os.path.join(prep, "a_fixed.stdout.log"), opts=opts, threads=threads, echo=echo,
+                            progress=progress, tick=tick, label="fixed-scan(A) ")
             if not r["ok"]:
                 echo(f"[esl-worker] A Case fixed-scan 실패({r['code']}{fixed_hint(r, a_case.get('man'))}) — A 체결점은 "
                      "3-2-1 만(A_FASTENERS_UNKNOWN)")
         elif step == "fixed":
             d = fresh(os.path.join("prep", "fixed"))
-            r = _paicad(ex, st, "paicad_fixed_scan", {"assem_dir": assem, "parts": pio.parts_arg([inp["part_id"]]),
-                                                      "out_dir": d, "options": opts, "threads": threads},
-                        cwd=prep, capture=os.path.join(prep, "fixed.stdout.log"), report=os.path.join(d, pio.SCAN_JSON),
-                        stage="prep", echo=echo, progress=progress, tick=tick, label="fixed-scan ")
+            r = _fixed_scan(ex, st, assem_dir=assem, parts=pio.parts_arg([inp["part_id"]]), out_dir=d, cwd=prep,
+                            capture=os.path.join(prep, "fixed.stdout.log"), opts=opts, threads=threads, echo=echo,
+                            progress=progress, tick=tick, label="fixed-scan ")
             if r["ok"]:
                 fx = (r.get("report") or {}).get("fixed") or {}
                 echo(f"[esl-worker] 고정 노드 {fx.get('total')} (클러스터 {len(fx.get('clusters') or [])})")

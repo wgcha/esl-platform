@@ -211,6 +211,71 @@ def entry_load(target: Target, raw: dict | None, summary_for_mapping: dict | Non
     return np.asarray(f, dtype=np.float64), info
 
 
+# ---------------------------------------------------------------- v0.24.4 P3 하중 출처(esl_jig_case.md §9 — D-0.24.4-JIG-14)
+def source_entry_load(target: Target, raw: dict, f) -> tuple[np.ndarray, dict]:
+    """S1 출처 하중(``esl.library.source_load.find`` 의 f — 엔트리 raw 노드 순서) → 대상 노드 순서(``entry_load`` 와 같은 재배열)."""
+    F, info = entry_load(target, {**raw, "f": np.asarray(f, dtype=np.float64)})
+    return F, {**info, "source": "load_source"}
+
+
+def jig_support_reason(doc: dict | None) -> str | None:
+    """지그 ESL(Case <src>.json 의 method·tie_dofs)이 전역 SPC 로 정확히 옮겨지는가 — 가능 = None, 아니면 사유(→ 422
+    LOAD_SOURCE_UNSUPPORTED, 후속 R-VAL-7). 열 값만: METHODS.tie_value zero ∧ tie_stiff hard ∧ TIE_DOFS.dirs xyz ∧ aux321 none."""
+    from esl.mech import jig_bc
+    d = doc or {}
+    m = jig_bc.METHODS.get(str(d.get("method")))
+    td = jig_bc.TIE_DOFS.get(str(d.get("tie_dofs")))
+    if m is None or td is None:
+        return "지그 ESL 의 방식·구속 성분을 알 수 없습니다"
+    if m["tie_value"] == "zero" and m["tie_stiff"] == "hard" and td["dirs"] == "xyz" and td["aux321"] == "none":
+        return None
+    return (f"비드 최적화는 병진 구속 + 고정 지그만 전달합니다(이 ESL = {td['text']} · {m['name']}) — 국부 구속·강제 변위·"
+            "스프링은 후속(R-VAL-7)")
+
+
+def jig_supports(doc: dict | None, bc: dict | None) -> list:
+    """지그 ESL(doc + ``source_load.find`` 의 bc — 노드 ID) → 대상 지지 [(노드 ID, "123")](tie 노드 정렬). 사상 불가 =
+    LOAD_SOURCE_UNSUPPORTED, 구속 배열 없음 = LOAD_SOURCE_UNAVAILABLE. 자료 확인: 스프링 없음 ∧ 값 0 ∧ 노드마다 전역 3축."""
+    from esl.mech import jig_bc
+    why = jig_support_reason(doc)
+    if why is not None:
+        raise EslError("LOAD_SOURCE_UNSUPPORTED", why)
+    if not bc:
+        raise EslError("LOAD_SOURCE_UNAVAILABLE", "지그 ESL 의 구속(bc) 배열이 없습니다")
+    kind = np.asarray(bc["bc_kind"]).astype(np.int64)
+    node = np.asarray(bc["bc_node"], dtype=np.int64)
+    dirs = np.asarray(bc["bc_dir"], dtype=np.float64).reshape(-1, 3)
+    val = np.asarray(bc["bc_val"], dtype=np.float64)
+    tie = kind == int(jig_bc.KIND_TIE)
+    if np.asarray(bc.get("sp_node", np.zeros(0))).size or not tie.any() or not np.all(tie) or np.any(val != 0.0):
+        raise EslError("LOAD_SOURCE_UNSUPPORTED", "지그 구속이 값 0 의 tie 병진 구속만이 아닙니다(스프링·면내·강제 값)")
+    ax = np.argmax(np.abs(dirs), axis=1)
+    if not np.all(np.abs(dirs).sum(axis=1) == 1.0):
+        raise EslError("LOAD_SOURCE_UNSUPPORTED", "지그 구속 방향이 전역 축이 아닙니다")
+    nodes = np.unique(node)
+    for n in nodes.tolist():
+        if sorted(set(ax[node == n].tolist())) != [0, 1, 2]:
+            raise EslError("LOAD_SOURCE_UNSUPPORTED", f"tie 노드 {n} 의 구속이 병진 3축이 아닙니다")
+    return [(int(n), "123") for n in nodes.tolist()]
+
+
+def source_supports(target: Target, sets: dict) -> list:
+    """항목별 지그 지지 {entry_id: [(노드 ID, "123")]} → 대상 지지 1개(모두 같아야 함 — 덱·선정 지지 하나). 다름 =
+    LOAD_SOURCE_UNSUPPORTED, 대상 메시에 없는 노드 = NODE_NOT_IN_PART, 강체 6모드 미구속 = SUPPORT_DEGENERATE."""
+    if not sets:
+        raise EslError("LOAD_SOURCE_UNAVAILABLE", "지그 지지 항목이 없습니다")
+    first = next(iter(sets))
+    sup = [(int(n), str(d)) for n, d in sets[first]]
+    diff = [k for k, v in sets.items() if [(int(n), str(d)) for n, d in v] != sup]
+    if diff:
+        raise EslError("LOAD_SOURCE_UNSUPPORTED", f"항목마다 지그 지지가 다릅니다(기준 {first} 와 다른 항목 {len(diff)}개) — "
+                                                  "한 최적화는 지지 하나만 씁니다")
+    sr = support_check(target.mesh, sup)
+    if sr["rank"] < 6 or sr["sigma_ratio"] < msup.DEGENERATE_RATIO:
+        raise EslError("SUPPORT_DEGENERATE", f"지그 지지가 강체 6모드를 구속하지 못함(rank {sr['rank']})")
+    return sup
+
+
 # ---------------------------------------------------------------- 설계/비설계
 def design_mask(target: Target, nondesign_pids, keepout_mask) -> tuple[np.ndarray, dict]:
     pid = np.asarray(target.mesh["elem_pid"], dtype=np.int64)

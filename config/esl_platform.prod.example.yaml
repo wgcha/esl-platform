@@ -155,6 +155,7 @@ opt_run:                              # v0.7.0 비드 최적화 서버 실행(�
   check: {bead_width_elem_factor: 2.0, min_nodes_per_cell: 64, max_aspect: 10.0, max_warp_deg: 15.0}
   grid: {nx: 24, ny: 14}
   ui: {max_preview_points: 20000}     # 평면도(plan-view) 요소 점 최대 수
+  load_source_default: full            # v0.24.4 P3 비드 최적화 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). full = 지금 동작
 bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead_doe.md §14). 섹션이 없으면 enabled: false
   enabled: true                       # 실행에는 paicad(≥ min_version, OCP 포함)가 필요 — 워커가 점검해 기록(없으면 화면 비활성)
   part_title: "chassis rear"          # ② B 메시 기본 파트 제목(case.part_title 과 같은 규칙)
@@ -183,6 +184,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   view3d: {top_k: 3, jig: true, jig_support_max: 64, jig_diag: true, jig_tie_gap_mm: 5.0, regen_keep_backups: 1, recon: true}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수, v0.23.3 jig_diag = 지그 진단 3D·하중 정의 탭 자료, jig_tie_gap_mm = 지그 노드 상대 부품 찾기 거리(보고만), regen_keep_backups = 3D 다시 만들기 이전 진단 백업 유지 개수(0 = 백업 안 함), v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단(목표 sm_ref)
   bforce: {enabled: true, grades: [full, contact], view3d: true}   # v0.24.0 경계력 ESL(esl_bforce.md §9) — Case 에 접촉력 결과가 있으면 하중 정의 탭 [경계력 ESL]: grades = 순위에 쓸 데이터 등급(접촉력 전용, contact = tie 체결력 미포함), view3d = 응답 컨투어 + 하중 화살표
   fint: {enabled: true, grades: [fint], view3d: true}   # v0.24.0 내력 ESL(esl_fint.md §9) — Case 에 FINT(/H3D/NODA/FINT) 결과가 있으면 탭 [내력 ESL](F = s·FINT, 3-2-1 재풀이)
+  case_jig: {enabled: true, timeout_s: null}   # v0.24.4 Case ③ ESL 지그 3방식 — 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더 01_extract/jig_fixed 에 준비(esl_jig_case.md §5.1 — deck 표면 캐시 jig_surf.npz 는 코어가). enabled false = 준비·fixed-scan 호출 0. timeout_s null = bead_doe.paicad.timeout_s.fixed_scan
   rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)
     ratio_tol: 1.0e-6                 # '변화 없음' 허용치(③ 은 noise_floor 반영)
     per_esl_inline_max: 2000          # 순위 행 per_esl 상한(안 수 × ESL 수)
@@ -224,7 +226,18 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       cancel_warn: 0.5                # cancel_rel 정보 표시 임계(경고 아님 — D-JIG-18, 해시 밖)
       work_eff_min: 0.05              # 일 효율 미달 → JIG_LOAD_CANCEL (D-JIG-18, 해시 밖)
       tie_spread_min: 0.02            # 지그 노드 분포(2번째 주축 표준편차 / 대상 파트 1번째 주축 표준편차) 미달 → JIG_SUPPORT_WEAK (해시 밖)
+      # v0.24.4 Case 지그 세 방식(esl_jig_case.md §11 — 코어 Case 절 jig.* 와 같은 이름·값). 옛 스냅샷(키 없음) = translation·fixed
+      tie_dofs: normal                # tie 구속 성분: normal(면외 법선 + 3-2-1 면내 — 새 기본) | translation(병진 123 — 옛 동작, 비교용)
+      methods: [fixed, prescribed, spring]   # 계산할 방식(출처 행 jig·jig_disp·jig_spring) — 빼면 그 방식은 계산 안 함(spring 이 가장 무거움)
+      normal_kink_deg: 45.0           # 노드 법선 산포 고유치 기준 꺾임각(넘으면 두 면 법선 모두 구속)
+      aux321_dup_deg: 10.0            # 3-2-1 면내 행이 tie 구속 부분공간과 이 각도 이내로 겹치면 제거
+      aux_reaction_warn: 0.05         # 3-2-1 면내 반력비 초과 → 정보 JIG_AUX_REACTION (해시 밖)
+      spring_k_mode: auto             # auto(k = α × 노드 자기 병진 강성) | value(spring_k_value N/mm)
+      spring_alpha: 0.01              # auto 배율 α(≥ 1e-3). 기본 0.01 — α=1 은 prescribed 와 구분되지 않음(Q-JIGC-1)
+      spring_k_value: null            # value 모드에서 필수(N/mm, > 0)
+      spring_alpha_scan: []           # 현장 진단용 α 목록(예 [0.01, 0.1, 1]) — 출처 행 아님(해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
+  load_source_default: null           # v0.24.4 P3 스터디 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). null = 지금 동작(순위 지표 기준)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
     enabled: true
     max_shapes: 20                    # 형상(STEP) 수 상한

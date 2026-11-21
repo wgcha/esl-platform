@@ -92,7 +92,7 @@ const ROWS: View3dSourcesOut["rows"] = [
 
 describe("V-0241-V3D-15 출처 표 · 탭 상태", () => {
   it("SOURCE_ROWS 키·순서·이름 = 스터디 LOAD_SOURCES(label·title 같은 값)", () => {
-    expect(SOURCE_KEYS).toEqual(["jig", "full", "bforce", "fint"]);
+    expect(SOURCE_KEYS).toEqual(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]);
     expect(LOAD_SOURCES.map((s) => s.key)).toEqual(SOURCE_KEYS as string[]);
     expect(LOAD_SOURCES.map((s) => [s.label, s.title])).toEqual(SOURCE_ROWS.map((s) => [s.label, s.title]));
     expect(SOURCE_ROWS.filter((r) => r.legacy).map((r) => r.key)).toEqual(["full"]);

@@ -100,6 +100,15 @@ export interface LoadSource {
   add: SourceAddCols | null;
 }
 
+/** v0.24.4 지그 방식 행(jig_disp·jig_spring)이 순위·진단에서 숨길 키(다른 출처 값 — 백엔드 VIEW_DROP_JIG 거울) */
+const JIG_VIEW_DROP = ["C", "C_solve", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"] as const;
+const JIG_VIEW_HIDE: readonly (keyof DoeResultOut)[] = ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"];
+/** 이 스터디가 그 지그 방식을 계산하지 않은 탭 사유(JIG_METHOD_NOT_RUN — 옛 스냅샷·P2c 전) */
+export const JIG_METHOD_NOT_RUN_TEXT = (label: string) => `이 스터디에서 계산하지 않은 방식입니다: ${label} — 새 스터디·복제에서 계산(rank.jig.methods)`;
+function jigMethodUnavailable(_r: DoeResultOut, key: string): string {
+  return JIG_METHOD_NOT_RUN_TEXT(SR(key).label);
+}
+
 export const REGEN_HINT_FULL = "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다";
 export const REGEN_HINT_JIG = "3D 다시 만들기로 지그 탭 자료(순위·진단)를 만들 수 있습니다";
 
@@ -150,6 +159,48 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     nodal: null,
     recon: { kind: "jigdiag" },
     add: ADD_JIG,
+  },
+  {
+    // v0.24.4 지그 강제 변위(esl_jig_case.md §6.1): 스터디 계산 = P2c(새 스냅샷만 rank_views.jig_disp). 3D 칸 = 후속(R-JIGC-2)
+    key: "jig_disp",
+    label: SR("jig_disp").label,
+    title: SR("jig_disp").title,
+    primaryFor: ["jd"],
+    drop: [...JIG_VIEW_DROP, "C_jig", "umax_jig", "C_js", "umax_js"],
+    blankUmax: true,
+    warnPrefixes: [],
+    hide: JIG_VIEW_HIDE,
+    chips: ["best_clean"],
+    view3d: "pair",
+    pairKeys: null,
+    perEslKey: "C_jd",
+    sensKey: "rank_views.jig_disp.sensitivity",
+    sort: "score",
+    unavailable: (r) => jigMethodUnavailable(r, "jig_disp"),
+    nodal: null,
+    recon: null,
+    add: null,
+  },
+  {
+    // v0.24.4 지그 스프링(§6.1) — 위와 같은 규칙(키 js)
+    key: "jig_spring",
+    label: SR("jig_spring").label,
+    title: SR("jig_spring").title,
+    primaryFor: ["js"],
+    drop: [...JIG_VIEW_DROP, "C_jig", "umax_jig", "C_jd", "umax_jd"],
+    blankUmax: true,
+    warnPrefixes: [],
+    hide: JIG_VIEW_HIDE,
+    chips: ["best_clean"],
+    view3d: "pair",
+    pairKeys: null,
+    perEslKey: "C_js",
+    sensKey: "rank_views.jig_spring.sensitivity",
+    sort: "score",
+    unavailable: (r) => jigMethodUnavailable(r, "jig_spring"),
+    nodal: null,
+    recon: null,
+    add: null,
   },
   {
     key: "full",

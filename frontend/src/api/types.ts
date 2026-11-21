@@ -1948,6 +1948,63 @@ export interface ValidationSourcesOut {
   default: string;
   rows: ValidationSourceRow[];
 }
+/** v0.24.4 P3 출처 하중 등급(esl_jig_case.md §9) — 나쁜 쪽이 뒤: PASS < caution < not_comparable < UNDETERMINED < FAIL < NO_RESULT */
+export type LoadGrade = "PASS" | "caution" | "not_comparable" | "UNDETERMINED" | "FAIL" | "NO_RESULT";
+/** v0.24.4 P3 항목 출처 1행: ④ 검증 출처 행 + 출처 하중 존재·등급 */
+export interface EntrySourceRow extends ValidationSourceRow {
+  load_available: boolean;
+  load_code?: string | null;
+  load_reason?: string | null;
+  grade: LoadGrade;
+  flags: LoadGrade[];
+  /** 비드 최적화로 전달 불가한 하중이면 "LOAD_SOURCE_UNSUPPORTED" + 사유(생성 422 와 같은 규칙 — 미리 안내). 옛 서버 = 없음 */
+  opt_code?: string | null;
+  opt_reason?: string | null;
+}
+/** v0.24.4 P3 묶음 판정 GET /library/entries/sources?ids= (검증 없는 항목 = 모든 행 available false·code VAL_SRC_NOT_RUN, validation_id null) */
+export interface EntrySourcesItem {
+  entry_id: string;
+  validation_id?: string | null;
+  rows: EntrySourceRow[];
+}
+export interface EntrySourceEntry {
+  entry_id: string;
+  validation_id?: string | null;
+  status?: ValidationStatus | null;
+  comparable?: boolean | null;
+  grade: LoadGrade;
+  flags: LoadGrade[];
+  limits: string[];
+  load_available: boolean;
+  load_code?: string | null;
+  load_reason?: string | null;
+}
+export interface EntrySourceSummary {
+  key: string;
+  label?: string | null;
+  worst: LoadGrade;
+  n: number;
+  unavailable_entry_ids: string[];
+  needs_confirm: boolean;
+  entries: EntrySourceEntry[];
+}
+export interface EntrySourcesOut {
+  ids: string[];
+  items: EntrySourcesItem[];
+  sources: EntrySourceSummary[];
+}
+/** v0.24.4 P3 스냅샷 load_source_check(esl_jig_case.md §9) */
+export interface LoadSourceCheckEntry {
+  entry_id: string;
+  status: ValidationStatus | null;
+  comparable: boolean | null;
+  validation_id: string | null;
+}
+export interface LoadSourceCheck {
+  key: string;
+  entries: LoadSourceCheckEntry[];
+  worst: LoadGrade | null;
+}
 export interface ValidationSourcesHistItem {
   validation_id: string;
   rows: ValidationSourceRow[];
@@ -2059,6 +2116,8 @@ export interface OptLoadsSettings {
   default_k: number;
 }
 export interface OptSettingsOut {
+  /** v0.24.4 P3 설정 opt_run.load_source_default(기본 "full") */
+  load_source_default?: string | null;
   enabled: boolean;
   solver_ready: boolean;
   solver_reason?: string | null;
@@ -2326,6 +2385,9 @@ export interface OptOptionsIn {
 }
 export type OptRunOptions = OptOptionsIn;
 export interface OptRunIn {
+  /** v0.24.4 P3: 하중 출처(없으면 필드 생략 = 지금과 같음) · 경고 확인 뒤 재요청에만 load_source_ack: true */
+  load_source?: string | null;
+  load_source_ack?: boolean | null;
   project_id: string;
   scenario: OptScenario;
   title?: string | null;
@@ -2422,7 +2484,8 @@ export interface OptRunOut {
   size?: { entries?: unknown[]; template?: unknown; warnings?: string[] } | null;
   /** 실행 스냅샷 */
   design: { bead: BeadIn; nondesign_pids: number[]; keepout: { rects: KeepoutRect[]; auto: { hole: boolean; edge: boolean } } };
-  options: { objective_norm: ObjectiveNorm; load_strategy: LoadStrategy; k: number | null; supports: SupportIn[] | null };
+  /** v0.24.4 P3 스냅샷 = options.load_source·load_source_check(옛 실행 = 키 없음) */
+  options: { objective_norm: ObjectiveNorm; load_strategy: LoadStrategy; k: number | null; supports: SupportIn[] | null; load_source?: string | null; load_source_check?: LoadSourceCheck | null };
   load_strategy: LoadStrategy;
   k?: number | null;
   objective_norm: ObjectiveNorm;
@@ -2572,6 +2635,8 @@ export interface DoeSettingsShapeRules {
   mesh_route: { relaxed_direct: { enabled: boolean; min_faces: number | null } };
 }
 export interface DoeSettingsOut {
+  /** v0.24.4 P3 설정 bead_doe.load_source_default(기본 null = 순위 지표 기준) */
+  load_source_default?: string | null;
   /** v0.21.0 형상 규칙 설정 요약(표시용 — 새 스냅샷 판정은 study.inputs.shape_rules, 옛 서버면 없음) */
   shape_rules?: DoeSettingsShapeRules | null;
   /** v0.20.0 순위 지표 설정(옛 서버면 없음) */
@@ -2799,6 +2864,9 @@ export interface DoeLoadTransferResolved {
   region_mode?: "auto" | "a_bbox" | "largest" | "all";
 }
 export interface DoeCheckIn {
+  /** v0.24.4 P3: 하중 출처(스터디 생성 — check-inputs 에는 보내지 않음). 없으면 필드 생략 = 지금과 같음 */
+  load_source?: string | null;
+  load_source_ack?: boolean | null;
   project_id: string;
   scenario: DoeScenario;
   entry_ids: string[];
@@ -3043,6 +3111,9 @@ export interface DoeStudyOut {
     select_schema?: 1 | 2 | null;
     /** v0.21.0 형상 규칙 스냅샷(esl_bead_shape_v021.md §2.1 — 옛 스터디 = 키 없음/null) */
     shape_rules?: DoeShapeRules | null;
+    /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) */
+    load_source?: string | null;
+    load_source_check?: LoadSourceCheck | null;
   };
   phase: DoePhase;
   version: number;
@@ -3237,7 +3308,7 @@ export interface DoeRankRow {
   umax_ev_all?: number | null;
 }
 /** v0.20.0 순위 지표: lin = 1차 섭동(새 기본), solve = 재풀이 C(옛) */
-export type DoeRankMetric = "lin" | "solve" | "jig";
+export type DoeRankMetric = "lin" | "solve" | "jig" | "jd" | "js" | "bf" | "fi";
 /** v0.16.2 AD-D-8: MORPH_EXTREME_ELEMENTS(극단 요소)도 순위 ⚠ */
 export type DoeRankWarn = "FIXED_MOVED" | "QUALITY_WARN" | "CROSS_BEAD_MOVE" | "MORPH_EXTREME_ELEMENTS" | "MESH_QUALITY_RANK";
 /** 안 1개 · ESL 1개의 컴플라이언스·베이스라인 대비 비율 */
@@ -3388,6 +3459,9 @@ export interface DoeResultOut {
   } | null;
   /** v0.20.0 순위 지표(esl_stiffness_metric.md §6 — 옛 결과 = 키 없음 = solve 표시 그대로). lin = 재풀이 없는 1차 섭동 지표 */
   metric?: DoeRankMetric | null;
+  /** v0.24.4 P3: 스터디 load_source 를 고른 새 결과만 — 고른 출처 키·그 출처가 없을 때의 기본 지표 */
+  load_source?: string | null;
+  metric_default?: DoeRankMetric | null;
   lin_form?: "taylor" | "ritz" | null;
   /** v0.20.0 이 스터디 스냅샷의 순위 지표 설정(임계값 출처 1순위) */
   rank?: DoeRankCfg | null;

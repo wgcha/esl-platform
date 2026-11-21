@@ -25,7 +25,8 @@ LIN_FORMS = ("taylor", "ritz")
 METRICS = ("lin", "solve", "jig")
 VIEW_METRIC_BF = "bf"                          # 하중 출처 보기 지표(경계력 ESL) — rank.rank(metric="bf") → per_esl C_bf
 # v0.24.0 보완(esl_fint.md §5.1): 보기 전용 지표 표 1곳(스터디 rank.metric 선택지 아님) — 노드 힘 출처 per_esl C_<pe>
-VIEW_METRICS = {VIEW_METRIC_BF: "C_bf", "fi": "C_fi"}
+# v0.24.4(esl_jig_case.md §6.1): 지그 강제 변위 jd·스프링 js(per_esl C_jd·C_js — P2c 가 채움, 보기·P3 주 지표 허용)
+VIEW_METRICS = {VIEW_METRIC_BF: "C_bf", "fi": "C_fi", "jd": "C_jd", "js": "C_js"}
 LIN_VALID_DEFAULT = 0.3
 IMBALANCE_WARN_DEFAULT = 0.02
 

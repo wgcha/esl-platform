@@ -7,7 +7,8 @@
   ``<esl_root>/_opt/<id>/`` 는 워커가 만든다(여기서는 경로 안전성만).
 - 작업 params(워커 계약): {opt_run_id, scenario, title, settings{opt_run, core, library}, entries[{id, dir_rel, case_id,
   mode, inch, L_xi, L_eta, grid}], base(S1)|None, template(S2)|None, design{bead, nondesign_pids, keepout{rects, auto}},
-  options{objective_norm, load_strategy, k, supports}, keepout_key{template_id|topo_sha256}}.
+  options{objective_norm, load_strategy, k, supports[, load_source, load_source_check]}, keepout_key{template_id|topo_sha256}[,
+  load_source]}(v0.24.4 P3: load_source 는 요청에 있을 때만 — 없으면 params·options 가 v0.24.3 과 같음).
 - 다운로드 ``rel`` 은 파일 목록에 있는 것만 + realpath 가 ``_opt/<id>/`` 안. 결과 폴더 쓰기 없음.
 """
 
@@ -21,6 +22,7 @@ import re
 import uuid
 from typing import Any
 
+from esl_worker import core_adapter
 from sqlalchemy import null
 from sqlalchemy.exc import IntegrityError
 
@@ -37,7 +39,15 @@ from ..context import AppContext
 from . import bundle as bundle_svc
 from . import item_delete
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder, entry_size, require_eligible, require_eligible_ids
+from .library import (
+    backfill_opt_meta,
+    check_load_source,
+    entry_folder,
+    entry_size,
+    require_eligible,
+    require_eligible_ids,
+    source_plan_row,
+)
 from .opt_keepouts import validate_keepout
 from .opt_templates import TEMPLATE_EXT, load_template, template_arrays, template_meta, template_preview
 
@@ -81,7 +91,8 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
         log.warning("방법·출처 자료를 읽지 못함(GET /opt/settings method_sources.error): %s", exc.message)
         ms = {"error": exc.message if principal is not None and principal.is_global_admin else "방법·출처 자료를 읽지 못했습니다(관리자 문의)"}
     lo = o["loads"]
-    return {"enabled": bool(o["enabled"]), "solver_ready": ready, "solver_reason": reason,
+    return {"load_source_default": o.get("load_source_default"),
+            "enabled": bool(o["enabled"]), "solver_ready": ready, "solver_reason": reason,
             "size": {k: o["size"][k] for k in ("tol_rel", "plate_tol_rel", "require_inch")},
             "bead_defaults": {k: float(o["bead_defaults"][k]) for k in ("angle", "min_width", "height")},
             "keepout_auto": {k: float(o["keepout"][k]) for k in ("hole_radius_mm", "edge_band_mm")},
@@ -359,6 +370,13 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     lib_cfg = require_library_config(ctx)
     opts = _options(o, body)
     bead = _bead(o, body)
+    src_row = None
+    if body.load_source:                      # v0.24.4 P3: 출처 키·시나리오 검사(정적 — 항목을 읽기 전)
+        src_row = source_plan_row(body.load_source)
+        if src_row["support"] == "jig" and body.scenario != "S1":
+            raise unprocessable("LOAD_SOURCE_UNSUPPORTED", f"{body.load_source}: 지그 하중은 기존 형상 최적화(S1)에서만 쓸 수 있습니다 — "
+                                "템플릿(셀 매핑) 최적화는 후속", load_source=body.load_source,
+                                reason="지그 하중은 템플릿(셀 매핑) 최적화에서 쓸 수 없음")
     if len(body.entry_ids) > int(o["max_entries"]):
         raise unprocessable("INVALID_PARAMS", f"ESL 은 최대 {o['max_entries']}개 (요청 {len(body.entry_ids)}개)")
     nd_pids = sorted({int(p) for p in (body.design.nondesign_pids or [])})
@@ -413,6 +431,10 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if opts["load_strategy"] == "B" and not any(eff):
         raise unprocessable("NO_MODE_CANDIDATES", "전략 B: 변형 모드(덴팅·뒤틀림·굽힘)가 정해진 ESL 이 없습니다 — 모드를 "
                             "지정하거나 전략 A·C 를 쓰세요")
+    if src_row is not None:                  # v0.24.4 P3: 하중 없음 422 · 전달 불가 지그 422 · 확인(ack) — 다른 입력 검사 뒤
+        lchk = check_load_source(ctx, body.load_source, [r["id"] for r in rows], body.load_source_ack,
+                                 doc_check=core_adapter.jig_support_reason if src_row["support"] == "jig" else None)
+        opts = {**opts, "load_source": body.load_source, "load_source_check": lchk}
     rid = str(uuid.uuid4())
     opt_run_dir(ctx.settings, rid)          # 경로 안전성(실제 생성은 워커)
     design = {"bead": bead, "nondesign_pids": nd_pids, "keepout": {"rects": ko["rects"], "auto": ko["auto"]}}
@@ -428,6 +450,8 @@ def create_run(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
                            "library": copy.deepcopy(lib_cfg)},
               "entries": entries_p, "base": base, "template": template, "design": design, "options": opts,
               "keepout_key": keepout_key, "warnings": warns}
+    if src_row is not None:
+        params["load_source"] = body.load_source          # 워커(opt_jobs.prepare)가 읽는 키 — 없으면 지금 params 와 같음
     with ctx.engine.begin() as conn:
         r = opt_repo.insert_run(
             conn, id=rid, project_id=body.project_id, scenario=body.scenario, title=body.title,

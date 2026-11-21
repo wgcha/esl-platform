@@ -251,14 +251,14 @@ def test_v0243_val_3_7_source_metrics_independent_and_one_factorization(golden_r
     assert cap.n_factor == 1 and len(cap.leg) == 1 and len(cap.fs) == 2            # 분해 1회·legacy 해 1·출처 해 2
     sj = _j(out, pipeline.D_VAL, "sources.json")
     assert sj["schema"] == "esl/val_sources/1" and sj["default"] == "full" and sj["enabled"] is True
-    assert sj["esl_ref"] == TAG and [x["key"] for x in sj["rows"]] == ["jig", "full", "bforce", "fint"]
+    assert sj["esl_ref"] == TAG and [x["key"] for x in sj["rows"]] == list(pipeline._vs.KEYS)   # v0.24.4 KEYS 6(의도 변경)
     g = sj["solve"]["groups"]
     assert len(g) == 1 and g[0]["support"] == "bc321" and g[0]["keys"] == ["full", "bforce", "fint"]
     assert set(g[0]["solve_s"]) == {"full", "bforce", "fint"} and g[0]["factor_s"] >= 0
     assert set(sj["solve"]["eval_s"]) == {"full", "bforce", "fint"} and sj["solve"]["decision"]["run"] is True
     summ = rec["stages"]["validate"]["summary"]
     assert "n_factorizations" not in summ["solver"]
-    assert set(summ["sources"]) == {"jig", "bforce", "fint"}
+    assert set(summ["sources"]) == {"jig", "jig_disp", "jig_spring", "bforce", "fint"}
     root = _j(out, pipeline.D_VAL, "validation.json")
     model = np.load(os.path.join(out, pipeline.D_EXTRACT, "model.npz"), allow_pickle=False)
     X0, nid = model["x0"], model["node_id"]
@@ -319,7 +319,8 @@ def test_v0243_val_3_7_source_metrics_independent_and_one_factorization(golden_r
     assert rows["full"]["metrics"]["disp_rms_rel"] == {x["metric"]: x for x in root["metrics"]}["disp_rms_rel"]["value"]
     assert rows["bforce"]["comparable"] is False and rows["bforce"]["limits"] == ["BF_TIE_MISSING"]
     assert rows["fint"]["comparable"] is True and rows["fint"]["cond"]["balance"] == "none"
-    assert rows["jig"]["status"] == "na" and rows["jig"]["code"] == "V3D_STUDY_ONLY" and rows["jig"]["dir"] is None
+    for k in ("jig", "jig_disp", "jig_spring"):                    # v0.24.4: tie 준비 없는 Case = JIG_NOT_PREPARED(요약 code)
+        assert rows[k]["status"] == "unavailable" and rows[k]["code"] == "JIG_NOT_PREPARED" and rows[k]["dir"] is None
 
 
 def _Ctx(out):
@@ -358,7 +359,7 @@ def _mut_summary(out, **sub):
     ("old_esl", {"bforce": ("unavailable", "V3D_SRC_NOT_RUN", None), "fint": ("unavailable", "V3D_SRC_NOT_RUN", None)}),
 ])
 def test_v0243_val_5_reasons_from_summary_and_diag(golden_runs, tmp_path, case, exp):
-    from esl import val_src, view3d_src
+    from esl import view3d_src
     r = copy_case(golden_runs, "bf", str(tmp_path))
     out = r["out"]
     _mut_drop_src(out)
@@ -382,7 +383,7 @@ def test_v0243_val_5_reasons_from_summary_and_diag(golden_runs, tmp_path, case, 
         assert rows[key]["verdict"] is None and rows[key]["metrics"] is None and rows[key]["dir"] is None
         assert not os.path.exists(os.path.join(out, pipeline.D_VAL, key))
         assert rec["stages"]["validate"]["summary"]["sources"][key]["code"] == code
-    assert rows["jig"]["reason"] == val_src.reason_text("V3D_STUDY_ONLY")
+    assert rows["jig"]["code"] == "JIG_NOT_PREPARED" and rows["jig"]["reason"]
     assert _root_hashes(out, golden_runs["bf"]["root"]) == _gold("bf")
     assert _j(out, pipeline.D_VAL, "sources.json")["solve"]["groups"][0]["keys"] == ["full"]
 
@@ -511,7 +512,7 @@ def test_v0243_val_8_settings(golden_runs, tmp_path, monkeypatch):
     sj = _j(r["out"], pipeline.D_VAL, "sources.json")
     assert sj["enabled"] is False and sj["solve"]["groups"][0]["keys"] == ["full"]
     rows = {x["key"]: x for x in sj["rows"]}
-    for k in ("jig", "bforce", "fint"):
+    for k in ("jig", "jig_disp", "jig_spring", "bforce", "fint"):
         assert (rows[k]["status"], rows[k]["code"]) == ("disabled", "VAL_SRC_DISABLED"), k
     assert rows["full"]["status"] == "done"
     assert _root_hashes(r["out"], golden_runs["bf"]["root"]) == _gold("bf")

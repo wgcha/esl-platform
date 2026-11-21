@@ -361,7 +361,11 @@ def load_transfer_html(lt: dict | None) -> str:
     return inner
 
 
-SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스", "jig": "지그 컴플라이언스(체결부 고정 + 맞춤 가압 하중)"}
+SM_METRIC_KO = {"lin": "1차 강성 지표(재풀이 없음)", "solve": "재풀이 컴플라이언스", "jig": "지그 컴플라이언스(체결부 고정 + 맞춤 가압 하중)",
+                # v0.24.4 P3(esl_jig_case.md §9): load_source 로 고른 출처 지표(혼합 컴플라이언스 Π — §3.8, 노드 힘 출처 C)
+                "jd": "지그 변위 — 혼합 컴플라이언스(tie 강제 변위 + 맞춤 하중, Π 기반)",
+                "js": "지그 스프링 — 혼합 컴플라이언스(tie 스프링 + 맞춤 하중, Π 기반)",
+                "bf": "경계력 ESL 컴플라이언스", "fi": "내력 ESL 컴플라이언스"}
 SM_FORM_KO = {"ritz": "C_ref / ρ (Ritz)", "taylor": "C_ref (2 − ρ) (Taylor)"}
 SM_CROSS_KO = ("다른 메시 비교(정밀도 낮음) — 형상·안마다 메시가 달라 1차 강성 지표를 쓰지 않고 work 하중을 옮겨 재풀이한 C 로 "
                "순위를 매깁니다")

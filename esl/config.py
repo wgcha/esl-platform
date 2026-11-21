@@ -101,6 +101,27 @@ STRAIN_SOURCES = ("max_strain", "plastic_strain", "strain_tensor", "max_stress")
 BFORCE_KINDS = ("cont", "cont2", "acc", "mass", "fint")     # 경계력 ESL 결과 종류(esl_bforce.md §1)
 
 
+# v0.24.4 지그 ESL(esl_jig_case.md §11): fixed-scan 종류 이름(esl.io.fixed_scan.FIXED_KINDS 와 같음 — 시험이 확인)·방식·구속 성분
+JIG_FIXED_KINDS = ("INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN", "RBE2", "RBE3", "RBODY", "BCS", "SHARED")
+JIG_METHODS = ("fixed", "prescribed", "spring")            # esl.mech.jig_bc.METHODS 키(시험이 같음 확인)
+JIG_TIE_DOFS = ("normal", "translation")                    # esl.mech.jig_bc.TIE_DOFS 키
+JIG_SPRING_ALPHA_MIN = 1e-3                                 # esl.mech.jig_bc.SPRING_ALPHA_MIN
+
+
+def _uniq_list(allowed: tuple[str, ...], max_len: int | None = None):
+    def chk(key, v):
+        if not isinstance(v, list) or not v or len(set(map(str, v))) != len(v) or any(x not in allowed for x in v) \
+                or (max_len is not None and len(v) > max_len):
+            raise _bad(key, f"{list(allowed)} 중 중복 없는 비어 있지 않은 목록이어야 함 (값 {v!r})")
+    return chk
+
+
+def _alpha_list(key, v):
+    if not isinstance(v, list) or any(isinstance(a, bool) or not isinstance(a, (int, float)) or not math.isfinite(float(a))
+                                      or float(a) < JIG_SPRING_ALPHA_MIN for a in v):
+        raise _bad(key, f"α(≥ {JIG_SPRING_ALPHA_MIN:g}) 목록이어야 함 (값 {v!r})")
+
+
 def _strain_sources(key, v):
     if not isinstance(v, list) or not v or len(set(map(str, v))) != len(v) or any(x not in STRAIN_SOURCES for x in v):
         raise _bad(key, f"{list(STRAIN_SOURCES)} 중 중복 없는 비어 있지 않은 목록이어야 함 (값 {v!r})")
@@ -272,6 +293,8 @@ SCHEMA: dict[str, Any] = {
         # 선택(OPTIONAL_KEYS, v0.14.0 D-0.14-RESID): 자체 쉘 솔버 해 수용 검사. 없으면 SOLVER_CHECK_DEFAULTS
         "resid_rel_cap": _num(0.0, 1.0, lo_open=True, hi_open=True),      # 후방 오차로 수용할 때도 ‖Ku−F‖/‖F‖ 상한
         "equilibrium_tol_rel": _num(0.0, 1.0, lo_open=True, hi_open=True),  # 반력 평형 |ΣR+ΣF|/max(|ΣF|,Σ|F|) 허용값(넘으면 SOLVER_SINGULAR)
+        # 선택(v0.24.4 검증 수정, 계약 esl_jig_case.md 부록 A.7): 새 지그 경로(jig_bc.factorize) SuperLU 분해 순서. 없으면 SOLVER_JIG_DEFAULTS
+        "jig_factor_order": _enum("node_mmd", "default"),
     },
     "validation": {
         "disp_rms_rel_max": _num(0.0, lo_open=True),
@@ -359,6 +382,25 @@ SCHEMA: dict[str, Any] = {
                  "shared_nodes": _bool},
         "plastic_eps_min": _num(0.0),
     },
+    # 선택 절(OPTIONAL_SECTIONS, v0.24.4 esl_jig_case.md §11): Case ③ 지그 ESL 3방식. 기본값 = esl.mech.jig.JIG_DEFAULTS(단일 원본 —
+    # jig_settings). 검사 범위 = 플랫폼 bead_doe.rank.jig(pydantic BeadDoeRankJigCfg)와 같음. 절이 없으면 cfg 주입 없음(해시 불변)
+    "jig": {
+        "enabled": _bool, "fix_kinds": _uniq_list(JIG_FIXED_KINDS, 7), "contact_gap_mm": _num(0.0, lo_open=True),
+        "knn": _int(1, 64), "chunk_nodes": _int(1024, 2 ** 20), "max_surf_tris": _int(1), "max_regions": _int(1, 32),
+        "min_regions": _int(1), "min_region_nodes": _int(1), "min_region_area_mm2": _num(0.0), "patch_count": _int(1, 32),
+        "body_force": _bool, "basis_tangential": _bool, "n_modes": _int(0, 20), "rho_t_mm3": _num(0.0, lo_open=True),
+        "modes_sigma": _num(), "modes_tol": _num(0.0), "modes_maxiter": _int(1, 100000), "modes_ref321": _bool,
+        "w_inplane": _num(0.0, 1.0), "reg_force": _num(0.0), "reg_modes": _num(0.0), "ridge": _num(0.0),
+        "active_tol": _num(0.0, 1.0, lo_open=True, hi_open=True), "mac_min": _num(0.0, 1.0, lo_open=True),
+        "umax_err_max": _num(0.0, lo_open=True), "tie_rel_warn": _num(0.0, lo_open=True),
+        "cancel_warn": _num(0.0, 1.0, lo_open=True), "work_eff_min": _num(0.0, 1.0, lo_open=True, hi_open=True),
+        "tie_spread_min": _num(0.0, 1.0, hi_open=True),
+        "tie_dofs": _enum(*JIG_TIE_DOFS), "methods": _uniq_list(JIG_METHODS),
+        "normal_kink_deg": _num(0.0, 180.0, lo_open=True, hi_open=True), "aux321_dup_deg": _num(0.0, 90.0, hi_open=True),
+        "aux_reaction_warn": _num(0.0), "spring_k_mode": _enum("auto", "value"),
+        "spring_alpha": _num(JIG_SPRING_ALPHA_MIN), "spring_k_value": _opt(_num(0.0, lo_open=True)),
+        "spring_alpha_scan": _alpha_list,
+    },
 }
 
 
@@ -375,7 +417,7 @@ VALIDATION_SOURCES_DEFAULTS = {"enabled": True, "reaction_tol": {"fint": 0.10}, 
 CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg": "auto", "h3d_epsp_mode": "auto",
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
                        "detect": {"prev_floor": 1.0e-6, "min_elems": 10, "rel_tol": 0.05, "mono_frac": 0.99}}
-OPTIONAL_SECTIONS = frozenset({"cumulative", "bforce"})
+OPTIONAL_SECTIONS = frozenset({"cumulative", "bforce", "jig"})
 # v0.24.0 경계력 ESL(계약 esl_bforce.md §9) 기본값 단일 출처 — 선택 절, cfg 에 주입 안 함(설정 해시 불변). 이름 후보 = 현장 확인 이름
 # "Contact Forces"·"Acceleration"(#82) 포함, 나머지는 Radioss 2026 /H3D/NODA 키워드 표시명 후보(현장 확인 후 설정에 더함).
 BFORCE_DEFAULTS = {
@@ -415,14 +457,18 @@ EXTRACT_SOURCE_DEFAULTS = {
 }
 # v0.14.0 자체 쉘 솔버 해 수용 검사(D-0.14-RESID) 기본값 단일 출처 — esl solver 절·opt_run.solver 공통, cfg 에는 주입 안 함.
 SOLVER_CHECK_DEFAULTS = {"resid_rel_cap": 1.0e-4, "equilibrium_tol_rel": 1.0e-6}
+# v0.24.4 지그 분해 순서(solver.jig_factor_order): node_mmd = 노드 그래프 MMD 를 6dof 블록으로 펼친 순서(구속이 흩어진 tie 에서 59.7→9.2 s,
+# 메모리 −19 %, 결과 ≤1e-11 상대), default = 예전 SuperLU MMD_AT_PLUS_A. 새 지그 경로에만 적용(옛 3-2-1·spc 경로 불변). cfg 에는 주입 안 함.
+SOLVER_JIG_DEFAULTS = {"jig_factor_order": "node_mmd"}
 # 선택 키(없어도 됨, 기본값을 cfg 에 넣지 않음 — 설정 스냅샷·해시 불변). 기본값은 읽는 곳(esl.rad)의 상수.
 OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumulative.max_npg", "support.auto_check",
                            *(f"support.auto_check.{k}" for k in SUPPORT_CHECK_DEFAULTS),
                            *(f"extract.{k}" for k in EXTRACT_SOURCE_DEFAULTS), "extract.dump_keep",
-                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS),
+                           "extract.dump_max_bytes", *(f"solver.{k}" for k in SOLVER_CHECK_DEFAULTS), *(f"solver.{k}" for k in SOLVER_JIG_DEFAULTS),
                            *(f"bforce.{k}" for k in BFORCE_DEFAULTS), "bforce.signs.cont", "bforce.signs.cont2",
                            "bforce.signs.fint", *(f"bforce.fint.{k}" for k in BFORCE_DEFAULTS["fint"]),
-                           "validation.sources", *(f"validation.sources.{k}" for k in VALIDATION_SOURCES_DEFAULTS)})
+                           "validation.sources", *(f"validation.sources.{k}" for k in VALIDATION_SOURCES_DEFAULTS),
+                           *(f"jig.{k}" for k in SCHEMA["jig"])})
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
 
@@ -481,6 +527,19 @@ def bforce_settings(cfg: dict | None) -> dict:
             if isinstance(out[k], dict) and isinstance(v, dict):
                 out[k].update({kk: copy.deepcopy(vv) for kk, vv in v.items() if kk in out[k]})
             else:
+                out[k] = copy.deepcopy(v)
+    return out
+
+
+def jig_settings(cfg: dict | None) -> dict:
+    """Case 지그 ESL 설정(v0.24.4 esl_jig_case.md §11): 코어 선택 절 ``jig`` 를 ``esl.mech.jig.JIG_DEFAULTS``(단일 원본) 위에 덮은 사본.
+    절이 없으면 기본값 그대로(새 기본 = normal·세 방식). cfg 는 바꾸지 않는다(검증은 validate_settings)."""
+    from esl.mech.jig import JIG_DEFAULTS  # scipy 를 쓰는 모듈 — 설정 로더 import 를 가볍게 두려고 여기서만
+    out = copy.deepcopy(JIG_DEFAULTS)
+    jc = cfg.get("jig") if isinstance(cfg, dict) else None
+    if isinstance(jc, dict):
+        for k, v in jc.items():
+            if k in out:
                 out[k] = copy.deepcopy(v)
     return out
 
@@ -583,6 +642,12 @@ def validate_settings(cfg: Any) -> dict:
                 else:
                     cu.setdefault(k, copy.deepcopy(v))
     _walk(SCHEMA, cfg, "")
+    jc = cfg.get("jig")
+    if isinstance(jc, dict):                    # 키 사이 조건(pydantic _regions·jig_bc.check_cfg 와 같은 규칙)
+        if "min_regions" in jc and "max_regions" in jc and jc["min_regions"] > jc["max_regions"]:
+            raise _bad("jig.min_regions", "min_regions ≤ max_regions")
+        if jc.get("spring_k_mode") == "value" and jc.get("spring_k_value") is None:
+            raise _bad("jig.spring_k_value", "spring_k_mode = value 이면 spring_k_value(> 0 N/mm) 필요")
     sup = cfg["support"]
     if sup["candidates"] == "node_ids" and len(set(sup["node_ids"])) < 3:
         raise _bad("support.node_ids", "candidates=node_ids 이면 서로 다른 노드 ID 3개 이상 필요")

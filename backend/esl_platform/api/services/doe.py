@@ -42,6 +42,7 @@ import time
 import uuid
 from typing import Any
 
+from esl_worker import core_adapter
 from sqlalchemy import null
 from sqlalchemy.exc import IntegrityError
 
@@ -58,7 +59,14 @@ from . import bundle as bundle_svc
 from . import item_delete
 from . import uploads as up_svc
 from .common import job_out, require_config_ok, require_execute, require_library_config
-from .library import backfill_opt_meta, entry_folder, require_eligible, require_eligible_ids
+from .library import (
+    backfill_opt_meta,
+    check_load_source,
+    entry_folder,
+    require_eligible,
+    require_eligible_ids,
+    source_plan_row,
+)
 from .opt import _entry_mesh, _s1_base, _same_model_rows, _size_row, entries_in_order
 
 log = logging.getLogger("esl_platform.api")
@@ -73,7 +81,7 @@ VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-bin
                 "recon.json": "application/json",        # v0.24.1 노드 힘 출처 재현 진단(esl_view3d_sources.md §5.2 — d000_<pe>_e<kk> 만)
                 "recon.bin": "application/octet-stream"}
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
-RANK_VIEWS = ("jig", "full", "bforce", "fint")
+RANK_VIEWS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")   # v0.24.4: 코어 RANK_SOURCES 키(jig_disp·jig_spring 도 사이드카 jig_view.json)
 BF_VIEW_JSON = "bforce_view.json"                         # v0.24.0 사이드카 post/bforce_view.json(esl_bforce.md §5.4)
 # v0.24.0 노드 힘 출처 표(코어 esl/doe/stages.py NODAL_SOURCES 거울 — esl_fint.md §5): 사이드카·응답 블록·3D 키·추가 계산 열.
 # 호출부는 열만 읽음(출처 이름 분기 없음). 행이 없는 출처 = 응답 키 null·추가 계산 404.
@@ -359,6 +367,21 @@ def rank_snapshot(c: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _rank_with_jig_source(rank: dict[str, Any], key: str, entry_ids: list[str]) -> dict[str, Any]:
+    """v0.24.4 P3(esl_jig_case.md §9): 지그 계열 출처를 고르면 스터디가 그 방식을 계산해야 한다 — 스냅샷 rank.jig.methods 에 그 방식을
+    넣는다(방식 표 순서 유지, 이미 있으면 그대로). 스터디 지그가 꺼져 있으면(rank.jig 없음 = 계산 안 함) 422 LOAD_SOURCE_UNAVAILABLE."""
+    jig = rank.get("jig")
+    m = core_adapter.jig_method_of_source(key)
+    if not isinstance(jig, dict) or m is None:
+        why = "스터디 지그 계산이 꺼져 있습니다(설정 bead_doe.rank.jig.enabled)"
+        raise unprocessable("LOAD_SOURCE_UNAVAILABLE", f"{key}: {why}", load_source=key, entry_ids=list(entry_ids),
+                            reasons={i: why for i in entry_ids})
+    if m not in (jig.get("methods") or []):
+        order = list(core_adapter.jig_method_names())
+        rank = {**rank, "jig": {**jig, "methods": [x for x in order if x in {*(jig.get("methods") or []), m}]}}
+    return rank
+
+
 def _lt_invalid(msg: str, **extra: Any):
     return unprocessable("LOAD_TRANSFER_INVALID", msg, **extra)
 
@@ -422,7 +445,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
     st = status(ctx)
     d = c["doe"]
     sc = c["select"]
-    return {**st, "max_entries": int(c["max_entries"]), "max_designs": int(c["max_designs"]),
+    return {**st, "load_source_default": c.get("load_source_default"), "max_entries": int(c["max_entries"]), "max_designs": int(c["max_designs"]),
             "doe": {"methods": ["lhs", "halton", "fullfact"], "default_method": d["default_method"],
                     "default_n": int(d["default_n"]), "seed": int(d["seed"]), "levels_default": int(d["levels_default"]),
                     "levels_max": int(d["levels_max"]), "default_types": list(d["default_types"])},
@@ -1252,6 +1275,12 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     r = check_inputs(ctx, principal, body, _internal=True)
     out, mat = r["out"], r["mat"]
     require_eligible(mat["rows"])                 # v0.10.0 MR-D-10: 현재 기준 PASS 항목만(422 ENTRY_NOT_ELIGIBLE)
+    src_row = None
+    if body.load_source:                          # v0.24.4 P3: 하중 출처 — 키 검사(모르는 키 422)·강성 순위가 있는 시나리오만
+        src_row = source_plan_row(body.load_source)
+        if body.scenario == "compare":
+            raise unprocessable("INVALID_PARAMS", "하중 출처는 강성 순위가 있는 시나리오(① ② ③ 선택)에서만 고릅니다 — 형상 직접 "
+                                "비교(④)에는 없음", load_source=body.load_source)
     if body.scenario == "compare":
         props, _h = _validate_step_extras(body, c, mat)
         return _create_compare(ctx, principal, body, out, mat, props)
@@ -1297,6 +1326,13 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         inputs["select_schema"] = SELECT_SCHEMA_NEW     # v0.17.0 BG-D-35(복제 = 원 스터디 값 유지)
     inputs["load_transfer"] = lt_summary(mat["load_transfer"], body.scenario)     # v0.20.0 LT-11·19: 해석된 값 고정
     rank = rank_snapshot(c)
+    lchk = None
+    if src_row is not None:                       # v0.24.4 P3: 지그 계열이면 그 방식을 스터디가 계산하게(새 스냅샷 rank.jig.methods) → 하중 검사·확인
+        if src_row["support"] == "jig":
+            rank = _rank_with_jig_source(rank, body.load_source, [e["id"] for e in rows])
+        lchk = check_load_source(ctx, body.load_source, [e["id"] for e in rows], body.load_source_ack)
+        inputs["load_source"] = body.load_source
+        inputs["load_source_check"] = lchk
     inputs["rank_metric"] = rank["metric"]                                        # v0.20.0 SM-2
     import datetime as _dt
 
@@ -1328,6 +1364,9 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         doe["select_schema"] = SELECT_SCHEMA_NEW        # v0.17.0 BG-D-40: BD_LOADS 그래프 단계·BD_GEOM 힌트 plan(키 없음 = 1)
     doe["load_transfer"] = copy.deepcopy(mat["load_transfer"])      # v0.20.0 §13.6: 공통 블록 + schema(옛 스터디 = 키 없음)
     doe["rank"] = rank                                              # v0.20.0 SM-2
+    if lchk is not None:                                            # v0.24.4 P3: 코어(stages)가 읽는 하중 출처 — 없으면 키 없음 = 지금 동작
+        doe["load_source"] = body.load_source
+        doe["load_source_check"] = lchk
     if (shape := shape_snapshot(c)) is not None:                    # v0.21.0 SH-1: 같은 블록을 작업 스냅샷·inputs 에(옛 = 키 없음)
         doe["shape_rules"] = shape
         inputs["shape_rules"] = copy.deepcopy(shape)
@@ -1723,6 +1762,8 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         # v0.23.2 D-0.23.2-1: 순위 설정 = 지금 설정(평가·후처리 전용 — 행렬·미리보기·selection 무영향, 새 폴더라 이어하기 무관).
         # 옛 스냅샷(rank 없음, v0.20.0 이전)은 주입하지 않음(load_transfer legacy 와 짝)
         new_rank = rank_snapshot(cfg(ctx))
+        if d.get("load_source") and source_plan_row(d["load_source"])["support"] == "jig":     # v0.24.4 P3: 복제도 그 방식을 계산
+            new_rank = _rank_with_jig_source(new_rank, d["load_source"], list(s["entry_ids"]))
         if new_rank != d["rank"]:
             om, nm = d["rank"].get("metric", "solve"), new_rank["metric"]
             add = ", 지그 계산 추가" if "jig" in new_rank and "jig" not in d["rank"] else ""
@@ -1896,6 +1937,9 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric·lin_form(새 스냅샷만 — legacy = null). 순위 행의 score_solve·
     # imbalance_max·rho_min·rho_max·umax_def 와 SM_LIN_RANGE·SM_IMBALANCE 경고는 행·warnings 그대로 통과
     for k in ("metric", "lin_form"):
+        if isinstance(r.get(k), str):
+            out[k] = r[k]
+    for k in ("load_source", "metric_default"):      # v0.24.4 P3: 고른 하중 출처·그 출처가 없을 때의 기본 지표(새 스냅샷만 — 코어 값 그대로)
         if isinstance(r.get(k), str):
             out[k] = r[k]
     out["rank"] = _rank_snapshot_out(ctx, sid)       # 스터디 스냅샷 doe.rank(경고 문턱 — 화면이 상수 대신 사용), 옛 스터디 = null

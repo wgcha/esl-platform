@@ -304,11 +304,13 @@ class OptSolverCfg(_M):
     # dump 에 넣는다(코어 opt DEFAULTS 와 같은 모양·DOE 설정 해시 불변)
     resid_rel_cap: float | None = Field(default=None, gt=0, lt=1)
     equilibrium_tol_rel: float | None = Field(default=None, gt=0, lt=1)
+    # v0.24.4 새 지그 경로 SuperLU 분해 순서(node_mmd | default). None = 코어 기본(esl.config.SOLVER_JIG_DEFAULTS) — 지정했을 때만 dump
+    jig_factor_order: Literal["node_mmd", "default"] | None = None
 
     @model_serializer(mode="wrap")
     def _drop_unset_checks(self, handler):
         d = handler(self)
-        for k in ("resid_rel_cap", "equilibrium_tol_rel"):
+        for k in ("resid_rel_cap", "equilibrium_tol_rel", "jig_factor_order"):
             if d.get(k) is None:
                 d.pop(k, None)
         return d
@@ -388,6 +390,7 @@ class OptRunCfg(_M):
     check: OptCheckCfg = OptCheckCfg()
     grid: OptGridCfg = OptGridCfg()
     ui: OptUiCfg = OptUiCfg()
+    load_source_default: str | None = Field(default="full", min_length=1, max_length=32)   # v0.24.4 P3(esl_jig_case.md §9·§11)
 
 
 # ---------------------------------------------------------------- v0.9.0 비드 DOE(esl_bead_doe.md §14)
@@ -581,6 +584,18 @@ class BeadDoeRankJigCfg(_M):
     cancel_warn: float = Field(default=0.5, gt=0, le=1)
     work_eff_min: float = Field(default=0.05, gt=0, lt=1)
     tie_spread_min: float = Field(default=0.02, ge=0, lt=1)
+    # v0.24.4 새 키(esl_jig_case.md §11, esl.mech.jig.JIG_DEFAULTS·JIG_NEW_KEYS 거울): 세 방식·tie 구속 성분·법선·3-2-1 면내·스프링.
+    # 옛 스냅샷(키 없음)의 뜻 = esl.mech.jig_bc.LEGACY_ABSENT(translation·fixed). spring_alpha 기본 0.01(메인 결정 — α=1 은 prescribed 와 구분 안 됨)
+    tie_dofs: Literal["normal", "translation"] = "normal"
+    methods: list[Literal["fixed", "prescribed", "spring"]] = Field(
+        default_factory=lambda: ["fixed", "prescribed", "spring"], min_length=1, max_length=3)
+    normal_kink_deg: float = Field(default=45.0, gt=0, lt=180)
+    aux321_dup_deg: float = Field(default=10.0, gt=0, lt=90)
+    aux_reaction_warn: float = Field(default=0.05, ge=0)
+    spring_k_mode: Literal["auto", "value"] = "auto"
+    spring_alpha: float = Field(default=0.01, ge=1e-3)
+    spring_k_value: float | None = Field(default=None, gt=0)
+    spring_alpha_scan: list[float] = Field(default_factory=list, max_length=16)
 
     @field_validator("fix_kinds")
     @classmethod
@@ -590,11 +605,35 @@ class BeadDoeRankJigCfg(_M):
             raise ValueError(f"fix_kinds 는 {list(_JIG_FIXED_KINDS)} 중 중복 없이: {v}")
         return v
 
+    @field_validator("methods")
+    @classmethod
+    def _methods(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError(f"methods 는 중복 없이: {v}")
+        return v
+
+    @field_validator("spring_alpha_scan")
+    @classmethod
+    def _alpha_scan(cls, v: list[float]) -> list[float]:
+        if any(a < 1e-3 for a in v):
+            raise ValueError("spring_alpha_scan 의 값은 모두 ≥ 1e-3")
+        return v
+
     @model_validator(mode="after")
     def _regions(self):
         if self.min_regions > self.max_regions:
             raise ValueError("min_regions ≤ max_regions")
+        if self.spring_k_mode == "value" and self.spring_k_value is None:
+            raise ValueError("spring_k_mode value 는 spring_k_value(N/mm, > 0) 필요")
         return self
+
+
+class BeadDoeCaseJigCfg(_M):
+    """v0.24.4 Case ③ ESL 지그 3방식의 워커 tie 준비(esl_jig_case.md §5.1·§11): enabled = 워커가 paicad fixed-scan·deck 표면 캐시를
+    Case 폴더에 준비(꺼짐 = hw·fixed-scan 호출 0), timeout_s = fixed-scan 시간 한도(null = bead_doe.paicad.timeout_s.fixed_scan)."""
+
+    enabled: bool = True
+    timeout_s: float | None = Field(default=None, gt=0)
 
 
 class BeadDoeRankCfg(_M):
@@ -1466,8 +1505,10 @@ class BeadDoeCfg(_M):
     view3d: BeadDoeView3dCfg = BeadDoeView3dCfg()
     bforce: BeadDoeBforceCfg = BeadDoeBforceCfg()                # v0.24.0 경계력 ESL
     fint: BeadDoeFintCfg = BeadDoeFintCfg()                      # v0.24.0 내력 ESL(esl_fint.md §9)
+    case_jig: BeadDoeCaseJigCfg = BeadDoeCaseJigCfg()            # v0.24.4 Case 지그 tie 준비(esl_jig_case.md §5.1)
     rank: BeadDoeRankCfg = BeadDoeRankCfg()
     settings_cache_s: float = Field(default=300, ge=0)
+    load_source_default: str | None = Field(default=None, min_length=1, max_length=32)   # v0.24.4 P3(esl_jig_case.md §9·§11)
     compare: BeadDoeCompareCfg = BeadDoeCompareCfg()
     load_transfer: BeadDoeLoadTransferCfg = BeadDoeLoadTransferCfg()   # v0.20.0 모든 모드 공통(esl_load_transfer.md §13.6)
     redrop: BeadDoeRedropCfg = BeadDoeRedropCfg()                      # v0.22.0 REDROP(esl_redrop_bundle.md §6)
@@ -1939,6 +1980,7 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     _fill_missing(d.setdefault("shape_rules", {}), BeadDoeShapeRulesCfg().model_dump())   # v0.21.0
     _fill_missing(d.setdefault("redrop", {}), BeadDoeRedropCfg().model_dump())             # v0.22.0
     _fill_missing(d.setdefault("rank", {}), BeadDoeRankCfg().model_dump())     # v0.20.0 SM 강성 지표 키(코어 병합 전에도)
+    _fill_missing(d.setdefault("case_jig", {}), BeadDoeCaseJigCfg().model_dump())   # v0.24.4(코어 DEFAULTS 병합 전에도)
     return d
 
 

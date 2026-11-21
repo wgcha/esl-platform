@@ -143,10 +143,12 @@ def test_node_weights_match_shell_area(base):
 
 def test_hash_view_drops_thresholds():
     cfg = dict(JIG, enabled=True, fix_kinds=list(jig.TIE_KINDS), mac_min=0.9, umax_err_max=0.2, tie_rel_warn=0.1,
-               modes_ref321=True, tie_spread_min=0.02)
+               modes_ref321=True, tie_spread_min=0.02,
+               aux_reaction_warn=0.05, spring_alpha_scan=[0.1, 1.0])
     hv = jig.hash_view(cfg)
     assert set(cfg) - set(hv) == set(jig.HASH_EXCLUDE) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn",
-                                                         "work_eff_min", "rho_t_mm3", "modes_ref321", "tie_spread_min"}
+                                                         "work_eff_min", "rho_t_mm3", "modes_ref321", "tie_spread_min",
+                                                         "aux_reaction_warn", "spring_alpha_scan"}   # v0.24.4: 새 키 중 보고용 2개 해시 밖(계약 §11)
     for k in ("n_modes", "modes_sigma", "modes_tol", "modes_maxiter", "w_inplane", "reg_force", "basis_tangential", "ridge"):
         assert hv[k] == cfg[k]
     assert "mac_min" in cfg                                              # 원본 불변

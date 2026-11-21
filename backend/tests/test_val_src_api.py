@@ -89,8 +89,13 @@ BF_ROW = dict(verdict="FAIL", fail_reasons=["DISP_RMS"], reaction_role="info", c
               comparable=False)
 
 
+def _jig_na(key: str) -> dict:
+    from esl import val_src as vs   # v0.24.4: 지그 3행 = 지그 ESL 없는 Case(JIG_NOT_RUN — 문구는 view3d_src.REASON_TEXT 원본)
+    return sj_row(key, "na", code="JIG_NOT_RUN", reason=vs.reason_text("JIG_NOT_RUN"))
+
+
 def rows_full_bf_fint_unavail() -> list[dict]:
-    return [sj_row("jig", "na", code="V3D_STUDY_ONLY", reason="강성 평가 스터디에서만 계산됩니다(Case 산출물 없음)"),
+    return [_jig_na("jig"), _jig_na("jig_disp"), _jig_na("jig_spring"),
             sj_row("full", **FULL_ROW), sj_row("bforce", **BF_ROW),
             sj_row("fint", "unavailable", code="FINT_NO_DATA", reason="내력 하중 자료 없음(검증 시험)")]
 
@@ -162,7 +167,7 @@ def test_source_errors(client, engine, case):
     u = f"{API}/validations/{vid}"
     r = client.get(u, params={"src": "nope"}, headers=R)
     assert r.status_code == 404 and _code(r) == "SOURCE_NOT_FOUND"
-    assert r.json()["detail"]["src"] == "nope" and r.json()["detail"]["keys"] == ["jig", "full", "bforce", "fint"]
+    assert r.json()["detail"]["src"] == "nope" and r.json()["detail"]["keys"] == ["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]
     # sources.json 없음(옛 검증) → 409 VAL_SOURCE_UNAVAILABLE(reason_code VAL_SRC_NOT_RUN)
     r = client.get(u, params={"src": "bforce"}, headers=R)
     d = r.json()["detail"]
@@ -174,7 +179,7 @@ def test_source_errors(client, engine, case):
     assert r.status_code == 409 and d["reason_code"] == "FINT_NO_DATA" and d["reason"] == "내력 하중 자료 없음(검증 시험)"
     r = client.get(u, params={"src": "jig"}, headers=R)
     d = r.json()["detail"]
-    assert r.status_code == 409 and d["reason_code"] == "V3D_STUDY_ONLY" and d["code"] == "VAL_SOURCE_UNAVAILABLE"
+    assert r.status_code == 409 and d["reason_code"] == "JIG_NOT_RUN" and d["code"] == "VAL_SOURCE_UNAVAILABLE"
     for tail in ("/field", "/disp-field", "/section"):
         r = client.get(u + tail, params={"src": "fint"}, headers=R)
         assert r.status_code == 409 and _code(r) == "VAL_SOURCE_UNAVAILABLE", tail
@@ -203,7 +208,7 @@ def test_source_read_from_snapshot_and_backup(client, engine, case):
     r = client.get(f"{API}/validations/{vid}", params={"src": "bforce"}, headers=R)
     assert r.status_code == 200 and r.json()["disp_rms_rel"] == 0.021
     src = client.get(f"{API}/validations/{vid}/sources", headers=R).json()
-    assert [x["available"] for x in src["rows"]] == [False, True, True, False]
+    assert [x["available"] for x in src["rows"]] == [False, False, False, True, True, False]
 
 
 # ---------------------------------------------------------------- V-13 field·disp-field·section
@@ -255,27 +260,27 @@ def test_sources_paths_four_kinds_and_read_only(client, engine, case):
     assert new.status_code == 200, new.text
     nj = new.json()
     assert nj["validation_id"] == c["validation_id"] and nj["default"] == "full"
-    assert [r["key"] for r in nj["rows"]] == ["jig", "full", "bforce", "fint"]
-    jig, full, bf, fint = nj["rows"]
-    assert (jig["available"], jig["code"], jig["status"]) == (False, "V3D_STUDY_ONLY", None)
-    assert jig["reason"] == "강성 평가 스터디에서만 계산됩니다(Case 산출물 없음)"
+    assert [r["key"] for r in nj["rows"]] == ["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]
+    jig, jig_d, jig_s, full, bf, fint = nj["rows"]
+    for jr in (jig, jig_d, jig_s):                                       # v0.24.4: 지그 3행 — 지그 ESL 없는 Case
+        assert (jr["available"], jr["code"], jr["status"]) == (False, "JIG_NOT_RUN", None)
+        assert "지그 ESL 이 없습니다" in jr["reason"]
     assert full["available"] and full["status"] == "FAIL" and full["fail_reasons"] == ["DISP_RMS"]   # DB 가 기준
     assert full["cond_text"] == FULL_ROW["cond_text"] and full["note"] is None and full["limits"] == []
     assert bf["available"] and bf["status"] == "FAIL" and bf["reaction_role"] == "info" and bf["comparable"] is False
     assert bf["limits"] == ["BF_TIE_MISSING"] and bf["limit_text"] == ["tie 체결력 미포함"] and bf["note"]
     assert bf["fail_reasons"] == ["DISP_RMS"] and bf["code"] is None
     assert not fint["available"] and fint["code"] == "FINT_NO_DATA" and fint["status"] is None and fint["cond_text"] is None
-    # 옛(LEGACY) 검증: legacy 행 = DB(LEGACY), 나머지 VAL_SRC_NOT_RUN(jig = V3D_STUDY_ONLY)
+    # 옛(LEGACY) 검증: legacy 행 = DB(LEGACY), 나머지 VAL_SRC_NOT_RUN(지그 3행도 load 가 있는 행이라 같은 사유)
     old = client.get(f"{API}/validations/{b['validation_id']}/sources", headers=R).json()["rows"]
-    assert old[1]["status"] == "LEGACY" and old[1]["available"] and old[1]["cond_text"] is None
-    assert old[1]["comparable"] is None and old[1]["limits"] == []
-    assert [(r["code"], r["available"]) for r in old if r["key"] != "full"] == [
-        ("V3D_STUDY_ONLY", False), ("VAL_SRC_NOT_RUN", False), ("VAL_SRC_NOT_RUN", False)]
-    assert "다시 실행" in old[2]["reason"]
+    assert old[3]["key"] == "full" and old[3]["status"] == "LEGACY" and old[3]["available"] and old[3]["cond_text"] is None
+    assert old[3]["comparable"] is None and old[3]["limits"] == []
+    assert [(r["code"], r["available"]) for r in old if r["key"] != "full"] == [("VAL_SRC_NOT_RUN", False)] * 5
+    assert "다시 실행" in old[4]["reason"]
     # 파일 없음
     gone = client.get(f"{API}/validations/{a['validation_id']}/sources", headers=R).json()["rows"]
-    assert gone[1]["status"] == "PASS" and gone[1]["available"]
-    assert [(r["code"], r["available"]) for r in gone if r["key"] != "full"] == [("VALIDATION_FILES_GONE", False)] * 3
+    assert gone[3]["status"] == "PASS" and gone[3]["available"]
+    assert [(r["code"], r["available"]) for r in gone if r["key"] != "full"] == [("VALIDATION_FILES_GONE", False)] * 5
     assert "이후 검증으로 바뀌었습니다" in gone[0]["reason"]
     # 이력: /cases/{id}/validations 와 같은 순서·개수
     h = client.get(f"{API}/cases/{case['id']}/validations/sources", headers=R)
@@ -295,7 +300,8 @@ def test_sources_corrupt_json_is_treated_as_missing(client, engine, case):
     os.makedirs(os.path.join(case["dir"], "05_val"))
     Path(case["dir"], "05_val", "sources.json").write_text("{not json", encoding="utf-8")
     rows = client.get(f"{API}/validations/{s['validation_id']}/sources", headers=R).json()["rows"]
-    assert rows[2]["code"] == "VAL_SRC_NOT_RUN" and rows[1]["available"]
+    by = {r["key"]: r for r in rows}
+    assert by["bforce"]["code"] == "VAL_SRC_NOT_RUN" and by["full"]["available"]
 
 
 def test_sources_row_with_missing_dir_is_unavailable_on_fetch(client, engine, case):

@@ -520,7 +520,7 @@ class View3dSourceRow(_Out):
 
 
 class View3dSourcesOut(_Out):
-    """v0.24.1 `GET /esl-runs/{id}/view3d/sources` — 행 순서 = 출처 표 KEYS(jig·full·bforce·fint), default = 기본 탭(설정
+    """v0.24.1 `GET /esl-runs/{id}/view3d/sources` — 행 순서 = 출처 표 KEYS(jig·jig_disp·jig_spring·full·bforce·fint — v0.24.4 지그 3방식), default = 기본 탭(설정
     view3d.case_src_default)."""
 
     esl_run_id: str
@@ -625,6 +625,56 @@ class ValidationSourcesHistItem(_Out):
 class ValidationSourcesHistOut(_Out):
     case_id: str
     items: list[ValidationSourcesHistItem]
+
+
+LoadGradeLit = Literal["PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"]   # 나쁜 쪽이 뒤(services.library.LOAD_GRADES)
+
+
+class EntrySourceRow(ValidationSourceRow):
+    """v0.24.4 P3 항목 출처 1행: ④ 검증 출처 행 + 출처 하중 존재·등급(esl_jig_case.md §9)."""
+    load_available: bool
+    load_code: str | None = None
+    load_reason: str | None = None
+    grade: LoadGradeLit
+    flags: list[LoadGradeLit]
+    # 비드 최적화로는 전달할 수 없는 하중이면 코드 LOAD_SOURCE_UNSUPPORTED + 사유(생성 때 422 와 같은 규칙 — 미리 안내, 선택 차단은 화면)
+    opt_code: str | None = None
+    opt_reason: str | None = None
+
+
+class EntrySourcesItem(_Out):
+    entry_id: str
+    validation_id: str | None = None
+    rows: list[EntrySourceRow]
+
+
+class EntrySourceEntry(_Out):
+    entry_id: str
+    validation_id: str | None = None
+    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    comparable: bool | None = None
+    grade: LoadGradeLit
+    flags: list[LoadGradeLit]
+    limits: list[str]
+    load_available: bool
+    load_code: str | None = None
+    load_reason: str | None = None
+
+
+class EntrySourceSummary(_Out):
+    key: str
+    label: str | None = None
+    worst: LoadGradeLit
+    n: int
+    unavailable_entry_ids: list[str]
+    needs_confirm: bool
+    entries: list[EntrySourceEntry]
+
+
+class EntrySourcesOut(_Out):
+    ids: list[str]
+    items: list[EntrySourcesItem]
+    sources: list[EntrySourceSummary]
 
 
 class ArtifactOut(_Out):
@@ -1562,6 +1612,11 @@ class OptRunIn(_Req):
     template_id: str | None = Field(default=None, max_length=64)
     design: OptDesignIn = Field(default_factory=OptDesignIn)
     options: OptOptionsIn = Field(default_factory=OptOptionsIn)
+    # v0.24.4 P3(esl_jig_case.md §9): 하중 출처(코어 출처 표 키 — 없으면 지금 동작 = 항목 자신의 하중·3-2-1). 검증 미통과·비교용
+    # 아님·주의 출처는 load_source_ack true 가 있어야 진행(422 LOAD_SOURCE_UNCONFIRMED), 하중 없음 422 LOAD_SOURCE_UNAVAILABLE,
+    # 지그 계열은 병진 고정·S1 만(422 LOAD_SOURCE_UNSUPPORTED)
+    load_source: str | None = Field(default=None, min_length=1, max_length=32)
+    load_source_ack: bool | None = None
 
 
 class OptSizeSettings(_Out):
@@ -1590,6 +1645,7 @@ class OptLoadsSettings(_Out):
 
 
 class OptSettingsOut(_Out):
+    load_source_default: str | None = None          # v0.24.4 P3 설정 opt_run.load_source_default(기본 "full", 안내용)
     enabled: bool
     solver_ready: bool
     solver_reason: str | None = None
@@ -1819,6 +1875,10 @@ class DoeCheckIn(_Req):
     # v0.20.0 하중 전달(esl_load_transfer.md §4.2·§13.6, 모든 시나리오 ①②③④ 공통): 없으면 bead_doe.load_transfer(최상위) 설정값. work + cell_size_mm 값 → 422 LOAD_TRANSFER_INVALID, cell + cell_size_mm 생략 = 설정값(명시적 null = 기존 24×14 격자)
     load_transfer: Literal["work", "cell"] | None = None
     cell_size_mm: float | None = None
+    # v0.24.4 P3(esl_jig_case.md §9, 스터디 생성에만 적용 — check-inputs 는 무시): 하중 출처(코어 출처 표 키 — 없으면 지금 동작 =
+    # rank.metric → metric_effective). 확인·하중 없음 규칙은 OptRunIn 과 같다(지그 계열은 스냅샷 rank.jig.methods 에 그 방식 포함)
+    load_source: str | None = Field(default=None, min_length=1, max_length=32)
+    load_source_ack: bool | None = None
 
 
 class DoeStudyIn(DoeCheckIn):
@@ -1853,6 +1913,7 @@ class DoeRunIn(_Req):
 
 
 class DoeSettingsOut(_Out):
+    load_source_default: str | None = None          # v0.24.4 P3 설정 bead_doe.load_source_default(기본 null = 순위 지표 기준, 안내용)
     enabled: bool
     reason: str | None = None
     paicad: dict[str, Any]
@@ -2167,6 +2228,10 @@ class DoeView3dRegenOut(_Out):
     reason: str | None = None
 
 
+# 순위 지표 키(코어 RANK_SOURCES.metric 열 + lin·solve·jig·effective 의 값) — v0.24.4 P3 로 jd·js·bf·fi 가 기본 지표가 될 수 있음
+RankMetricLit = Literal["lin", "solve", "jig", "jd", "js", "bf", "fi"]
+
+
 class DoeResultOut(_Out):
     scenario: DoeScenarioLit | None = None          # v0.14.0
     reference_source: Literal["step", "case"] | None = None    # ④ 만
@@ -2199,13 +2264,16 @@ class DoeResultOut(_Out):
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6): 순위 기준 metric(lin|solve)·lin_form(ritz|taylor) — 옛 스터디 = null(solve).
     # ranking 행(dict) += score_solve·imbalance_max·rho_min·rho_max·umax_def, per_esl 행 += C_lin·C_ritz·rho·imbalance_rel·umax_def·ts_err?
     # (새 스냅샷만), 경고 SM_LIN_RANGE·SM_IMBALANCE — 모두 코어가 쓴 대로 통과
-    metric: Literal["lin", "solve", "jig"] | None = None
+    metric: RankMetricLit | None = None
+    # v0.24.4 P3(esl_jig_case.md §9): 스터디 load_source 를 고른 새 스냅샷만 — 고른 출처 키·그 출처가 없을 때의 기본 지표(없으면 null)
+    load_source: str | None = None
+    metric_default: RankMetricLit | None = None
     lin_form: Literal["ritz", "taylor"] | None = None
     # 이 스터디 스냅샷 {metric, lin_form, lin_valid, imbalance_warn}(경고 문턱 SM_LIN_RANGE·SM_IMBALANCE 를 화면이 상수 대신 사용), 옛 스터디 null
     rank: dict[str, Any] | None = None
     # 결정 A(2026-11-13): 순위에 실제로 쓴 지표(lin = 같은 메시 1차 강성 지표 | solve) — 다른 메시 비교(옛 ③·④)는 solve·cross_mesh true
     # (경고 SM_CROSS_MESH, 정밀도 낮음). rank{…} 에도 같은 두 키. 옛 스터디 = null
-    metric_effective: Literal["lin", "solve", "jig"] | None = None
+    metric_effective: RankMetricLit | None = None
     cross_mesh: bool | None = None
     C_ref_solve: float | None = None         # 재풀이 C 기준값(보조 열). ranking 행 += C_solve{entry_id: C}, n_failed.sm = 지표 계산 실패 수
     # v0.23.0 지그 순위(esl_jig_rank.md §4): 지그 블록(옛 스터디·지그 블록 없는 스냅샷 = null). ranking 행(dict) += score_jig·umax_jig·C_jig{},

@@ -23,7 +23,10 @@ NX, NY, LX, LZ = 12, 8, 300.0, 200.0
 
 
 def jcfg(**over):
-    j = copy.deepcopy(DEFAULTS["rank"]["jig"])
+    """v0.24.4 P2c(esl_jig_case.md §7·§12-3 의도 변경): 이 파일과 이 도구를 쓰는 시험은 v0.23 지그(옛 스냅샷 키 집합 — 새 키 없음 =
+    jig_bc.LEGACY_ABSENT translation·fixed, 옛 산술 경로)를 시험한다. 새 스냅샷(세 방식·tie 법선)은 tests/doe/test_jig_methods.py."""
+    from esl.mech import jig as mj
+    j = {k: v for k, v in copy.deepcopy(DEFAULTS["rank"]["jig"]).items() if k not in mj.JIG_NEW_KEYS}
     j.update(over)
     return j
 

@@ -17,6 +17,8 @@ import { BundleButton } from "../../components/BundleButton";
 import { openReport } from "../../components/ReportLink";
 import { CORNER_LABEL } from "../../components/KeepoutPlan";
 import { usePolling } from "../../lib/usePolling";
+import { LoadSourceChip } from "../../components/LoadSourcePicker";
+import { loadSourceChipOf } from "../../view3d/loadSource";
 import { dt } from "../../lib/format";
 import { libPath } from "../library/common";
 
@@ -234,6 +236,7 @@ export function OptDetail() {
   const run = usePolling(() => opt.run(optId).catch(goneToList(nav, `${libPath(projectId)}?tab=opt`)), poll, [optId]);
   const settings = usePolling(() => opt.settings(), 0, []);
   const r = run.data;
+  const lsChip = loadSourceChipOf(r?.options?.load_source, r?.options?.load_source_check);
   const done = r?.state === "SUCCEEDED";
   const full = isFullResult(r?.result) ? r?.result ?? null : null;
   useEffect(() => {
@@ -274,6 +277,9 @@ export function OptDetail() {
             <Stat label="ESL" value={`${r.entry_ids.length}개`} />
             <Stat label="하중 선정" value={STRATEGY_NAME[r.load_strategy]} sub={r.load_strategy === "C" ? `k ${r.k}` : undefined} />
             <Stat label="목표 기준" value={NORM_NAME[r.objective_norm]} />
+            {lsChip && (
+              <Stat label="하중 출처" value={<LoadSourceChip chip={lsChip} className="ls-chip" short />} />
+            )}
             <Stat label="비드" value={r.design.bead ? `${r.design.bead.angle}° · ${r.design.bead.min_width} · ${r.design.bead.height} mm` : "–"} sub="경사 · 폭 · 높이" />
             <Stat
               label="금지 영역"

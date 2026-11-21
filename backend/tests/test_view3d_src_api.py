@@ -206,11 +206,12 @@ def test_src_errors(mk, seed, engine):
     c = mk()
     r = c.get(seed.url(), params={"src": "xyz"}, headers=R)
     assert r.status_code == 404 and code(r) == "SOURCE_NOT_FOUND" and r.json()["detail"]["keys"] == [
-        "jig", "full", "bforce", "fint"]
+        "jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]
     r = c.get(seed.url(), params={"src": "jig"}, headers=R)
     d = r.json()["detail"]
     assert r.status_code == 409 and d["code"] == "V3D_SOURCE_UNAVAILABLE" and d["src"] == "jig"
-    assert d["reason_code"] == "V3D_STUDY_ONLY" and d["reason"] == "강성 평가 스터디에서만 계산됩니다(Case 산출물 없음)"
+    from esl import view3d_src as vs                                              # v0.24.4: jig = 지그 ESL 없는 Case(JIG_NOT_RUN)
+    assert d["reason_code"] == "JIG_NOT_RUN" and d["reason"] == vs.REASON_TEXT["JIG_NOT_RUN"]
     r = c.get(seed.url(), params={"src": "bforce"}, headers=R)                     # 옛 실행(npz·요약 없음)
     assert r.status_code == 409 and code(r) == "V3D_SOURCE_UNAVAILABLE"
     assert r.json()["detail"]["reason_code"] == "V3D_SRC_NOT_RUN" and "v0.24.0 이전" in r.json()["detail"]["reason"]
@@ -229,7 +230,7 @@ def _rows(c, s: Seed) -> dict:
     r = c.get(f"{API}/esl-runs/{s.run_id}/view3d/sources", headers=R)
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["esl_run_id"] == s.run_id and [x["key"] for x in d["rows"]] == ["jig", "full", "bforce", "fint"]
+    assert d["esl_run_id"] == s.run_id and [x["key"] for x in d["rows"]] == ["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]
     return d
 
 
@@ -249,7 +250,8 @@ def test_sources_variants_and_no_writes(mk, world, engine, variant):  # noqa: F8
     d = _rows(mk(), s)
     rows = {x["key"]: x for x in d["rows"]}
     assert d["default"] == "full" and _tree(s.dir) == before                          # 파일 안 씀
-    assert rows["jig"]["available"] is False and rows["jig"]["code"] == "V3D_STUDY_ONLY" and rows["jig"]["rigid"] is None
+    for k in ("jig", "jig_disp", "jig_spring"):                                       # v0.24.4: 지그 ESL 없는 Case
+        assert rows[k]["available"] is False and rows[k]["code"] == "JIG_NOT_RUN", k
     assert rows["full"]["available"] is True and rows["full"]["rigid"] == "linear"
     assert rows["full"]["resp"] is (variant == "with_val")
     if variant != "with_val":
@@ -408,7 +410,7 @@ def test_case_src_default_setting_validated(tmp_path):
 
     lc = load_config_dict(make_settings_dict(tmp_path), environ={})
     assert lc.ok and lc.settings.view3d.case_src_default == "full"
-    for v, ok in (("bforce", True), ("fint", True), ("jig", False), ("xyz", False)):
+    for v, ok in (("bforce", True), ("fint", True), ("jig", True), ("jig_spring", True), ("xyz", False)):
         assert load_config_dict(make_settings_dict(tmp_path, view3d={"case_src_default": v}), environ={}).ok is ok, v
 
 

@@ -4240,3 +4240,95 @@ details.card.fold > .fold-body {
   margin: 0 0 -0.5rem; /* 카드 본문 grid gap 일부를 상쇄 — 사유 줄이 더하는 높이를 줄임 */
   line-height: 1.2;
 }
+
+/* v0.24.4 지그 ESL 그룹 탭(esl_jig_case.md §6.2) — ≥2201px: 머리 글자 + 하위 탭 한 줄 펼침 · ≤2200px: "지그 ESL · 고정 ▾" 한 탭 + 절대 위치 팝오버(세로 증가 0) */
+.seg > .seg-group {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-right: 1px solid var(--line-strong);
+  white-space: nowrap;
+  user-select: none;
+}
+.seg > button + .seg-group,
+.seg > span.sr-only + .seg-group {
+  border-left: 1px solid var(--line-strong);
+}
+.src-pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  margin: 2px 0 0;
+  padding: 0.15rem 0;
+  list-style: none;
+  min-width: 9rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+}
+.src-opt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.4rem;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.84rem;
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.src-opt[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+.src-opt[aria-disabled="true"] .src-opt-name {
+  opacity: 0.55;
+}
+.src-opt.on {
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+  font-weight: 650;
+}
+.src-opt:focus-visible,
+.src-opt:hover {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: -2px;
+}
+.src-opt-why {
+  flex: 1 0 100%;
+  font-weight: 400;
+  white-space: normal;
+  max-width: 24rem;
+}
+
+/* v0.24.4 P3 하중 출처 선택(타이틀 줄 안 — 세로 증가 없음). 줄바꿈이 생기지 않게 select·표식 폭을 줄이고(말줄임) 전체 문구는 툴팁·드롭다운 항목에 둔다 */
+.ls-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.ls-pick select {
+  height: 2.1rem;
+  width: 15rem;
+  max-width: 100%;
+  min-width: 6rem;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+}
+.ls-pick .ls-mark {
+  font-weight: 650;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

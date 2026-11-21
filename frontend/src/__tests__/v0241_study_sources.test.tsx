@@ -73,7 +73,7 @@ describe("V-0241-V3D-19 tabState.add · 자료 만들기 버튼", () => {
     expect(tabState(r2).add.bforce).toBe(false);
     // 보기가 있는 탭·full(add 열 null) = add 아님
     const ok = withBforce(withJig(withSolveMetric(withMetric({ ...base })), "ok"), "ok");
-    expect(tabState(ok).add).toEqual({ jig: false, full: false, bforce: false, fint: expect.any(Boolean) });
+    expect(tabState(ok).add).toEqual({ jig: false, jig_disp: false, jig_spring: false, full: false, bforce: false, fint: expect.any(Boolean) });
   });
   it("화면: 탭 4개 × 상태 조합에서 자료 만들기 버튼 ≤ 1, testid 유지", async () => {
     open("doe-51");
@@ -156,8 +156,8 @@ describe("V-0241-V3D-20 소스 규율", () => {
     const bad = code.filter((l) => /(?:key|src|curTab|tab|source)\s*[!=]==?\s*"(?:jig|full|bforce|fint)"/.test(l) || /===\s*"(?:bforce|fint)"/.test(l));
     expect(bad).toEqual([]);
     // 이전 시험들이 쓰는 열 값
-    expect(LOAD_SOURCES.map((s) => s.recon?.kind ?? null)).toEqual(["jigdiag", null, "sidecar", "sidecar"]);
-    expect(LOAD_SOURCES.map((s) => s.add?.testid ?? null)).toEqual(["v3d-regen", null, "v3d-bf-add", "v3d-fi-add"]);
+    expect(LOAD_SOURCES.map((s) => s.recon?.kind ?? null)).toEqual(["jigdiag", null, null, null, "sidecar", "sidecar"]);
+    expect(LOAD_SOURCES.map((s) => s.add?.testid ?? null)).toEqual(["v3d-regen", null, null, null, "v3d-bf-add", "v3d-fi-add"]);
   });
 });
 

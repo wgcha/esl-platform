@@ -55,10 +55,14 @@ def test_v10_table_in_section5_rows_and_limits(cases):
     assert len(blocks) == 1 and len(_BLOCK.findall(_section5(html))) == 1           # 5절 안 표 1개
     b = blocks[0]
     labels = [val_src.LABEL[r["key"]] for r in val_src.VAL_PLAN if r["load"] is not None]
-    pos = [b.index(x) for x in labels]
-    assert pos == sorted(pos) and val_src.LABEL["jig"] not in b                      # 순서 = KEYS 중 load 있는 행
+    t = b[b.index("<table"):]                                                        # 표 안(설명 문구 제외)
+    pos = [t.index(x) for x in labels]
+    assert pos == sorted(pos)                                                        # 순서 = KEYS 중 load 있는 행
     rows = re.findall(r"<tr>(.*?)</tr>", b, re.DOTALL)[1:]
-    assert len(rows) == 3
+    assert len(rows) == 6                                                            # v0.24.4: 지그 3방식 행(의도 변경 §12-6)
+    for k in ("jig", "jig_disp", "jig_spring"):                                      # tie 준비 없는 Case = 불가 + 사유
+        jr = next(x for x in rows if val_src.LABEL[k] in x)
+        assert "불가" in jr and "tie 노드 준비 기록이 없어" in jr and "PASS" not in jr
     bf_row = next(x for x in rows if val_src.LABEL["bforce"] in x)
     assert "비교용 아님" in bf_row and "tie 체결력 미포함" in bf_row and "PASS" in bf_row
     assert "관성 이완" in bf_row                                                     # 조건(균형) 문구
