@@ -17,6 +17,8 @@ class UnsafePath(OSError):
 def _lex_rel(root: str, path: str) -> list[str]:
     rr = os.path.abspath(root)
     rp = os.path.abspath(path)
+    if ".." in os.fspath(path).replace(os.altsep or os.sep, os.sep).split(os.sep):      # abspath 는 글자만 정리(링크 뒤의 .. 가 사라짐) — 쓰기 대상엔 .. 를 허용하지 않음
+        raise UnsafePath(f"상위 경로(..) 구성 요소가 있는 경로: {os.path.basename(rp)}")
     try:
         if os.path.commonpath([rr, rp]) != rr:
             raise ValueError

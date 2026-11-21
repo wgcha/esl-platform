@@ -54,3 +54,25 @@ def test_checked_path_reason_is_symlink(tmp_path):
         safe_fs.checked_target(str(cd), str(cd / "runs" / "new" / "deep"))
     (cd / "ok").mkdir()
     assert safe_fs.checked_target(str(cd), str(cd / "ok" / "new" / "deep")).endswith("deep")
+
+
+def test_dotdot_component_rejected_even_when_lexically_inside(tmp_path):
+    """root/01_extract/../x 는 abspath 로 root/x 가 되어 통과했음 — 링크 뒤의 .. 는 실제로 다른 곳이므로 거부."""
+    v = _victim(tmp_path)
+    root = tmp_path / "case"
+    root.mkdir()
+    os.symlink(v / "x", root / "01_extract")                     # 01_extract → victim/x, 그 상위(..) = victim
+    for fn in (safe_fs.checked_target, safe_fs.checked_path):
+        with pytest.raises(safe_fs.UnsafePath):
+            fn(str(root), str(root / "01_extract" / ".." / "newfile"))
+        with pytest.raises(safe_fs.UnsafePath):
+            fn(str(root), os.path.join(str(root), "sub", "..", "other"))     # 링크가 없어도 .. 는 쓰기 대상에 허용 안 함
+    assert sorted(p.name for p in v.iterdir()) == ["x"]
+
+
+def test_dotdot_normal_paths_unchanged(tmp_path):
+    root = tmp_path / "case"
+    (root / "a").mkdir(parents=True)
+    assert safe_fs.checked_target(str(root), str(root / "a" / "new.txt")) == str(root / "a" / "new.txt")
+    assert safe_fs.checked_path(str(root), str(root / "a")) == str(root / "a")
+    assert safe_fs.checked_target(str(root), str(root / "a..b" / "x..")) == str(root / "a..b" / "x..")   # 이름 안의 점 두 개는 허용
