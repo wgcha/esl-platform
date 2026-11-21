@@ -99,7 +99,7 @@ describe("출처 옵션(순수)", () => {
     expect(chip!.short).toBe("경계력 ESL · FAIL · 비교용 아님");
     expect(chip!.tone).toBe("warn");
     // 최악 등급(worst)으로 caution(⚠)·not_comparable·FAIL·UNDETERMINED·NO_RESULT 표식(markOf 재사용)
-    const ok = { entry_id: "a", status: "PASS" as const, comparable: true, validation_id: null };
+    const ok: { entry_id: string; status: "PASS" | "FAIL" | "UNDETERMINED" | "LEGACY" | null; comparable: boolean | null; validation_id: string | null } = { entry_id: "a", status: "PASS", comparable: true, validation_id: null };
     const c = (worst: "PASS" | "caution" | "not_comparable" | "UNDETERMINED" | "FAIL" | "NO_RESULT" | null, entries = [ok]) => loadSourceChipOf("fint", { key: "fint", worst, entries });
     expect(c("caution")!.short).toBe("내력 ESL · PASS ⚠");
     expect(c("caution")!.tone).toBe("ok");
