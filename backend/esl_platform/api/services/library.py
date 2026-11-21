@@ -76,11 +76,12 @@ def _stash(lib_root: str, d: str) -> None:
         return
     try:
         safe_fs.checked_path(lib_root, d)              # 링크·라이브러리 밖이면 옮기지 않고 사유만 남김(실패 처리 중 호출)
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
+        dst = os.path.join(lib_root, "_backup", f"{ts}_{os.path.basename(d)}")
+        safe_fs.checked_target(lib_root, dst)          # 대상(_backup)·상위도 같은 검사 — _backup 이 링크면 밖으로 안 나감
     except safe_fs.UnsafePath as exc:
         logging.getLogger(__name__).warning("library _stash 거부(옮기지 않음): %s", exc)
         return
-    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%S_%fZ")
-    dst = os.path.join(lib_root, "_backup", f"{ts}_{os.path.basename(d)}")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(d, dst)
 

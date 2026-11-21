@@ -41,7 +41,7 @@ HASH_CHUNK = 1 << 20
 DETAIL_MAX = 300
 
 SKIPPED_CAUSES = ("PAICAD_UNAVAILABLE", "NO_INPUT", "SETTINGS")
-FAILED_CAUSES = ("TIMEOUT", "SCAN_FAILED", "READ_FAILED", "EXCEPTION")
+FAILED_CAUSES = ("TIMEOUT", "SCAN_FAILED", "READ_FAILED", "EXCEPTION", "SYMLINK_PATH")
 
 # 원인 → 상세 문구(기록 detail — 코어가 지그 세 행 사유로 씀) 한 곳.
 CAUSE_TEXT: dict[str, str] = {
@@ -52,6 +52,7 @@ CAUSE_TEXT: dict[str, str] = {
     "SCAN_FAILED": "fixed-scan 실패({msg})",
     "READ_FAILED": "fixed-scan 결과를 읽지 못함({msg})",
     "EXCEPTION": "tie 준비 오류({msg})",
+    "SYMLINK_PATH": "지그 산출물 위치가 심링크이거나 Case 폴더 밖이라 쓰지 않음({msg})",
 }
 
 # ESL step 로그 문구 한 곳.
@@ -209,6 +210,17 @@ def make_guard(cdir: str) -> Callable[[str], str]:
     return guard
 
 
+def _final_targets(cdir: str) -> list[str]:
+    final = fixed_dir(cdir)
+    return [final, os.path.join(final, NODES_JSON), os.path.join(cdir, EXTRACT, RECORD)]
+
+
+def _check_finals(cdir: str) -> None:
+    """최종 대상(jig_fixed·메타·기록)과 상위 전부를 쓰기 전에 검사 — 링크·Case 밖이면 UnsafePath(이동·쓰기 0)."""
+    for t in _final_targets(cdir):
+        safe_fs.checked_target(cdir, t)
+
+
 def _within(p: str, root: str) -> bool:
     rp, rr = os.path.realpath(p), os.path.realpath(root)
     return rp == rr or rp.startswith(rr.rstrip(os.sep) + os.sep)
@@ -217,6 +229,7 @@ def _within(p: str, root: str) -> bool:
 def _backup_move(cdir: str, rel: str) -> str | None:
     """Case 폴더 안 rel 이 있으면 ``_backup/<UTC>/<rel>`` 로 옮김(삭제 없음)."""
     p = os.path.join(cdir, *rel.split("/"))
+    safe_fs.checked_target(cdir, p)                         # 없는 대상도 가장 가까운 존재 상위까지 검사(01_extract 링크 → UnsafePath)
     if not os.path.lexists(p):
         return None
     safe_fs.checked_path(cdir, p)                           # 심링크·Case 밖이면 UnsafePath(이동 안 함)
@@ -354,6 +367,10 @@ def _fill(ex, inp: dict[str, Any], jcfg: dict[str, Any], echo) -> tuple[str | No
         cfg = json.loads(json.dumps(full))
         cfg.setdefault("bead_doe", {}).setdefault("paicad", {}).setdefault("timeout_s", {})["fixed_scan"] = float(tmo)
     limit = float(((cfg.get("bead_doe") or {}).get("paicad") or {}).get("timeout_s", {}).get("fixed_scan") or 3600)
+    try:
+        _check_finals(cdir)                             # 01_extract 가 Case 밖 심링크면 fixed-scan 전에 중단(밖에 아무것도 안 씀)
+    except safe_fs.UnsafePath as exc:
+        return "SYMLINK_PATH", detail_text("SYMLINK_PATH", msg=str(exc)[:200]), None, None
     guard(work)                                         # _jig 가 심링크·Case 밖이면 여기서 거부(만들기·쓰기·삭제 전)
     os.makedirs(work, exist_ok=True)
     opts = None
@@ -413,7 +430,11 @@ def _fill(ex, inp: dict[str, Any], jcfg: dict[str, Any], echo) -> tuple[str | No
     except core_adapter.CoreError as exc:
         return "READ_FAILED", detail_text("READ_FAILED", msg=f"{exc.code}: {exc.message}"[:240]), None, mode
     # 성공분만 최종 위치로(이전 캐시는 _backup 으로 옮김 — 삭제 없음), 키·메타 기록
-    prev = _backup_move(cdir, f"{EXTRACT}/{FIXED_SUB}")
+    try:
+        _check_finals(cdir)                             # 스캔 사이 바뀐 경우까지 — 이동·쓰기 전 재검사
+        prev = _backup_move(cdir, f"{EXTRACT}/{FIXED_SUB}")
+    except safe_fs.UnsafePath as exc:
+        return "SYMLINK_PATH", detail_text("SYMLINK_PATH", msg=str(exc)[:200]), None, mode
     if prev:
         echo(f"[esl-worker] 이전 지그 tie 캐시를 옮김: {prev}")
     final = fixed_dir(cdir)

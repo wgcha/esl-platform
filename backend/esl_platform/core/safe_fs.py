@@ -32,12 +32,28 @@ def checked_path(root: str, path: str) -> str:
     for name in parts:
         cur = os.path.join(cur, name)
         try:
-            if os.path.islink(cur):
-                raise UnsafePath(f"심링크 경로를 거칩니다: {name}")
-        except OSError as exc:
+            linked = os.path.islink(cur)
+        except OSError as exc:                      # islink 자체의 오류만 "확인 실패" — 아래 UnsafePath 는 이 except 밖
             raise UnsafePath(f"경로 확인 실패: {name}") from exc
+        if linked:
+            raise UnsafePath(f"심링크 경로를 거칩니다: {name}")
     rr = os.path.realpath(root)
     rp = os.path.realpath(path)
     if rp != rr and not rp.startswith(rr.rstrip(os.sep) + os.sep):
         raise UnsafePath(f"Case 폴더 밖 경로: {os.path.basename(path)}")
+    return path
+
+
+def checked_target(root: str, path: str) -> str:
+    """아직 없을 수 있는 쓰기 대상 검사: ``path`` 와 그 상위 전부(root 아래)를 ``checked_path`` 로 검사한다.
+    존재하지 않는 구성 요소는 가장 가까운 존재 상위까지만 검사하고, 그 상위의 realpath 가 root 안인지 본다."""
+    parts = _lex_rel(root, path)
+    cur = os.path.abspath(root)
+    near = cur
+    for name in parts:
+        cur = os.path.join(cur, name)
+        if not os.path.lexists(cur):
+            break
+        near = cur
+    checked_path(root, near)
     return path
