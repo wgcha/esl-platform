@@ -15,7 +15,7 @@
 - 비드 최적화: 고른 출처의 하중으로 선정·덱을 만든다. 지그 고정(병진 구속 + 고정)은 tie 노드 지지를 3-2-1 대신 덱에 넣는다. 법선 구속·강제 변위·스프링 지그와 템플릿(S2) 지그는 아직 지원하지 않아 `LOAD_SOURCE_UNSUPPORTED` 사유와 함께 막힌다.
 - API: `GET /library/entries/sources?ids=`(항목별 출처 판정·하중 존재·최악 등급), 스터디·비드 최적화 생성 요청에 `load_source`·`load_source_ack`(없으면 생략), 422 `LOAD_SOURCE_UNCONFIRMED`·`LOAD_SOURCE_UNAVAILABLE`·`LOAD_SOURCE_UNSUPPORTED`, 스터디 결과에 `load_source`·`metric_default`. 설정: `bead_doe.load_source_default`(기본 null)·`opt_run.load_source_default`(기본 full) — 화면 안내용이며 요청에 출처가 없으면 서버는 적용하지 않는다.
 ### 수정 (독립 검증 지적)
-- 안전: Case 폴더 안의 `_jig`·`01_extract/jig_fixed` 등이 Case 밖을 가리키는 심링크여도 지그 준비·스냅샷·3D 보기 정리가 밖의 내용을 지우거나 옮기지 않는다(링크면 거부하고 사유만 기록, ESL 은 계속) `01_extract`·`_backup` 이 Case(라이브러리) 밖 링크여도 지그 산출물·기록·백업 이동이 밖에 쓰지 않고(지그 준비는 `SYMLINK_PATH` 사유로 실패 표시), 거부 사유는 "심링크 경로를 거칩니다" 로 나온다.
+- 안전: Case 폴더 안의 `_jig`·`01_extract/jig_fixed` 등이 Case 밖을 가리키는 심링크여도 지그 준비·스냅샷·3D 보기 정리가 밖의 내용을 지우거나 옮기지 않는다(링크면 거부하고 사유만 기록, ESL 은 계속) `01_extract`·`_backup` 이 Case(라이브러리) 밖 링크여도 지그 산출물·기록·백업 이동이 밖에 쓰지 않고(지그 준비는 `SYMLINK_PATH` 사유로 실패 표시), 거부 사유는 "심링크 경로를 거칩니다" 로 나온다. paicad 출력 로그(`_jig/fixed_scan.stdout.log` 등)가 Case 밖 파일을 가리키는 링크여도 그 파일을 덮어쓰지 않는다(지그 준비는 fixed-scan 을 돌리지 않고 `SYMLINK_PATH` 로 실패 표시, ESL 은 계속).
 - 지그 변위·스프링이 없는 옛 스터디의 탭 사유 문구에서 조사가 어색하던 것("변위을")을 고쳤다.
 - 새 스터디 화면에서 하중 출처를 고르면 제목 줄이 2줄로 늘던 것을 1줄로 유지한다(긴 표식은 줄임표, 전체는 툴팁·목록·확인 창).
 - 결과 화면 하중 출처 칩이 "주의(⚠)"·"비교용 아님"·FAIL 을 보여 준다. ④ 지그 탭 조건 툴팁에 "값 0·낙하 변위·스프링 α" 가 들어간다.
