@@ -17,7 +17,15 @@ class UnsafePath(OSError):
 def _lex_rel(root: str, path: str) -> list[str]:
     rr = os.path.abspath(root)
     rp = os.path.abspath(path)
-    if ".." in os.fspath(path).replace(os.altsep or os.sep, os.sep).split(os.sep):      # abspath 는 글자만 정리(링크 뒤의 .. 가 사라짐) — 쓰기 대상엔 .. 를 허용하지 않음
+    # abspath 는 글자만 정리(링크 뒤의 .. 가 사라짐) — 쓰기 대상엔 .. 를 허용하지 않음.
+    # 단 root 자신의 .. (설정 esl_root 가 /srv/x/../esl 등)는 검사 대상이 아님: path 가 root 문자열로 시작하면 그 뒤 꼬리만, 아니면 전체를 본다.
+    alt = os.altsep or os.sep
+    ps = os.fspath(path).replace(alt, os.sep)
+    rs = os.fspath(root).replace(alt, os.sep)
+    rs = rs.rstrip(os.sep) if rs.strip(os.sep) else rs
+    if ps == rs or ps.startswith(rs.rstrip(os.sep) + os.sep):
+        ps = ps[len(rs):]
+    if ".." in ps.split(os.sep):
         raise UnsafePath(f"상위 경로(..) 구성 요소가 있는 경로: {os.path.basename(rp)}")
     try:
         if os.path.commonpath([rr, rp]) != rr:

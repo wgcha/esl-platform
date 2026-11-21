@@ -662,7 +662,7 @@ D-0.24.4-JIG-1 범위·단계 · (부록 A.1: -19 spring α 기본 0.01 · -20 �
 | esl/doe/stages 지그 prep json·csv(4232~4383·1040) | write_json·makedirs | `writer.guard`·`Writer` | 막힘(기존) |
 | doe_jobs `_stage_full` 연구 폴더 분기 `prep/<rel>.json`(0.12.1 부터) | write_text_atomic | 없음(연구 폴더 안, 이번 버전 신규 아님) | **후속**(위험 낮음 — 연구 폴더는 서버가 만든 경로, 사용자 심링크 입구 없음) |
 | worker/jig_prep `_fill` paicad stdout 로그 `_jig/fixed_scan.stdout.log`(capture) | open('wb')(paicad 가 stdout 으로 씀) | **수정 9 추가** fixed-scan 전 `checked_target(capture)` + `paicad_proc.run` 열기를 `safe_fs.open_nofollow`(POSIX `O_NOFOLLOW`, Windows lstat 검사)로 — 링크는 따라가지 않음 | 링크면 fixed-scan 0회, status failed·cause `SYMLINK_PATH`, ESL 계속. 링크·대상 파일 불변(삭제·수정 0). 같은 열기를 쓰는 다른 paicad 호출(`doe_jobs` prep 로그 4곳)도 `PATH_UNSAFE` 로 거부 |
-| `safe_fs` `..` 구성 요소 | (경로 판정) | **수정 9** `_lex_rel` 가 대상 경로에 `..` 구성 요소가 있으면 `UnsafePath`(abspath 가 글자만 정리해 `root/01_extract/../x` 가 통과하던 구멍) | 호출부는 상수·ID 라 도달 불가였으나 공용 가드에서 차단 |
+| `safe_fs` `..` 구성 요소 | (경로 판정) | **수정 9·9d** `_lex_rel` 가 root 뒤 상대 꼬리에 `..` 구성 요소가 있으면 `UnsafePath`(abspath 가 글자만 정리해 `root/01_extract/../x` 가 통과하던 구멍). root 자신의 `..`(esl_root=`/srv/x/../esl`)는 검사 제외 — path 가 root 문자열로 시작할 때만, 아니면 전체 검사. 이름 속 `a..b` 는 허용 | 호출부는 상수·ID 라 도달 불가였으나 공용 가드에서 차단. esl_root 는 정규화 안 함 — 가드가 root 내부 `..` 를 허용하므로 값(경로 문자열)을 바꿀 필요가 없고 기존 Case 경로와 어긋나지 않음 |
 | worker/executor 지그 로그 append | open('a') | 작업 로그 경로(서버 생성, Case 밖 아님) | 해당 없음 |
 
 분해 순서(`jig_factor_order`) 해 차이 기준은 **≤5e-11 상대(반올림 수준 — 합성 스프링 최대 1.28e-11 관측)**로 정정(시험 `test_jig_factor_order_same_result_both_branches`, 이전 ≤1e-9 는 느슨했음).

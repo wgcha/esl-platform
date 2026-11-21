@@ -76,3 +76,41 @@ def test_dotdot_normal_paths_unchanged(tmp_path):
     assert safe_fs.checked_target(str(root), str(root / "a" / "new.txt")) == str(root / "a" / "new.txt")
     assert safe_fs.checked_path(str(root), str(root / "a")) == str(root / "a")
     assert safe_fs.checked_target(str(root), str(root / "a..b" / "x..")) == str(root / "a..b" / "x..")   # 이름 안의 점 두 개는 허용
+
+
+# ---- safe_fs `..` 검사: root 자신의 .. 는 허용, root 뒤 꼬리의 .. 는 거부 (v0.24.4 재검증 3) ----
+def _dd_tree(tmp_path):
+    (tmp_path / "esl" / "case" / "01_extract").mkdir(parents=True)
+    (tmp_path / "sub").mkdir()
+    return tmp_path
+
+
+def test_root_with_dotdot_normal_paths_pass(tmp_path):
+    t = _dd_tree(tmp_path)
+    root = os.path.join(t, "sub", "..", "esl", "case")
+    assert safe_fs.checked_path(root, os.path.join(root, "01_extract"))
+    assert safe_fs.checked_target(root, os.path.join(root, "01_extract", "jig_fixed", "f.json"))
+    assert safe_fs.checked_path(root + "/", os.path.join(root, "01_extract") + "/")
+
+
+def test_tail_dotdot_rejected(tmp_path):
+    t = _dd_tree(tmp_path)
+    for root in (os.path.join(t, "esl", "case"), os.path.join(t, "sub", "..", "esl", "case")):
+        with pytest.raises(safe_fs.UnsafePath):
+            safe_fs.checked_target(root, os.path.join(root, "01_extract", "..", "x"))
+        with pytest.raises(safe_fs.UnsafePath):
+            safe_fs.checked_path(root, os.path.join(root, "..", "case", "01_extract"))
+
+
+def test_path_not_from_root_checked_whole(tmp_path):
+    t = _dd_tree(tmp_path)
+    root = os.path.join(t, "esl", "case")
+    with pytest.raises(safe_fs.UnsafePath):
+        safe_fs.checked_path(root, os.path.join(t, "sub", "..", "esl", "case", "01_extract"))
+
+
+def test_dotdot_inside_name_allowed(tmp_path):
+    t = _dd_tree(tmp_path)
+    root = os.path.join(t, "esl", "case")
+    assert safe_fs.checked_target(root, os.path.join(root, "a..b", "x"))
+    assert safe_fs.checked_target(root, os.path.join(root, "..x"))
