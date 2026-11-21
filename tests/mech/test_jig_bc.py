@@ -569,7 +569,7 @@ def _order_case(n=14, tie_dofs="normal"):
 
 @pytest.mark.parametrize("tie_dofs", ["normal", "translation"])
 def test_jig_factor_order_same_result_both_branches(tie_dofs):
-    """node_mmd = default 결과(≤1e-9 상대) — factorize_bc(법선) 와 spc 가지(병진) 모두. 순서만 다르다."""
+    """node_mmd = default 결과(≤5e-11 상대 — 반올림 수준, 합성 스프링 최대 1.28e-11 관측) — factorize_bc(법선) 와 spc 가지(병진) 모두. 순서만 다르다."""
     mesh, BC, F = _order_case(tie_dofs=tie_dofs)
     out = {}
     for order in ("default", "node_mmd"):
@@ -580,7 +580,7 @@ def test_jig_factor_order_same_result_both_branches(tie_dofs):
         lu = (h.h if hasattr(h, "h") else h).lu                       # SpcSolve(.h = FactorizedSolve) 또는 BcSolve
         assert (lu._perm is None) == (order == "default")
     a, b = out["default"], out["node_mmd"]
-    assert np.abs(a - b).max() <= 1e-9 * np.abs(a).max()
+    assert np.abs(a - b).max() <= 5e-11 * np.abs(a).max()
 
 
 def test_jig_factor_order_does_not_touch_old_paths_and_validates():

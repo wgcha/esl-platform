@@ -252,7 +252,7 @@ def _stage_full(ex, starter: str, case_dir: str, rel: str, echo, label: str = ""
             guard=inproc.stop_guard(stop, guard, cnt)),
             label=f"{label}모델 전체 사본 {rel}", echo=echo, stop=stop, detail=lambda: f"파일 쓰기 {cnt['files']}건")
         if man_path:
-            _write_json(man_path, man)
+            _write_json(guard(man_path), man)             # 호출부가 준 쓰기 검사(Case _jig 아래·비링크)를 매니페스트에도
     sm = core_adapter.doe_assem_summary(man)
     echo(f"[esl-worker] {label}모델 전체 사본 prep/{rel}: 파일 {sm['n_files']}개 {sm['total_mb']:.1f} MB "
          f"(Case 폴더 밖 {sm['n_outside']}개, 엔진 rad {'포함' if sm['engine_rad'] else '제외'}"
