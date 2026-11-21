@@ -57,3 +57,23 @@ def checked_target(root: str, path: str) -> str:
         near = cur
     checked_path(root, near)
     return path
+
+
+def open_nofollow(path: str, mode: str = "wb", **kw):
+    """쓰기용 열기 — ``path`` 자체가 심링크면 따라가지 않고 ``UnsafePath``(링크 대상 파일은 건드리지 않음). mode: w·wb·a·ab.
+    POSIX 는 ``O_NOFOLLOW`` 로 열기와 검사가 한 번에(경쟁 없음), 없는 플랫폼(Windows)은 열기 직전 lstat 검사. ``kw`` 는 텍스트 모드의 encoding·newline 등."""
+    base = mode.replace("b", "").replace("+", "")
+    if base not in ("w", "a"):
+        raise ValueError(f"쓰기 모드만 허용: {mode}")
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_TRUNC if base == "w" else os.O_APPEND)
+    flags |= getattr(os, "O_BINARY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow and os.path.islink(path):
+        raise UnsafePath(f"심링크에는 쓰지 않음: {os.path.basename(path)}")
+    try:
+        fd = os.open(path, flags | nofollow, 0o666)
+    except OSError as exc:
+        if nofollow and os.path.islink(path):            # ELOOP(링크) — 사유를 분명히
+            raise UnsafePath(f"심링크에는 쓰지 않음: {os.path.basename(path)}") from exc
+        raise
+    return os.fdopen(fd, mode, **kw)

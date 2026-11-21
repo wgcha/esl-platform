@@ -28,6 +28,8 @@ import threading
 import time
 from typing import Any, Callable
 
+from esl_platform.core import safe_fs
+
 from . import localproc
 from .os_solve import BASE_ENV_KEYS
 
@@ -193,7 +195,11 @@ def run(key: str, values: dict[str, Any], *, settings, cfg: dict, out_root: str,
     timed_out = False
     pio = _pio()
     lines: list[str] = []
-    with open(capture, "wb") as fh:                 # 호출마다 새 내용(판정은 이 명령의 stdout 만)
+    try:
+        fh = safe_fs.open_nofollow(capture, "wb")  # 호출마다 새 내용(판정은 이 명령의 stdout 만) — 링크는 따라가지 않음
+    except safe_fs.UnsafePath as exc:
+        raise PaicadError("PATH_UNSAFE", f"paicad 출력 로그 위치가 심링크라 쓰지 않음: {exc}") from None
+    with fh:
         try:
             proc = localproc.start(argv, cwd=cwd, log_fh=fh, env=child_env(settings), preexec=limiter.posix_preexec(lim),
                                    priority=settings.worker.priority, fail_code="PAICAD_FAILED", what="paicad")

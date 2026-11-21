@@ -35,6 +35,7 @@ RECORD = "jig_prep.json"                 # <01_extract>/ 시도 기록
 WORK = "_jig"                            # Case 폴더 안 작업 폴더(사본·로그·임시 출력)
 ASSEM_SUB = "assem_full"
 TMP_SUB = "fixed_tmp"
+CAPTURE_LOG = "fixed_scan.stdout.log"    # _jig/ 안 paicad stdout 로그
 CODE_SKIPPED = "JIG_FIXED_SKIPPED"
 CODE_FAILED = "JIG_FIXED_FAILED"
 HASH_CHUNK = 1 << 20
@@ -372,6 +373,11 @@ def _fill(ex, inp: dict[str, Any], jcfg: dict[str, Any], echo) -> tuple[str | No
     except safe_fs.UnsafePath as exc:
         return "SYMLINK_PATH", detail_text("SYMLINK_PATH", msg=str(exc)[:200]), None, None
     guard(work)                                         # _jig 가 심링크·Case 밖이면 여기서 거부(만들기·쓰기·삭제 전)
+    capture = os.path.join(work, CAPTURE_LOG)
+    try:
+        safe_fs.checked_target(cdir, capture)           # 로그 파일이 (밖을 가리키는) 심링크면 fixed-scan 0회 — 링크 대상은 건드리지 않음
+    except safe_fs.UnsafePath as exc:
+        return "SYMLINK_PATH", detail_text("SYMLINK_PATH", msg=str(exc)[:200]), None, None
     os.makedirs(work, exist_ok=True)
     opts = None
     if pc.get("options"):
@@ -392,7 +398,7 @@ def _fill(ex, inp: dict[str, Any], jcfg: dict[str, Any], echo) -> tuple[str | No
             shutil.rmtree(guard(tmp_out))
         os.makedirs(guard(tmp_out))                     # 스터디 BD_GEOM 의 fresh_dir 와 같이 빈 출력 폴더를 미리 만들어 줌
         return doe_jobs._fixed_scan(ex, None, assem_dir=assem_dir, parts=parts, out_dir=tmp_out, cwd=work,
-                                    capture=os.path.join(work, "fixed_scan.stdout.log"), opts=opts, threads=threads,
+                                    capture=capture, opts=opts, threads=threads,
                                     echo=echo, tick=tick, label=label, cfg=cfg)
 
     def stage() -> str:
