@@ -264,7 +264,7 @@ export type Case = CaseOut;
 export interface CaseLibraryOut {
   count?: number;
   latest_entry_id?: string | null;
-  latest_status?: "PASS" | "FAIL" | "UNDETERMINED" | "LEGACY" | null;
+  latest_status?: "PASS" | "CONDITIONAL" | "FAIL" | "UNDETERMINED" | "LEGACY" | null;
   latest_registered_at?: string | null;
 }
 
@@ -309,7 +309,7 @@ export interface RunAllOut {
   /** §7 멈춤 코드(TSTAR_REVIEW_REQUIRED·SUPPORT_AUTO_BLOCKED·STEP_FAILED·VALIDATION_FAIL …) */
   stop_code: string | null;
   stop_reason: RunAllStopReason | null;
-  verdict: "PASS" | "FAIL" | "UNDETERMINED" | null;
+  verdict: "PASS" | "CONDITIONAL" | "FAIL" | "UNDETERMINED" | null;
   job_ids: RunAllJobRef[];
   skipped: RunAllSkip[];
   resumed_from_id: string | null;
@@ -744,8 +744,8 @@ export interface ValidationOut {
   hotspots: ValidationHotspot[];
   excluded: { elem_id: number; reason: string }[];
   /** v0.5.7(esl_disp_primary §3.3): UNDETERMINED = 판정 불가(전체 재해석 생략·변형 없음) */
-  verdict: "PASS" | "FAIL" | "UNDETERMINED";
-  /** 판정 체계: 새 검증 "disp_primary/1", 0.5.7 이전 검증은 null(= LEGACY) */
+  verdict: "PASS" | "CONDITIONAL" | "FAIL" | "UNDETERMINED";
+  /** 판정 체계: 새 검증 "disp_primary/2"(v0.24.5 — 단계 판정·MAC), 이전 "disp_primary/1"(단일 기준·MAC 없음), 0.5.7 이전 검증은 null(= LEGACY) */
   scheme: string | null;
   /** 표시 상태. scheme 이 null 이면 LEGACY, 아니면 verdict */
   status: ValidationStatus;
@@ -758,6 +758,10 @@ export interface ValidationOut {
   /** 변형률 참고 집계(§3.4). LEGACY 는 null */
   strain_ref: StrainRef | null;
   fail_reasons: string[];
+  /** v0.24.5: 조건부 PASS 사유 코드(DISP_RMS·MAC·REACTION). 옛 서버·옛 결과 = 없음/[] */
+  cond_reasons?: string[];
+  /** v0.24.5: MAC(검증) — 새 체계(disp_primary/2)만, 옛 결과 null */
+  mac?: number | null;
   /** 코어 validation.json criteria (disp_rms_rel_max, hotspot_strain_rel_err_max, reaction_rel_max, …) */
   criteria: Record<string, unknown>;
   dir_rel: string;
@@ -767,7 +771,8 @@ export interface ValidationOut {
   field?: FieldSummary | null;
 }
 export type Validation = ValidationOut;
-export type ValidationStatus = "PASS" | "FAIL" | "UNDETERMINED" | "LEGACY";
+/** v0.24.5: CONDITIONAL = 조건부 PASS(esl_validate_tiers.md) — 게이트에서는 통과, 표식만 다르다 */
+export type ValidationStatus = "PASS" | "CONDITIONAL" | "FAIL" | "UNDETERMINED" | "LEGACY";
 
 // ---------------------------------------------------------------- 변위 주지표 판정 (계약 esl_disp_primary.md §3.4·§3.5·§4·§7)
 export interface DispHist {
@@ -1793,7 +1798,7 @@ export interface VersionOut {
   commit: string | null;
   built_at: string | null;
   /** v0.6.0: 공개 설정. upload_slim_hint_gb = 이 크기(GB) 초과 h3d 에 압축 모드 안내(0 = 끔, 없으면 5) */
-  ui?: { upload_slim_hint_gb?: number; library_export_enabled?: boolean; library_export_max_entries?: number };
+  ui?: { upload_slim_hint_gb?: number; library_export_enabled?: boolean; library_export_max_entries?: number; /** v0.24.5 화면에서 숨길 하중 출처 키(설정 ui.hidden_sources) — 없으면 숨김 없음 */ hidden_sources?: string[] };
 }
 export type ChangelogSection = "추가" | "변경" | "수정";
 /** GET /changelog 원소 */
@@ -1926,6 +1931,10 @@ export interface ValidationSourceRow {
   status: ValidationStatus | null;
   fail_reasons: string[];
   undetermined_reason: string | null;
+  /** v0.24.5: 이 행의 판정 체계(disp_primary/2 = 단계 판정·MAC, 그 밖 = 옛 단일 기준). 옛 서버 = 없음 */
+  scheme?: string | null;
+  /** v0.24.5: 조건부 PASS 사유 코드. 옛 서버 = 없음 */
+  cond_reasons?: string[];
   /** judge = 반력도 판정 · info = 지지 반력(정보) */
   reaction_role: "judge" | "info" | null;
   /** 이 출처의 반력 불합격 허용치(상대, 판정에 쓴 값 — 출처별 설정 validation.sources.reaction_tol, 없으면 공통 기준) */
@@ -1948,8 +1957,8 @@ export interface ValidationSourcesOut {
   default: string;
   rows: ValidationSourceRow[];
 }
-/** v0.24.4 P3 출처 하중 등급(esl_jig_case.md §9) — 나쁜 쪽이 뒤: PASS < caution < not_comparable < UNDETERMINED < FAIL < NO_RESULT */
-export type LoadGrade = "PASS" | "caution" | "not_comparable" | "UNDETERMINED" | "FAIL" | "NO_RESULT";
+/** v0.24.4 P3 출처 하중 등급(esl_jig_case.md §9) — 나쁜 쪽이 뒤: PASS < CONDITIONAL(v0.24.5 조건부 PASS) < caution < not_comparable < UNDETERMINED < FAIL < NO_RESULT */
+export type LoadGrade = "PASS" | "CONDITIONAL" | "caution" | "not_comparable" | "UNDETERMINED" | "FAIL" | "NO_RESULT";
 /** v0.24.4 P3 항목 출처 1행: ④ 검증 출처 행 + 출처 하중 존재·등급 */
 export interface EntrySourceRow extends ValidationSourceRow {
   load_available: boolean;

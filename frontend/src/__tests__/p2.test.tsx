@@ -316,7 +316,7 @@ describe("종합분석 만들기", () => {
     const a = server.analyses[server.analyses.length - 1];
     expect(a.target_entry_id).toBe("le-1");
     expect(a.title).toBe("75형 강건 비드");
-    expect(a.filters).toEqual({ model: ["75QN80H"], drop_type: ["Corner", "Edge"], verdict: ["PASS"] });
+    expect(a.filters).toEqual({ model: ["75QN80H"], drop_type: ["Corner", "Edge"], verdict: ["PASS", "CONDITIONAL"] });
     expect(a.options).toEqual({ normalization: "mass", n_representative: 3, objective: "minmax", svd_energy: 0.9, worst_case: false, optdeck_cases: "all" });
     expect(a.entry_ids).toEqual(["le-1", "le-2", "le-9", "le-10"]);
     // 진행 표시, 보고서 버튼은 끝나야 활성

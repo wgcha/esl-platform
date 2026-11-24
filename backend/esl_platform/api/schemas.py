@@ -167,7 +167,7 @@ class CaseLibraryOut(_Out):
     """#49 Case 목록: 이 Case 에서 등록된 라이브러리 현황(ACTIVE 항목 수·최신 항목 판정)."""
     count: int = 0
     latest_entry_id: str | None = None
-    latest_status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    latest_status: Literal["PASS", "CONDITIONAL", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
     latest_registered_at: datetime | None = None
 
 
@@ -203,7 +203,7 @@ class RunAllOut(_Out):
     stop_step: RunAllStep | None = None
     stop_code: str | None = Field(default=None, description="§7 멈춤 코드(STOPPED·CANCELED, DONE 은 null)")
     stop_reason: RunAllStopReason | None = None
-    verdict: Literal["PASS", "FAIL", "UNDETERMINED"] | None = None
+    verdict: Literal["PASS", "CONDITIONAL", "FAIL", "UNDETERMINED"] | None = None
     job_ids: list[RunAllJobRef] = Field(default_factory=list)
     skipped: list[RunAllSkip] = Field(default_factory=list)
     resumed_from_id: str | None = None
@@ -573,7 +573,7 @@ class ValidationOut(_Out):
     reaction_rel: float | None = None
     hotspots: list[dict[str, Any]]
     excluded: list[dict[str, Any]]
-    verdict: Literal["PASS", "FAIL", "UNDETERMINED"]
+    verdict: Literal["PASS", "CONDITIONAL", "FAIL", "UNDETERMINED"]
     fail_reasons: list[str]
     criteria: dict[str, Any]
     field: dict[str, Any] | None = None
@@ -582,12 +582,15 @@ class ValidationOut(_Out):
     stale: bool
     # 0.5.7(계약 esl_disp_primary.md §7): 변위 주지표 판정. scheme null = 이전 판정 체계(status LEGACY)
     scheme: str | None = None
-    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] = "LEGACY"
+    status: Literal["PASS", "CONDITIONAL", "FAIL", "UNDETERMINED", "LEGACY"] = "LEGACY"
     disp_max_rel: float | None = None
     disp_noise_rel: float | None = None
     undetermined_reason: str | None = None
     disp: dict[str, Any] | None = None
     strain_ref: dict[str, Any] | None = None
+    # 0.24.5(계약 esl_validate_tiers.md §4.3): MAC(검증)·조건부 사유. 옛 행 mac null·cond_reasons []
+    mac: float | None = None
+    cond_reasons: list[str] = []
 
 
 class ValidationSourceRow(_Out):
@@ -596,9 +599,11 @@ class ValidationSourceRow(_Out):
     available: bool
     code: str | None = None
     reason: str | None = None
-    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    status: Literal["PASS", "CONDITIONAL", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
     fail_reasons: list[str]
     undetermined_reason: str | None = None
+    scheme: str | None = None                       # 0.24.5: 이 행의 판정 체계(disp_primary/1 = 옛 단일 기준·MAC 없음, /2 = 단계)
+    cond_reasons: list[str] = []                    # 0.24.5: 조건부 PASS 사유 코드(새 체계만)
     reaction_role: Literal["judge", "info"] | None = None
     reaction_tol: float | None = None
     reaction_tol_key: str | None = None
@@ -627,7 +632,7 @@ class ValidationSourcesHistOut(_Out):
     items: list[ValidationSourcesHistItem]
 
 
-LoadGradeLit = Literal["PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"]   # 나쁜 쪽이 뒤(services.library.LOAD_GRADES)
+LoadGradeLit = Literal["PASS", "CONDITIONAL", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"]   # 나쁜 쪽이 뒤(services.library.LOAD_GRADES)
 
 
 class EntrySourceRow(ValidationSourceRow):
@@ -651,7 +656,7 @@ class EntrySourcesItem(_Out):
 class EntrySourceEntry(_Out):
     entry_id: str
     validation_id: str | None = None
-    status: Literal["PASS", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
+    status: Literal["PASS", "CONDITIONAL", "FAIL", "UNDETERMINED", "LEGACY"] | None = None
     comparable: bool | None = None
     grade: LoadGradeLit
     flags: list[LoadGradeLit]

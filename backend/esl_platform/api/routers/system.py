@@ -64,7 +64,8 @@ def version(request: Request, principal: Principal = Depends(get_principal)) -> 
     st = get_ctx(request).settings
     return {**version_svc.build_info(), "ui": {"upload_slim_hint_gb": st.ui.upload_slim_hint_gb,
                                                "library_export_enabled": bool(st.ui.library_export_enabled),
-                                               "library_export_max_entries": int(st.library_export.max_entries)}}
+                                               "library_export_max_entries": int(st.library_export.max_entries),
+                                               "hidden_sources": list(st.ui.hidden_sources)}}
 
 
 @router.get("/changelog", response_model=list[ChangelogEntry])

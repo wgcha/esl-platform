@@ -1,8 +1,9 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api } from "../api/endpoints";
 import { errorText } from "../api/client";
 import { p3 } from "../api/p3";
 import type { Me, Project, Role, VersionOut } from "../api/types";
+import { hiddenSourcesSig, setHiddenSources } from "../view3d/sources";
 
 interface AppState {
   me: Me | null;
@@ -22,13 +23,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then(([me, projects]) => alive && setState((s) => ({ ...s, me, projects, error: null })))
       .catch((e) => alive && setState((s) => ({ ...s, error: errorText(e) })));
     p3.version()
-      .then((version) => alive && setState((s) => ({ ...s, version })))
+      .then((version) => {
+        if (!alive) return;
+        setHiddenSources(version.ui?.hidden_sources); // v0.24.5 화면 출처 숨김(서버 설정) — 아래 key 가 바뀌면 화면을 한 번 다시 세운다
+        setState((s) => ({ ...s, version }));
+      })
       .catch(() => undefined);
     return () => {
       alive = false;
     };
   }, []);
-  return <Ctx.Provider value={state}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={state}>
+      <Fragment key={hiddenSourcesSig()}>{children}</Fragment>
+    </Ctx.Provider>
+  );
 }
 
 export const useApp = () => useContext(Ctx);

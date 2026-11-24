@@ -15,6 +15,7 @@ import { MENU_LIBRARY, Shell } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, Field, JobStatusBadge, StrainSourceBadge } from "../../components/ui";
 import { usePolling } from "../../lib/usePolling";
 import { dt } from "../../lib/format";
+import { entryStatus } from "../../components/VerdictStatus";
 import { DROP_LABEL, DROP_TYPES, NORM_LABEL, EligibilityBadge, entryLabel, ineligibleOf, isEligible, legacyBlockText, modelVersions, sceneText, uniq } from "./common";
 import { ComparisonVerdictBadge } from "./ComparisonDetail";
 import { MODES, MODE_LABEL, optPath, optSettingsCached, sameSize, sizeOf, sizeText } from "../../api/opt";
@@ -48,8 +49,8 @@ export async function exportUi(): Promise<{ enabled: boolean; max: number | null
 }
 export const PROMOTED_TEXT = "현재 기준 PASS — 정상 항목으로 전환";
 
-/** 판정 필터: PASS / LEGACY / FAIL·판정 불가(Q1 A — 셋 다 부적격, 재검증 대상) */
-type VerdictFilter = "" | "PASS" | "LEGACY" | "FAIL_UND";
+/** 판정 필터: PASS / 조건부 PASS(v0.24.5) / LEGACY / FAIL·판정 불가(Q1 A — 셋 다 부적격, 재검증 대상) */
+type VerdictFilter = "" | "PASS" | "CONDITIONAL" | "LEGACY" | "FAIL_UND";
 
 interface Filters {
   model: string;
@@ -250,6 +251,7 @@ function ItemsTab({ projectId, me, allowed, rows, entries, f, set, filtered, set
           <select aria-label="판정" value={f.verdict} onChange={(e) => set("verdict", e.target.value)}>
             <option value="">전체</option>
             <option value="PASS">PASS</option>
+            <option value="CONDITIONAL">조건부 PASS</option>
             <option value="LEGACY">LEGACY</option>
             <option value="FAIL_UND">FAIL·판정 불가</option>
           </select>
@@ -558,10 +560,11 @@ function AnalysesTab({ projectId, entries, allowed }: { projectId: string; entri
 }
 
 /** 판정 필터 → 서버 verdict(FAIL·판정 불가는 서버 값이 둘이라 받은 뒤 거른다) */
-const serverVerdict = (v: VerdictFilter) => (v === "PASS" || v === "LEGACY" ? v : undefined);
+const serverVerdict = (v: VerdictFilter) => (v === "PASS" || v === "CONDITIONAL" || v === "LEGACY" ? v : undefined);
 const matchVerdict = (e: EntryOut, v: VerdictFilter) => {
   if (!v) return true;
   const r = ineligibleOf(e);
+  if (v === "CONDITIONAL") return !r && entryStatus(e.quality) === "CONDITIONAL";
   return v === "PASS" ? !r : v === "LEGACY" ? r === "LEGACY" : r === "FAIL" || r === "UNDETERMINED";
 };
 

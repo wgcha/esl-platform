@@ -39,6 +39,19 @@ export const SOURCE_ROWS: readonly SourceRow[] = [
 ];
 
 export const SOURCE_KEYS: readonly string[] = SOURCE_ROWS.map((r) => r.key);
+
+// v0.24.5 화면 출처 숨김(사용자 결정 2026-11-24, esl_validate_tiers.md §11): 서버 설정 ui.hidden_sources(GET /version)를 AppProvider 가 넣는다.
+// 표시만 거른다 — 계산·API·저장 산출물·보고서는 그대로(정보 삭제 없음). 값이 없으면(옛 서버·아직 못 받음) 숨김 없음 = v0.24.4 화면.
+// 출처 이름 분기 없음: 어떤 키를 숨길지는 설정 한 곳, 거르는 곳은 이 표를 읽는 아래 함수들 한 곳.
+let hiddenKeys: ReadonlySet<string> = new Set();
+export function setHiddenSources(keys: readonly string[] | null | undefined): void {
+  hiddenKeys = new Set((keys ?? []).filter((k) => SOURCE_ROWS.some((r) => r.key === k)));
+}
+export const isHiddenSource = (key: string | null | undefined): boolean => !!key && hiddenKeys.has(key);
+/** 화면에 보이는 출처 키(표 순서) */
+export const visibleSourceKeys = (): string[] => SOURCE_ROWS.filter((r) => !hiddenKeys.has(r.key)).map((r) => r.key);
+/** 같은 숨김 집합이면 같은 문자열(AppProvider 가 바뀔 때만 화면을 다시 세우는 키) */
+export const hiddenSourcesSig = (): string => [...hiddenKeys].sort().join(",");
 export const sourceRow = (key: string | null | undefined): SourceRow | null => SOURCE_ROWS.find((r) => r.key === key) ?? null;
 export const LEGACY_SOURCE: string = SOURCE_ROWS.find((r) => r.legacy)?.key ?? "full";
 export const isLegacySource = (key: string | null | undefined): boolean => !key || !!sourceRow(key)?.legacy;
@@ -81,7 +94,7 @@ export interface TabMark {
 export function tabItemsOf(rows: readonly { key: string; available: boolean; reason: string | null }[] | null): SourceTabItem[] | null {
   if (!rows) return null;
   // optional 열 행은 응답에 없으면 그리지 않는다(옛 서버·옛 Case = 이전 화면). 그룹은 응답에 같은 group 이 ≥ 2 행일 때만(1 행 = 단독 탭, 이름 = 그룹 이름)
-  const shown = SOURCE_ROWS.filter((r) => !r.optional || rows.some((x) => x.key === r.key));
+  const shown = SOURCE_ROWS.filter((r) => !hiddenKeys.has(r.key) && (!r.optional || rows.some((x) => x.key === r.key)));
   const count = (g: string) => shown.filter((r) => r.group === g).length;
   return shown.map((r) => {
     const row = rows.find((x) => x.key === r.key);
@@ -101,10 +114,10 @@ export function tabItemsOf(rows: readonly { key: string; available: boolean; rea
 }
 
 /** 스터디 하중 정의 탭용(항상 SOURCE_ROWS 전체): 표 행 → 그룹·짧은 이름·주의 속성(열만 읽음) */
-export function groupFieldsOf(key: string, keys: readonly string[] = SOURCE_KEYS): Pick<SourceTabItem, "group" | "short" | "caution"> {
+export function groupFieldsOf(key: string, keys: readonly string[] = visibleSourceKeys()): Pick<SourceTabItem, "group" | "short" | "caution"> {
   const r = SOURCE_ROWS.find((x) => x.key === key);
   if (!r) return {};
-  const grouped = !!r.group && SOURCE_ROWS.filter((x) => x.group === r.group && keys.includes(x.key)).length >= 2;
+  const grouped = !!r.group && SOURCE_ROWS.filter((x) => x.group === r.group && keys.includes(x.key) && !hiddenKeys.has(x.key)).length >= 2;
   return { ...(grouped ? { group: r.group, short: r.short ?? r.label } : {}), ...(r.caution ? { caution: r.caution } : {}) };
 }
 
@@ -116,8 +129,11 @@ export function caseTabItems(sources: View3dSourcesOut | null): SourceTabItem[] 
 /** ④ 검증 결과가 없는 이 검증(v0.24.3 이전)의 출처 사유 코드 — 탭은 선택 가능(본문의 [검증 다시 실행]) */
 export const VAL_NOT_RUN_CODE = "VAL_SRC_NOT_RUN";
 
-const MARK_STATUS_TEXT: Record<ValidationStatus, string> = { PASS: "PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "이전 판정" };
-const MARK_STATUS_TONE: Record<ValidationStatus, TabMark["tone"]> = { PASS: "ok", FAIL: "bad", UNDETERMINED: "muted", LEGACY: "muted" };
+const MARK_STATUS_TEXT: Record<ValidationStatus, string> = { PASS: "PASS", CONDITIONAL: "조건부 PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "이전 판정" };
+const MARK_STATUS_TONE: Record<ValidationStatus, TabMark["tone"]> = { PASS: "ok", CONDITIONAL: "warn", FAIL: "bad", UNDETERMINED: "muted", LEGACY: "muted" };
+/** 판정 체계가 단계 판정(조건부 PASS·MAC)인가 — 새 결과 "disp_primary/2". 없음·이전 체계 = 옛 단일 기준(esl_validate_tiers.md §3.2) */
+export const TIER_SCHEME = "disp_primary/2";
+export const isTierScheme = (s: string | null | undefined): boolean => s === TIER_SCHEME;
 const MARK_LIMIT_NOT_COMPARABLE = "비교용 아님";
 const MARK_LIMIT_CAUTION = "⚠";
 
@@ -131,9 +147,11 @@ export function markOf(row: Pick<ValidationSourceRow, "available" | "status" | "
 }
 
 /** 반력 허용치 문구(순수): 출처별 설정을 쓰는 행만 — "반력 허용치 ≤ 10 % · 주의 > 5 %"(판정에 쓴 값). 없으면 null */
-export function reactionTolText(row: Pick<ValidationSourceRow, "reaction_role" | "reaction_tol" | "reaction_tol_key" | "reaction_warn"> | null | undefined): string | null {
+export function reactionTolText(row: Pick<ValidationSourceRow, "reaction_role" | "reaction_tol" | "reaction_tol_key" | "reaction_warn"> & { scheme?: string | null } | null | undefined): string | null {
   if (!row || row.reaction_role !== "judge" || row.reaction_tol == null || !row.reaction_tol_key) return null;
   const p = (x: number) => `${Number((x * 100).toPrecision(3))} %`;
+  // 새 체계(v0.24.5 §4.5): 반력 PASS ≤ 주의 문턱 · 조건부 ≤ 허용치. 옛 행 = 지금 문구 그대로
+  if (isTierScheme(row.scheme) && row.reaction_warn != null) return `반력 PASS ≤ ${p(row.reaction_warn)} · 조건부 ≤ ${p(row.reaction_tol)}`;
   return `반력 허용치 ≤ ${p(row.reaction_tol)}${row.reaction_warn != null ? ` · 주의 > ${p(row.reaction_warn)}` : ""}`;
 }
 

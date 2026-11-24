@@ -32,17 +32,18 @@ export function valSourceRows(v: ValidationOut, mode: Exclude<ValSourcesMode, "o
 
 function valSourceRows4(v: ValidationOut, mode: Exclude<ValSourcesMode, "old">, latest = true): ValidationSourceRow[] {
   const jig = { ...blank("jig"), code: "V3D_STUDY_ONLY", reason: STUDY_ONLY };
-  const full: ValidationSourceRow = { ...blank("full"), available: true, status: statusOf(v), fail_reasons: v.fail_reasons, undetermined_reason: v.undetermined_reason, cond_text: COND("기준 형상 F = K₀·u_rel", "자기평형(구성상)"), comparable: true };
+  const tier = v.scheme === "disp_primary/2"; // v0.24.5: 새 체계 행은 scheme·cond_reasons 를 함께 낸다
+  const full: ValidationSourceRow = { ...blank("full"), available: true, status: statusOf(v), fail_reasons: v.fail_reasons, undetermined_reason: v.undetermined_reason, ...(tier ? { scheme: v.scheme, cond_reasons: v.cond_reasons ?? [] } : {}), cond_text: COND("기준 형상 F = K₀·u_rel", "자기평형(구성상)"), comparable: true };
   if (mode === "notrun" || !latest) {
     return [jig, { ...full, cond_text: null, comparable: null }, { ...blank("bforce"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN }, { ...blank("fint"), code: "VAL_SRC_NOT_RUN", reason: NOT_RUN }];
   }
   const bforce: ValidationSourceRow = {
-    ...blank("bforce"), available: true, status: "FAIL", fail_reasons: ["DISP_RMS"], reaction_role: "info", reaction_tol_key: "validation.sources.reaction_tol",
+    ...blank("bforce"), available: true, status: "FAIL", fail_reasons: tier ? ["DISP_RMS", "MAC"] : ["DISP_RMS"], ...(tier ? { scheme: v.scheme, cond_reasons: [] } : {}), reaction_role: "info", reaction_tol_key: "validation.sources.reaction_tol",
     cond_text: COND("기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R)", "관성 이완"), note: VAL_SRC_NOTE_RECON,
     limits: ["BF_TIE_MISSING"], limit_text: ["tie 체결력 미포함 — 조립 부품 하중 누락"], comparable: false,
   };
   const fint: ValidationSourceRow = {
-    ...blank("fint"), available: true, status: "PASS", reaction_role: "judge", reaction_tol: 0.1, reaction_tol_key: "validation.sources.reaction_tol", reaction_warn: 0.05, reaction_warned: false,
+    ...blank("fint"), available: true, status: tier ? "CONDITIONAL" : "PASS", ...(tier ? { scheme: v.scheme, cond_reasons: ["REACTION"] } : {}), reaction_role: "judge", reaction_tol: 0.1, reaction_tol_key: "validation.sources.reaction_tol", reaction_warn: 0.05, reaction_warned: tier,
     cond_text: COND("기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R)", "균형 보정 없음 — 불평형은 지지 반력으로"), note: VAL_SRC_NOTE_RECON,
     limits: ["FINT_ROT_LINKS"], limit_text: ["회전 링크 요소 내력 포함"], comparable: true,
   };
@@ -51,6 +52,10 @@ function valSourceRows4(v: ValidationOut, mode: Exclude<ValSourcesMode, "old">, 
 
 /** ?src=<키> 검증 응답: 부모 행 필드 + 출처 판정(목) */
 export function valSourceOut(base: ValidationOut, key: string): ValidationOut {
+  const tier = base.scheme === "disp_primary/2";
+  if (tier && key === "fint")
+    return { ...base, verdict: "CONDITIONAL", status: "CONDITIONAL", disp_rms_rel: 3.1e-2, disp_max_rel: 4.0e-2, mac: 0.9712, reaction_rel: 7.2e-2, fail_reasons: [], cond_reasons: ["REACTION"], criteria: { ...base.criteria, reaction_role: "judge", reaction_rel_max: 0.1, reaction_warn_rel: 0.05 }, dir_rel: "05_val/fint" };
+  if (tier) return { ...base, mac: 0.9731, cond_reasons: [], dir_rel: `05_val/${key}`, ...(key === "bforce" ? { verdict: "FAIL" as const, status: "FAIL" as const, disp_rms_rel: 1.3e-1, mac: 0.71, reaction_rel: 1.2e-3, fail_reasons: ["DISP_RMS", "MAC"], criteria: { ...base.criteria, reaction_role: "info" as const } } : {}) };
   if (key === "bforce")
     return { ...base, verdict: "FAIL", status: "FAIL", disp_rms_rel: 3.4e-2, disp_max_rel: 7.9e-2, reaction_rel: 1.2e-3, fail_reasons: ["DISP_RMS", "DISP_MAX"], criteria: { ...base.criteria, reaction_role: "info" }, dir_rel: "05_val/bforce" };
   return { ...base, verdict: "PASS", status: "PASS", disp_rms_rel: (base.disp_rms_rel ?? 1e-6) * 1.6, disp_max_rel: (base.disp_max_rel ?? 1e-5) * 1.4, reaction_rel: 3.1e-8, fail_reasons: [], criteria: { ...base.criteria, reaction_role: "judge", ...(key === "fint" ? { reaction_rel_max: 0.1, reaction_warn_rel: 0.05 } : {}) }, dir_rel: `05_val/${key}` };

@@ -329,6 +329,8 @@ def _settings_summary(params: dict[str, Any]) -> dict[str, Any]:
     val, cmp_ = st.get("validation") or {}, st.get("compare") or {}
     return {
         "criteria": {"disp_rms_rel_max": val.get("disp_rms_rel_max"),
+                     "disp_rms_rel_cond_max": val.get("disp_rms_rel_cond_max"),     # 0.24.5: 없으면 null(스냅샷에 안 넣는 선택 키)
+                     "mac_min": val.get("mac_min"), "mac_cond_min": val.get("mac_cond_min"),
                      "disp_max_rel_max": val.get("disp_max_rel_max"),
                      "disp_noise_rel_max": val.get("disp_noise_rel_max"),
                      "hotspot_strain_rel_err_max": val.get("hotspot_strain_rel_err_max"),

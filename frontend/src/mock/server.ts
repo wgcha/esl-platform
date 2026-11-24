@@ -14,7 +14,7 @@ import {
 } from "./data";
 import { makeStrainRef, enrichValidation, envelopeCsv, makeAnalysisFiles, makeAnalysisResult, makeComparisonResult, makeEntries, makeField, makeFieldSummary, makeSection, reportHtml } from "./p2data";
 import { makeDispField } from "./dispdata";
-import { entryStatus, statusOf } from "../components/VerdictStatus";
+import { entryStatus, isPassing, statusOf } from "../components/VerdictStatus";
 import { modelVersions, pairEntries, prevVersion } from "../pages/library/common";
 import { MOCK_VERSION, P3Mock } from "./p3mock";
 import { HistoryMock } from "./historymock";
@@ -125,7 +125,7 @@ export class MockServer {
   /** 시연·시험용: ② 가드 실패(1순위 D 밖 → TSTAR_ADJUSTED)로 볼 Case */
   tstarAdjusted = new Set<string>();
   /** 시연·시험용: 이 Case 의 다음 검증 판정을 바꾼다 */
-  validationVariant = new Map<string, "FAIL" | "UNDETERMINED">();
+  validationVariant = new Map<string, Parameters<typeof variantValidation>[1]>();
   /** 시연·시험용: 이 작업 종류는 첫 step 에서 FAILED */
   failJobTypes = new Set<JobType>();
   /** v0.10.0 §6: 라이브러리 다중 내보내기 묶음 */
@@ -514,13 +514,13 @@ export class MockServer {
     const e = act[0];
     if (!e) return { count: 0, latest_entry_id: null, latest_status: null, latest_registered_at: null };
     const o = this.entryOut(e);
-    return { count: act.length, latest_entry_id: e.id, latest_status: o.eligible ? "PASS" : o.ineligible_reason ?? "LEGACY", latest_registered_at: e.registered_at };
+    return { count: act.length, latest_entry_id: e.id, latest_status: o.eligible ? (entryStatus(e.quality) === "CONDITIONAL" ? "CONDITIONAL" : "PASS") : o.ineligible_reason ?? "LEGACY", latest_registered_at: e.registered_at };
   }
 
   /** §7.4 EntryOut 추가 키(목: Case·run 행 없이 quality 로 계산) */
   private entryOut(e: EntryOut): EntryOut {
     const st = entryStatus(e.quality);
-    const eligible = st === "PASS";
+    const eligible = isPassing(st);
     const rj = [...this.jobs].reverse().find((j) => j.params?.origin === "library_revalidate" && j.params?.entry_id === e.id && ACTIVE.includes(j.state));
     return {
       ...e,
@@ -892,17 +892,17 @@ export class MockServer {
         // B3 실제 형식: 행마다 load_available·load_code·load_reason·grade·flags(검증 전 = 하중은 있음)
         const rows: EntrySourceRow[] = base.map((r) => {
           const ok = r.available || r.code === "VAL_SRC_NOT_RUN";
-          const g: LoadGrade = !r.available ? "NO_RESULT" : r.status === "FAIL" ? "FAIL" : r.status === "UNDETERMINED" ? "UNDETERMINED" : r.comparable === false ? "not_comparable" : r.limits.length ? "caution" : "PASS";
+          const g: LoadGrade = !r.available ? "NO_RESULT" : r.status === "FAIL" ? "FAIL" : r.status === "UNDETERMINED" ? "UNDETERMINED" : r.comparable === false ? "not_comparable" : r.limits.length ? "caution" : r.status === "CONDITIONAL" ? "CONDITIONAL" : "PASS";
           return { ...r, load_available: ok, load_code: ok ? null : r.code, load_reason: ok ? null : r.reason, grade: g, flags: [g] };
         });
         return { entry_id: id, validation_id: v?.id ?? null, rows };
       });
-      const order: LoadGrade[] = ["PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"];
+      const order: LoadGrade[] = ["PASS", "CONDITIONAL", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT"];
       const sources = (items[0]?.rows ?? []).map((_r, k) => {
         const ents = items.map((it) => ({ entry_id: it.entry_id, validation_id: it.validation_id, status: it.rows[k].status, comparable: it.rows[k].comparable, grade: it.rows[k].grade, flags: it.rows[k].flags, limits: it.rows[k].limits, load_available: it.rows[k].load_available, load_code: it.rows[k].load_code, load_reason: it.rows[k].load_reason }));
         const worst = ents.reduce<LoadGrade>((a, x) => (order.indexOf(x.grade) > order.indexOf(a) ? x.grade : a), "PASS");
         const un = ents.filter((x) => !x.load_available).map((x) => x.entry_id);
-        return { key: items[0].rows[k].key, label: null, worst, n: ents.length, unavailable_entry_ids: un, needs_confirm: !un.length && worst !== "PASS", entries: ents };
+        return { key: items[0].rows[k].key, label: null, worst, n: ents.length, unavailable_entry_ids: un, needs_confirm: !un.length && !isPassing(worst), entries: ents };
       });
       return { status: 200, body: { ids, items, sources } };
     }
@@ -935,7 +935,7 @@ export class MockServer {
       const reason = "";
       const vs = statusOf(v);
       if (vs === "LEGACY") return err(422, "VALIDATION_LEGACY", "이전 판정 체계 결과는 등록할 수 없습니다 — ④에서 다시 검증하세요");
-      if (vs !== "PASS") return err(422, "VALIDATION_NOT_PASS", "변위 기준 PASS만 등록할 수 있습니다", { verdict: v.verdict });
+      if (!isPassing(vs)) return err(422, "VALIDATION_NOT_PASS", "변위 기준 PASS(조건부 PASS 포함)만 등록할 수 있습니다", { verdict: v.verdict });
       const fs = makeFieldSummary();
       const fs0 = makeStrainRef();
       const t = this.now();
@@ -1434,9 +1434,9 @@ export class MockServer {
         if (v?.verdict === "UNDETERMINED")
           return this.runAllStop(run, k, "VALIDATION_UNDETERMINED", `검증 판정 불가 — ${v.undetermined_reason ?? ""}`, { verdict: "UNDETERMINED", validation_id: v.id, undetermined_reason: v.undetermined_reason });
         run.status = "DONE";
-        run.verdict = "PASS";
+        run.verdict = v?.verdict === "CONDITIONAL" ? "CONDITIONAL" : "PASS";
         run.cur_step = k;
-        run.stop_reason = { message: "④ 검증 PASS — 라이브러리 등록은 ④에서", detail: { verdict: "PASS", validation_id: v?.id ?? null } };
+        run.stop_reason = { message: `④ 검증 ${run.verdict === "CONDITIONAL" ? "조건부 PASS" : "PASS"} — 라이브러리 등록은 ④에서`, detail: { verdict: run.verdict, validation_id: v?.id ?? null } };
         run.finished_at = this.now();
         return;
       }

@@ -1,14 +1,19 @@
-// 판정 상태 표시(계약 esl_disp_primary.md §3.3·§9): PASS(ok) · FAIL(bad) · 판정 불가(중립) · 이전 판정 체계(중립, 당시 PASS|FAIL).
+// 판정 상태 표시(계약 esl_disp_primary.md §3.3·§9, esl_validate_tiers.md §4.5): PASS(ok) · 조건부 PASS(warn) · FAIL(bad) · 판정 불가(중립) · 이전 판정 체계(중립, 당시 PASS|FAIL).
 // scheme 이 없으면 LEGACY — 저장값이 아니라 표시 상태다. 검증 화면·이력·라이브러리가 함께 쓴다.
 import type { ValidationOut, ValidationStatus } from "../api/types";
 import { Badge } from "./ui";
 
 export const STATUS_LABEL: Record<ValidationStatus, string> = {
   PASS: "PASS",
+  CONDITIONAL: "조건부 PASS",
   FAIL: "FAIL",
   UNDETERMINED: "판정 불가",
   LEGACY: "이전 판정 체계",
 };
+
+/** 통과 판정 한 곳(계약 esl_validate_tiers.md §4.1) — 게이트(등록·적격·배지·RunAllBar)는 `=== "PASS"` 대신 이것만 쓴다. 서버 `core.verdicts.PASSING` 과 같은 값 */
+export const PASSING: readonly string[] = ["PASS", "CONDITIONAL"];
+export const isPassing = (s: string | null | undefined): boolean => !!s && PASSING.includes(s);
 
 type StatusLike = { status?: ValidationStatus | null; scheme?: string | null; verdict?: string | null };
 
@@ -16,7 +21,7 @@ type StatusLike = { status?: ValidationStatus | null; scheme?: string | null; ve
 export function statusOf(v: StatusLike): ValidationStatus {
   if (v.status) return v.status;
   if (!v.scheme) return "LEGACY";
-  return v.verdict === "PASS" || v.verdict === "FAIL" || v.verdict === "UNDETERMINED" ? v.verdict : "FAIL";
+  return v.verdict === "PASS" || v.verdict === "CONDITIONAL" || v.verdict === "FAIL" || v.verdict === "UNDETERMINED" ? v.verdict : "FAIL";
 }
 
 /** 라이브러리 항목 상태(esl_disp_primary.md §7): quality.scheme 없음 = LEGACY, 아니면 quality.status(없으면 quality.verdict) */
@@ -28,6 +33,7 @@ export function entryStatus(q: { scheme?: string | null; status?: ValidationStat
 export function StatusBadge({ v }: { v: StatusLike }) {
   const s = statusOf(v);
   if (s === "PASS") return <Badge kind="ok">PASS</Badge>;
+  if (s === "CONDITIONAL") return <Badge kind="warn">{STATUS_LABEL.CONDITIONAL}</Badge>;
   if (s === "FAIL") return <Badge kind="bad">FAIL</Badge>;
   if (s === "UNDETERMINED") return <span className="badge neutral">판정 불가</span>;
   return (

@@ -1,5 +1,5 @@
 // 변위 오차 r = e/U 의 log10 히스토그램(계약 esl_disp_primary.md §3.5): log10(r) 균등 bin, r = 0 노드는 n_zero 로 따로.
-// 점선 = 판정 기준(disp_rms_rel_max·disp_max_rel_max) — 범위 밖이면 그리지 않는다.
+// 점선 = 판정 기준(disp_rms_rel_max·disp_max_rel_max, 새 체계는 disp_rms_rel_cond_max 점선 1개 더) — 범위 밖이면 그리지 않는다.
 import type { DispHist } from "../api/types";
 import { f3 } from "../lib/colormap";
 import { ticks, useWidth } from "./MaxHoldChart";
@@ -7,7 +7,7 @@ import { ticks, useWidth } from "./MaxHoldChart";
 const M = { l: 52, r: 12, t: 10, b: 38 };
 const H = 200;
 
-export function DispHistogram({ hist, rmsCrit, maxCrit }: { hist: DispHist; rmsCrit?: number | null; maxCrit?: number | null }) {
+export function DispHistogram({ hist, rmsCrit, maxCrit, rmsCondCrit }: { hist: DispHist; rmsCrit?: number | null; maxCrit?: number | null; rmsCondCrit?: number | null }) {
   const { ref, width: W } = useWidth<HTMLDivElement>(480);
   const e = hist.edges_log10;
   if (!hist.counts.length || e.length < 2) return <div className="empty">변위 오차가 0인 노드뿐입니다(n_zero {hist.n_zero.toLocaleString()})</div>;
@@ -19,6 +19,7 @@ export function DispHistogram({ hist, rmsCrit, maxCrit }: { hist: DispHist; rmsC
   const marks = [
     { v: rmsCrit, t: "RMS 기준" },
     { v: maxCrit, t: "최대 기준" },
+    ...(typeof rmsCondCrit === "number" ? [{ v: rmsCondCrit, t: "RMS 조건부" }] : []), // v0.24.5: 없으면 DOM 동일
   ]
     .filter((m): m is { v: number; t: string } => typeof m.v === "number" && m.v > 0)
     .map((m) => ({ x: Math.log10(m.v), t: m.t }))

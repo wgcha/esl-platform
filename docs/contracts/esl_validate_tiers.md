@@ -187,7 +187,7 @@ reference·info 행·`reaction_role = info`(지그 3행) 규칙은 그대로. �
 - CONDITIONAL = **통과**(미결 Q-VT-2 기본 가정): 라이브러리 등록(422 아님·사유 불필요·confirmed_* 없음)·`eligibility` 적격(DOE·비드 최적화·Case 목록 배지)·재검증 PROMOTED·CLI 등록·run_all DONE(verdict CONDITIONAL, 문구 "④ 검증 조건부 PASS — 라이브러리 등록은 ④에서")·내보내기(경고 문구 "검증 조건부 PASS 상태로 내보냄" — 경고 유지, 막지 않음). csv `validation.csv` 열 불변(verdict 행 value CONDITIONAL, pass = PASS 일 때만).
 
 ### 4.2 DB · 등록 (migration `0017_validation_tiers`)
-- `validations`: 컬럼 `mac` Float NULL, `cond_reasons` JSONB NOT NULL DEFAULT `'[]'`. CHECK 교체 `ck_validations_verdict` += CONDITIONAL, `ck_validations_scheme` += `disp_primary/2`, 추가 `ck_validations_conditional`: verdict ≠ CONDITIONAL ∨ scheme = `disp_primary/2`.
+- `validations`: 컬럼 `mac` Float NULL, `cond_reasons` JSONB NOT NULL DEFAULT `'[]'`. CHECK 교체 `ck_validations_verdict` += CONDITIONAL, `ck_validations_scheme` += `disp_primary/2`, 추가 `ck_validations_conditional`: `verdict <> 'CONDITIONAL' OR (scheme = 'disp_primary/2') IS TRUE` (scheme NULL 이면 CONDITIONAL 불가 — NULL 에서 CHECK 가 통과로 새지 않도록 `IS TRUE`).
 - `run_alls`: `ck_run_alls_verdict` += CONDITIONAL.
 - 백필 없음(옛 행 mac NULL·cond_reasons []). downgrade = CONDITIONAL·`disp_primary/2` 행이 있으면 중단(데이터 보존 — 0008 선례).
 - `core_outputs.validation_fields` += `mac`(metric_value)·`cond_reasons`. 워커 `register_validation`: verdict 4값·VERDICT_SCHEMES 2값 허용, mac·cond_reasons 저장, 응답·`_quality_from`·`QUALITY_FROM_VALIDATION` += mac·cond_reasons. 라이브러리 등록 quality(`library.py:333`) += 같은 두 키.
@@ -259,12 +259,23 @@ reference·info 행·`reaction_role = info`(지그 3행) 규칙은 그대로. �
 
 ## 9. 결정 (요약 — 전문 `docs/decisions.md` 2026-11-24)
 
-D-0.24.5-VT-1 항목 등급·종합(§1.1·§1.2), VT-2 MAC 정의·위치(§1.3), VT-3 설정 키(§2), VT-4 fint 반력 통합(§1.4), VT-5 스키마(§1.5), VT-6 해시·stale·옛 결과 표시(§3), VT-7 migration 0017(§4.2), VT-8 통과 판정 한 곳·게이트(§4.1), VT-9 등급 순서·확인(§4.4), VT-10 화면(§4.5), VT-11 보고서(§4.6).
+D-0.24.5-VT-1 항목 등급·종합(§1.1·§1.2), VT-2 MAC 정의·위치(§1.3), VT-3 설정 키(§2), VT-4 fint 반력 통합(§1.4), VT-5 스키마(§1.5), VT-6 해시·stale·옛 결과 표시(§3), VT-7 migration 0017(§4.2), VT-8 통과 판정 한 곳·게이트(§4.1), VT-9 등급 순서·확인(§4.4), VT-10 화면(§4.5), VT-11 보고서(§4.6), VT-12 화면 출처 숨김(§11), VT-13 출처 계산 제외(§12).
 
 ## 10. 후속 (R-VT-n)
 
 - R-VT-1 저장 지표로 재판정만 하는 작업(다시 풀지 않음 — 옛 `compare_disp.npz` 에 d_rel·d_val 이 있어(`esl/report/field.py:357`) MAC 재계산 가능. 새 검증 행으로 등록할지·옛 행을 둘지 결정 필요).
 - R-VT-2 ③ 재현 MAC·umax 오차를 ④ 와 같은 강체 제거 규칙으로 맞출지(지금은 이름만 구분).
+
+## 11. 화면 출처 숨김 (사용자 결정 2026-11-24 — D-0.24.5-VT-12)
+
+사용자 원문: "경계력이랑 내력은 참고로도 쓰기 어려우니 웹에서 숨겨놓자. 지그 esl도 고정은 숨기자".
+
+- **표시만**: 웹 화면에서 출처 `bforce`·`fint`·`jig`(지그 고정)를 숨긴다. 계산·API 응답·저장 산출물(sources.json·05_val 폴더·스냅샷)·보고서(07_report·DOE 보고서)는 전 출처 그대로 — 정보 삭제 없음, 설정 한 줄로 되돌림. 보이는 출처 = `jig_disp`·`jig_spring`·`full`.
+- **설정 한 키**(하드코딩 금지): `ui.hidden_sources`(backend `UiCfg.hidden_sources`, 기본 `["bforce","fint","jig"]`, `config/esl_platform*.example.yaml`). `GET /version` 의 `ui.hidden_sources` 로 전달. 코어 설정 아님(코어 변경 불필요). 키가 없거나(옛 서버) `[]` 이면 v0.24.4 화면과 같다(탭·높이 동일 — Playwright 확인).
+- **거르는 곳 한 곳**: 화면 출처 표 `view3d/sources.ts`(`setHiddenSources`·`isHiddenSource`)를 읽는 `tabItemsOf`(Case ③ 3D 탭·④ 검증 탭·판정 표식), `loadSourceOptions`(스터디·비드 최적화 하중 출처 드롭다운 — 숨긴 출처 선택 불가), `doeTabs.visibleLoadSources`(스터디 하중 정의 탭·순위·3D·사유 줄·칩), `loadSourceChipOf`(결과 칩). 출처 이름 분기 없음. AppProvider 가 `/version` 을 받으면 설정을 넣고 화면을 한 번 다시 세운다.
+- 지그 그룹은 보이는 행이 2개(변위·스프링)이면 그대로 그룹 [변위|스프링](2560 펼침·1920 팝오버 규칙 유지). 기본 탭은 보이는 첫 출처(숨긴 출처가 응답 default·스냅샷 기본이어도).
+- 스터디 순위 기준(`metric_effective`)이 숨긴 출처이면 결과 카드에 한 줄 알림("순위 기준 출처(…)는 화면에서 숨겼습니다 …", `data-testid=hidden-primary-note`) — 정보 손실 없음(계산·저장 그대로).
+- 시험: 기본 설정에서 숨김 3출처가 어떤 탭·드롭다운에도 안 보임, `[]` 이면 v0.24.4 화면과 같음(vitest `validate_tiers.test.tsx` §11, Playwright 높이·탭 `/home/claude/shots/v0245h_*`).
 
 ## 12. 출처 계산 제외 (사용자 결정 2026-11-24 — 범위 추가)
 
@@ -272,7 +283,7 @@ D-0.24.5-VT-1 항목 등급·종합(§1.1·§1.2), VT-2 MAC 정의·위치(§1.3
 1. (2026-11-24 10:48) "경계력이랑 내력은 참고로도 쓰기 어려우니 웹에서 숨겨놓자. 지그 esl도 고정은 숨기자"
 2. (2026-11-24 11:16) "강성스터디랑 esl계산에서도 제외하는거지?" — 예.
 
-### 12.2 결정 (D-0.24.5-VT-12)
+### 12.2 결정 (D-0.24.5-VT-13)
 화면 숨김(`ui.hidden_sources`)은 B·F, **계산 제외는 코어 기본값**(설정으로 되돌릴 수 있음 — 하드코딩 없음, 출처 이름 분기 없음).
 
 | 대상 | 키(기본값 원본) | v0.24.4 → v0.24.5 | 끈 효과 |

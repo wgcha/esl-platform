@@ -42,6 +42,9 @@ export function installMockFetch() {
   if (dvs === "ok" || dvs === "notrun") server.valSourcesMode = dvs;
   // v0.24.4 지그 3방식 시연: ?demoJigRows=1 — ③ 3D·④ 검증 출처 행에 jig·jig_disp·jig_spring(고정·변위 가능, 스프링 = JIG_NOT_RUN). 없으면 옛 Case(4행)
   if (params.get("demoJigRows") === "1") server.jigRows = true;
+  // v0.24.5 화면 출처 숨김 시연: ?hiddenSources=default(실서버 기본 bforce·fint·jig) | <키,키…> | (없음 = 숨김 없음 = v0.24.4 화면)
+  const hs = params.get("hiddenSources");
+  if (hs) server.p3.hiddenSources = hs === "default" ? ["bforce", "fint", "jig"] : hs.split(",").filter(Boolean);
   // v0.12.0 검증 낙하 시연: ?demoVerify=1 doe-1 에 완료·실행 중·결과 모름 검증 낙하, ?verifyMode=disabled|writes_off
   if (params.get("demoVerify") === "1") server.verify.seedDemo("doe-1");
   const vm = params.get("verifyMode");

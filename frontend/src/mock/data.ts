@@ -265,6 +265,10 @@ export const VALIDATION_CRITERIA = {
   field_min_rel: 0.1,
 };
 
+const TIER_SCHEME = "disp_primary/2";
+/** 새 체계 criteria(계약 §1.5): 실제 적용값 + 새 키 3개. 반력은 로컬 기준(1e-6)을 그대로 둔다 */
+const TIER_CRITERIA = { ...VALIDATION_CRITERIA, disp_rms_rel_max: 0.05, disp_rms_rel_cond_max: 0.1, mac_min: 0.95, mac_cond_min: 0.9 };
+
 export function makeValidation(id: string, runId: string, caseId: string): ValidationOut {
   const hs = TSTAR_METRICS.max_strain.hotspots;
   return {
@@ -298,8 +302,15 @@ export function makeValidation(id: string, runId: string, caseId: string): Valid
 }
 
 /** 시험·시연용 변형: FAIL(변위 RMS 초과) · UNDETERMINED(전체 재해석 생략/변형 없음) · LEGACY(이전 판정 체계, 당시 verdict 유지) */
-export function variantValidation(v: ValidationOut, kind: "PASS" | "FAIL" | "UNDETERMINED" | "ZERO_DISP" | "LEGACY_FAIL" | "LEGACY_PASS"): ValidationOut {
+export function variantValidation(v: ValidationOut, kind: "PASS" | "FAIL" | "UNDETERMINED" | "ZERO_DISP" | "LEGACY_FAIL" | "LEGACY_PASS" | "TIER_PASS" | "TIER_COND" | "TIER_FAIL"): ValidationOut {
   switch (kind) {
+    // v0.24.5 새 체계(disp_primary/2, esl_validate_tiers.md §1.5): 단계 기준·MAC. 값은 계약 §1.1 경계 안(PASS ≤0.05·MAC ≥0.95 / 조건부 ≤0.10·MAC ≥0.90)
+    case "TIER_PASS":
+      return { ...v, scheme: TIER_SCHEME, status: "PASS", verdict: "PASS", disp_rms_rel: 2.4e-2, disp_max_rel: 3.1e-2, mac: 0.9931, cond_reasons: [], criteria: TIER_CRITERIA };
+    case "TIER_COND":
+      return { ...v, scheme: TIER_SCHEME, status: "CONDITIONAL", verdict: "CONDITIONAL", disp_rms_rel: 7.2e-2, disp_max_rel: 3.8e-2, mac: 0.9312, cond_reasons: ["DISP_RMS", "MAC"], fail_reasons: [], criteria: TIER_CRITERIA };
+    case "TIER_FAIL":
+      return { ...v, scheme: TIER_SCHEME, status: "FAIL", verdict: "FAIL", disp_rms_rel: 1.4e-1, disp_max_rel: 3.8e-2, mac: 0.62, cond_reasons: [], fail_reasons: ["DISP_RMS", "MAC"], criteria: TIER_CRITERIA };
     case "PASS":
       return v;
     case "FAIL":

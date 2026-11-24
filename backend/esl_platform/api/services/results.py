@@ -76,7 +76,8 @@ def get_validation(ctx: AppContext, vid: str, src: str | None = None) -> dict[st
     out = validation_out(case, run, val)
     fields = co.validation_fields(doc)
     for k in ("hotspots", "excluded", "verdict", "scheme", "undetermined_reason", "disp_rms_rel", "reaction_rel",
-              "disp_max_rel", "disp_noise_rel", "fail_reasons", "criteria", "field", "disp", "strain_ref"):
+              "disp_max_rel", "disp_noise_rel", "mac", "fail_reasons", "cond_reasons", "criteria", "field", "disp",
+              "strain_ref"):
         out[k] = fields[k]
     out["dir_rel"] = f"{co.D_VAL}/{row['dir']}"
     out["status"] = fields["verdict"] if fields["scheme"] else "LEGACY"
@@ -256,12 +257,14 @@ def _source_rows(ctx: AppContext, case: dict[str, Any], val: dict[str, Any], lat
     for row in plan["rows"]:
         r = _sj_row(sj, row["key"])
         base: dict[str, Any] = {"key": row["key"], "available": False, "code": None, "reason": None, "status": None,
-                                "fail_reasons": [], "undetermined_reason": None, "reaction_role": None,
+                                "fail_reasons": [], "undetermined_reason": None, "scheme": None, "cond_reasons": [],
+                                "reaction_role": None,
                                 "reaction_tol": None, "reaction_tol_key": None, "reaction_warn": None,
                                 "reaction_warned": None, "cond_text": None, "note": None, "limits": [], "limit_text": [], "comparable": None}
         if row["key"] == plan["legacy"]:       # 등록·DB 기준 — 상태 = DB(LEGACY 포함), 나머지 필드는 있으면 sources.json
             base.update(available=True, status=validation_status(val), fail_reasons=list(val.get("fail_reasons") or []),
-                        undetermined_reason=val.get("undetermined_reason"))
+                        undetermined_reason=val.get("undetermined_reason"), scheme=val.get("scheme"),
+                        cond_reasons=list(val.get("cond_reasons") or []))
             if r is not None and r.get("status") == "done":
                 _fill(base, r, with_verdict=False)
         elif loc is None:
@@ -279,6 +282,8 @@ def _fill(base: dict[str, Any], r: dict[str, Any], *, with_verdict: bool) -> Non
     if with_verdict:
         base["fail_reasons"] = list(r.get("fail_reasons") or [])
         base["undetermined_reason"] = r.get("undetermined_reason")
+        base["scheme"] = r.get("verdict_scheme") or None
+        base["cond_reasons"] = list(r.get("cond_reasons") or [])
     base["reaction_role"] = r.get("reaction_role")
     tol = r.get("reaction_tol")
     base["reaction_tol"] = float(tol) if isinstance(tol, (int, float)) and not isinstance(tol, bool) else None

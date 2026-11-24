@@ -64,7 +64,8 @@ import { loadRangeTop, loadUnitOf } from "../../view3d/values";
 import { groupFieldsOf, reconLineText } from "../../view3d/sources";
 import { useStudyRecon } from "../../view3d/useRecon";
 import type { SourceTabItem } from "../../view3d/sources";
-import { BF_GRADE_TEXT, LOAD_SOURCES, V3D_RECON_NONE_TEXT, nodalNote, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
+import { hiddenSourcesSig, isHiddenSource } from "../../view3d/sources";
+import { BF_GRADE_TEXT, V3D_RECON_NONE_TEXT, LOAD_SOURCES, hiddenPrimaryOf, nodalNote, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -1532,16 +1533,19 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const done = phase === "DONE";
   const result = usePolling(() => (done ? doe.results(id) : Promise.resolve(null)), 0, [id, done]);
   // v0.23.3 하중 정의 탭(D-0.23.3-4): 기본 = metric_effective, 탭마다 투영 결과만 화면에
-  const tabs = useMemo(() => (result.data && !isCompare ? tabState(result.data, LOAD_SOURCES) : null), [result.data, isCompare]);
+  // v0.24.5: 설정 ui.hidden_sources 가 거른 출처만(숨긴 출처의 탭·사유 줄·칩 없음 — 계산·저장은 그대로)
+  const hidSig = hiddenSourcesSig();
+  const loadSources = useMemo(() => LOAD_SOURCES.filter((x) => !isHiddenSource(x.key)), [hidSig]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tabs = useMemo(() => (result.data && !isCompare ? tabState(result.data, loadSources) : null), [result.data, isCompare, loadSources]);
   const [ltab, setLtab] = useState<LoadTab | null>(null);
   const curTab: LoadTab = tabs ? (ltab && (tabs.ok[ltab] || tabs.add[ltab]) ? ltab : tabs.def ?? "") : "";
   /** v0.24.1: 보기 없음 ∧ 자료 만들기 가능한 탭 = 본문이 사유 + 버튼 1개 */
   const addTab = !!tabs && !!curTab && !tabs.ok[curTab] && !!tabs.add[curTab];
-  const curSrc = tabs && curTab ? sourceOf(curTab, LOAD_SOURCES) : null;
-  const tabR = useMemo(() => (result.data ? (curSrc ? tabResult(result.data, curTab, LOAD_SOURCES) : result.data) : null), [result.data, curSrc, curTab]);
+  const curSrc = tabs && curTab ? sourceOf(curTab, loadSources) : null;
+  const tabR = useMemo(() => (result.data ? (curSrc ? tabResult(result.data, curTab, loadSources) : result.data) : null), [result.data, curSrc, curTab, loadSources]);
   /** 불가 출처의 첫 칩(사유 — v0.23.2 지그 미계산·불가 칩 유지)을 현재 탭 띠 앞에(원 결과로). 탭 없음(curSrc null) = 띠 기본 칩 전부 */
   const reasonChips = tabs && curSrc && result.data
-    ? LOAD_SOURCES.filter((x) => !tabs.ok[x.key] && x.chips.length).map((x) => <StatusChipOnly key={x.key} result={result.data!} kind={x.chips[0]} />)
+    ? loadSources.filter((x) => !tabs.ok[x.key] && x.chips.length).map((x) => <StatusChipOnly key={x.key} result={result.data!} kind={x.chips[0]} />)
     : null;
 
   /** v0.24.4 P3 사용 하중 출처 칩(스냅샷 load_source — 옛 스터디 = 칩 없음) */
@@ -1994,7 +1998,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           right={
             result.data ? (
               <span className="inline-actions">
-                {tabs && <LoadTabSeg ts={tabs} tab={curTab} setTab={setLtab} sources={LOAD_SOURCES} />}
+                {tabs && <LoadTabSeg ts={tabs} tab={curTab} setTab={setLtab} sources={loadSources} />}
                 <Downloads study={s} result={result.data} />
               </span>
             ) : undefined
@@ -2002,8 +2006,13 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
         >
           <ErrorLine text={result.error} />
           {/* 계산했는데 prep 결과가 불가인 노드 힘 출처: 사유를 마우스 없이 한 줄로(활성 빈 탭 본문이 이미 보이면 생략) */}
+          {result.data && tabs && hiddenPrimaryOf(result.data) && (
+            <div className="small muted" role="status" data-testid="hidden-primary-note">
+              순위 기준 출처({hiddenPrimaryOf(result.data)!.label})는 화면에서 숨겼습니다 — 아래는 표시 중인 출처로 투영한 순위입니다(계산·저장은 그대로).
+            </div>
+          )}
           {result.data &&
-            LOAD_SOURCES.map((x) => {
+            loadSources.map((x) => {
               const t = x.key === curTab && addTab ? null : nodalNote(result.data!, x);
               return t ? (
                 <div key={`nn-${x.key}`} className="small warn-text" role="status" data-testid="nodal-unavail-note" data-src={x.key}>

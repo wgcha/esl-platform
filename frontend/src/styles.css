@@ -1059,6 +1059,9 @@ details.card > .table-wrap {
 .stat.ok .stat-value {
   color: var(--ok);
 }
+.stat.warn .stat-value {
+  color: var(--wait);
+}
 .ovl {
   display: grid;
   gap: 0.5rem;
