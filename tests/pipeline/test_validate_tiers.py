@@ -82,7 +82,8 @@ def test_v0245_vt_6_golden_v0244_plus_intended_only(golden_runs):
         rj = _j(r["out"], pipeline.RUN_JSON)
         assert G.norm_summary(VC.back_summary(rj["stages"]["validate"]["summary"],
                                               os.path.join(r["out"], pipeline.D_VAL))) == g["summary"], name
-        seg = cur[name]["report"]
+        rep = os.path.join(r["out"], pipeline.D_REPORT, "report.html")
+        seg = G.report_segments(VC.back_cfg_sha_text(G._read(rep), r["out"]), r["root"])    # §12 되돌림 설정 sha
         changed = sorted(k for k in g["report"] if seg.get(k) != g["report"][k])
         assert set(seg) == set(g["report"]), name
         assert set(changed) <= {"validation.judge", "validation.val_src"}, (name, changed)
@@ -532,5 +533,5 @@ def test_v0245_vt_8_old_results_report_stage_reads_only(golden_runs, tmp_path, n
     assert rec["stages"]["report"]["summary"]["verdict"] == v["verdict"]
     html = G._read(os.path.join(out, pipeline.D_REPORT, "report.html"))
     gold = G.load_golden()["cases"][name]
-    html = VC.strip_val_src_tiers(html).replace(out, r["out"])           # 사본 경로 → 원 Case 경로(입력 경로는 같음)
+    html = VC.back_cfg_sha_text(VC.strip_val_src_tiers(html).replace(out, r["out"]), out)   # 사본 경로·§12 되돌림 설정 sha
     assert G.text_hash(html, r["root"]) == gold["files"]["07_report/report.html"]

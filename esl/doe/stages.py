@@ -3393,10 +3393,14 @@ def _sm_post(c: Ctx) -> dict | None:
         return None
     plan = _lt_plan(c)
     jig_ok = False
-    if S_["metric"] == "jig" and _jig(c) is not None:         # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
-        jd = _jig_doc(c)
+    jsrc = _jig_rank_src(c) if S_["metric"] == "jig" and _jig(c) is not None else None
+    if jsrc is not None:                                      # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
+        jd = _jig_src_doc(c, jsrc)
         jig_ok = bool(jd and jd.get("status") == "ok")
-    out = {**S_, "metric_effective": tp.metric_effective(plan, S_["metric"], jig_ok), "cross_mesh": tp.cross_mesh(plan)}
+    eff = tp.metric_effective(plan, S_["metric"], jig_ok)
+    if eff == "jig" and jsrc is not None:                     # v0.24.5 §12: 지그 순위 = 첫 계산 방식의 출처 지표(jig·jd·js)
+        eff = _jig_src_row(jsrc)["metric"]
+    out = {**S_, "metric_effective": eff, "cross_mesh": tp.cross_mesh(plan)}
     ls = c.D.get("load_source")
     if ls is not None:                         # v0.24.4 P3(esl_jig_case.md §9 — 새 스냅샷만, 키 없음 = 지금 동작·바이트 동일):
         out["load_source"] = str(ls)           # 순위 기준 = 출처 행 metric 열(bd_post _ls_rank_input 에서 준비 확인 후 바꿈)
@@ -4184,6 +4188,15 @@ def _jig_plan(c: Ctx) -> tuple[str, tuple]:
         if ls is not None and row["src"] == ls and m not in ms:
             ms.append(m)
     return td, tuple(ms)
+
+
+def _jig_rank_src(c: Ctx) -> str:
+    """rank.metric = jig 의 순위 출처(v0.24.5 esl_validate_tiers.md §12): 스냅샷 방식 목록(_jig_plan — 설정 순서)의 **첫 방식**의
+    출처 키(METHODS.src 열). 옛 스냅샷(키 없음 = fixed)·v0.24.4 스냅샷(fixed 가 첫째) = jig(C_jig — 바이트 동일), v0.24.5 기본
+    ([prescribed, spring] — 지그 고정 계산 제외) = jig_disp(C_jd). 이름 분기 없음."""
+    from esl.mech import jig_bc
+    ms = _jig_plan(c)[1]
+    return str(jig_bc.METHODS[ms[0]]["src"]) if ms else jig_bc.METHODS[jig_bc.basis_method()]["src"]
 
 
 def _jig_single_legacy(td: str, ms: tuple) -> bool:

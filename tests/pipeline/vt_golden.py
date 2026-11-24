@@ -41,13 +41,17 @@ def _read(path: str) -> str:
         return fh.read()
 
 
-def cfg_text() -> str:
-    """골든 설정 = 예시 yaml(float64) + disp_rms_rel_max 0.01 명시(기록 당시 예시 값)."""
+# v0.24.5 §12(출처 계산 제외 — 경계력·내력·지그 고정 기본 끔)를 설정으로 되돌림 = v0.24.4 기본과 같은 계산(골든 비교 조건)
+REENABLE_V0244 = "\nbforce:\n  enabled: true\njig:\n  methods: [fixed, prescribed, spring]\n"
+
+
+def cfg_text(reenable: bool = True) -> str:
+    """골든 설정 = 예시 yaml(float64) + disp_rms_rel_max 0.01 명시(기록 당시 예시 값) + (reenable) v0.24.5 끈 출처 다시 켬."""
     t = _read(os.path.join(ROOT, "config", "esl.example.yaml")).replace("disp_precision: float32",
                                                                          "disp_precision: float64")
     t2, n = re.subn(r"(\n  disp_rms_rel_max: )[0-9.eE+-]+", r"\g<1>0.01", t)
     assert n == 1
-    return t2
+    return t2 + (REENABLE_V0244 if reenable else "")
 
 
 def _sha(b: bytes) -> str:

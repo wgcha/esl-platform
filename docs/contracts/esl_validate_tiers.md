@@ -265,3 +265,27 @@ D-0.24.5-VT-1 항목 등급·종합(§1.1·§1.2), VT-2 MAC 정의·위치(§1.3
 
 - R-VT-1 저장 지표로 재판정만 하는 작업(다시 풀지 않음 — 옛 `compare_disp.npz` 에 d_rel·d_val 이 있어(`esl/report/field.py:357`) MAC 재계산 가능. 새 검증 행으로 등록할지·옛 행을 둘지 결정 필요).
 - R-VT-2 ③ 재현 MAC·umax 오차를 ④ 와 같은 강체 제거 규칙으로 맞출지(지금은 이름만 구분).
+
+## 12. 출처 계산 제외 (사용자 결정 2026-11-24 — 범위 추가)
+
+### 12.1 사용자 요청 (원문, 변경 금지)
+1. (2026-11-24 10:48) "경계력이랑 내력은 참고로도 쓰기 어려우니 웹에서 숨겨놓자. 지그 esl도 고정은 숨기자"
+2. (2026-11-24 11:16) "강성스터디랑 esl계산에서도 제외하는거지?" — 예.
+
+### 12.2 결정 (D-0.24.5-VT-12)
+화면 숨김(`ui.hidden_sources`)은 B·F, **계산 제외는 코어 기본값**(설정으로 되돌릴 수 있음 — 하드코딩 없음, 출처 이름 분기 없음).
+
+| 대상 | 키(기본값 원본) | v0.24.4 → v0.24.5 | 끈 효과 |
+|---|---|---|---|
+| Case 경계력·내력 | `bforce.enabled`(`esl/config.py` BFORCE_DEFAULTS, 예시 yaml 주석) | true → **false** | ③ `bforce`·`fint` 산출 없음(요약 code BF_DISABLED·FINT_DISABLED), ① 추출 request `bf_on 0`(워커 `h3d.bforce_request` — TCL 이 경계력 결과를 읽지 않음), ③ 보충 추출(on_demand) 판정 = 끔, ① `pack_bforce` 없음 |
+| Case 지그 고정 | `jig.methods`(`esl/mech/jig.py` JIG_DEFAULTS, 예시 yaml 주석) | [fixed, prescribed, spring] → **[prescribed, spring]** | ③ `jig.json/npz` 없음(요약 JIG_DISABLED, detail jig.methods). jig_disp·jig_spring 그대로 |
+| 스터디 경계력·내력 | `bforce.enabled`·`fint.enabled`(`esl/doe/__init__.py` DEFAULTS) | true → **false** | 새 스터디 노드 힘 출처 사이드카·보기 계산 없음 |
+| 스터디 지그 고정 | `rank.jig.methods`(DEFAULTS — JIG_DEFAULTS 거울) | 같음 → **[prescribed, spring]** | 새 스냅샷 C_jig 계산 없음 |
+| 스터디 기본 순위 | `rank.metric = jig` 해석 | C_jig 고정 | **스냅샷 방식 목록 첫 방식의 출처 지표**(`_jig_rank_src` — fixed 첫째 = jig 그대로, 새 기본 = jig_disp → `jd`). 준비 안 됨 = 지금처럼 solve |
+
+- ④ 검증: 계산하지 않은 출처는 지금 규칙대로 `row_status` unavailable(code = ESL 요약 BF_DISABLED·FINT_DISABLED·JIG_DISABLED) → 풀이 0(분해 묶음에서 빠짐).
+- full(전 노드)·jig_disp·jig_spring 은 그대로 계산.
+- 옛 스냅샷(rank.jig 키 없음 = LEGACY_ABSENT translation·fixed, v0.24.4 스냅샷의 명시 methods)·옛 Case 결과 = 바이트 동일(값을 스냅샷·설정에서 읽음).
+- 되돌림: `bforce: {enabled: true}` + `jig: {methods: [fixed, prescribed, spring]}` = v0.24.4 와 같은 산출물(골든 V-0245-VT-6 이 이 설정으로 비교).
+- 백엔드 거울(B): pydantic `BeadDoeBforceCfg/FintCfg.enabled`·`BeadDoeRankJigCfg.methods` 기본값과 `config/esl_platform*.example.yaml` 2개 — 같은 이름·값.
+- 시험 V-0245-VT-16: 기본 설정에서 끈 출처 산출물·풀이·bf_on 0, 되돌린 설정 = 골든, 옛 스냅샷 바이트 동일, 소요 시간 비교(합성).

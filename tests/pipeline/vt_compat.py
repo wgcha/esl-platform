@@ -162,6 +162,7 @@ def render_back(out: str) -> str | None:
 
     with open(os.path.join(out, "run.json"), encoding="utf-8") as fh:
         rec = json.load(fh)
+    rec = back_record_cfg(rec)
     rcfg = rec["config"]["snapshot"]["report"]
     with tempfile.TemporaryDirectory() as t:
         cp = os.path.join(t, "case")
@@ -170,6 +171,34 @@ def render_back(out: str) -> str | None:
         doc, _ = case_report.build_case_report(cp, record=rec, max_points=rcfg["max_points"],
                                                top_forces=rcfg["top_forces"])
     return doc.replace(cp, out)
+
+
+# v0.24.5 §12 되돌림 설정(vt_golden.REENABLE_V0244 — bforce.enabled true·jig.methods 세 방식) = v0.24.4 기본과 같은 계산. 보고서
+# 1절 "설정 sha256" 만 달라지므로 그 두 절을 뺀 스냅샷의 sha(= v0.24.4 때 같은 설정의 값)로 되돌린다.
+REENABLE_SNAP = {"bforce": {"enabled": True}, "jig": {"methods": ["fixed", "prescribed", "spring"]}}
+
+
+def _snap_sha(snap: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(snap, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def back_record_cfg(rec: dict) -> dict:
+    """run.json 기록의 config(snapshot·sha256)에서 §12 되돌림 절을 뺀 사본(그 절이 정확히 되돌림 값일 때만)."""
+    cfg = rec.get("config") or {}
+    snap = cfg.get("snapshot") or {}
+    if not all(snap.get(k) == v for k, v in REENABLE_SNAP.items()):
+        return rec
+    s2 = {k: v for k, v in snap.items() if k not in REENABLE_SNAP}
+    return {**rec, "config": {**cfg, "snapshot": s2, "sha256": _snap_sha(s2)}}
+
+
+def back_cfg_sha_text(text: str, out: str) -> str:
+    """파일 글자 안 설정 sha(되돌림 절 포함) → 절을 뺀 sha(보고서를 pipeline 이 직접 쓴 경우)."""
+    with open(os.path.join(out, "run.json"), encoding="utf-8") as fh:
+        rec = json.load(fh)
+    new = back_record_cfg(rec)
+    return text if new is rec else text.replace(rec["config"]["sha256"], new["config"]["sha256"])
 
 
 _SRC_BLOCK = re.compile(r"<!--val-src-->.*?<!--/val-src-->", re.DOTALL)

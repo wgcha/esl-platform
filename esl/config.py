@@ -431,7 +431,10 @@ OPTIONAL_SECTIONS = frozenset({"cumulative", "bforce", "jig"})
 # v0.24.0 경계력 ESL(계약 esl_bforce.md §9) 기본값 단일 출처 — 선택 절, cfg 에 주입 안 함(설정 해시 불변). 이름 후보 = 현장 확인 이름
 # "Contact Forces"·"Acceleration"(#82) 포함, 나머지는 Radioss 2026 /H3D/NODA 키워드 표시명 후보(현장 확인 후 설정에 더함).
 BFORCE_DEFAULTS = {
-    "enabled": True,
+    # v0.24.5(esl_validate_tiers.md §12 — 사용자 2026-11-24 "경계력이랑 내력은 참고로도 쓰기 어려우니 … 계산에서도 제외"): 기본 끔.
+    # false = ③ ESL 경계력·내력 산출 없음(BF_DISABLED·FINT_DISABLED) + ① 추출 request bf_on 0(워커 h3d) + ③ 보충 추출(on_demand) 없음.
+    # true 로 되돌리면 v0.24.4 와 같은 산출물(골든 시험)
+    "enabled": False,
     # v0.24.2(esl_bforce_ondemand.md §9 — D-0.24.2-BFD-7): ③ ESL 때 선택 프레임의 경계력 원자료가 01_extract 에 없으면 h3d 에서
     # 그 프레임만 보충(h3d 입력 Case, 워커가 읽음). false = v0.24.1 동작
     "on_demand": True,
