@@ -62,6 +62,8 @@ def test_bforce_request_keys():
     from esl_worker import h3d
 
     r = h3d.bforce_request({})
+    assert r["bf_on"] == "0"                                         # v0.24.5 §12: 기본 끔(추출 TCL 이 경계력 결과를 읽지 않음)
+    r = h3d.bforce_request({"bforce": {"enabled": True}})
     assert r["bf_on"] == "1" and r["bf_names_cont"].split("|")[0] == "Contact Forces"
     assert r["bf_names_acc"].split("|")[0] == "Acceleration" and r["bf_vec_comps"] == "X Y Z"
     r2 = h3d.bforce_request({"bforce": {"enabled": False, "result_names": {"cont": ["KF", "Contact Forces"]},

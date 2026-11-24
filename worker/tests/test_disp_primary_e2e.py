@@ -12,7 +12,7 @@ import sys
 import numpy as np
 import pytest
 import yaml
-from esl_test_support import API, REPO, H, create_case, make_settings_dict
+from esl_test_support import API, REPO, H, create_case, legacy_sources, make_settings_dict
 from sqlalchemy import text
 
 sys.path.insert(0, str(REPO / "tests" / "library"))
@@ -37,7 +37,7 @@ def settings_dict(tmp_path, fs):
     lib["library"]["ista6"] = str(REPO / "config" / lib["library"]["ista6"])
     lp = tmp_path / "library.e2e.yaml"
     lp.write_text(yaml.safe_dump(lib, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    d = make_settings_dict(tmp_path, report={"auto": False}, library={"config_path": str(lp)})
+    d = legacy_sources(make_settings_dict(tmp_path, report={"auto": False}, library={"config_path": str(lp)}))   # v0.24.5 §12
     d["core"]["settings"]["validation"]["full_solve"] = fs
     return d
 
@@ -89,8 +89,8 @@ def test_dp_pass_case_register_status_fields_section(client, synth_inputs, worke
 
     # ---- V-DP-10 / V-DP-11: 등록 → API
     v = client.get(f"{API}/validations/{vid}", headers=R).json()
-    assert vj["schema"] == "esl/validation/3"
-    assert v["verdict"] == v["status"] == "PASS" and v["scheme"] == "disp_primary/1" and v["fail_reasons"] == []
+    assert vj["schema"] == "esl/validation/4"
+    assert v["verdict"] == v["status"] == "PASS" and v["scheme"] == "disp_primary/2" and v["fail_reasons"] == []
     assert v["undetermined_reason"] is None
     assert v["disp_rms_rel"] == pytest.approx(m["disp_rms_rel"]["value"]) and v["disp_rms_rel"] < 1e-6
     assert v["disp_max_rel"] == pytest.approx(m["disp_max_rel"]["value"])
@@ -267,11 +267,11 @@ def test_dp_pass_case_register_status_fields_section(client, synth_inputs, worke
             return reg.register_validation(c, vjob, case, cdir)
 
     def legacy(d):
-        for k in ("verdict_scheme", "undetermined_reason", "disp", "strain_ref", "noise_source"):
+        for k in ("verdict_scheme", "undetermined_reason", "disp", "strain_ref", "noise_source", "cond_reasons"):
             d.pop(k, None)
         d["schema"] = "esl/validation/2"
         d["metrics"] = [{k: x for k, x in mm.items() if k not in ("role", "exceeded")} for mm in d["metrics"]
-                        if mm["metric"] not in ("disp_max_rel", "disp_noise_rel")] + [
+                        if mm["metric"] not in ("disp_max_rel", "disp_noise_rel", "mac")] + [
             {"metric": "disp_max_rel", "value": 0.001, "criterion": None, "pass": None}]
 
     out = register(legacy)
@@ -280,10 +280,10 @@ def test_dp_pass_case_register_status_fields_section(client, synth_inputs, worke
         row = cases_repo.get_validation(c, out["validation_id"])
     assert row["scheme"] is None and row["disp_noise_rel"] is None and row["disp"] is None and row["strain_ref"] is None
     assert row["undetermined_reason"] is None and row["disp_max_rel"] == pytest.approx(0.001)
-    out3 = register(lambda d: None)                                        # schema 3 그대로
+    out3 = register(lambda d: None)                                        # 코어 새 출력(schema 4) 그대로
     with engine.connect() as c:
         row3 = cases_repo.get_validation(c, out3["validation_id"])
-    assert out3["status"] == "PASS" and row3["scheme"] == "disp_primary/1" and row3["disp"]["n_nodes"] == N
+    assert out3["status"] == "PASS" and row3["scheme"] == "disp_primary/2" and row3["disp"]["n_nodes"] == N
     assert row3["disp_noise_rel"] == pytest.approx(m["disp_noise_rel"]["value"]) and row3["strain_ref"]["n_elems"] == len(
         synth_inputs["elem_id"])
 
@@ -305,7 +305,8 @@ def test_dp_pass_case_register_status_fields_section(client, synth_inputs, worke
         rowc = cases_repo.get_validation(c, cd["validation_id"])
     assert cd["status"] == cd["verdict"] == "CONDITIONAL" and cd["mac"] == pytest.approx(0.93) and cd["cond_reasons"] == ["MAC"]
     assert rowc["scheme"] == "disp_primary/2" and rowc["mac"] == pytest.approx(0.93) and rowc["cond_reasons"] == ["MAC"]
-    assert row3["mac"] is None and row3["cond_reasons"] == []                       # 옛 체계 행: mac NULL·[]
+    assert row["mac"] is None and row["cond_reasons"] == []                         # 옛 체계(LEGACY) 행: mac NULL·[]
+    assert row3["mac"] == pytest.approx(1.0) and row3["cond_reasons"] == []         # 코어 새 출력: 합성 Case = mac 1·조건부 사유 없음
     pf = register(tier("PASS", cond_reasons=[]))
     assert pf["status"] == "PASS" and pf["mac"] == pytest.approx(0.93) and pf["cond_reasons"] == []
     with pytest.raises(reg.RegisterError) as ei:                                     # CONDITIONAL 은 새 체계에서만
@@ -325,7 +326,7 @@ def test_dp_undetermined_case_api(client, synth_inputs, worker_factory, esl_root
     worker = worker_factory()
     cid, rid, vid = _through_validate(client, worker, lambda: create_case(client, synth_inputs))
     v = client.get(f"{API}/validations/{vid}", headers=R).json()
-    assert v["verdict"] == v["status"] == "UNDETERMINED" and v["scheme"] == "disp_primary/1"
+    assert v["verdict"] == v["status"] == "UNDETERMINED" and v["scheme"] == "disp_primary/2"
     assert v["undetermined_reason"] == "NO_FULL_SOLVE" and v["fail_reasons"] == []
     assert v["disp_rms_rel"] is None and v["disp_max_rel"] is None and v["reaction_rel"] is None and v["disp"] is None
     assert v["disp_noise_rel"] is not None and v["strain_ref"]["n_elems"] == len(synth_inputs["elem_id"])
@@ -376,7 +377,7 @@ def test_dp12_library_pass_and_legacy(client, worker_factory, inputs_root, esl_r
     r = client.post(f"{API}/library/entries", json={"esl_run_id": rid}, headers=W)       # PASS: 사유 불필요
     assert r.status_code == 201, r.text
     q = r.json()["quality"]
-    assert q["status"] == q["verdict"] == "PASS" and q["scheme"] == "disp_primary/1" and q["confirmed_fail"] is None
+    assert q["status"] == q["verdict"] == "PASS" and q["scheme"] == "disp_primary/2" and q["confirmed_fail"] is None
     assert q["confirmed_undetermined"] is None and q["disp_max_rel"] is not None and q["disp_noise_rel"] is not None
     assert q["strain_exceed_frac"] is not None and q["undetermined_reason"] is None
     # 이전 판정 체계(LEGACY): schema 2 산출물 + DB scheme NULL → 당시 verdict(PASS) 규칙, quality.scheme 없음

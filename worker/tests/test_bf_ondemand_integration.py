@@ -32,9 +32,9 @@ def fake_hw(tmp_path) -> Path:
 
 @pytest.fixture()
 def settings_dict(tmp_path, fake_hw):
-    from esl_test_support import make_settings_dict
+    from esl_test_support import legacy_sources, make_settings_dict
 
-    d = make_settings_dict(tmp_path)
+    d = legacy_sources(make_settings_dict(tmp_path))                    # v0.24.5 §12: 보충 추출은 bforce.enabled 일 때만
     d["altair"] = {"hw_exe_path": str(fake_hw), "max_concurrent_hw": 1}
     d["worker"]["slots"] = 2
     return d

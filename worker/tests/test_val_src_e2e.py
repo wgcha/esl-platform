@@ -9,7 +9,7 @@ import os
 import shutil
 
 import pytest
-from esl_test_support import API, H, create_case, make_settings_dict
+from esl_test_support import API, H, create_case, legacy_sources, make_settings_dict
 
 W = H("tok-power", True)
 R = H("tok-power")
@@ -22,7 +22,7 @@ def fs(request):
 
 @pytest.fixture()
 def settings_dict(tmp_path, fs):
-    d = make_settings_dict(tmp_path, report={"auto": False})
+    d = legacy_sources(make_settings_dict(tmp_path, report={"auto": False}))   # v0.24.5 §12: 끈 출처를 되돌려 6 출처 형식 시험
     d["core"]["settings"]["validation"]["full_solve"] = fs
     return d
 
