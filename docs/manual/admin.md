@@ -591,6 +591,14 @@ $env:PGPASSWORD = $null
 - 라이브러리 설정(`library.yaml`)의 설계 버전 비교 수렴 기준 `convergence`: `cos_min`(기본 0.95), `rep_same`(기본 true — 짝 대표(medoid)의 cos ≥ `cos_min` 이면 같은 대표, medoid 씬이 달라도 됨), `min_nodes_per_cell`(기본 64 — 셀당 노드 중앙값이 이보다 작으면 경고, 16 미만이면 "판정 신뢰 낮음" 배지), `coarsen`(false|half — 2×2 셀 묶음으로 cos 계산, 12×7 이하 격자에서는 무시). 설치본 `library.yaml`은 업데이트 때 덮어쓰지 않으므로 빠진 키는 이 기본값으로 채운다(이전 기본 0.9 를 적어 둔 파일은 그 값이 유지됨).
 - 오류 코드 `SOLVER_OUT_OF_MEMORY`: 쉘 솔버(조립·분해·해)나 코어 처리 중 메모리 부족(MemoryError, PARDISO error -2, CHOLMOD out-of-memory). 비양정치·구속 부족(`SOLVER_SINGULAR`)과 구분된다 — 13장 FAQ.
 
+### 4.5 v0.24.5 업데이트 안내(④ 판정 단계·MAC·출처 숨김·계산 제외)
+
+업데이트(§3.0)만 하면 **DB migration `0017_validation_tiers` 가 자동 적용**된다(`validations` 에 `mac`·`cond_reasons` 열, 판정 값에 `CONDITIONAL` 추가). 옛 검증 결과는 그대로이고(백필 없음) 화면에서 "이전 판정 체계"로 보인다. 새 기준·MAC 은 ④ **검증 다시 실행**(ESL 다시 계산 불필요)으로 반영된다.
+
+- **5 % / 10 % 기준을 쓰려면 현장 설정 1줄을 고친다.** 현장 코어 설정 `.runtime\config\esl.yaml` 의 `validation.disp_rms_rel_max` 가 예전 값(`0.01`)으로 남아 있으면 명시값이 우선하므로 PASS ≤ 1 %·조건부 ≤ 10 % 가 된다. `0.05` 로 바꾸고 **작업(ESL-Worker·ESL-Backend)을 재시작**해야 PASS ≤ 5 %·조건부 PASS ≤ 10 %(MAC ≥ 0.95 PASS·≥ 0.90 조건부) 가 된다. 조건부 상한·MAC 기준은 선택 키 `validation.disp_rms_rel_cond_max`(0.10)·`mac_min`(0.95)·`mac_cond_min`(0.90). 조건부 PASS 는 통과로 취급한다(라이브러리 등록·재검증 승격 가능, 표식만 다름).
+- **경계력·내력·지그 고정은 기본으로 계산하지 않고 화면에서도 숨긴다.** 코어 `esl.yaml`: `bforce.enabled` 기본 `false`(경계력·내력 산출·추출 `bf_on 0`·보충 추출 없음), `jig.methods` 기본 `[prescribed, spring]`(지그 고정 제외). 플랫폼 `esl_platform.yaml`: `bead_doe.bforce.enabled`·`bead_doe.fint.enabled` 기본 `false`, `bead_doe.rank.jig.methods` 기본 `[prescribed, spring]`. 옛 스냅샷·옛 결과는 바이트 그대로다.
+- **끈 출처를 다시 켜려면** 계산과 화면 두 곳을 맞춘다. 계산: 코어 `esl.yaml` 에 `bforce: {enabled: true}`·`jig: {methods: [fixed, prescribed, spring]}`, 플랫폼 `esl_platform.yaml` 에 `bead_doe: {bforce: {enabled: true}, fint: {enabled: true}, rank: {jig: {methods: [fixed, prescribed, spring]}}}`(켜면 v0.24.4 와 같은 산출물). 화면: `ui.hidden_sources`(기본 `[bforce, fint, jig]`)를 `[]` 로(또는 보일 출처만 빼고) 바꾼다. 화면 숨김은 표시만이라 계산·API·저장 산출물·보고서는 그대로다. 둘을 따로 바꿀 수 있다(계산은 끄고 화면만 보이기 = 사유 표시, 계산은 켜고 화면만 숨기기). 설정 변경 후 작업 재시작(§4.2).
+
 ---
 
 ## 10. 환경 점검
