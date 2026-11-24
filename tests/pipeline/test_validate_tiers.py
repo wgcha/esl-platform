@@ -501,3 +501,36 @@ def test_v0245_vt_copy_semantics_unchanged():
     assert [r["metric"] for r in vm.JUDGE_ROWS] == list(vm.FAIL_REASON)
     assert all(r["sense"] in vm.SENSES for r in vm.JUDGE_ROWS)
     assert copy.deepcopy(vs.ROW_METRICS)[-1] == "mac"
+
+
+# ====================================================================== V-8(코어) 옛 결과 = 저장 판정 그대로·바이트 불변
+def _tree_sha(d):
+    out = {}
+    for dp, _dns, fns in os.walk(d):
+        for f in fns:
+            p = os.path.join(dp, f)
+            with open(p, "rb") as fh:
+                out[os.path.relpath(p, d)] = hashlib.sha256(fh.read()).hexdigest()
+    return out
+
+
+@pytest.mark.parametrize("name", ["jig", "never"])
+def test_v0245_vt_8_old_results_report_stage_reads_only(golden_runs, tmp_path, name):
+    """옛 형식 05_val(v0.24.4 와 같은 문서)로 report 단계 → 05_val 파일 바이트 불변(다시 쓰지 않음), 보고서 = v0.24.4 골든
+    (출처 표의 MAC "—" 열·설명 끝 문장만 추가), 판정 머리 = 저장 판정(옛 단일 기준 — 재판정 없음)."""
+    r = golden_runs[name]
+    out = os.path.join(str(tmp_path), "out")
+    shutil.copytree(r["out"], out)
+    VC.back_tree(out)
+    vd = os.path.join(out, pipeline.D_VAL)
+    before = _tree_sha(vd)
+    v = _j(vd, "validation.json")
+    assert v["verdict_scheme"] == "disp_primary/1" and "cond_reasons" not in v
+    rec = pipeline.run(config_path=r["cfg"], rad=r["c"]["rad"], results=r["c"]["csv"], out=out, stage="report",
+                       echo=lambda *_: None)
+    assert _tree_sha(vd) == before
+    assert rec["stages"]["report"]["summary"]["verdict"] == v["verdict"]
+    html = G._read(os.path.join(out, pipeline.D_REPORT, "report.html"))
+    gold = G.load_golden()["cases"][name]
+    html = VC.strip_val_src_tiers(html).replace(out, r["out"])           # 사본 경로 → 원 Case 경로(입력 경로는 같음)
+    assert G.text_hash(html, r["root"]) == gold["files"]["07_report/report.html"]
