@@ -3492,6 +3492,8 @@ export interface DoeResultOut {
   view3d_jig_ref?: Record<string, string> | null;
   /** v0.23.2 지그 블록 없는 결과: 복제하면 지그가 계산되는가(블록 있으면 null) */
   jig_on_clone?: boolean | null;
+  /** v0.24.5 #88 후속: 이 모드의 계획 표 열 sm_jig — base = 지그 계산 모드, none = 이 모드는 지그 ESL 을 계산하지 않음(탭 사유를 이 값으로 고름). 모르는 조합 = null */
+  jig_plan?: "base" | "none" | null;
   /** v0.23.3 기준 d000 엔트리별 지그 진단(목표·맞춤·오차 3D + 값, esl_jig_view.md §1.5) — 사이드카 없으면 null */
   jig_diag?: DoeJigDiagOut | null;
   /** v0.23.3 하중 정의 탭 보기 {jig, full}(§2) — 지그 계산된 결과만 */

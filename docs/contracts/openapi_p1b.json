@@ -4556,6 +4556,21 @@
             ],
             "title": "Jig On Clone"
           },
+          "jig_plan": {
+            "anyOf": [
+              {
+                "enum": [
+                  "base",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jig Plan"
+          },
           "lin_form": {
             "anyOf": [
               {
