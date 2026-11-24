@@ -4335,3 +4335,85 @@ details.card.fold > .fold-body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------------------------------------------------------------- v0.24.6 VW 뷰어 (경계조건·하중 칩 · ⚙ 팝오버 · 구간 겹침 범례) — 모두 칸 위 겹침/절대 위치(세로 증가 0) */
+.v3d-view-bar .v3d-chip {
+  min-width: 0;
+  padding: 0 0.5rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.v3d-view-bar .v3d-bar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 0.2rem 0.2rem;
+  background: var(--line);
+}
+.v3d-gear {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.v3d-viewer-pop {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 4;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 13rem;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+.v3d-viewer-pop .v3d-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.v3d-legend-ov {
+  position: absolute;
+  left: 0.6rem;
+  top: 0.5rem;
+  z-index: 2;
+  max-width: 10rem;
+  padding: 0.25rem 0.4rem;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  pointer-events: none;
+  display: grid;
+  gap: 0.1rem;
+}
+.v3d-legend-ov-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v3d-legend-ov-band {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  line-height: 0;
+}
+.v3d-legend-ov-sw {
+  flex: none;
+  width: 1.1rem;
+  height: 100%;
+}
+.v3d-legend-ov-val {
+  line-height: 1;
+  transform: translateY(-50%);
+  min-height: 0.5rem;
+}
+.v3d-legend-ov-bar {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+.v3d-legend-ov-out,
+.v3d-legend-ov-max {
+  white-space: nowrap;
+}

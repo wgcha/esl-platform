@@ -13,7 +13,7 @@ export interface LoadView {
   runId: string;
   /** v0.24.1 하중 출처 키(없음 = legacy 전 노드 — 지금 화면 그대로) */
   src: string | null;
-  /** 범례 수동 범위 기억 키: legacy = runId 그대로(저장된 범위 유지), 그 밖 `runId:src` */
+  /** 범례 수동 범위 기억 키 = runId(출처 접미 없음 — v0.24.6 §2.6: 출처를 바꿔도 같은 수동 범위). 옛 출처별 키 `runId:src` 는 읽지 않고 그대로 둔다 */
   rangeKey: string;
   manifest: View3dOut | null;
   /** manifest 실패 사유(한국어 한 줄) */
@@ -97,7 +97,7 @@ export function useLoadView(runId: string | null, enabled: boolean, src?: string
   const requestFocus = useCallback((p: V3) => setFocusReq((r) => ({ point: p, seq: (r?.seq ?? 0) + 1 })), []);
 
   return useMemo(
-    () => (runId ? { runId, src: srcKey, rangeKey: srcKey ? `${runId}:${srcKey}` : runId, manifest, error, fallback, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload } : null),
+    () => (runId ? { runId, src: srcKey, rangeKey: runId, manifest, error, fallback, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload } : null),
     [runId, srcKey, manifest, error, fallback, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload],
   );
 }

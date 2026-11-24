@@ -147,7 +147,7 @@ describe("V-0241-V3D-17 useLoadView 출처", () => {
     await waitFor(() => expect(a.result.current?.error).toBeTruthy());
     expect(v3).toHaveBeenLastCalledWith("r1", "bforce");
     expect(forces).not.toHaveBeenCalled();
-    expect(a.result.current?.rangeKey).toBe("r1:bforce");
+    expect(a.result.current?.rangeKey).toBe("r1");
     const b = renderHook(() => useLoadView("r1", true, "full"));
     await waitFor(() => expect(forces).toHaveBeenCalledWith("r1", 100));
     expect(v3).toHaveBeenLastCalledWith("r1", undefined);
