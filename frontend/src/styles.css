@@ -3174,50 +3174,53 @@ details.doe-chip-detail[open] > :not(summary) {
   flex-wrap: wrap;
   min-width: 0;
 }
-/* §6 결과 2열(≤2200px 1열) */
-.doe-result-2col {
+/* §6 결과 3행(v0.24.6 §7 — 행1 3D 전체 폭 · 행2 순위 표 | 개선율 · 행3 민감도 전체 폭, 각 행이 한 화면) */
+.doe-result-rows {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
   gap: var(--gap);
-  align-items: start;
+  min-width: 0;
 }
-.doe-result-2col.solo {
-  grid-template-columns: minmax(0, 1fr);
-}
-.doe-result-left,
-.doe-result-right {
+.doe-row-3d,
+.doe-row-tables,
+.doe-row-sens,
+.doe-col-rank,
+.doe-col-pe {
   display: grid;
   gap: 0.6rem;
   align-content: start;
   min-width: 0;
 }
-@media (max-width: 2200px) {
-  .doe-result-2col {
+.doe-row-tables {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+  --tbl-max: calc(100vh - var(--topbar-h) - 18rem);
+}
+.doe-row-tables .doe-rank-wrap,
+.doe-row-tables .doe-per-esl-wrap {
+  --tbl-max: calc(100vh - var(--topbar-h) - 18rem);
+}
+/* 넘치면 표 안 스크롤·셀 줄바꿈 금지 */
+.doe-row-tables .doe-rank td,
+.doe-row-tables .doe-rank th {
+  white-space: nowrap;
+}
+/* 1500px 이하만 1열 */
+@media (max-width: 1500px) {
+  .doe-row-tables {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-/* §6.1 높이 예산(2201px 이상만 — 결과 단계 페이지 세로 스크롤 없이 결과 카드) */
-@media (min-width: 2201px) {
-  .doe-result-2col {
-    --doe-res-h: calc(100vh - var(--topbar-h) - 21rem);
-  }
-  .doe-result-left .doe-rank-wrap {
-    --tbl-max: calc(var(--doe-res-h) - 23rem);
-  }
-  /* 좁아진 왼쪽 열에서 셀 줄바꿈으로 행이 높아지지 않게(넘치면 표 안 가로 스크롤) */
-  .doe-result-left .doe-rank td,
-  .doe-result-left .doe-rank th {
-    white-space: nowrap;
-  }
-  .doe-result-left .doe-per-esl-wrap {
-    --tbl-max: 12rem;
-  }
-  .doe-result-right .doe-compare-grid .v3d-host {
-    height: calc(var(--doe-res-h) * 0.26);
-  }
-  .doe-result-right .doe-sens svg {
-    max-height: calc(var(--doe-res-h) * 0.15);
-  }
+/* 3D 칸: 한 화면에 들어오는 높이(2560 = 820px · 1920 = 702px) */
+.doe-row-3d .doe-compare-grid .v3d-host {
+  height: clamp(360px, calc(100vh - var(--topbar-h) - 22rem), 820px);
+}
+/* 민감도 svg: 전체 폭으로 늘이면 viewBox 비율로 너무 커짐 — 폭 제한·왼쪽 정렬 */
+.doe-row-sens .doe-sens svg {
+  display: block;
+  width: 100%;
+  max-width: 64rem;
+  max-height: calc(100vh - var(--topbar-h) - 8rem);
 }
 /* §7 새 스터디 ① 2열(≤2200px 1열) · 설명 ⓘ */
 .doe-inputs-cols {

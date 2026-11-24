@@ -3404,7 +3404,28 @@ export interface DoeJigEntryOut {
   /** 지그 노드 Kabsch 회전각(도) */
   rot_deg: number;
 }
+/** v0.24.6 지그 방식별 결과(esl_viewer_hv.md §9.2 — 코어 result.json jig.methods[src] 그대로 통과, 옛 결과 = 응답 methods null) */
+export interface DoeJigMethodOut {
+  method: string;
+  method_name: string;
+  tie_dofs: "normal" | "translation" | null;
+  /** ok = 계산됨 · 그 밖(fallback·poor 가 아닌 실패 등) = 계산 실패 */
+  status: string;
+  code: string | null;
+  detail: string | null;
+  fit_mac_min: number | null;
+  fit_umax_err_max: number | null;
+  warnings: string[];
+  limits: string[];
+  n_jig: number | null;
+  bc: Record<string, unknown> | null;
+  spring: Record<string, unknown> | null;
+}
 export interface DoeJigOut {
+  /** v0.24.6 지그 tie 자유도(법선 | 병진) — 옛 결과 null */
+  tie_dofs?: "normal" | "translation" | null;
+  /** v0.24.6 방식별 결과 {rank 출처 키: …} — 옛 단일 경로(고정만) 결과 = null */
+  methods?: Record<string, DoeJigMethodOut> | null;
   status: "ok" | "poor" | "fallback" | "unsupported";
   /** fallback·unsupported 사유 코드 1개(ok·poor = null) */
   code: string | null;
@@ -3490,6 +3511,13 @@ export interface DoeResultOut {
   view3d_jig?: Record<string, string> | null;
   view3d_jig_esl?: Record<string, string> | null;
   view3d_jig_ref?: Record<string, string> | null;
+  /** v0.24.6 지그 변위(jd)·스프링(js) 응답 3D(esl_viewer_hv.md §8.3 — 사이드카 병합, 없으면 null): did → `<did>_jd`, did → 최악 entry_id, entry_id → `d000_jd_e<kk>` */
+  view3d_jd?: Record<string, string> | null;
+  view3d_jd_esl?: Record<string, string> | null;
+  view3d_jd_ref?: Record<string, string> | null;
+  view3d_js?: Record<string, string> | null;
+  view3d_js_esl?: Record<string, string> | null;
+  view3d_js_ref?: Record<string, string> | null;
   /** v0.23.2 지그 블록 없는 결과: 복제하면 지그가 계산되는가(블록 있으면 null) */
   jig_on_clone?: boolean | null;
   /** v0.24.5 #88 후속: 이 모드의 계획 표 열 sm_jig — base = 지그 계산 모드, none = 이 모드는 지그 ESL 을 계산하지 않음(탭 사유를 이 값으로 고름). 모르는 조합 = null */
