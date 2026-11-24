@@ -241,7 +241,7 @@ vec3 gpuColor(float v) {
 }
 void main() {`,
       )
-      .replace("#include <color_vertex>", "#if defined( USE_COLOR )\n vColor = gpuColor( aValue );\n#endif");
+      .replace("#include <color_vertex>", "#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )\n vColor = vec4( gpuColor( aValue ), 1.0 );\n#endif");
   };
   surfMat.customProgramCacheKey = () => "esl-gpu-contour";
   const layers: { full: Layer | null; lod: Layer | null } = { full: null, lod: null };
@@ -884,7 +884,7 @@ void main() {`,
         for (const m of list) {
           const sp = textSprite(m.text, "●", { color: "#b45309", bg: "rgba(255,255,255,0.9)", px: 20 });
           sp.position.set(m.position[0], m.position[1], m.position[2]);
-          sp.center.set(0.05, 0.5);
+          sp.center.set(0.05, -0.1); // 표식 점 위쪽에 라벨(지지 기호 라벨은 아래쪽)
           sp.renderOrder = 11;
           sp.visible = layerOn.marks;
           scene.add(sp);

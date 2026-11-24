@@ -128,7 +128,7 @@ describe("V-L3-11 ④ 3D 하중 보기", () => {
     const sel = last("select");
     expect(sel[0]).toBe(2);
     expect(typeof sel[1]).toBe("number");
-    expect(screen.getByTestId("v3d-info").textContent).toMatch(/^노드 \d+ · 면압 [\d.]+ MPa · \|Fn\| /);
+    expect(screen.getByTestId("v3d-info").textContent).toMatch(/^노드 \d+ · u \([^)]*\) mm · 면압 [\d.]+ MPa · \|Fn\| .* · \([^)]*\) mm$/); // v0.24.6 §2.5: 노드 · u 성분 · 면압… · 좌표
     fireEvent.doubleClick(rows[4]);
     await waitFor(() => expect(last("focus")).toBeTruthy());
     expect((last("focus")[0] as number[]).length).toBe(3);
