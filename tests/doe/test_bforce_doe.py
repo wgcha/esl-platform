@@ -13,6 +13,7 @@ import pytest
 import synth_doe as sd
 import test_jig_stages as T
 
+from esl.doe import DEFAULTS
 from esl.doe import evaluate as ev
 from esl.doe import rank as rk
 from esl.doe import stages as stg
@@ -62,6 +63,9 @@ def _fake_case(root, entry_dir, F_bf, grade="contact"):
 
 def _setup(t, grade="contact"):
     mesh, doe = T.build_same(t)
+    bd = doe["cfg"]["bead_doe"]                       # v0.24.5 §12: 경계력·내력 기본 끔 → 이 시험(그 출처를 다룸)은 다시 켬
+    doe["cfg"] = {**doe["cfg"], "bead_doe": {**bd, "bforce": {**DEFAULTS["bforce"], "enabled": True},
+                                             "fint": {**DEFAULTS["fint"], "enabled": True}}}
     X = mesh["x0"]
     sm = ShellModel(X, mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"], backend="superlu")
     m = lumped_mass(mesh, 7.85e-9)
@@ -198,6 +202,8 @@ def test_v0240_g_add_source_existing_study(tmp_path):
 def test_v0240_unavailable_grade_none(tmp_path):
     """Case 에 경계력 자료 없음(등급 none) → 블록 unavailable + 사유, 보기 없음, 순위·결과 불변."""
     mesh, doe = T.build_same(tmp_path)
+    bd = doe["cfg"]["bead_doe"]                       # v0.24.5 §12: 경계력 기본 끔 → 켠 상태에서 자료 없음을 봄
+    doe["cfg"] = {**doe["cfg"], "bead_doe": {**bd, "bforce": {**DEFAULTS["bforce"], "enabled": True}}}
     out, post, ids = T.run(str(tmp_path / "o"), doe, mesh, rank=T.rank_snap())
     sd_ = _side(out)
     assert sd_["bforce"]["status"] == "unavailable" and sd_["bforce"]["code"] == "BF_NOT_FOUND"

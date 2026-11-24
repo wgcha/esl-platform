@@ -79,7 +79,8 @@ def _read(p):
 
 
 def new_jig(**over):
-    j = copy.deepcopy(DEFAULTS["rank"]["jig"])                # 지금 DEFAULTS = 새 스냅샷(normal·세 방식)
+    j = copy.deepcopy(DEFAULTS["rank"]["jig"])                # 지금 DEFAULTS = 새 스냅샷(normal·두 방식 — v0.24.5 §12 fixed 제외)
+    j["methods"] = ["fixed", "prescribed", "spring"]          # 이 시험 = v0.24.4 세 방식(fixed 다시 켬)
     j.update(over)
     return j
 

@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline"))
 import synth_case  # noqa: E402
+import vt_golden  # noqa: E402
 from test_bforce_stage import _add_bforce  # noqa: E402
 
 from esl import pipeline, val_src  # noqa: E402
@@ -34,7 +35,7 @@ def cases(tmp_path_factory):
             _add_bforce(c, c["csv"], fint_sign=-1.0)
         cfg = os.path.join(root, "esl64.yaml")
         with open(CFG, encoding="utf-8") as fh:
-            txt = fh.read().replace("disp_precision: float32", "disp_precision: float64")
+            txt = fh.read().replace("disp_precision: float32", "disp_precision: float64") + vt_golden.REENABLE_V0244  # v0.24.5 §12: 끈 출처(경계력·내력·지그 고정)를 다시 켬 — 이 시험은 그 출처를 다룸
         with open(cfg, "w", encoding="utf-8") as fh:
             fh.write(txt)
         o = os.path.join(root, "out")

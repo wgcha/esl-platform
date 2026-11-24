@@ -21,6 +21,7 @@ import shutil
 import numpy as np
 import pytest
 import synth_case
+import vt_golden
 from test_bforce_stage import _add_bforce
 
 from esl import config as cfgm
@@ -34,7 +35,7 @@ from esl.rad import writer as rw
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 with open(os.path.join(ROOT, "config", "esl.example.yaml"), encoding="utf-8") as _fh:
-    CFG_TEXT = _fh.read().replace("disp_precision: float32", "disp_precision: float64")
+    CFG_TEXT = _fh.read().replace("disp_precision: float32", "disp_precision: float64") + vt_golden.REENABLE_V0244  # v0.24.5 §12: 끈 출처(경계력·내력·지그 고정)를 다시 켬 — 이 시험은 그 출처를 다룸
 TAG = "jigcase-t1"
 SRCS = tuple(r["src"] for r in jig_bc.METHODS.values())
 NY = 26
@@ -465,7 +466,7 @@ def test_v15_config_jig_section():
     assert cfgm.jig_settings(None) == jig.JIG_DEFAULTS and cfgm.jig_settings({}) is not jig.JIG_DEFAULTS
     assert cfgm.jig_settings({"jig": {"spring_alpha": 0.5}})["spring_alpha"] == 0.5
     import yaml
-    base_cfg = yaml.safe_load(CFG_TEXT)
+    base_cfg = yaml.safe_load(CFG_TEXT.replace(vt_golden.REENABLE_V0244, ""))     # 예시 yaml 그대로(§12 되돌림 절 없이)
     v = cfgm.validate_settings(json.loads(json.dumps(base_cfg)))
     assert "jig" not in v                                                         # 절 없음 = cfg 주입 없음(설정 해시 불변)
     good = json.loads(json.dumps(base_cfg))
