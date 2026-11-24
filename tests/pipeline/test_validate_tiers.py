@@ -13,9 +13,9 @@ import shutil
 
 import numpy as np
 import pytest
-
 import vt_compat as VC
 import vt_golden as G
+
 from esl import config as cfgm
 from esl import pipeline
 from esl import val_metrics as vm
@@ -95,7 +95,7 @@ def test_v0245_vt_6_golden_v0244_plus_intended_only(golden_runs):
 def test_v0245_vt_7_sources_same_values_everywhere(golden_runs):
     """V-0245-VT-7: 출처 행마다 mac·grade·cond_reasons 가 sources.json 행·출처 validation.json·run.json 요약에서 같은 값."""
     seen = set()
-    for name, r in golden_runs.items():
+    for r in golden_runs.values():
         out = r["out"]
         sj = _j(out, pipeline.D_VAL, vs.SOURCES_JSON)
         summ = _j(out, pipeline.RUN_JSON)["stages"]["validate"]["summary"]
@@ -215,7 +215,7 @@ def test_v0245_vt_2_verdict_order_and_rows():
     assert _verdict({"disp_rms_rel": 0.07, "disp_max_rel": 0.2})[1] == ("FAIL", ["DISP_MAX"], ["DISP_RMS"])
     assert _verdict({"disp_rms_rel": 0.2, "mac": 0.5}, und="NO_FULL_SOLVE")[1] == ("UNDETERMINED", [], [])
     # skipped judge = FAIL(불변), 응답 0 → MAC None → FAIL MAC
-    rows, (v, fail, cond) = _verdict({"mac": None})
+    rows, (v, fail, _cond) = _verdict({"mac": None})
     m = next(x for x in rows if x["metric"] == "mac")
     assert m["status"] == "skipped" and m["grade"] is None and m["pass"] is None and (v, fail) == ("FAIL", ["MAC"])
     assert vm.verdict_of([], None) == ("PASS", [], [])                                 # 빈 목록 PASS
@@ -233,7 +233,7 @@ def test_v0245_vt_5_reaction_warn_tiers_rows(reac, grade):
     r = next(x for x in rows if x["metric"] == "reaction_rel")
     assert (r["grade"], r["criterion"], r["criterion_cond"]) == (grade, 0.05, 0.10)
     assert v == grade and ("REACTION" in cond) is (grade == "CONDITIONAL") and ("REACTION" in fail) is (grade == "FAIL")
-    rows, (v1, *_r) = _verdict({"reaction_rel": reac}, {**CRIT, "reaction_rel_max": 0.10})    # 주의 없음 = 단일 0.10
+    rows, _vv = _verdict({"reaction_rel": reac}, {**CRIT, "reaction_rel_max": 0.10})    # 주의 없음 = 단일 0.10
     r = next(x for x in rows if x["metric"] == "reaction_rel")
     assert r["criterion_cond"] is None and r["grade"] == ("FAIL" if reac > 0.10 else "PASS")
     row = vs.plan("fint")
@@ -249,14 +249,14 @@ def test_v0245_vt_3_mac_definition():
     import synth_case
 
     assert vm.mac is bfm.mac                                                           # 식 복제 없음(같은 객체)
-    X0, conn, et, thk = synth_case.plate()
+    X0 = synth_case.plate()[0]
     rng = np.random.default_rng(7)
     n = X0.shape[0]
     u_rel = 1e-2 * np.c_[np.sin(X0[:, 0] / 40.0), np.cos(X0[:, 1] / 30.0), X0[:, 0] * X0[:, 1] / 1e4]
     u_val = u_rel + 1e-4 * rng.standard_normal((n, 3))
     R = np.zeros((n, 3))
     F = np.ones((n, 3))
-    kw = dict(top_n=5, hist_bins=10)
+    kw = {"top_n": 5, "hist_bins": 10}
     nid = np.arange(1, n + 1)
     U = float(np.max(np.linalg.norm(u_rel, axis=1)))
     m0 = vm.disp_metrics(X0, u_rel, np.c_[u_val, np.zeros((n, 3))], R, F, [0, 1, 2], U, nid, **kw)

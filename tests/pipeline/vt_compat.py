@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import io
 import json
 import os
 import re
@@ -218,5 +217,5 @@ def back_tree(out: str) -> None:
 
 
 def _dump(p: str, obj) -> None:
-    with io.open(p, "w", encoding="utf-8") as fh:
+    with open(p, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=1)
