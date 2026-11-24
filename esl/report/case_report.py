@@ -447,11 +447,15 @@ def _sec_val_sources(c: _Case) -> str:
                         else f' <span class="small muted">({H.esc(_reac_crit_text(r))})</span>'),
                      lim or "—", why))
     cap = ('<p class="small muted">같은 정의(목표 u_rel·양쪽 선형 강체 제거·Σ‖R‖/Σ‖F‖)·같은 기준값으로 출처마다 검증한 결과. '
-           "반력 허용치는 출처마다 설정(validation.sources.reaction_tol)으로 정하며 표의 괄호 값이 판정에 쓴 값이다. 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다. "
-           "v0.24.5 이후 검증은 MAC(검증)(변형 형상 일치)도 판정에 넣고 단계(PASS·조건부 PASS·FAIL)로 판정한다 — 이전 검증은 MAC '—'·단일 기준 그대로.</p>")
+           "반력 허용치는 출처마다 설정(validation.sources.reaction_tol)으로 정하며 표의 괄호 값이 판정에 쓴 값이다. 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다."
+           + VAL_SRC_TIERS_NOTE + "</p>")
     return ("<!--val-src--><h3>출처별 판정</h3>" + cap
             + H.table(["출처", "판정", "변위 RMS/U", "변위 최대/U", "MAC(검증)", "반력 Σ‖R‖/Σ‖F‖", "한계", "조건·사유"], rows,
                       num=(2, 3, 4, 5), raw=(1, 5)) + "<!--/val-src-->")
+
+
+VAL_SRC_TIERS_NOTE = (" v0.24.5 이후 검증은 MAC(검증)(변형 형상 일치)도 판정에 넣고 단계(PASS·조건부 PASS·FAIL)로 판정한다 — "
+                      "이전 검증은 MAC '—'·단일 기준 그대로.")       # 출처 표 머리 설명 끝 문장(§4.6)
 
 
 def _reac_crit_text(r: dict) -> str:
