@@ -107,14 +107,15 @@ def test_rank_v3d_mirrors_models_and_nodal():
 
 
 def test_rank_v3d_mirrors_core_column():
-    """코어 RANK_SOURCES 열 v3d(C1 가 추가 — 아직 없으면 키 목록만 대조)."""
+    """코어 RANK_SOURCES 열 v3d(C1)와 실제 대조 — 모든 행에 열이 있고 값(응답 키 3개 | None)이 거울과 같다. 열 v3d_store·v3d_tag 도 확인."""
     from esl.doe import stages as stg
     from esl_platform.api.services.doe import RANK_V3D
 
     assert [s["key"] for s in stg.RANK_SOURCES] == list(RANK_V3D)
     for row in stg.RANK_SOURCES:
-        if "v3d" in row:
-            assert (tuple(row["v3d"]) if row["v3d"] else None) == RANK_V3D[row["key"]], row["key"]
+        assert "v3d" in row and "v3d_tag" in row and "v3d_store" in row, row["key"]          # 열 없음 = 대조 건너뜀 금지
+        assert (tuple(row["v3d"]) if row["v3d"] else None) == RANK_V3D[row["key"]], row["key"]
+        assert (row["v3d"] is None) == (row["v3d_tag"] is None), row["key"]
 
 
 def test_methods_model_mirrors_core_fields():

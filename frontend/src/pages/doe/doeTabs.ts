@@ -425,7 +425,10 @@ export function tabState(r: DoeResultOut, sources: readonly LoadSource[] = LOAD_
     ok[s.key] = !!views[s.key] || s.key === primary;
     reason[s.key] = ok[s.key] ? null : s.unavailable(r);
     const sa = sourceAddOf(r, s);
-    add[s.key] = !ok[s.key] && !!sa?.available && sa.allowed;
+    // v0.24.6 통합: 지그 방식 행이 계산됐는데 순위 보기(rank_views)가 없으면(no_view — 예: view3d.jig_diag 끔) 3D 다시 만들기는 보기를
+    // 만들 수 없다(코어 _jig_extras 는 그 조건에서 아무것도 쓰지 않음) — 빈 탭의 [다시 만들기] 버튼을 두지 않고 사유 줄만 보인다
+    const noView = s.jigMethod && jigMethodState(r, s.key).state === "no_view";
+    add[s.key] = !ok[s.key] && !noView && !!sa?.available && sa.allowed;
     // 만들 수 있는데 권한이 없거나 작업 중이면 탭 비활성 + 그 사유를 덧붙임(정보 삭제 없음)
     if (!ok[s.key] && sa?.available && !sa.allowed && sa.reason) reason[s.key] = `${reason[s.key]} (${sa.reason})`;
   }
