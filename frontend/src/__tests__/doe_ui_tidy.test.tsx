@@ -89,14 +89,14 @@ describe("V-UI-4·5·6·7 결과 카드(한 정보 한 자리 · 상태 띠 · �
     const menu = within(dl).getByTestId("doe-files-menu");
     expect(within(menu).getByRole("link", { name: /include inc_mesh\.inc/ })).toBeTruthy();
     expect(menu.textContent).toMatch(/받기 · 최적 d\d{3}/);
-    const right = res.querySelector(".doe-result-right") as HTMLElement;
+    const right = res.querySelector(".doe-row-3d") as HTMLElement;   // v0.24.6 §7: 3D 행(전체 폭)
     const acts = within(right).getByTestId("doe-pick-actions");
     expect(within(acts).getByTestId("vd-open")).toBeTruthy();
     expect(within(acts).getByTestId("redrop")).toBeTruthy();
     expect(screen.getAllByTestId("vd-open")).toHaveLength(1);
     expect(within(right).getByText("3D 비교")).toBeTruthy();
-    expect(within(right).getByText("민감도")).toBeTruthy();
-    const left = res.querySelector(".doe-result-left") as HTMLElement;
+    expect(within(res.querySelector(".doe-row-sens") as HTMLElement).getByText("민감도")).toBeTruthy();
+    const left = res.querySelector(".doe-row-tables") as HTMLElement;
     expect(within(left).getByRole("table", { name: "ESL별 개선율" })).toBeTruthy();
     // 한 정보 한 자리(§9)
     const txt = document.body.textContent ?? "";

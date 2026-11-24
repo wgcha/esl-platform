@@ -20,7 +20,7 @@ const openJig = (id: string, mod?: (r: DoeResultOut) => DoeResultOut) =>
 const heads = (t: HTMLElement) => within(t).getAllByRole("columnheader").map((h) => h.textContent?.trim() ?? "");
 const tabBtn = (k: "jig" | "full") => screen.getByTestId("doe-load-tab").querySelector(`[data-tab=${k}]`) as HTMLButtonElement;
 const sensText = () => {
-  const st = [...document.querySelectorAll(".doe-result-right .sub-title")].find((x) => x.textContent === "민감도");
+  const st = [...document.querySelectorAll(".doe-row-sens .sub-title")].find((x) => x.textContent === "민감도");
   return st?.parentElement?.textContent ?? "";
 };
 
@@ -64,7 +64,7 @@ describe("하중 정의 탭(doe-40 지그 ok)", () => {
     expect(screen.getByTestId("v3d-jig-mode")).toBeTruthy();
     expect(screen.queryByTestId("v3d-mode")).toBeNull();
     const sJig = sensText();
-    const bodyJig = document.querySelector(".doe-result-2col")!.textContent ?? "";
+    const bodyJig = document.querySelector(".doe-result-rows")!.textContent ?? "";
     expect(bodyJig).not.toMatch(/재풀이 C 비|불평형/);
     fireEvent.click(tabBtn("full"));
     await waitFor(() => expect(heads(screen.getByRole("table", { name: "순위표" }))).toContain("재풀이 C"));
@@ -77,7 +77,7 @@ describe("하중 정의 탭(doe-40 지그 ok)", () => {
     const tog = screen.queryByTestId("rank-aux-toggle");
     if (tog) fireEvent.click(tog);
     await waitFor(() => expect(heads(screen.getByRole("table", { name: "순위표" }))).not.toContain("지그 C 비"));
-    expect(document.querySelector(".doe-result-2col")!.textContent).not.toMatch(/지그 C|umax\(지그\)/);
+    expect(document.querySelector(".doe-result-rows")!.textContent).not.toMatch(/지그 C|umax\(지그\)/);
     expect(sensText()).not.toBe(sJig);                                   // 민감도 = 탭 score
     expect(screen.getByTestId("v3d-cond").textContent).toMatch(/^하중: 전 노드 ESL 재풀이 · 지지: 3-2-1/);
   }, 30000);

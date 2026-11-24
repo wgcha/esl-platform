@@ -2,7 +2,7 @@
 // 좌표 mm·Z-up. onDemand 렌더: 카메라·상태 변경 때만 requestAnimationFrame 1회. 언마운트 시 geometry·material·texture·renderer dispose.
 // v0.12.5: 회전은 TrackballControls(화면 공간, 극점 제한 없음 — 상하·좌우 무한 연속 회전). up 이 회전을 따라 바뀌므로 맞춤 보기에서 +Z 로 복원.
 import {
-  AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
+  AmbientLight, BufferAttribute, BufferGeometry, CanvasTexture, Color, DataTexture, FloatType, LineBasicMaterial, LineSegments, NearestFilter, RGBAFormat, ConeGeometry, DirectionalLight, DoubleSide, HemisphereLight, InstancedMesh,
   Matrix4, Mesh, MeshBasicMaterial, Points, PointsMaterial, MeshLambertMaterial, OrthographicCamera, PerspectiveCamera, Quaternion, Raycaster, Scene, ShaderMaterial, SphereGeometry, Sprite, SpriteMaterial,
   SRGBColorSpace, Vector2, Vector3, Vector4, WebGLRenderTarget, WebGLRenderer,
 } from "three";
@@ -12,11 +12,11 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { ARROW_COLOR, ARROW_PICK_PX, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_SCALE, CONE_PX, LINE_PX, SUPPORT_LINE_PX, type ArrowSpec } from "./arrows";
 import { applyDeform } from "./deform";
-import { LUT_DIV_LINEAR, LUT_LINEAR, fillVertexColors, srgbToLinear } from "./colors";
+import { LUT_DIV_LINEAR, LUT_LINEAR, LUT_SIZE, NAN_LINEAR, srgbToLinear } from "./colors";
 import { idToRgb, type IdPatch, type Rect } from "./select/lasso";
 import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
-import type { CreateScene, GeoData, PickEvent, SceneApi, SceneOptions } from "./sceneApi";
+import type { CameraState, CreateScene, GeoData, PickEvent, SceneApi, SceneOptions, ViewerSceneLayer } from "./sceneApi";
 import { fitView, validBbox, viewBasis, type Bbox, type FitResult } from "./viewFit";
 import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
 import { PAN_SPEED, STATIC_MOVING, WHEEL_ZOOM_SPEED, trackballRotateSpeed } from "../lib/viewerControls";
@@ -71,12 +71,16 @@ export class FreeRotateControls extends TrackballControls {
   }
 }
 
+/** aValue 의 NaN 표지(셰이더가 3.0e38 초과를 uNaN 색으로) */
+const VALUE_NAN = 3.4e38;
+
 interface Layer {
   geo: GeoData;
   mesh: Mesh;
   geometry: BufferGeometry;
   position: BufferAttribute;
-  color: BufferAttribute;
+  /** 정점 스칼라 aValue(GPU 색칠 입력). NaN·비유한 = VALUE_NAN 표지 */
+  value: BufferAttribute;
   base: Float32Array;
   dirty: boolean;
 }
@@ -192,20 +196,67 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     });
   };
 
+  // v0.24.6 층 표시 상태(visible 만 바꾼다 — 다시 만들 때도 이 상태를 따른다)
+  const layerOn: Record<ViewerSceneLayer, boolean> = { supports: true, arrows: true, ghost: true, marks: true };
+  let camCb: ((s: CameraState) => void) | null = null;
+  let applyingCam = false;
+
   // ---- 표면
+  // v0.24.6 GPU 재색칠: 정점 값 aValue + 색표 텍스처, 범위·레벨은 uniform. 조명은 Lambert 그대로(색 = 정점 단계에서 계산해 vColor 로).
+  const lutData = new Float32Array(LUT_SIZE * 4);
+  const setLutData = (lin: Float32Array) => {
+    for (let k = 0; k < LUT_SIZE; k++) {
+      lutData[k * 4] = lin[k * 3];
+      lutData[k * 4 + 1] = lin[k * 3 + 1];
+      lutData[k * 4 + 2] = lin[k * 3 + 2];
+      lutData[k * 4 + 3] = 1;
+    }
+  };
+  setLutData(LUT_LINEAR);
+  const lutTex = new DataTexture(lutData, LUT_SIZE, 1, RGBAFormat, FloatType);
+  lutTex.minFilter = NearestFilter;
+  lutTex.magFilter = NearestFilter;
+  lutTex.needsUpdate = true;
+  const uni = {
+    uMin: { value: 0 },
+    uMax: { value: 1 },
+    uLevels: { value: 0 },
+    uLut: { value: lutTex },
+    uNaN: { value: new Vector3(NAN_LINEAR[0], NAN_LINEAR[1], NAN_LINEAR[2]) },
+  };
   const surfMat = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
+  surfMat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, uni);
+    sh.vertexShader = sh.vertexShader
+      .replace(
+        "void main() {",
+        `attribute float aValue;
+uniform float uMin; uniform float uMax; uniform float uLevels; uniform sampler2D uLut; uniform vec3 uNaN;
+vec3 gpuColor(float v) {
+  if (v > 3.0e38) return uNaN;
+  float t = (uMax > uMin) ? clamp((v - uMin) / (uMax - uMin), 0.0, 1.0) : 0.0;
+  if (uLevels > 0.5) t = (min(floor(t * uLevels), uLevels - 1.0) + 0.5) / uLevels;
+  float k = floor(t * ${(LUT_SIZE - 1).toFixed(1)} + 0.5);
+  return texture2D(uLut, vec2((k + 0.5) / ${LUT_SIZE.toFixed(1)}, 0.5)).rgb;
+}
+void main() {`,
+      )
+      .replace("#include <color_vertex>", "#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )\n vColor = vec4( gpuColor( aValue ), 1.0 );\n#endif");
+  };
+  surfMat.customProgramCacheKey = () => "esl-gpu-contour";
   const layers: { full: Layer | null; lod: Layer | null } = { full: null, lod: null };
   let u: Float32Array | null = null;
   let kscale = 0;
-  let colorArgs: { values: Float32Array; min: number; max: number } | null = null;
+  let fieldValues: Float32Array | null = null;
+  let valueUploads = 0;
   let lodTimer: ReturnType<typeof setTimeout> | null = null;
 
   const makeLayer = (geo: GeoData, compute: boolean): Layer => {
     const geometry = new BufferGeometry();
     const position = new BufferAttribute(new Float32Array(geo.positions), 3);
-    const color = new BufferAttribute(new Float32Array(geo.positions.length).fill(0.75), 3);
+    const value = new BufferAttribute(new Float32Array(geo.positions.length / 3).fill(VALUE_NAN), 1);
     geometry.setAttribute("position", position);
-    geometry.setAttribute("color", color);
+    geometry.setAttribute("aValue", value);
     geometry.setIndex(new BufferAttribute(geo.indices, 1));
     if (compute) geometry.computeVertexNormals(); // 로드 직후 1회 — 변형 중 재계산 없음
     else geometry.computeVertexNormals();
@@ -213,7 +264,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     const mesh = new Mesh(geometry, surfMat);
     mesh.frustumCulled = false;
     scene.add(mesh);
-    return { geo, mesh, geometry, position, color, base: geo.positions, dirty: false };
+    return { geo, mesh, geometry, position, value, base: geo.positions, dirty: false };
   };
   const disposeLayer = (l: Layer | null) => {
     if (!l) return;
@@ -223,10 +274,17 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   const srcOf = (l: Layer) => l.geo.src;
 
   let lut: Float32Array = LUT_LINEAR;
+  /** aValue 업로드(필드가 바뀔 때만) */
   const paintLayer = (l: Layer) => {
-    if (!colorArgs) return;
-    fillVertexColors(colorArgs.values, colorArgs.min, colorArgs.max, l.color.array as Float32Array, srcOf(l), lut);
-    l.color.needsUpdate = true;
+    if (!fieldValues) return;
+    const out = l.value.array as Float32Array;
+    const src = srcOf(l);
+    const n = src ? src.length : fieldValues.length;
+    for (let i = 0; i < n; i++) {
+      const v = fieldValues[src ? src[i] : i];
+      out[i] = Number.isFinite(v) ? v : VALUE_NAN;
+    }
+    l.value.needsUpdate = true;
   };
   const deformLayer = (l: Layer) => {
     const out = l.position.array as Float32Array;
@@ -359,6 +417,12 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     scene.add(arrowHead);
     updateLineArrows();
   };
+  const applyArrowVis = () => {
+    const on = layerOn.arrows;
+    if (arrowHead) arrowHead.visible = on;
+    for (const g of lineGroups) g.obj.visible = on;
+    for (const sp of arrowLabels) sp.visible = on;
+  };
   const clearArrows = () => {
     if (arrowHead) {
       scene.remove(arrowHead);
@@ -440,12 +504,37 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     supSprites.length = 0;
   };
 
+  const applySupVis = () => {
+    const on = layerOn.supports;
+    if (supLines) supLines.visible = on;
+    for (const sp of supSprites) sp.visible = on;
+  };
+  // v0.24.6 최대·최소 표식 스프라이트, 원형 외곽선
+  const markSprites: Sprite[] = [];
+  let markTexts: string[] = [];
+  const clearMarkSprites = () => {
+    for (const s of markSprites) {
+      scene.remove(s);
+      s.material.map?.dispose();
+      s.material.dispose();
+    }
+    markSprites.length = 0;
+  };
+  const ghostMat = new LineBasicMaterial({ color: 0x8a93a0 });
+  let ghost: LineSegments | null = null;
+  const clearGhost = () => {
+    if (!ghost) return;
+    scene.remove(ghost);
+    ghost.geometry.dispose();
+    ghost = null;
+  };
+
   // 화면 크기 고정 스프라이트: 높이 px → scale
   const sizeSprites = () => {
     const h = Math.max(1, canvas.clientHeight);
     // sizeAttenuation=false: 원근은 깊이로 나눠져 2·tan(FOV/2), 직교는 보이는 높이(월드) 그대로
     const t = proj === "ortho" ? orthoVisibleH() : 2 * Math.tan((FOV * Math.PI) / 360);
-    for (const s of [...supSprites, ...arrowLabels]) {
+    for (const s of [...supSprites, ...arrowLabels, ...markSprites]) {
       const frac = (s.userData.px as number) / h;
       s.scale.set(frac * t * (s.userData.aspect as number), frac * t, 1);
     }
@@ -501,6 +590,17 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     controls.update();
     sizeSprites();
     invalidate();
+    emitCam();
+  };
+  const cameraState = (): CameraState => ({
+    position: v3(camera.position),
+    target: v3(controls.target),
+    up: v3(camera.up),
+    halfH: orthoHalfH,
+    zoom: ortho.zoom,
+  });
+  const emitCam = () => {
+    if (!applyingCam && camCb) camCb(cameraState());
   };
   const fitBox = (b: Bbox) => {
     const eye = v3(tmpDir.copy(camera.position).sub(controls.target));
@@ -525,6 +625,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
   controls.addEventListener("change", () => {
     moved = true;
     invalidate();
+    emitCam();
   });
   controls.addEventListener("start", () => {
     interacting = true;
@@ -555,7 +656,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     if (camera === ortho && ortho.near < 0) raycaster.ray.origin.addScaledVector(raycaster.ray.direction, ortho.near);
     const pxW = pxWorldAt; // 거리 t 에서 1 px 의 월드 길이(직교는 거리 무관)
     // 1) 지지 기호 2) 화살표 3) 표면 — 화살표는 화면 공간(투영 선분까지 px 거리, 머리 포함) 허용 ARROW_PICK_PX
-    const supIdx = supports.findIndex((s) => {
+    const supIdx = !layerOn.supports ? -1 : supports.findIndex((s) => {
       const v = new Vector3(s.position[0], s.position[1], s.position[2]).sub(raycaster.ray.origin);
       const t = v.dot(raycaster.ray.direction);
       if (t <= 0) return false;
@@ -572,6 +673,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       return { p: ndcToPx(tmpPick.x, tmpPick.y, W, H), z: tmpPick.z };
     };
     const ssegs = arrows.map((a, i): ScreenSeg | null => {
+      if (!layerOn.arrows) return null;
       const A = toPx(a.tail);
       const B = toPx([a.tail[0] + a.dir[0] * a.length, a.tail[1] + a.dir[1] * a.length, a.tail[2] + a.dir[2] * a.length]);
       if (Math.abs(A.z) > 1 || Math.abs(B.z) > 1) return null; // 근/원 평면 밖(원근 카메라 뒤 포함)
@@ -624,20 +726,31 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
         layers.full.dirty = true; // 첫 표시는 LOD, 250 ms 뒤 전체 해상도
         scheduleFull();
       }
-      if (colorArgs) {
+      if (fieldValues) {
         paintLayer(layers.full);
         if (layers.lod) paintLayer(layers.lod);
       }
       invalidate();
     },
     setColors(values, min, max) {
-      colorArgs = { values, min, max };
+      api.setField!(values);
+      api.setLegend!({ min, max, levels: 0 });
+    },
+    setField(values) {
+      fieldValues = values;
+      valueUploads++;
       if (layers.lod) {
         paintLayer(layers.lod);
         layers.full!.dirty = true;
         if (!layers.lod.mesh.visible) paintLayer(layers.full!), (layers.full!.dirty = false);
         else scheduleFull();
       } else if (layers.full) paintLayer(layers.full);
+      invalidate();
+    },
+    setLegend(l) {
+      uni.uMin.value = l.min;
+      uni.uMax.value = l.max;
+      uni.uLevels.value = l.levels;
       invalidate();
     },
     setDeform(uu, k) {
@@ -666,6 +779,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
         });
         sizeSprites();
       }
+      applyArrowVis();
       invalidate();
     },
     setSupports(list) {
@@ -688,6 +802,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
         supLines.renderOrder = 8;
         scene.add(supLines);
       }
+      applySupVis();
       sizeSprites();
       invalidate();
     },
@@ -706,11 +821,14 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       camera.position.add(delta);
       controls.update();
       invalidate();
+      emitCam();
     },
     fit(bbox) {
       // 인자 없음 = 기존 동작(등각 +X+Y+Z·up +Z·모델 중심), bbox = 지금 시선 그대로 그 bbox 를 꽉 차게(화면비 반영)
-      if (bbox === undefined) fit();
-      else fitBox(validBbox(bbox) ? bbox : modelBbox);
+      if (bbox === undefined) {
+        fit();
+        emitCam();
+      } else fitBox(validBbox(bbox) ? bbox : modelBbox);
     },
     setView(axis, sign = 1, bbox) {
       const b = validBbox(bbox) ? bbox : modelBbox;
@@ -747,6 +865,72 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     onPick(cb) {
       pickCb = cb;
     },
+    setLayerVisible(layer, on) {
+      layerOn[layer] = on;
+      if (layer === "arrows") applyArrowVis();
+      else if (layer === "supports") applySupVis();
+      else if (layer === "ghost") {
+        if (ghost) ghost.visible = on;
+      } else for (const sp of markSprites) sp.visible = on;
+      invalidate();
+    },
+    setValueMarks(list) {
+      const texts = list.map((m) => m.text);
+      if (markSprites.length === list.length && texts.every((t, i) => t === markTexts[i])) {
+        list.forEach((m, i) => markSprites[i].position.set(m.position[0], m.position[1], m.position[2])); // 위치만
+      } else {
+        clearMarkSprites();
+        markTexts = texts;
+        for (const m of list) {
+          const sp = textSprite(m.text, "●", { color: "#b45309", bg: "rgba(255,255,255,0.9)", px: 20 });
+          sp.position.set(m.position[0], m.position[1], m.position[2]);
+          sp.center.set(0.05, -0.1); // 표식 점 위쪽에 라벨(지지 기호 라벨은 아래쪽)
+          sp.renderOrder = 11;
+          sp.visible = layerOn.marks;
+          scene.add(sp);
+          markSprites.push(sp);
+        }
+        sizeSprites();
+      }
+      invalidate();
+    },
+    setGhostEdges(base, pairs) {
+      clearGhost();
+      if (base && pairs && pairs.length) {
+        const g = new BufferGeometry();
+        g.setAttribute("position", new BufferAttribute(new Float32Array(base), 3));
+        g.setIndex(new BufferAttribute(pairs, 1));
+        ghost = new LineSegments(g, ghostMat);
+        ghost.frustumCulled = false;
+        ghost.renderOrder = 3;
+        ghost.visible = layerOn.ghost;
+        scene.add(ghost);
+      }
+      invalidate();
+    },
+    cameraState,
+    applyCameraState(st) {
+      applyingCam = true;
+      try {
+        camera.position.set(st.position[0], st.position[1], st.position[2]);
+        camera.up.set(st.up[0], st.up[1], st.up[2]);
+        controls.target.set(st.target[0], st.target[1], st.target[2]);
+        camera.lookAt(controls.target);
+        if (camera === ortho) {
+          orthoHalfH = st.halfH;
+          ortho.zoom = st.zoom;
+          applyOrtho();
+        } else persp.updateProjectionMatrix();
+        controls.update();
+        sizeSprites();
+        invalidate();
+      } finally {
+        applyingCam = false;
+      }
+    },
+    onCameraChange(cb) {
+      camCb = cb;
+    },
     setMarkers(points) {
       if (marks) {
         scene.remove(marks);
@@ -764,8 +948,8 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     },
     setColorMap(map) {
       lut = map === "diverging" ? LUT_DIV_LINEAR : LUT_LINEAR;
-      if (layers.full) paintLayer(layers.full);
-      if (layers.lod) paintLayer(layers.lod);
+      setLutData(lut);
+      lutTex.needsUpdate = true;
       invalidate();
     },
     setElements(tri2elem, nElems) {
@@ -927,7 +1111,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       }
       invalidate();
     },
-    stats: () => ({ renders }),
+    stats: () => ({ renders, valueUploads, colorLoops: 0 }),
     dispose() {
       disposed = true;
       if (raf) cancelAnimationFrame(raf);
@@ -939,6 +1123,10 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       controls.dispose();
       clearArrows();
       clearSupports();
+      clearMarkSprites();
+      clearGhost();
+      ghostMat.dispose();
+      lutTex.dispose();
       disposeLayer(layers.full);
       disposeLayer(layers.lod);
       disposeElemLayer();

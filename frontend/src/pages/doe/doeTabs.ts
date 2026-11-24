@@ -21,11 +21,20 @@ export type ChipKind = "jig" | "lt" | "mq" | "best_clean_mq" | "best_clean" | "n
 export type View3dKind = "jig" | "full" | "pair";
 /** v0.24.0 응답 쌍 3D 키(결과의 view3d 사전 이름) + 조건 줄 하중 문구 */
 export interface PairKeys {
-  dir: "view3d_jig" | "view3d_bf" | "view3d_fi";
-  esl: "view3d_jig_esl" | "view3d_bf_esl" | "view3d_fi_esl";
-  ref: "view3d_jig_ref" | "view3d_bf_ref" | "view3d_fi_ref";
+  dir: "view3d_jig" | "view3d_bf" | "view3d_fi" | "view3d_jd" | "view3d_js";
+  esl: "view3d_jig_esl" | "view3d_bf_esl" | "view3d_fi_esl" | "view3d_jd_esl" | "view3d_js_esl";
+  ref: "view3d_jig_ref" | "view3d_bf_ref" | "view3d_fi_ref" | "view3d_jd_ref" | "view3d_js_ref";
   load: string;
+  /** v0.24.6 3D 조건 줄 지지 문구 틀(§8.3) — {tie} = jig.tie_dofs 문구(TIE_DOFS_TEXT). 화면은 이 열만 읽음 */
+  support: string;
+  /** v0.24.6 3D 변위 색 라벨(§8.3) */
+  disp: string;
 }
+
+/** 지그 tie 자유도 → 조건 줄 문구({tie} 자리) */
+export const TIE_DOFS_TEXT: Record<string, string> = { normal: "법선", translation: "병진" };
+/** 조건 줄 지지 문구 완성: {tie} 를 결과 jig.tie_dofs 로(없으면 "–") */
+export const supportText = (tpl: string, tie: string | null | undefined): string => tpl.replace("{tie}", (tie && TIE_DOFS_TEXT[tie]) || "–");
 
 /** v0.24.0 노드 힘 출처 열(esl_fint.md §8 — 경계력·내력 공용): 칩·[계산] 버튼·비활성 사유·3D 조건 줄은 이 열만 읽는다(출처 이름 분기 없음) */
 export interface NodalCols {
@@ -56,8 +65,8 @@ export interface SourceAddCols {
   hint: string;
   /** 버튼 title(가능할 때) */
   title: string;
-  /** 옛 거울 키(source_add 가 없는 응답 폴백) */
-  legacy: "view3d_regen" | "bforce_add" | "fint_add";
+  /** 옛 거울 키(source_add 가 없는 응답 폴백 — 새 출처(v0.24.6 jd·js)는 옛 응답이 없으므로 null) */
+  legacy: "view3d_regen" | "bforce_add" | "fint_add" | null;
 }
 
 /** v0.24.1 재현 진단 열: jigdiag = 지그 진단(JigDiag) · sidecar = 범용 ReconDiag(결과 키 = 엔트리 → 폴더) · null = 해당 없음(V3D_RECON_NA) */
@@ -98,19 +107,77 @@ export interface LoadSource {
   recon: ReconCols;
   /** v0.24.1 자료 만들기 열(그 밖 null) */
   add: SourceAddCols | null;
+  /** v0.24.6 지그 방식 열: true = 탭 사유·사유 줄을 jigMethodState(응답 jig.methods)로 고름(§9) */
+  jigMethod: boolean;
 }
 
 /** v0.24.4 지그 방식 행(jig_disp·jig_spring)이 순위·진단에서 숨길 키(다른 출처 값 — 백엔드 VIEW_DROP_JIG 거울) */
 const JIG_VIEW_DROP = ["C", "C_solve", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"] as const;
 const JIG_VIEW_HIDE: readonly (keyof DoeResultOut)[] = ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"];
-/** 이 스터디가 그 지그 방식을 계산하지 않은 탭 사유(JIG_METHOD_NOT_RUN — 옛 스냅샷·P2c 전) */
-export const JIG_METHOD_NOT_RUN_TEXT = (label: string) => `이 스터디에서 계산하지 않은 방식입니다: ${label} — 새 스터디·복제에서 계산(rank.jig.methods)`;
-/** v0.24.5 #88 후속: 모드가 지그 ESL 을 계산하지 않음(계획 표 열 sm_jig = none — 응답 jig_plan). 복제해도 같으므로 위 문구와 구분 */
-export const JIG_MODE_NONE_TEXT = (label: string) => `이 모드는 지그 ESL 을 계산하지 않습니다: ${label} — 안·형상마다 다른 메시를 비교하는 모드라 복제해도 같습니다`;
-/** 지그 방식 탭 사유 — 계획 열(jig_plan)로만 고름(모드 이름 비교 없음). 열 값 없음(옛 응답) = 옛 문구 */
-function jigMethodUnavailable(r: DoeResultOut, key: string): string {
-  return (r.jig_plan === "none" ? JIG_MODE_NONE_TEXT : JIG_METHOD_NOT_RUN_TEXT)(SR(key).label);
+/** v0.24.6 지그 방식 탭 상태 4가지(esl_viewer_hv.md §9.1): 화면 문구는 이 표 한 곳(JIG_STATE_TEXT) — 다른 곳에 글자를 두지 않는다 */
+export type JigMethodStateKind = "no_jig" | "not_planned" | "failed" | "no_view";
+export const JIG_DETAIL_MAX = 120;
+export const JIG_STATE_TEXT = {
+  /** r.jig 없음 — 지그를 계산하지 않은 스터디(복제하면 계산하는지는 jig_on_clone) */
+  no_jig: { why: "이 스터디는 지그를 계산하지 않았습니다", clone: " — 복제하면 지그를 계산합니다" },
+  /** 옛 단일 경로(고정만)·방식 목록에 없음 = 현재 설정으로 복제 / 모드가 지그 ESL 을 계산하지 않음(계획 열 jig_plan = none — 복제해도 같음, v0.24.5 #88 후속) */
+  not_planned: {
+    why: (label: string) => `이 스터디에서 계산하지 않은 방식입니다: ${label} — 복제(현재 설정 rank.jig.methods)로 다시 계산`,
+    whyMode: (label: string) => `이 모드는 지그 ESL 을 계산하지 않습니다: ${label} — 안·형상마다 다른 메시를 비교하는 모드라 복제해도 같습니다`,
+  },
+  /** 계산했지만 실패(methods[key].status ≠ ok) — 마우스 없이 보이는 줄에 다음 행동을 덧붙임 */
+  failed: {
+    why: (label: string, code: string, detail: string) => `${label} 계산 실패: ${code}${detail ? ` — ${detail}` : ""}`,
+    next: " — 3D 다시 만들기로는 고칠 수 없습니다. 원인을 고친 뒤 복제로 다시 계산",
+  },
+  /** 계산은 됐는데 순위 보기가 없음(기준 d000 의 C 값 없음) */
+  no_view: {
+    why: (label: string, col: string, warn: string) => `${label}: 계산됐지만 기준(d000) 값 ${col} 가 없어 순위를 만들지 못했습니다${warn ? ` — ${warn}` : ""}`,
+  },
+} as const;
+
+export interface JigMethodState {
+  /** 4상태 + ok(계산됨·보기 있음 — 탭 가능, 사유 없음) */
+  state: JigMethodStateKind | "ok";
+  /** 탭 사유(탭 title·sr-only·초점 줄·팝오버 — detail 은 120자) */
+  why: string;
+  /** 전체 문구(title — detail 전체) */
+  title: string;
+  /** 마우스 없이 보이는 줄(failed·no_view 만, 그 밖 null) */
+  note: string | null;
 }
+
+/** 지그 방식 탭 상태(응답만 읽음 — 모드·출처 이름 비교 없음). 판정 순서: 계획 열 none → r.jig 없음 → methods 없음/키 없음 → 실패 → 보기 없음 */
+export function jigMethodState(r: DoeResultOut, key: string): JigMethodState {
+  const label = SR(key).label;
+  const plain = (state: JigMethodStateKind, why: string): JigMethodState => ({ state, why, title: why, note: null });
+  const T = JIG_STATE_TEXT;
+  if (r.jig_plan === "none") return plain("not_planned", T.not_planned.whyMode(label));
+  if (!r.jig) return plain("no_jig", T.no_jig.why + (r.jig_on_clone ? T.no_jig.clone : ""));
+  const m = r.jig.methods?.[key] ?? null;
+  if (!m) return plain("not_planned", T.not_planned.why(label));
+  if (m.status !== "ok") {
+    const detail = (m.detail ?? "").trim();
+    const full = T.failed.why(label, m.code ?? "–", detail);
+    const why = detail.length > JIG_DETAIL_MAX ? T.failed.why(label, m.code ?? "–", `${detail.slice(0, JIG_DETAIL_MAX)}…`) : full;
+    return { state: "failed", why, title: full, note: why + T.failed.next };
+  }
+  const views = (r.rank_views ?? {}) as Record<string, unknown>;
+  if (!views[key]) {
+    const why = T.no_view.why(label, sourceOf(key)?.perEslKey ?? key, (m.warnings ?? [])[0] ?? "");
+    return { state: "no_view", why, title: why, note: why };
+  }
+  return { state: "ok", why: "", title: "", note: null };
+}
+
+/** 지그 방식 사유 줄(열 jigMethod 가 참인 출처만 — failed·no_view). 전체 문구 = title */
+export function jigMethodNote(r: DoeResultOut, s: LoadSource): { text: string; title: string; state: JigMethodState["state"] } | null {
+  if (!s.jigMethod) return null;
+  const st = jigMethodState(r, s.key);
+  return st.note ? { text: st.note, title: st.title, state: st.state } : null;
+}
+/** 지그 방식 탭 사유 — 보기가 없을 때(응답 jig·jig.methods·jig_plan 으로 고름) */
+const jigMethodUnavailable = (r: DoeResultOut, key: string): string => jigMethodState(r, key).why;
 
 export const REGEN_HINT_FULL = "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다";
 export const REGEN_HINT_JIG = "3D 다시 만들기로 지그 탭 자료(순위·진단)를 만들 수 있습니다";
@@ -135,6 +202,15 @@ const addOfNodal = (n: NodalCols): SourceAddCols => ({
   title: `형상 생성 없이 안마다 ${n.addLabel.replace(/ 계산$/, "")} 하중으로 선형 풀이해 [${n.addLabel.replace(/ 계산$/, "")}] 탭 자료를 만듭니다(기존 결과 파일 그대로). ${n.addHint}`,
   legacy: n.add,
 });
+/** v0.24.6 지그 변위·스프링 3D 다시 만들기(§8.2 — 지그 행과 같은 작업, 한 작업이 빠진 방식 3D 를 모두 만든다) */
+const addOfJigMethod = (src: "jig_disp" | "jig_spring", testid: string): SourceAddCols => ({
+  src,
+  label: "지그 3D 다시 만들기",
+  testid,
+  hint: "3D 다시 만들기로 지그 변위·스프링 3D 를 만들 수 있습니다",
+  title: "계산된 지그 방식의 응답 3D 만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐). 한 번에 빠진 방식 3D 를 모두 만듭니다",
+  legacy: null,
+});
 const ADD_JIG: SourceAddCols = { src: "jig", label: "지그 3D 다시 만들기", testid: "v3d-regen", hint: REGEN_HINT_JIG, title: "지그 응답 3D·지그 진단 3D·하중 정의 탭 자료만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐)", legacy: "view3d_regen" };
 
 export const LOAD_SOURCES: readonly LoadSource[] = [
@@ -146,10 +222,10 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     drop: ["C", "C_solve", "C_jig", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "basis", "sm_warn"],
     blankUmax: true,
     warnPrefixes: ["JIG_"],
-    hide: ["load_transfer", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"],
+    hide: ["load_transfer", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref", "view3d_jd", "view3d_jd_esl", "view3d_jd_ref", "view3d_js", "view3d_js_esl", "view3d_js_ref"],
     chips: ["jig", "best_clean"],
     view3d: "jig",
-    pairKeys: { dir: "view3d_jig", esl: "view3d_jig_esl", ref: "view3d_jig_ref", load: "지그 하중" },
+    pairKeys: { dir: "view3d_jig", esl: "view3d_jig_esl", ref: "view3d_jig_ref", load: "지그 하중", support: "tie 고정", disp: "변위 |u| (mm) — 지그 고정(강체 성분 없음)" },
     perEslKey: "C_jig",
     sensKey: "rank_views.jig.sensitivity",
     sort: "score",
@@ -162,6 +238,7 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     nodal: null,
     recon: { kind: "jigdiag" },
     add: ADD_JIG,
+    jigMethod: false,
   },
   {
     // v0.24.4 지그 강제 변위(esl_jig_case.md §6.1): 스터디 계산 = P2c(새 스냅샷만 rank_views.jig_disp). 3D 칸 = 후속(R-JIGC-2)
@@ -172,17 +249,18 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     drop: [...JIG_VIEW_DROP, "C_jig", "umax_jig", "C_js", "umax_js"],
     blankUmax: true,
     warnPrefixes: [],
-    hide: JIG_VIEW_HIDE,
+    hide: [...JIG_VIEW_HIDE, "view3d_js", "view3d_js_esl", "view3d_js_ref"],
     chips: ["best_clean"],
     view3d: "pair",
-    pairKeys: null,
+    pairKeys: { dir: "view3d_jd", esl: "view3d_jd_esl", ref: "view3d_jd_ref", load: "지그 변위", support: "지그 tie {tie} 강제 변위 + 3-2-1 면내", disp: "변위 |u| (mm) — 지그 강제 변위 + 3-2-1 면내" },
     perEslKey: "C_jd",
     sensKey: "rank_views.jig_disp.sensitivity",
     sort: "score",
     unavailable: (r) => jigMethodUnavailable(r, "jig_disp"),
     nodal: null,
     recon: null,
-    add: null,
+    add: addOfJigMethod("jig_disp", "v3d-regen-jd"),
+    jigMethod: true,
   },
   {
     // v0.24.4 지그 스프링(§6.1) — 위와 같은 규칙(키 js)
@@ -193,17 +271,18 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     drop: [...JIG_VIEW_DROP, "C_jig", "umax_jig", "C_jd", "umax_jd"],
     blankUmax: true,
     warnPrefixes: [],
-    hide: JIG_VIEW_HIDE,
+    hide: [...JIG_VIEW_HIDE, "view3d_jd", "view3d_jd_esl", "view3d_jd_ref"],
     chips: ["best_clean"],
     view3d: "pair",
-    pairKeys: null,
+    pairKeys: { dir: "view3d_js", esl: "view3d_js_esl", ref: "view3d_js_ref", load: "지그 스프링", support: "지그 tie {tie} 스프링 + 3-2-1 면내", disp: "변위 |u| (mm) — 지그 스프링 + 3-2-1 면내" },
     perEslKey: "C_js",
     sensKey: "rank_views.jig_spring.sensitivity",
     sort: "score",
     unavailable: (r) => jigMethodUnavailable(r, "jig_spring"),
     nodal: null,
     recon: null,
-    add: null,
+    add: addOfJigMethod("jig_spring", "v3d-regen-js"),
+    jigMethod: true,
   },
   {
     key: "full",
@@ -213,7 +292,7 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     drop: ["C", "C_jig", "score_jig", "umax_jig"],
     blankUmax: false,
     warnPrefixes: ["SM_", "LT_", "MESH_QUALITY"],
-    hide: ["jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"],
+    hide: ["jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref", "view3d_jd", "view3d_jd_esl", "view3d_jd_ref", "view3d_js", "view3d_js_esl", "view3d_js_ref"],
     chips: ["lt", "mq", "best_clean_mq", "best_clean"],
     view3d: "full",
     pairKeys: null,
@@ -224,6 +303,7 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     nodal: null,
     recon: null,
     add: null,
+    jigMethod: false,
   },
   {
     // v0.24.0 경계력 ESL(esl_bforce.md §8): 낙하 해석이 계산한 노드 힘(접촉력 − 관성, 관성 이완) — 같은 3-2-1 로 설계안 재풀이
@@ -234,10 +314,10 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     drop: ["C", "C_solve", "C_jig", "C_bf", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"],
     blankUmax: true,
     warnPrefixes: ["BF_"],
-    hide: ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"],
+    hide: ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref", "view3d_jd", "view3d_jd_esl", "view3d_jd_ref", "view3d_js", "view3d_js_esl", "view3d_js_ref"],
     chips: ["nodal", "best_clean"],
     view3d: "pair",
-    pairKeys: { dir: "view3d_bf", esl: "view3d_bf_esl", ref: "view3d_bf_ref", load: "경계력 ESL" },
+    pairKeys: { dir: "view3d_bf", esl: "view3d_bf_esl", ref: "view3d_bf_ref", load: "경계력 ESL", support: "3-2-1", disp: "변위 |u| (mm) — 3-2-1(자기평형 하중)" },
     perEslKey: "C_bf",
     sensKey: "rank_views.bforce.sensitivity",
     sort: "score",
@@ -245,6 +325,7 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     nodal: NODAL_BF,
     recon: { kind: "sidecar", key: "view3d_bf_recon" },
     add: addOfNodal(NODAL_BF),
+    jigMethod: false,
   },
   {
     // v0.24.0 보완 내력 ESL(esl_fint.md §8): 낙하 해석 노드 내력 FINT(자기평형) — 같은 3-2-1 로 설계안 재풀이
@@ -255,10 +336,10 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     drop: ["C", "C_solve", "C_jig", "C_bf", "C_fi", "score_solve", "score_jig", "score_lin", "imbalance_max", "rho_min", "rho_max", "umax_def", "umax_jig", "basis", "sm_warn"],
     blankUmax: true,
     warnPrefixes: ["FINT_"],
-    hide: ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref"],
+    hide: ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "view3d_jd", "view3d_jd_esl", "view3d_jd_ref", "view3d_js", "view3d_js_esl", "view3d_js_ref"],
     chips: ["nodal", "best_clean"],
     view3d: "pair",
-    pairKeys: { dir: "view3d_fi", esl: "view3d_fi_esl", ref: "view3d_fi_ref", load: "내력 ESL" },
+    pairKeys: { dir: "view3d_fi", esl: "view3d_fi_esl", ref: "view3d_fi_ref", load: "내력 ESL", support: "3-2-1", disp: "변위 |u| (mm) — 3-2-1(자기평형 하중)" },
     perEslKey: "C_fi",
     sensKey: "rank_views.fint.sensitivity",
     sort: "score",
@@ -266,6 +347,7 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     nodal: NODAL_FI,
     recon: { kind: "sidecar", key: "view3d_fi_recon" },
     add: addOfNodal(NODAL_FI),
+    jigMethod: false,
   },
 ];
 
@@ -280,7 +362,7 @@ export const hiddenPrimaryOf = (r: DoeResultOut): LoadSource | null => {
 /** 자료 만들기 가능 여부(행 add 열): 결과 source_add[key], 없으면 옛 거울 키(응답 폴백) */
 export function sourceAddOf(r: DoeResultOut, s: LoadSource): { available: boolean; allowed: boolean; reason?: string | null } | null {
   if (!s.add) return null;
-  return r.source_add?.[s.key] ?? r[s.add.legacy] ?? null;
+  return r.source_add?.[s.key] ?? (s.add.legacy ? r[s.add.legacy] : null) ?? null;
 }
 
 /** 노드 힘 출처 탭 비활성 사유(블록 사유·데이터 등급 → 문구) — 열만 읽음 */
