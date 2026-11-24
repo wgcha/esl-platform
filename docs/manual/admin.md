@@ -593,11 +593,35 @@ $env:PGPASSWORD = $null
 
 ### 4.5 v0.24.5 업데이트 안내(④ 판정 단계·MAC·출처 숨김·계산 제외)
 
-업데이트(§3.0)만 하면 **DB migration `0017_validation_tiers` 가 자동 적용**된다(`validations` 에 `mac`·`cond_reasons` 열, 판정 값에 `CONDITIONAL` 추가). 옛 검증 결과는 그대로이고(백필 없음) 화면에서 "이전 판정 체계"로 보인다. 새 기준·MAC 은 ④ **검증 다시 실행**(ESL 다시 계산 불필요)으로 반영된다.
+업데이트(§3.0)만 하면 **DB migration `0017_validation_tiers` 가 자동 적용**된다(`validations` 에 `mac`·`cond_reasons` 열, 판정 값에 `CONDITIONAL` 추가). 옛 검증 결과는 그대로이고(백필 없음) 화면에서 "이전 판정 체계"로 보인다. 새 기준·MAC 은 ④ **검증 다시 실행**(ESL 다시 계산 불필요)으로 반영된다. 현장 확인표: `docs/manual/field_check_v0245.md`(아래 설정 고치기 포함).
 
 - **5 % / 10 % 기준을 쓰려면 현장 설정 1줄을 고친다.** 현장 코어 설정 `.runtime\config\esl.yaml` 의 `validation.disp_rms_rel_max` 가 예전 값(`0.01`)으로 남아 있으면 명시값이 우선하므로 PASS ≤ 1 %·조건부 ≤ 10 % 가 된다. `0.05` 로 바꾸고 **작업(ESL-Worker·ESL-Backend)을 재시작**해야 PASS ≤ 5 %·조건부 PASS ≤ 10 %(MAC ≥ 0.95 PASS·≥ 0.90 조건부) 가 된다. 조건부 상한·MAC 기준은 선택 키 `validation.disp_rms_rel_cond_max`(0.10)·`mac_min`(0.95)·`mac_cond_min`(0.90). 조건부 PASS 는 통과로 취급한다(라이브러리 등록·재검증 승격 가능, 표식만 다름).
 - **경계력·내력·지그 고정은 기본으로 계산하지 않고 화면에서도 숨긴다.** 코어 `esl.yaml`: `bforce.enabled` 기본 `false`(경계력·내력 산출·추출 `bf_on 0`·보충 추출 없음), `jig.methods` 기본 `[prescribed, spring]`(지그 고정 제외). 플랫폼 `esl_platform.yaml`: `bead_doe.bforce.enabled`·`bead_doe.fint.enabled` 기본 `false`, `bead_doe.rank.jig.methods` 기본 `[prescribed, spring]`. 옛 스냅샷·옛 결과는 바이트 그대로다.
 - **끈 출처를 다시 켜려면** 계산과 화면 두 곳을 맞춘다. 계산: 코어 `esl.yaml` 에 `bforce: {enabled: true}`·`jig: {methods: [fixed, prescribed, spring]}`, 플랫폼 `esl_platform.yaml` 에 `bead_doe: {bforce: {enabled: true}, fint: {enabled: true}, rank: {jig: {methods: [fixed, prescribed, spring]}}}`(켜면 v0.24.4 와 같은 산출물). 화면: `ui.hidden_sources`(기본 `[bforce, fint, jig]`)를 `[]` 로(또는 보일 출처만 빼고) 바꾼다. 화면 숨김은 표시만이라 계산·API·저장 산출물·보고서는 그대로다. 둘을 따로 바꿀 수 있다(계산은 끄고 화면만 보이기 = 사유 표시, 계산은 켜고 화면만 숨기기). 설정 변경 후 작업 재시작(§4.2).
+- **v0.24.0~v0.24.4 예시로 만든 현장 `esl_platform.yaml` 은 고쳐야 계산이 빠진다.** 그 예시에는 `bead_doe.bforce: {enabled: true, …}`·`bead_doe.fint: {enabled: true, …}`·`bead_doe.rank.jig.methods: [fixed, prescribed, spring]`(v0.24.4 부터)이 **명시**돼 있고, 업데이트(§3.0)는 빠진 키만 채우고 있는 값은 그대로 둔다. 그대로 두면 화면에서는 숨겨져도 **새 강성 스터디가 경계력·내력·지그 고정을 계속 계산**한다(시간만 더 듦). 코어 `esl.yaml` 은 예시에서 `bforce`·`jig` 절이 주석이라 보통 손댈 것이 없지만, 주석을 풀어 둔 경우 같은 방법으로 확인한다. `validation.disp_rms_rel_max` 도 예전 예시 값 `0.01` 이 남아 있으니 `0.05` 로 바꾼다(위 첫 항목). PowerShell 로 확인 → 고침 → 다시 확인:
+
+  ```powershell
+  $cfg = 'E:\VD_SIMULATION_WEB\esl-platform\.runtime\config'      # 런타임 config 폴더(설치 위치에 맞게)
+  # 1) 확인: 아래에 줄이 나오면 그 줄이 계산을 켜 두고 있음(주석 줄 #… 은 안 나옴)
+  Select-String -LiteralPath "$cfg\esl_platform.yaml","$cfg\esl.yaml" `
+    -Pattern '^\s*(bforce|fint):\s*\{\s*enabled:\s*true\b', '^\s*methods:\s*\[\s*fixed\b', '^\s*disp_rms_rel_max:\s*0\.01\b' |
+    Select-Object Filename, LineNumber, Line
+  Select-String -LiteralPath "$cfg\esl_platform.yaml" -Pattern '^\s*(bforce|fint):\s*$' -Context 0,1   # 블록 형식(다음 줄 enabled:)이면 여기 나옴 → 메모장으로 enabled: false
+  # 2) 고침: 백업 후 그 값만 바꿈(BOM 없는 UTF-8 로 저장 — Set-Content 대신)
+  $enc = New-Object Text.UTF8Encoding($false)
+  foreach ($f in "$cfg\esl_platform.yaml", "$cfg\esl.yaml") {
+    Copy-Item -LiteralPath $f -Destination "$f.bak_v0245"
+    $t = [IO.File]::ReadAllText($f, $enc)
+    $t = [regex]::Replace($t, '(?m)^(\s*(?:bforce|fint):\s*\{\s*enabled:\s*)true\b', '${1}false')
+    $t = [regex]::Replace($t, '(?m)^(\s*methods:\s*)\[\s*fixed\s*,\s*prescribed\s*,\s*spring\s*\]', '${1}[prescribed, spring]')
+    $t = [regex]::Replace($t, '(?m)^(\s*disp_rms_rel_max:\s*)0\.01\b', '${1}0.05')
+    [IO.File]::WriteAllText($f, $t, $enc)
+  }
+  # 3) 다시 1) 을 실행해 줄이 안 나오면 끝 → 작업 재시작(§4.2)
+  ```
+
+  줄을 지워도 된다(지우면 기본값 = 끔·`[prescribed, spring]`, 다음 업데이트가 새 예시 값으로 다시 채움). 고친 뒤 이미 만든 스터디는 스냅샷 그대로이고, **새 스터디·복제**부터 계산이 빠진다. 되돌리려면 `.bak_v0245` 파일을 원래 이름으로 복사한다.
+- `ui.hidden_sources` 에 출처 표에 없는 키(오타 등)가 있으면 기동은 그대로 하고 그 키만 무시한다. 대신 백엔드 시작 로그(`<런타임>\logs\backend.log`)에 `설정 경고: ui.hidden_sources 에 모르는 출처 키 ['<키>'] — 무시합니다(가능한 키: ['jig', 'jig_disp', 'jig_spring', 'full', 'bforce', 'fint'])` 1줄이 남고 환경 점검(§10) `config.valid` 가 경고로 보인다.
 
 ---
 

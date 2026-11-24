@@ -130,7 +130,7 @@ BF, FI, JIG = vs.plan("bforce"), vs.plan("fint"), vs.plan("jig")
 @pytest.mark.parametrize("row,have,doc,summ,exp_code,exp_reason", [
     (BF, True, None, None, None, None),
     (BF, False, None, {"grade": None, "code": "BF_DISABLED"}, "BF_DISABLED", "설정에서 꺼짐(bforce.enabled)"),
-    (FI, False, None, {"grade": None, "code": "FINT_DISABLED"}, "FINT_DISABLED", "설정에서 꺼짐(bforce.fint.enabled)"),
+    (FI, False, None, {"grade": None, "code": "FINT_DISABLED"}, "FINT_DISABLED", "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)"),
     (BF, False, None, {"grade": "none", "code": "BF_NO_DATA", "reason": "추출물에 경계력 결과 없음"}, "BF_NO_DATA",
      "추출물에 경계력 결과 없음"),
     (BF, False, None, {"grade": "none", "code": "BF_EXTRACT_FAILED", "reason": "보충 실패 — x"}, "BF_EXTRACT_FAILED",

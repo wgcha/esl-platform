@@ -364,7 +364,7 @@ def _mut_summary(out, **sub):
 
 @pytest.mark.parametrize("case,exp", [
     ("disabled", {"bforce": ("unavailable", "BF_DISABLED", "설정에서 꺼짐(bforce.enabled)"),
-                  "fint": ("unavailable", "FINT_DISABLED", "설정에서 꺼짐(bforce.fint.enabled)")}),
+                  "fint": ("unavailable", "FINT_DISABLED", "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)")}),
     ("extract_failed", {"bforce": ("unavailable", "BF_EXTRACT_FAILED", "보충 실패 — 프레임 6: x"),
                         "fint": ("unavailable", "BF_EXTRACT_SKIPPED", "보충 생략 — 프레임 6: y")}),
     ("diag_failed", {"bforce": ("unavailable", "BF_FAILED", "ValueError: boom"),

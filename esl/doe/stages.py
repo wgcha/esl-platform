@@ -3358,12 +3358,18 @@ SM_REF_NPZ = "sm_ref.npz"
 SM_REF_SCHEMA = "esl/doe_sm_ref/1"
 SM_SCHEMA = 1
 SM_ROW_KEYS = ("C_lin", "C_ritz", "rho", "imbalance_rel", "umax_def")
+# v0.24.5 하위 호환 상수(D-0.24.5-VT-16 — 하드코딩 금지의 예외, 값 고정이 목적이라 설정으로 빼지 않음. 바꾸지 말 것):
+# ≤ v0.24.3 스냅샷(rank.jig 에 키 없음)에 _sm 이 설정 기본 대신 병합하는 값 = v0.24.4(main 9b6b2587) DEFAULTS rank.jig 의 같은 키.
+# 계산은 이 값을 읽지 않는다(방식 = _jig_plan 이 스냅샷 원본에서 → jig_bc.LEGACY_ABSENT fixed 만). 쓰임은 _cfg_hash 의 jig 해시
+# 보기뿐 — v0.24.5 DEFAULTS methods 가 [prescribed, spring] 으로 바뀌어도 옛 스터디 이어하기·안 추가 input_sha256 이 main 과 바이트
+# 동일(캐시 적중). 새 스냅샷은 methods 를 명시하므로(백엔드 rank_snapshot — 설정 전체 고정) 이 값과 무관
+LEGACY_JIG_MERGE: dict = {"methods": ("fixed", "prescribed", "spring")}
 
 
 def _sm(c: Ctx) -> dict | None:
     """스냅샷 doe.rank(새 스터디) → {metric, lin_form, lin_valid, imbalance_warn, jig}. 없으면 None(옛 = solve, 지표 계산 없음).
     v0.23.0 D-JIG-8: 스냅샷 rank 에 metric 키가 없으면 solve(DEFAULTS 기본이 jig 로 바뀌어도 옛 동작 유지). jig = 스냅샷 rank.jig 를
-    설정 기본 위에 합친 값(스냅샷에 없으면 None)."""
+    설정 기본 위에 합친 값(스냅샷에 없으면 None). v0.24.5: 스냅샷에 없는 LEGACY_JIG_MERGE 키는 설정 기본 대신 그 호환 상수(해시 불변)."""
     r = c.D.get("rank")
     if not isinstance(r, dict) or c.scn not in ("same", "mesh", "step", "compare", "select"):
         return None
@@ -3372,7 +3378,9 @@ def _sm(c: Ctx) -> dict | None:
     out["metric"] = r.get("metric", "solve")
     if out["metric"] not in smm.METRICS or out["lin_form"] not in smm.LIN_FORMS:
         raise EslError("CONFIG_INVALID", f"rank.metric {out['metric']} / lin_form {out['lin_form']}")
-    out["jig"] = {**base["jig"], **r["jig"]} if isinstance(r.get("jig"), dict) else None
+    rj = r.get("jig")
+    out["jig"] = ({**base["jig"], **{k: list(v) for k, v in LEGACY_JIG_MERGE.items() if k not in rj}, **rj}
+                  if isinstance(rj, dict) else None)
     # v0.24.0 평가 영역(esl_fint.md §6.2): 스냅샷에 eval_region 이 있을 때만(옛 스냅샷 = None — 계산·키 없음)
     ev_ = r.get("eval_region")
     out["eval"] = None

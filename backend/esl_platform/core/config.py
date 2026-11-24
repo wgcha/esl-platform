@@ -2189,6 +2189,20 @@ def validate_library(s: Settings | None, *, base_dir: str | None = None) -> tupl
     return _library(s, base_dir)
 
 
+def hidden_sources_unknown(s: Settings | None) -> list[Issue]:
+    """v0.24.5 `ui.hidden_sources` 에 출처 표(코어 `esl.view3d_src.KEYS` — 화면 view3d/sources.ts 와 같은 키)에 없는 키가 있으면 경고
+    1개(거부 안 함 — 화면이 그 키를 조용히 무시하므로 오타를 시작 로그·환경 점검에 알린다). 알려진 키 목록은 코어 표 한 곳."""
+    if s is None or not s.ui.hidden_sources:
+        return []
+    from esl_worker.core_adapter import view3d_src_plan
+
+    keys = list(view3d_src_plan()["keys"])
+    bad = [k for k in s.ui.hidden_sources if k not in keys]
+    if not bad:
+        return []
+    return [Issue("ui.hidden_sources", f"ui.hidden_sources 에 모르는 출처 키 {bad} — 무시합니다(가능한 키: {keys})")]
+
+
 def misplaced_top_keys(d: Any) -> list[Issue]:
     """`hpc`(extra ignore) 밑 또는 `hpc.scx` 밑에 esl 최상위 키(Settings 필드명: scx_drive·verify_drop·bead_doe·opt_run·
     worker·storage …)를 들여쓴 경우 — pydantic 은 조용히 무시하므로 경고로 알린다. physicsai 공용 키(mode·command 등)는 계속 무시."""
@@ -2217,7 +2231,7 @@ def load_config_dict(d: dict[str, Any], *, environ: dict[str, str] | None = None
         d["profile"] = prof
     s, issues, core = validate_settings(d, base_dir=base_dir)
     lib_issues, lib = validate_library(s, base_dir=base_dir)
-    warns = misplaced_top_keys(d)
+    warns = misplaced_top_keys(d) + hidden_sources_unknown(s)
     if s is not None and s.verify_drop.enabled and s.hpc is not None and s.hpc.scx is not None \
             and str(s.hpc.scx.drive_base or "").strip().rstrip("/") == "~":
         warns.append(Issue("hpc.scx.drive_base", 'verify_drop.enabled 인데 hpc.scx.drive_base 가 "~"(공유 홈) — 검증 낙하는 전용 폴더가 '

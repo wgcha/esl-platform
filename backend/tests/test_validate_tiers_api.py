@@ -406,3 +406,40 @@ def test_vt11_hidden_sources_empty_override():
     base = dict(max_artifact_bytes=1, max_preview_points=10, poll_job_ms=100, poll_queue_ms=100)
     assert UiCfg(**base).hidden_sources == ["bforce", "fint", "jig"]
     assert UiCfg(**base, hidden_sources=[]).hidden_sources == []
+
+
+def test_vt11_hidden_sources_unknown_key_warns_once(settings_dict, tmp_path, monkeypatch, caplog):
+    """v0.24.5 Verifier: ui.hidden_sources 오타 키(화면이 조용히 무시) → 거부 안 함, 설정 경고 1개 → 백엔드 시작 로그 1줄.
+    알려진 키(코어 출처 표 KEYS)·[]·기본 = 경고 없음."""
+    import logging
+
+    import yaml
+    from esl_platform.api import main as api_main
+    from esl_platform.core import config as cfgm
+    from esl_platform.core.db import engine as dbe
+
+    def with_hidden(v):
+        return {**settings_dict, "ui": {**settings_dict["ui"], "hidden_sources": v}}
+
+    bad = with_hidden(["bforce", "fnt", "jig_fixed"])
+    lc = cfgm.load_config_dict(bad, environ={})
+    assert lc.ok and lc.settings.ui.hidden_sources == ["bforce", "fnt", "jig_fixed"]          # 거부 안 함(값 그대로 전달)
+    hw = [w for w in lc.warnings if w.key == "ui.hidden_sources"]
+    assert len(hw) == 1 and hw[0].message.startswith("ui.hidden_sources 에 모르는 출처 키 ['fnt', 'jig_fixed']")
+    for d in (settings_dict, with_hidden([]), with_hidden(["bforce", "fint", "jig"]),
+              with_hidden(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"])):
+        assert [w for w in cfgm.load_config_dict(d, environ={}).warnings if w.key == "ui.hidden_sources"] == []
+    # 시작 로그: _app_from_env 가 설정 경고를 1줄씩 남긴다(DB 엔진·앱 생성은 대역)
+    p = tmp_path / "esl_platform_bad.yaml"
+    p.write_text(yaml.safe_dump(bad, allow_unicode=True), encoding="utf-8")
+    monkeypatch.setenv(cfgm.ENV_CONFIG, str(p))
+    monkeypatch.delenv(cfgm.ENV_PROFILE, raising=False)
+    monkeypatch.setenv(lc.settings.database.url_env, "postgresql+psycopg://unused@127.0.0.1:1/unused")
+    monkeypatch.setattr(dbe, "make_engine", lambda url, pool: object())
+    monkeypatch.setattr(api_main, "build_context", lambda config, engine: config)
+    monkeypatch.setattr(api_main, "create_app", lambda ctx, bind_host=None: ctx)
+    with caplog.at_level(logging.WARNING, logger="esl_platform.api"):
+        got = api_main._app_from_env()
+    lines = [r.getMessage() for r in caplog.records if "ui.hidden_sources" in r.getMessage()]
+    assert got.settings.ui.hidden_sources == ["bforce", "fnt", "jig_fixed"]
+    assert len(lines) == 1 and lines[0].startswith("설정 경고: ui.hidden_sources 에 모르는 출처 키")

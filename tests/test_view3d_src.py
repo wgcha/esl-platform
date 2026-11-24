@@ -215,4 +215,4 @@ def test_case_status_jig_full_and_old_run():
     assert not f["available"] and f["code"] == "PREREQUISITE_MISSING"
     old = vs.case_status(vs.plan("fint"), None, {"model": True, "load": False, "target": True})
     assert old["code"] == "V3D_SRC_NOT_RUN" and old["reason"] == vs.REASON_TEXT["V3D_SRC_NOT_RUN"]
-    assert vs.reason_text("FINT_DISABLED") == "설정에서 꺼짐(bforce.fint.enabled)"
+    assert vs.reason_text("FINT_DISABLED") == "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)"
