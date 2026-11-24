@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
-import { JIG_STATE_TEXT, LOAD_SOURCES, jigMethodNote, jigMethodState, supportText, tabState, visibleLoadSources } from "../pages/doe/doeTabs";
+import { JIG_STATE_TEXT, LOAD_SOURCES, jigMethodNote, jigMethodState, sourceNoView, supportText, tabState, visibleLoadSources } from "../pages/doe/doeTabs";
 import { v3dPairCondText } from "../pages/doe/DoeStudy";
 import { setHiddenSources } from "../view3d/sources";
 import type { DoeJigMethodOut, DoeResultOut } from "../api/types";
@@ -224,5 +224,41 @@ describe("스터디 화면 — 지그 방식 사유·3D (목 응답)", () => {
     await waitFor(() => expect(screen.getByText(/지그 스프링 응답 3D 가 없습니다 — \[지그 3D 다시 만들기\]로 만드세요/)).toBeTruthy());
     expect(screen.getAllByTestId("v3d-regen-js")).toHaveLength(1);
     expect(screen.queryByTestId("v3d-regen")).toBeNull();
+  }, 30000);
+});
+
+describe("검증 수정 1: no_view 는 3D 행 [다시 만들기] 도 막는다(탭 add 와 같은 판정 sourceNoView)", () => {
+  const sa = { jig_disp: { available: true, allowed: true }, jig_spring: { available: true, allowed: true } };
+  it("sourceNoView: jigMethod 열 ∧ no_view 만 참 — 탭 add 와 일치", () => {
+    const row = (k: string) => LOAD_SOURCES.find((x) => x.key === k)!;
+    const r = base({ jig: jigOf({ jig_disp: method(), jig_spring: method() }), rank_views: { jig_spring: {} } as never, source_add: sa } as never);
+    expect(sourceNoView(r, row("jig_disp"))).toBe(true);
+    expect(sourceNoView(r, row("jig_spring"))).toBe(false); // 보기 있음
+    expect(sourceNoView(r, row("jig"))).toBe(false); // jigMethod 열 아님
+    const ts = tabState(r, LOAD_SOURCES);
+    for (const s of LOAD_SOURCES) if (sourceNoView(r, s)) expect(ts.add[s.key], s.key).toBe(false);
+  });
+  it("화면: jd 가 주 방식인데 보기 없음(no_view) — 사유 줄만, v3d-regen-jd 없음 / 보기 없음이 아니면 버튼 1개", async () => {
+    const jdPrimary = LOAD_SOURCES.find((x) => x.key === "jig_disp")!.primaryFor[0];
+    const mod = (noView: boolean) => (r: DoeResultOut): DoeResultOut => {
+      const { jig_disp: _d, ...rest } = (r.rank_views ?? {}) as Record<string, unknown>;
+      void _d;
+      return {
+        ...r,
+        metric_effective: jdPrimary,
+        rank: { ...(r.rank ?? {}), metric_effective: jdPrimary },
+        jig: { ...r.jig!, tie_dofs: "normal", methods: { jig_disp: method(), jig_spring: method({ method: "spring" }) } },
+        rank_views: noView ? rest : { ...rest, jig_disp: (r.rank_views as Record<string, unknown>).jig },
+        source_add: sa,
+      } as unknown as DoeResultOut;
+    };
+    openStudy(mod(true));
+    await screen.findByTestId("doe-result-rows", {}, { timeout: 8000 });
+    await waitFor(() => expect(screen.getAllByTestId("jig-unavail-note").some((n) => n.getAttribute("data-src") === "jig_disp")).toBe(true));
+    expect(screen.queryByTestId("v3d-regen-jd")).toBeNull();
+    cleanup();
+    openStudy(mod(false));
+    await screen.findByTestId("doe-result-rows", {}, { timeout: 8000 });
+    await waitFor(() => expect(screen.getAllByTestId("v3d-regen-jd")).toHaveLength(1));
   }, 30000);
 });

@@ -170,6 +170,11 @@ export function jigMethodState(r: DoeResultOut, key: string): JigMethodState {
   return { state: "ok", why: "", title: "", note: null };
 }
 
+/** v0.24.6 검증 수정: 지그 방식 행이 계산됐는데 순위 보기가 없음(no_view) = 3D 다시 만들기가 보기를 만들 수 없음. 탭 add 와 3D 행 버튼이 같은 이 판정 하나를 쓴다 */
+export function sourceNoView(r: DoeResultOut, s: LoadSource): boolean {
+  return !!s.jigMethod && jigMethodState(r, s.key).state === "no_view";
+}
+
 /** 지그 방식 사유 줄(열 jigMethod 가 참인 출처만 — failed·no_view). 전체 문구 = title */
 export function jigMethodNote(r: DoeResultOut, s: LoadSource): { text: string; title: string; state: JigMethodState["state"] } | null {
   if (!s.jigMethod) return null;
@@ -179,6 +184,8 @@ export function jigMethodNote(r: DoeResultOut, s: LoadSource): { text: string; t
 /** 지그 방식 탭 사유 — 보기가 없을 때(응답 jig·jig.methods·jig_plan 으로 고름) */
 const jigMethodUnavailable = (r: DoeResultOut, key: string): string => jigMethodState(r, key).why;
 
+/** 지그 3D 다시 만들기 버튼 문구 — 문구 표 한 곳(지그 행·지그 변위·스프링 행 공용) */
+export const JIG_REGEN_LABEL = "지그 3D 다시 만들기";
 export const REGEN_HINT_FULL = "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다";
 export const REGEN_HINT_JIG = "3D 다시 만들기로 지그 탭 자료(순위·진단)를 만들 수 있습니다";
 
@@ -205,13 +212,13 @@ const addOfNodal = (n: NodalCols): SourceAddCols => ({
 /** v0.24.6 지그 변위·스프링 3D 다시 만들기(§8.2 — 지그 행과 같은 작업, 한 작업이 빠진 방식 3D 를 모두 만든다) */
 const addOfJigMethod = (src: "jig_disp" | "jig_spring", testid: string): SourceAddCols => ({
   src,
-  label: "지그 3D 다시 만들기",
+  label: JIG_REGEN_LABEL,
   testid,
   hint: "3D 다시 만들기로 지그 변위·스프링 3D 를 만들 수 있습니다",
   title: "계산된 지그 방식의 응답 3D 만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐). 한 번에 빠진 방식 3D 를 모두 만듭니다",
   legacy: null,
 });
-const ADD_JIG: SourceAddCols = { src: "jig", label: "지그 3D 다시 만들기", testid: "v3d-regen", hint: REGEN_HINT_JIG, title: "지그 응답 3D·지그 진단 3D·하중 정의 탭 자료만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐)", legacy: "view3d_regen" };
+const ADD_JIG: SourceAddCols = { src: "jig", label: JIG_REGEN_LABEL, testid: "v3d-regen", hint: REGEN_HINT_JIG, title: "지그 응답 3D·지그 진단 3D·하중 정의 탭 자료만 다시 만듭니다(순위·결과 파일 그대로, 기존 작업 큐)", legacy: "view3d_regen" };
 
 export const LOAD_SOURCES: readonly LoadSource[] = [
   {
@@ -427,7 +434,7 @@ export function tabState(r: DoeResultOut, sources: readonly LoadSource[] = LOAD_
     const sa = sourceAddOf(r, s);
     // v0.24.6 통합: 지그 방식 행이 계산됐는데 순위 보기(rank_views)가 없으면(no_view — 예: view3d.jig_diag 끔) 3D 다시 만들기는 보기를
     // 만들 수 없다(코어 _jig_extras 는 그 조건에서 아무것도 쓰지 않음) — 빈 탭의 [다시 만들기] 버튼을 두지 않고 사유 줄만 보인다
-    const noView = s.jigMethod && jigMethodState(r, s.key).state === "no_view";
+    const noView = sourceNoView(r, s);
     add[s.key] = !ok[s.key] && !noView && !!sa?.available && sa.allowed;
     // 만들 수 있는데 권한이 없거나 작업 중이면 탭 비활성 + 그 사유를 덧붙임(정보 삭제 없음)
     if (!ok[s.key] && sa?.available && !sa.allowed && sa.reason) reason[s.key] = `${reason[s.key]} (${sa.reason})`;

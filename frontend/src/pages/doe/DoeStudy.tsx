@@ -66,7 +66,7 @@ import { groupFieldsOf, reconLineText } from "../../view3d/sources";
 import { useStudyRecon } from "../../view3d/useRecon";
 import type { SourceTabItem } from "../../view3d/sources";
 import { hiddenSourcesSig, isHiddenSource } from "../../view3d/sources";
-import { BF_GRADE_TEXT, V3D_RECON_NONE_TEXT, LOAD_SOURCES, hiddenPrimaryOf, jigMethodNote, nodalNote, supportText, sourceAddOf, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
+import { BF_GRADE_TEXT, V3D_RECON_NONE_TEXT, LOAD_SOURCES, hiddenPrimaryOf, jigMethodNote, nodalNote, supportText, sourceAddOf, sourceNoView, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -717,12 +717,13 @@ export function v3dPairCondText(load: string, grade: string | null, eslNames: (s
 
 /** v0.24.1 자료 만들기 버튼(esl_view3d_sources.md §6.3) — 출처 행 add 열만 읽음(출처 이름 분기 없음): 지그 3D 다시 만들기·경계력/내력 ESL 계산 공용.
  *  화면에 최대 1개: 계산 가능한 빈 탭 본문(SourceAddPanel) 또는 활성 탭 3D 의 빈 칸 안. 가능 여부 = 결과 source_add[key](없으면 옛 거울 키), allowed 아니면 비활성 + 이유 */
-function SourceAddButton({ studyId, result, src, onQueued }: { studyId: string; result: DoeResultOut; src: LoadSource; onQueued?: () => void }) {
+/** noView = sourceNoView(원 결과, 출처) — 탭 투영 결과(jig 숨김)로는 판정할 수 없어 호출부가 원 결과로 판정해 넘긴다(tabState.add 와 같은 함수) */
+function SourceAddButton({ studyId, result, src, onQueued, noView = false }: { studyId: string; result: DoeResultOut; src: LoadSource; onQueued?: () => void; noView?: boolean }) {
   const a = sourceAddOf(result, src);
   const add = src.add;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  if (!add || !a?.available) return null;
+  if (!add || !a?.available || noView) return null; // no_view = 다시 만들어도 보기가 안 생김
   const why = a.allowed ? null : a.reason ?? `${src.label} 자료를 만들 수 없습니다`;
   return (
     <span className="primary-wrap" title={why ?? add.title}>
@@ -1067,7 +1068,7 @@ const euro = (w: string): string => {
   return c >= 0 && c < 11172 && c % 28 !== 0 && c % 28 !== 8 ? "으로" : "로";
 };
 
-function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, tie = null, onRegen }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; onRegen?: () => void }) {
+function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, tie = null, onRegen, noView = false }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; onRegen?: () => void; noView?: boolean }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
@@ -1133,7 +1134,7 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
     </div>
   ) : null;
   // v0.24.1 자료 만들기 버튼은 활성 탭 3D 의 빈 칸 안에만(§6.3 — 다른 출처 버튼을 머리에 두지 않음, D-0.23.3-8 ② 개정)
-  const addBtn = src ? <SourceAddButton studyId={studyId} result={result} src={src} onQueued={onRegen} /> : null;
+  const addBtn = src ? <SourceAddButton studyId={studyId} result={result} src={src} onQueued={onRegen} noView={noView} /> : null;
   if (sideRecon && src && jmode === "diag")
     return <ReconDiag studyId={studyId} result={result} src={src} reconKey={sideRecon.key} pick={did} lead={modeSeg} addBtn={addBtn} />;
   if (jigTab && jmode === "diag")
@@ -2053,7 +2054,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} onRegen={() => void study.reload()} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} />
                     </div>
                     <div className="doe-row-tables" data-testid="doe-row-tables">
                       <div className="doe-col-rank">
