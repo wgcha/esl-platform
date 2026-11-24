@@ -800,7 +800,7 @@ def test_plus_migration_0016_from_0015(engine, db_url):
     command.upgrade(cfg(), "head")
     command.upgrade(cfg(), "head")                                       # 멱등
     with engine.connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0016"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0017"
         idx = {r[0] for r in c.execute(text("SELECT indexname FROM pg_indexes WHERE tablename='deletions'"))}
         cons = {r[0] for r in c.execute(text("SELECT conname FROM pg_constraint WHERE conrelid='deletions'::regclass"))}
     assert {"ix_deletions_project", "ux_deletions_kind_item", "ix_deletions_purge"} <= idx

@@ -41,6 +41,7 @@ def settings_dict(request, tmp_path, tools):
 
         d = doe_worker_settings(tmp_path, write_fake_paicad(tmp_path))
         d["bead_doe"]["rank"] = {"jig": {"fix_kinds": ["RBE2"]}}      # 가짜 paicad 는 RBE2 종류 클러스터를 돌려줌
+        d["bead_doe"]["bforce"] = {"enabled": True}                   # v0.24.5 §12: 기본 끔 — 경계력 출처 시험은 켠다
         return d
     return opt_settings(tmp_path, tools)
 

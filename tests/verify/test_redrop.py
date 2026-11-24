@@ -46,7 +46,7 @@ def _design(tmp_path, x, nid=NID, name="design.npz"):
 
 def _spec(tmp_path, files, design, **kw):
     return {"base_npz": str(tmp_path / "base_mesh.npz"), "design_npz": design, "files": files,
-            "out": str(tmp_path / "tok" / "input"), "meta_out": str(tmp_path / "tok"), "max_line": None,
+            "out": str(tmp_path / "tok"), "meta_out": str(tmp_path / "tok"), "max_line": None,
             "base_coord_tol_mm": 0.0,
             "manifest_extra": {"platform_version": "t", "created_at": "2026-11-16T00:00:00Z",
                                "study": {"id": "s", "title": "t", "scenario": "same", "select_base": None, "plan": "case_once"},
@@ -57,7 +57,8 @@ def _spec(tmp_path, files, design, **kw):
 
 def _out_files(spec):
     out = Path(spec["out"])
-    return sorted(str(p.relative_to(out)).replace(os.sep, "/") for p in out.rglob("*") if p.is_file())
+    meta = {"REDROP_README.txt", "redrop_manifest.json"}
+    return sorted(r for r in (str(p.relative_to(out)).replace(os.sep, "/") for p in out.rglob("*") if p.is_file()) if r not in meta)
 
 
 def _moved_design(tmp_path):
@@ -110,12 +111,13 @@ def test_rd2_base_design_changes_nothing(tmp_path):
     assert _out_files(spec) == []
     assert {f["rel"]: f["sha256"] for f in m["files"]} == {r: _sha(p) for r, p in files}
     assert all(f["source"] == "orig" for f in m["files"])
-    assert sorted(os.listdir(tmp_path / "tok")) == ["REDROP_README.txt", "input", "redrop_manifest.json"]
+    assert sorted(os.listdir(tmp_path / "tok")) == ["REDROP_README.txt", "redrop_manifest.json"]      # input/ 단계 없음(v0.24.5)
     mm = json.loads((tmp_path / "tok" / "redrop_manifest.json").read_text(encoding="utf-8"))
     assert sorted(mm) == sorted(["schema", "platform_version", "created_at", "study", "design", "entry", "case", "files", "changed",
                         "nodes", "checks"]) and mm["schema"] == "esl/redrop/1"
     assert mm["checks"] == {"nodeset_equal": True, "base_max_diff": 0.0, "base_coord_tol_mm": 0.0}
-    assert "input/" in (tmp_path / "tok" / "REDROP_README.txt").read_text(encoding="utf-8")
+    readme = (tmp_path / "tok" / "REDROP_README.txt").read_text(encoding="utf-8")
+    assert "input/" not in readme and "이 폴더를 그대로 HPC 에 올려" in readme
 
 
 def test_rd3_missing_node(tmp_path):
@@ -188,3 +190,14 @@ def test_redrop_module_independent():
 def test_merge_coords_and_readme():
     x, st = rd.merge_coords(NID, X0[::-1] + 1.0, X0, X0, 0.0, design_node_id=NID[::-1])
     assert np.allclose(x, X0 + 1.0) and st["n_moved"] == 12 and st["max_disp"] == pytest.approx(np.sqrt(3))
+
+
+def test_rd8_meta_name_conflict_rejected(tmp_path):
+    """v0.24.5: 입력 rel 이 메타 이름과 겹치면(대소문자 무시) 쓰기 전에 거부 — 폴더가 한 층이라 덮어쓰기 위험."""
+    src, files = _world(tmp_path)
+    (src / "redrop_manifest.json").write_bytes(b"x")
+    spec = _spec(tmp_path, files + [("Redrop_Manifest.json", str(src / "redrop_manifest.json"))], _design(tmp_path, X0))
+    with pytest.raises(EslError) as ei:
+        rd_prepare(spec, echo=lambda *_: None)
+    assert ei.value.code == "REDROP_META_NAME_CONFLICT"
+    assert not (tmp_path / "tok").exists() or os.listdir(tmp_path / "tok") == []

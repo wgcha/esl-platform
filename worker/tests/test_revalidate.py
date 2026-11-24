@@ -14,7 +14,7 @@ import os
 import shutil
 
 import pytest
-from esl_test_support import API, H, create_case, make_settings_dict
+from esl_test_support import API, H, create_case, legacy_sources, make_settings_dict
 from sqlalchemy import text
 
 W = H("tok-power", True)
@@ -23,7 +23,7 @@ R = H("tok-power")
 
 @pytest.fixture()
 def settings_dict(tmp_path):
-    return make_settings_dict(tmp_path, report={"auto": True})
+    return legacy_sources(make_settings_dict(tmp_path, report={"auto": True}))
 
 
 def _run(client, worker, job_id, lane="SLOT", want="SUCCEEDED"):
@@ -140,7 +140,7 @@ def test_revalidate_flow(client, synth_inputs, worker_factory, esl_root, engine,
     e = _entry(client, eid)
     q = e["quality"]
     assert e["eligible"] is True and e["ineligible_reason"] is None and e["version"] == ver + 1
-    assert q["status"] == "PASS" and q["scheme"] == "disp_primary/1" and e["validation_id"] == rv["validation_id"] != old_vid
+    assert q["status"] == "PASS" and q["scheme"] == "disp_primary/2" and e["validation_id"] == rv["validation_id"] != old_vid
     assert q["revalidated"]["from_validation_id"] == old_vid and q["revalidated"]["from_status"] == "LEGACY"
     assert q["revalidated"]["job_id"] == j["id"] and e["force_reason"] is None and q["confirmed_fail"] is None
     assert _hash_dir(edir) == files_before

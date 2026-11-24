@@ -123,7 +123,7 @@ def test_validation_legacy_paths_are_unchanged(client, engine, case):
     keys = set(plain.json())
     assert keys == {"id", "esl_run_id", "case_id", "job_id", "disp_rms_rel", "reaction_rel", "hotspots", "excluded",
                     "verdict", "fail_reasons", "criteria", "field", "dir_rel", "created_at", "stale", "scheme", "status",
-                    "disp_max_rel", "disp_noise_rel", "undetermined_reason", "disp", "strain_ref"}
+                    "disp_max_rel", "disp_noise_rel", "undetermined_reason", "disp", "strain_ref", "mac", "cond_reasons"}
 
 
 def test_legacy_path_does_not_touch_core_plan(client, engine, case, monkeypatch):
@@ -317,8 +317,9 @@ def test_validation_fields_matches_worker_conversion():
 
     f = co.validation_fields(src_doc())
     assert list(f) == ["hotspots", "excluded", "verdict", "scheme", "undetermined_reason", "disp_rms_rel",
-                       "reaction_rel", "disp_max_rel", "disp_noise_rel", "fail_reasons", "criteria", "field", "disp",
-                       "strain_ref"]
+                       "reaction_rel", "disp_max_rel", "disp_noise_rel", "mac", "fail_reasons", "cond_reasons", "criteria",
+                       "field", "disp", "strain_ref"]
+    assert f["mac"] is None and f["cond_reasons"] == []                       # v0.24.5: 옛 문서 = mac 없음
     assert f["scheme"] == "disp_primary/1" and f["hotspots"][0]["eps_val"] == 0.01
     old = co.validation_fields({"verdict": "PASS", "excluded": [{"elem_id": 5, "reason": "x"}],
                                 "hotspots": [{"elem_id": 1, "eps_os": 0.5, "eps_rad": "0.4"}], "disp_rms_rel": 0.1})
@@ -333,12 +334,12 @@ def test_openapi_new_paths_schemas_and_unchanged_validation_out():
     assert {"ValidationSourceRow", "ValidationSourcesOut", "ValidationSourcesHistItem",
             "ValidationSourcesHistOut"} <= set(sch)
     assert set(sch["ValidationSourceRow"]["properties"]) == {
-        "key", "available", "code", "reason", "status", "fail_reasons", "undetermined_reason", "reaction_role", "reaction_tol", "reaction_tol_key", "reaction_warn", "reaction_warned",
+        "key", "available", "code", "reason", "status", "fail_reasons", "undetermined_reason", "scheme", "cond_reasons", "reaction_role", "reaction_tol", "reaction_tol_key", "reaction_warn", "reaction_warned",
         "cond_text", "note", "limits", "limit_text", "comparable"}
     assert set(sch["ValidationOut"]["properties"]) == {
         "id", "esl_run_id", "case_id", "job_id", "disp_rms_rel", "reaction_rel", "hotspots", "excluded", "verdict",
         "fail_reasons", "criteria", "field", "dir_rel", "created_at", "stale", "scheme", "status", "disp_max_rel",
-        "disp_noise_rel", "undetermined_reason", "disp", "strain_ref"}          # 새 필드 없음
+        "disp_noise_rel", "undetermined_reason", "disp", "strain_ref", "mac", "cond_reasons"}      # v0.24.5: 새 필드 mac·cond_reasons 만
     for p in ("/esl/api/validations/{vid}", "/esl/api/validations/{vid}/field", "/esl/api/validations/{vid}/disp-field",
               "/esl/api/validations/{vid}/section"):
         assert "src" in {q["name"] for q in paths[p]["get"]["parameters"]}, p

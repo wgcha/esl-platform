@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import synth_case
 from esl_test_support import API, H, create_case, wait_for
-from esl_test_support import make_settings_dict
+from esl_test_support import legacy_sources, make_settings_dict
 from h3d_support import alive, write_fake_hw, write_h3d
 
 W = H("tok-power", True)
@@ -33,7 +33,7 @@ def fake_hw(tmp_path) -> Path:
 
 @pytest.fixture()
 def settings_dict(tmp_path, fake_hw):
-    d = make_settings_dict(tmp_path)
+    d = legacy_sources(make_settings_dict(tmp_path))                    # v0.24.5 §12: 보충 추출은 bforce.enabled 일 때만
     d["altair"] = {"hw_exe_path": str(fake_hw), "max_concurrent_hw": 1}
     d["worker"]["slots"] = 2
     return d
@@ -479,6 +479,8 @@ def test_bforce_request_unit():
 
     warn: list[str] = []
     out = h3d.bforce_request({}, warn)
+    assert out["bf_on"] == "0" and "bf_names_cont" in out and warn == []   # v0.24.5 §12 기본 끔
+    out = h3d.bforce_request({"bforce": {"enabled": True}}, warn)
     assert out["bf_on"] == "1" and "bf_names_cont" in out and warn == []
     assert h3d.bforce_request({"bforce": {"result_names": {"cont": []}}}) is not None
     try:

@@ -77,6 +77,7 @@
 | 422 | `VD_CUMULATIVE_EXCLUDED` · `VD_INCLUDE_LAYOUT` · `VD_ENGINE_MISSING` | `input_set` problems(첫 항목 코드) | `problems[{code, reason}]` 전부(경로 마스킹) |
 | 409 | `REDROP_NODESET_MISMATCH` | design.npz `node_id` 집합 ≠ base_mesh `node_id` 집합, 또는 중복 ID | `n_base`, `n_design`, `n_only_base`, `n_only_design` |
 | 422 | `VD_NODES_MISSING` | 대상 노드가 입력 폐포 `/NODE` 에 없음(코어 오류 그대로) | 메시지에 개수·상위 10 |
+| 422 | `REDROP_META_NAME_CONFLICT` | (v0.24.5) 입력 파일 rel 이 `REDROP_README.txt`·`redrop_manifest.json` 과 같음(대소문자 무시) — 쓰기 전 거부 | `rels` |
 | 409 | `REDROP_BASE_CHANGED` | 원본 파일의 대상 노드 좌표가 base_mesh `x0` 와 `base_coord_tol_mm` 넘게 다름(스터디 뒤 Case 입력이 바뀜) | `n_changed`, `max_diff` |
 | 422 | `RAD_PARSE_ERROR` | 같은 노드 ID 가 폐포 여러 파일에 다른 좌표로 있음 | – |
 | 422 | `VD_PATCH_ENCODING` | 고칠 노드 줄에 비 ASCII(코어 오류 그대로) | – |
@@ -90,16 +91,15 @@
 redrop_<did>_<엔트리 slug>_<sid8>/
   REDROP_README.txt
   redrop_manifest.json
-  input/
-    <starter>.rad                 # rad 폴더 기준 상대 배치 그대로
-    <stem>_0001.rad …             # 엔진 rad(input_set engines) — 포함
-    <include rel path> …          # include 폐포 전부(하위 폴더 보존)
+  <starter>.rad                   # rad 폴더 기준 상대 배치 그대로(v0.24.5: input/ 단계 없음)
+  <stem>_0001.rad …               # 엔진 rad(input_set engines) — 포함
+  <include rel path> …            # include 폐포 전부(하위 폴더가 있으면 그 rel 그대로 보존 — #include 경로 유지)
 ```
 
-- `input/` 아래 = `input_set().files` 의 모든 `(rel, abs)` 를 **같은 rel** 로. 바뀐 파일은 임시 폴더의 패치본, 나머지는 원본 경로에서 직접 읽어 넣음(원본 복사 없음).
+- **(v0.24.5 개정)** 최상위 폴더 바로 아래 = `input_set().files` 의 모든 `(rel, abs)` 를 **같은 rel** 로. 바뀐 파일은 임시 폴더의 패치본, 나머지는 원본 경로에서 직접 읽어 넣음(원본 복사 없음).
 - 엔진 rad **포함**(HPC 제출에 필요, `input_set` 이 이미 폐포에 넣음). 엔진 rad 에 `/NODE` 가 없으면 원본 그대로.
 - 결과 파일(h3d·`A001`·`.out`·`.sta`·`.str`·T01 등)은 **들어가지 않는다**: zip 은 `input_set` 폐포와 메타 2개만으로 만든다(폴더 통째 수집 없음). 상태 include 가 있으면 애초에 `VD_CUMULATIVE_EXCLUDED` 거부.
-- 메타 파일을 `input/` 밖에 두어 입력 파일 이름과 충돌하지 않는다. 사용자는 `input/` 폴더를 그대로 HPC 로 올린다.
+- **v0.24.5 변경(사용자 2026-11-24 "재낙하 파일은 폴더 밑에 input 폴더 없이 하나의 경로밑에 있게 해줘. 그래야 job 넣기 좋음")**: 옛 `input/<rel>` 단계를 없애 입력 파일과 메타 2개가 한 폴더에 놓인다. 사용자는 이 폴더를 그대로 HPC 에 올려 starter 로 제출(메타는 해석에 쓰이지 않음). rel 에 하위 폴더가 있으면 rad 폴더 기준 그대로 유지(대부분 같은 폴더라 평평). 입력 rel 이 메타 이름과 겹치면 `REDROP_META_NAME_CONFLICT`(422, 대소문자 무시, 쓰기 전). 옛 구조 선택 설정은 두지 않는다(사용성 우선). 임시 폴더 `_redrop/<token>/` = 바뀐 파일 + 메타(같은 층).
 
 ### 2.1 `redrop_manifest.json` (schema 1, 고정 키)
 
@@ -112,13 +112,13 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 | `design` | `{id, rank \| null, status \| null, values{변수: 값}}` — values·status = `run/designs/<did>/result.json`, rank = `post/result.json` ranking 행(없으면 null) |
 | `entry` | `{id, label, is_base}` — label = `_entry_label(e)`(zip 이름 slug 의 원문) |
 | `case` | `{id, title, part_title, rad_file_name}` (엔트리의 `case_id`, 절대경로 넣지 않음) |
-| `files` | `[{rel, source: "orig" \| "patched", n_patched, size, sha256}]` — `input/` 기준 rel, 패치 함수 반환 그대로(원본 행의 sha256 = 원본 파일) |
+| `files` | `[{rel, source: "orig" \| "patched", n_patched, size, sha256}]` — zip 최상위 폴더 기준 rel(v0.24.5, 옛 `input/` 기준 아님), 패치 함수 반환 그대로(원본 행의 sha256 = 원본 파일) |
 | `changed` | `source == "patched"` 인 rel 목록 |
 | `nodes` | `{n_target, n_moved, n_patched_lines, max_disp, max_disp_node_id, units: "model"}` — `n_target` = base_mesh 노드 수, `n_moved` = ‖x_design − x0‖ > 0 인 노드 수, `max_disp` = 그 최댓값 |
 | `checks` | `{nodeset_equal: true, base_max_diff, base_coord_tol_mm}` |
 
 ### 2.2 `REDROP_README.txt`
-한국어 평문(UTF-8, `\n`). 스터디·안·Case·변수 값·바뀐 파일·노드 수·최대 이동량 요약 + "input/ 폴더를 그대로 HPC 에 올려 starter rad 로 제출 / 원본 결과와 비교하려면 같은 엔진·버전 / 이 파일은 플랫폼이 만들었고 원본 폴더는 바꾸지 않았음". 본문은 `esl/verify/redrop.py:readme_text(manifest)` 가 manifest 만으로 만든다.
+한국어 평문(UTF-8, `\n`). 스터디·안·Case·변수 값·바뀐 파일·노드 수·최대 이동량 요약 + "이 폴더를 그대로 HPC 에 올려 starter rad 로 제출(README·manifest 는 해석에 쓰이지 않음) / 원본 결과와 비교하려면 같은 엔진·버전 / 이 파일은 플랫폼이 만들었고 원본 폴더는 바꾸지 않았음". 본문은 `esl/verify/redrop.py:readme_text(manifest)` 가 manifest 만으로 만든다.
 
 ## 3. 허용 조건 (모두 만족해야 200)
 
@@ -135,9 +135,9 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 - **I-2 기준 일치**: 원본 폐포에서 읽은 대상 노드 좌표 `x_file` 과 base_mesh `x0` 의 최대 성분 차 ≤ `base_coord_tol_mm`(기본 0 = 정확히 같음). 넘으면 `REDROP_BASE_CHANGED`.
 - **I-3 바뀌는 줄**: 패치 좌표 = `x_design`(‖x_design − x0‖ > 0 인 노드) / `x_file`(그 밖). 따라서 움직이지 않은 대상 노드 줄, 대상 파트 밖 노드 줄, `/NODE` 밖 모든 카드(요소·파트·접촉·tie·재질 …)·주석·빈 줄은 **바이트 동일**. 바뀐 줄도 ID 필드(앞 10자)와 70자 뒤 나머지는 그대로(patch.py 규칙).
 - **I-4 줄바꿈·인코딩**: 줄마다 원래 줄바꿈(`\r\n`/`\n`) 보존, 바이트 단위 처리(디코딩 후 재인코딩 없음 — 바뀐 줄만 ASCII).
-- **I-5 기준안**: `d000`(모핑 0) → `changed = []`, zip 의 `input/` 아래 모든 파일이 원본과 바이트 동일, 임시 폴더에는 메타 2개만.
+- **I-5 기준안**: `d000`(모핑 0) → `changed = []`, zip 최상위 폴더 아래 모든 입력 파일이 원본과 바이트 동일, 임시 폴더에는 메타 2개만.
 - **I-6 무쓰기**: input_roots·upload_root·Case 원본 폴더·`_doe/<sid>` 에 쓰지 않는다. 쓰기는 `<esl_root>/_redrop/<token>/` 뿐이고 응답 뒤 남지 않는다(정리 ①②③).
-- **I-7 폐포 일치**: zip `input/` 의 rel 집합 = `input_set().files` 의 rel 집합(그 밖 파일 0개).
+- **I-7 폐포 일치**: zip 최상위 폴더 아래 rel 집합 − 메타 2개 = `input_set().files` 의 rel 집합(그 밖 파일 0개, `input/` 단계 없음).
 
 ## 5. 구조 — 공용 모듈 / 계획 표 / 독립성
 
@@ -182,7 +182,7 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 
 ### 5.4 백엔드 서비스 (`backend/esl_platform/api/services/redrop.py`, 신규)
 
-`bundle(ctx, principal, sid, did, entry_id) -> {files, prefix, filename, size, cleanup}` + `sweep(ctx)` + `entries(ctx, conn, s) -> list[RedropEntryOut dict]`(§1 엔트리 판정 — `study_out` 이 호출). `_viewable` → 설정 → `DID_RE` → 계획 열 → 안 폴더/npz → 엔트리(`s["entry_ids"]` 포함 검사 → `lib_repo.get_entry`) → Case(§3-4) → `verify_drop.input_set` → `bundle._check_size` → `esl_subdir(REDROP_DIR, token)` → `rd_prepare` → 파일 목록 `[(abs, "input/<rel>")…] + [(manifest, "redrop_manifest.json"), (readme, "REDROP_README.txt")]`. `EslError` → `DomainError`(§1 표 HTTP). 라우터는 `zip_response` 와 같은 헤더로 `StreamingResponse(_with_cleanup(stream_zip(...), tmp))`.
+`bundle(ctx, principal, sid, did, entry_id) -> {files, prefix, filename, size, cleanup}` + `sweep(ctx)` + `entries(ctx, conn, s) -> list[RedropEntryOut dict]`(§1 엔트리 판정 — `study_out` 이 호출). `_viewable` → 설정 → `DID_RE` → 계획 열 → 안 폴더/npz → 엔트리(`s["entry_ids"]` 포함 검사 → `lib_repo.get_entry`) → Case(§3-4) → `verify_drop.input_set` → `bundle._check_size` → `esl_subdir(REDROP_DIR, token)` → `rd_prepare` → 파일 목록 `[(abs, "<rel>")…] + [(manifest, "redrop_manifest.json"), (readme, "REDROP_README.txt")]`. `EslError` → `DomainError`(§1 표 HTTP). 라우터는 `zip_response` 와 같은 헤더로 `StreamingResponse(_with_cleanup(stream_zip(...), tmp))`.
 - `zip_response` 를 고치지 않기 위해 라우터에서 정리 제너레이터로 감싼 뒤 `StreamingResponse` 를 직접 만든다(헤더 3개 동일).
 - `study_out`(services/doe.py)에 `redrop_ok`·`redrop_blocked`·`redrop_entries` 세 칸과 키워드 `with_redrop: bool = True` 만 추가(계산 = `redrop.flags(ctx, s)`·`redrop.entries(ctx, conn, s)`). 목록 `list_studies` 호출만 `with_redrop=False`.
 
@@ -222,7 +222,7 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 | 7 | 계획 열: 모든 `PLANS` 행에 `redrop` 이 있고 값 ∈ `RD_VALUES`, `case_once` 만 `node_id`. 열 지우면 `plan_for` → `CONFIG_INVALID` | `tests/doe/test_transfer_plan.py` |
 | 8 | API identity 거부: mesh·step·compare 스터디 → 422 `REDROP_UNSUPPORTED`, `redrop_ok=false`·`redrop_blocked` 문구. 서비스 코드에 시나리오 이름 문자열 비교 없음(정적 grep) | `backend/tests/test_doe_redrop_api.py` |
 | 9 | 순위 밖 안: keep_files_top=3, `best/` 에 없는 d020 → 200, manifest `design.rank` = 순위 행 값, `best/d020` 미생성 | 〃 |
-| 10 | zip 구조: 최상위 `redrop_<did>_<엔트리 slug>_<sid8>/`, `input/` rel 집합 = `input_set` rel 집합(I-7), 엔진 rad 포함, h3d·`A001`·`.out` 이 Case 폴더에 있어도 zip 에 없음, manifest 고정 키·`changed`·`nodes.max_disp` 가 numpy 계산과 일치, README 존재 | 〃 |
+| 10 | zip 구조: 최상위 `redrop_<did>_<엔트리 slug>_<sid8>/`, `input/` 단계 없음, rel 집합 = `input_set` rel 집합(I-7), 엔진 rad 포함, h3d·`A001`·`.out` 이 Case 폴더에 있어도 zip 에 없음, manifest 고정 키·`changed`·`nodes.max_disp` 가 numpy 계산과 일치, README 존재 | 〃 |
 | 11 | 입력 폴더 무쓰기: 요청 전후 Case 폴더·upload_root·`_doe/<sid>` 트리(이름·mtime·sha256) 동일 | 〃 |
 | 12 | `vd_patch` 회귀: 기존 `tests/verify/test_vd_patch.py` 전부 통과 + 같은 spec 로 리팩터 전후 산출 파일·result json 바이트 동일(골든 sha256) | `tests/verify/test_vd_patch.py`(추가 1건) |
 | 13 | 임시 폴더 정리: 정상 완료 → `_redrop/` 비어 있음. 스트림 도중 제너레이터 close → 비어 있음. 4xx(노드 누락) → 비어 있음. ttl 지난 잔여 폴더는 다음 요청에서 지워지고, 32-hex 가 아닌 이름·링크는 건드리지 않음 | `backend/tests/test_doe_redrop_api.py` |
@@ -230,7 +230,7 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 | 15 | 권한: 프로젝트 viewer 200, 프로젝트 밖 사용자 403, 없는 스터디 404 | 〃 |
 | 16 | 설정 동기: `DEFAULTS["redrop"]` == `BeadDoeRedropCfg()` == 두 예시 yaml 블록 | `backend/tests/test_doe_config.py`(추가) |
 | 17 | 프런트: 버튼 비활성(redrop_ok false → 툴팁, pick 없음, 선택 엔트리 ok=false), 활성 시 URL(`entry_id` 포함)·파일명, 409 메시지 표시, 413 안내, `check:api` 통과 | `frontend/src/__tests__/doe_redrop.test.tsx` |
-| 18 | 엔트리 선택(백엔드): 2개 Case 스터디에서 기준이 아닌 엔트리 지정 → 200, zip `input/` = 그 엔트리 Case 의 `input_set` 폐포, 이름에 그 엔트리 slug, manifest `entry.id/label/is_base=false`·`case.id` 일치. `entry_id` 생략 → 기준 엔트리(`is_base=true`) | `backend/tests/test_doe_redrop_api.py` |
+| 18 | 엔트리 선택(백엔드): 2개 Case 스터디에서 기준이 아닌 엔트리 지정 → 200, zip 입력 파일 = 그 엔트리 Case 의 `input_set` 폐포, 이름에 그 엔트리 slug, manifest `entry.id/label/is_base=false`·`case.id` 일치. `entry_id` 생략 → 기준 엔트리(`is_base=true`) | `backend/tests/test_doe_redrop_api.py` |
 | 19 | 엔트리 거부: 스터디에 없는 엔트리(다른 스터디·다른 프로젝트의 실제 엔트리 포함) → 422 `REDROP_ENTRY_NOT_IN_STUDY`, 임시 폴더 미생성. 엔트리 행 삭제됨 → 409 `REDROP_ENTRY_NOT_READY` | 〃 |
 | 20 | `redrop_entries`: 상세 응답에서 `entry_ids` 순서·`is_base`·label 일치, 보관 Case·누적 Case 엔트리 `ok=false`+사유, mesh 스터디는 전 행 `ok=false`, 목록 응답은 null. slug 규칙(금지 문자·길이·빈 이름 대체)과 `Content-Disposition` 의 `filename*` | 〃 |
 | 21 | 프런트 엔트리 선택칸: 기본 = `is_base` 엔트리, `ok=false` 옵션 disabled + 사유 title, 바꾸면 URL 의 `entry_id` 가 바뀜, 기준 엔트리가 불가면 첫 `ok` 엔트리로 | `frontend/src/__tests__/doe_redrop.test.tsx` |
@@ -268,6 +268,7 @@ redrop_<did>_<엔트리 slug>_<sid8>/
 | D-0.22.0-RD-5 | zip = `input/`(폐포 전체 + 엔진 rad, 결과 파일 없음) + manifest + README, 권한 = 스터디 읽기 |
 | D-0.22.0-RD-6 | 씬 범위 = 엔트리 선택 후 1개씩(`entry_id` 쿼리, Case 는 엔트리에서만), UI = 엔트리 선택칸 1개 + 버튼 1개 (사용자 확정 2026-11-16) |
 | D-0.22.0-RD-7 | 엔진 rad 없음 = `VD_ENGINE_MISSING` 거부 유지 (사용자 확정 2026-11-16) |
+| D-0.24.5-RD-1 | zip 의 `input/` 단계 제거 — 입력 파일·메타 2개를 최상위 폴더 바로 아래에(job 투입 편의, 사용자 2026-11-24). rel 하위 폴더 유지, 메타 이름 충돌 `REDROP_META_NAME_CONFLICT` |
 
 ## 12. 결정 질문 — **확정** (2026-11-16)
 

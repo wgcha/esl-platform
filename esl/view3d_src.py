@@ -57,7 +57,9 @@ REASON_TEXT = {
     "V3D_STUDY_ONLY": "강성 평가 스터디에서만 계산됩니다(Case 산출물 없음)",
     "V3D_SRC_NOT_RUN": "이 ESL 결과에는 없습니다(v0.24.0 이전 계산) — ESL 을 다시 계산하면 생깁니다",
     "BF_DISABLED": "설정에서 꺼짐(bforce.enabled)",
-    "FINT_DISABLED": "설정에서 꺼짐(bforce.fint.enabled)",
+    # v0.24.5(Verifier): 내력은 bforce.enabled 와 bforce.fint.enabled 둘 다 true 여야 계산(esl/pipeline.py _fint_esl) — v0.24.5 기본의
+    # 원인은 bforce.enabled. 문구 = esl_view3d_sources.md §2.5 표(BF_DISABLED·FINT_DISABLED 행). 화면 거울 Stage4.tsx SRC_DISABLED_TEXT
+    "FINT_DISABLED": "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)",
     "PREREQUISITE_MISSING": "ESL 산출물(04_esl/f_eq.npz·u_rel.npz 또는 01_extract/model.npz)이 없습니다",
     "V3D_RESP_NEED_VAL": "응답 변위 없음 — ⑤ 검증에서 전체 풀이(validation.full_solve)를 하면 보입니다",
     "V3D_RESP_SKIPPED": "응답 변위 없음 — ESL 단계 재현 풀이 생략",

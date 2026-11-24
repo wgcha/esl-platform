@@ -220,7 +220,7 @@ def test_src_errors(mk, seed, engine):
     r = c.get(seed.url(), params={"src": "bforce"}, headers=R)
     assert r.json()["detail"]["reason_code"] == "BF_NO_DATA" and r.json()["detail"]["reason"] == "접촉력 출력 없음 — /H3D/NODA/CONT"
     r = c.get(seed.url(), params={"src": "fint"}, headers=R)
-    assert r.json()["detail"]["reason_code"] == "FINT_DISABLED" and r.json()["detail"]["reason"] == "설정에서 꺼짐(bforce.fint.enabled)"
+    assert r.json()["detail"]["reason_code"] == "FINT_DISABLED" and r.json()["detail"]["reason"] == "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)"
     assert c.get(seed.url("/part.glb"), params={"src": "xyz"}, headers=R).status_code == 404
     assert not (seed.dir / "runs" / seed.run_id / "view3d_bforce").exists()
 

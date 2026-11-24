@@ -55,7 +55,9 @@ JIG_DEFAULTS: dict[str, Any] = {
     "ridge": 1e-8, "active_tol": 1e-3, "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1,
     "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02,
     # v0.24.4 (D-0.24.4-JIG-3·4·5·7·16)
-    "tie_dofs": "normal", "methods": ["fixed", "prescribed", "spring"], "normal_kink_deg": 45.0,
+    # v0.24.5(esl_validate_tiers.md §12 — 사용자 2026-11-24 "지그 esl도 고정은 숨기자 … 계산에서도 제외"): 기본 방식에서 fixed 제외
+    # (설정 methods 에 fixed 를 넣으면 v0.24.4 와 같음). 옛 스냅샷(키 없음) = jig_bc.LEGACY_ABSENT 그대로
+    "tie_dofs": "normal", "methods": ["prescribed", "spring"], "normal_kink_deg": 45.0,
     "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto",
     # 스프링 α 기본 0.01(메인 결정 2026-11-20 — P2a 합성: α = 1 은 노드 자기 강성이라 spring ≈ prescribed(‖Δu‖/‖u‖ 2.4e-5),
     # α ≲ 1e-2 에서야 구분됨, Q-JIGC-1 사용자 확인 대기 — 값은 여기 한 곳, D-0.24.4-JIG-19)

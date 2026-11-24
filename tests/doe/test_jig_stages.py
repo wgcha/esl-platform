@@ -333,7 +333,9 @@ def test_sm_metric_default_and_hash(tmp_path):
     c = _ctx(tmp_path, {"schema": 1, "lin_form": "ritz"})
     assert stg._sm(c)["metric"] == "solve" and stg._sm(c)["jig"] is None and stg._jig(c) is None
     c = _ctx(tmp_path, rank_snap())
-    assert stg._jig(c) == DEFAULTS["rank"]["jig"] and stg._sm(c)["metric"] == "jig"
+    # v0.24.5 D-0.24.5-VT-16: 옛 스냅샷(methods 키 없음)의 병합값 = 설정 기본 + 호환 상수(v0.24.4 기본 methods — 해시 불변)
+    legacy_merged = {**DEFAULTS["rank"]["jig"], **{k: list(v) for k, v in stg.LEGACY_JIG_MERGE.items()}}
+    assert stg._jig(c) == legacy_merged and stg._sm(c)["metric"] == "jig"
     h_on = stg._cfg_hash(c)
     h_off = stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=False, metric="solve")))
     assert h_on != h_off
@@ -345,6 +347,51 @@ def test_sm_metric_default_and_hash(tmp_path):
         assert stg._cfg_hash(_ctx(tmp_path, rank_snap(jig=jcfg(**{k: v})))) != h_on, k     # 하중을 바꾸는 키 = 해시 안
     assert stg._cfg_hash(_ctx(tmp_path, rank_snap(metric="solve"))) == h_on                  # metric 도 해시 밖(SM-6)
     assert stg._jig(_ctx(tmp_path, rank_snap(jig=jcfg(enabled=False), metric="solve"))) is None
+
+
+# ---------------------------------------------------------------- v0.24.5 옛 스냅샷 해시 호환(D-0.24.5-VT-16, Verifier 결함)
+# ≤ v0.24.3 스냅샷 rank.jig(v0.24.4 새 키 없음) — 리터럴로 고정(DEFAULTS 에서 만들면 기본값이 바뀔 때 같이 바뀌어 시험이 무력해짐).
+LEGACY_JIG_V0243 = {
+    "enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TYPE2_MAIN"], "contact_gap_mm": 2.0, "knn": 8,
+    "chunk_nodes": 65536, "max_surf_tris": 20000000, "max_regions": 8, "min_regions": 2, "min_region_nodes": 3,
+    "min_region_area_mm2": 25.0, "patch_count": 6, "body_force": True, "basis_tangential": True, "n_modes": 4,
+    "rho_t_mm3": 7.85e-9, "modes_sigma": 0.0, "modes_tol": 1e-8, "modes_maxiter": 2000, "modes_ref321": False,
+    "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0, "ridge": 1e-8, "active_tol": 1e-3, "mac_min": 0.9,
+    "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02}
+# main(9b6b2587 = v0.24.4) 코드로 이 스냅샷·이 파일의 build_same/run 을 돌려 기록한 값(경로 무관 — 두 경로에서 같음 확인)
+V0244_LEGACY_CFG_HASH = "d871dd3db54260503237f54175930de7c035243b2c3fd213f1d0d0b8c08c5e50"
+V0244_LEGACY_DONE_SHA = {"d000": "2c2c564dbd92d20a15891004746df9203ad7a77090d485d58580fa55b61bd292",
+                         "d001": "ad28cca51eed3086ea581d3c18d9159070d0c3ffb6f7b089959e02e7d8f18419",
+                         "d002": "4017b2a184062f806f5c461d5514b84f5c49a0c3c0f9e3cf1f99e73f1589c5b2"}
+
+
+def test_v0245_legacy_snapshot_hash_equals_v0244(tmp_path):
+    """옛 스터디 이어하기·안 추가가 모든 안을 다시 평가하지 않음: input_sha256(done.json)·설정 해시 = main 기록값.
+    계산 뜻은 그대로 옛 것(tie translation·fixed 만 — 호환 상수는 해시 보기에만)."""
+    rank = rank_snap(jig=copy.deepcopy(LEGACY_JIG_V0243))
+    for scn in ("same", "mesh"):
+        c = _ctx(tmp_path, copy.deepcopy(rank), scn=scn)
+        assert stg._cfg_hash(c) == V0244_LEGACY_CFG_HASH, scn
+        assert stg._jig_plan(c) == ("translation", ("fixed",))
+    mesh, doe = build_same(tmp_path / "s")
+    out, post, ids = run(str(tmp_path / "s" / "o"), doe, mesh, rank=copy.deepcopy(rank))
+    got = {d: U.read_json(os.path.join(out, "run", "designs", d, "done.json"))["input_sha256"] for d in ids}
+    assert got == V0244_LEGACY_DONE_SHA
+    assert post["metric_effective"] == "jig"                                  # 옛 스냅샷 순위 = C_jig 그대로
+    # 호환 상수는 키가 없을 때만 — 스냅샷에 명시된 methods 는 그대로 해시·계산에
+    c1 = _ctx(tmp_path, rank_snap(jig={**copy.deepcopy(LEGACY_JIG_V0243), "methods": ["spring"]}))
+    assert stg._jig(c1)["methods"] == ["spring"] and stg._cfg_hash(c1) != V0244_LEGACY_CFG_HASH
+
+
+def test_v0245_new_snapshot_uses_new_default_methods(tmp_path):
+    """새 스터디(스냅샷 rank.jig = 설정 전체 고정 — 백엔드 rank_snapshot): 새 기본 [prescribed, spring] 그대로, 첫 방식 = 순위 출처
+    jig_disp, 해시는 옛 스냅샷과 다름(호환 상수 무관)."""
+    assert DEFAULTS["rank"]["jig"]["methods"] == ["prescribed", "spring"]
+    assert list(stg.LEGACY_JIG_MERGE["methods"]) != DEFAULTS["rank"]["jig"]["methods"]
+    c = _ctx(tmp_path, rank_snap(jig=copy.deepcopy(DEFAULTS["rank"]["jig"])))
+    assert stg._jig(c)["methods"] == ["prescribed", "spring"] and stg._jig(c) == DEFAULTS["rank"]["jig"]
+    assert stg._jig_plan(c)[1] == ("prescribed", "spring") and stg._jig_rank_src(c) == "jig_disp"
+    assert stg._cfg_hash(c) != V0244_LEGACY_CFG_HASH
 
 
 # ---------------------------------------------------------------- ④·옛 ③ unsupported, ③ xfer(스텁 — gmsh 불필요)

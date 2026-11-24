@@ -133,8 +133,9 @@ def run_case(t):
     root = str(t)
     c = synth_case.build(root, source="max_strain")
     _add_bforce(c, c["csv"], fint_sign=-1.0)
-    with open(os.path.join(ROOT, "config", "esl.example.yaml"), encoding="utf-8") as fh:
-        txt = fh.read().replace("disp_precision: float32", "disp_precision: float64")
+    import vt_golden
+
+    txt = vt_golden.cfg_text()      # 예시 yaml(float64) + disp_rms_rel_max 0.01(골든 기록 당시 예시 값 — v0.24.5 0.05)
     cfg = os.path.join(root, "esl64.yaml")
     with open(cfg, "w", encoding="utf-8") as fh:
         fh.write(txt)
@@ -145,8 +146,33 @@ def run_case(t):
 
 
 def case_snapshot(out: str, root: str) -> dict[str, str]:
-    return tree_hashes(out, root, lambda rel: rel.split("/")[0] in ("03_bc", "04_esl", "05_val", "06_export",
-                                                                    "07_report"))
+    """v0.24.5(esl_validate_tiers.md §5-6): 05_val 문서·validation.csv·보고서는 판정 단계·MAC 의도 차이를 ``vt_compat`` 로
+    v0.24.4 형식으로 되돌린 뒤 해시(보고서 = 되돌린 문서로 다시 그린 것 — 현재 VAL_PLAN 으로)."""
+    import vt_compat as VC
+
+    h = tree_hashes(out, root, lambda rel: rel.split("/")[0] in ("03_bc", "04_esl", "05_val", "06_export",
+                                                                 "07_report"))
+    vd = os.path.join(out, "05_val")
+    for rel in list(h):
+        p = os.path.join(out, rel)
+        name = os.path.basename(rel)
+        if rel.startswith("05_val/") and name == "validation.json":
+            with open(p, encoding="utf-8") as fh:
+                doc = VC.back_validation(json.load(fh))
+            h[rel] = _sha(json.dumps(_strip(doc, root), ensure_ascii=False, sort_keys=True).encode())
+        elif rel == "05_val/sources.json":
+            with open(p, encoding="utf-8") as fh:
+                doc = VC.back_sources(json.load(fh), vd)
+            h[rel] = _sha(json.dumps(_strip(doc, root), ensure_ascii=False, sort_keys=True).encode())
+        elif name == "validation.csv":
+            with open(p, encoding="utf-8", newline="") as fh:
+                t = VC.back_csv(fh.read(), p, out)
+            h[rel] = _sha(_TS.sub("<TS>", t.replace(root, "<ROOT>")).encode())
+        elif rel == "07_report/report.html":
+            t = VC.back_report_html(out)
+            if t is not None:
+                h[rel] = _sha(_TS.sub("<TS>", t.replace(root, "<ROOT>")).encode())
+    return h
 
 
 # v0.24.4 P2b(esl_jig_case.md §12-6 의도 변경): 검증 출처 표 KEYS 6(지그 3방식 행) → 05_val/sources.json(행 목록)·07_report(출처별 판정 표)만
@@ -160,13 +186,15 @@ OLD_JIG_VAL_ROW = {"key": "jig", "legacy": False, "load": None, "required": Fals
 
 
 def run_case_old_plan(t):
-    """v0.24.3 출처 표(VAL_PLAN = 옛 jig 행 + full·bforce·fint, 보고서 이름 '지그 ESL')로 새 코드 실행."""
+    """v0.24.3 출처 표(VAL_PLAN = 옛 jig 행 + full·bforce·fint, 보고서 이름 '지그 ESL')로 새 코드 실행 → (out, root, 스냅샷 —
+    같은 옛 출처 표 안에서 계산: 보고서 되돌림 재생성도 옛 표로)."""
     from esl import val_src
     old = (OLD_JIG_VAL_ROW, *(r for r in val_src.VAL_PLAN if r["key"] in ("full", "bforce", "fint")))
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(val_src, "VAL_PLAN", old)
         mp.setitem(val_src.LABEL, "jig", "지그 ESL")
-        return run_case(t)
+        out, root = run_case(t)
+        return out, root, case_snapshot(out, root)
 
 
 @pytest.fixture(scope="module")
@@ -177,9 +205,8 @@ def golden_runs(tmp_path_factory):
     (t / "o").mkdir()
     out, _post, _ids = run_study(t / "s")
     cout, croot = run_case(t / "c")
-    oout, oroot = run_case_old_plan(t / "o")
-    return {"study": study_snapshot(out, str(t)), "case": case_snapshot(cout, croot),
-            "case_old_plan": case_snapshot(oout, oroot)}
+    _oout, _oroot, osnap = run_case_old_plan(t / "o")
+    return {"study": study_snapshot(out, str(t)), "case": case_snapshot(cout, croot), "case_old_plan": osnap}
 
 
 def test_v0244_jig_1_golden_bytes(golden_runs):

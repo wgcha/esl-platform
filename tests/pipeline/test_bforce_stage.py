@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import synth_case
+import vt_golden
 from esl import pipeline
 from esl.mech import bforce as bfm
 from esl.mech.mass import lumped_mass
@@ -19,7 +20,8 @@ from esl.rad import parse_rad
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CFG = os.path.join(ROOT, "config", "esl.example.yaml")
-CFG64_TEXT = open(CFG, encoding="utf-8").read().replace("disp_precision: float32", "disp_precision: float64")
+CFG64_TEXT = (open(CFG, encoding="utf-8").read().replace("disp_precision: float32", "disp_precision: float64")
+              + vt_golden.REENABLE_V0244)  # v0.24.5 §12: 끈 출처(경계력·내력·지그 고정)를 다시 켬 — 이 시험은 그 출처를 다룸
 A0 = np.array([300.0, -9810.0 * 150.0, 2.0e5])           # 강체 감속(가속도) — 관성 이완이 지움
 
 

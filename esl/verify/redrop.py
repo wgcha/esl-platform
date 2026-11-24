@@ -15,7 +15,6 @@ from esl.errors import EslError
 SCHEMA = "esl/redrop/1"
 MANIFEST_NAME = "redrop_manifest.json"
 README_NAME = "REDROP_README.txt"
-INPUT_DIR = "input"
 
 
 class RedropError(EslError):
@@ -83,6 +82,15 @@ def merge_coords(node_id, x_design, x0, x_file, tol: float, *, design_node_id=No
                  "max_disp_node_id": int(nid[k]) if moved.any() else None, "base_max_diff": max_diff}
 
 
+def check_meta_names(rels) -> None:
+    """v0.24.5: 입력 파일과 메타 2개가 한 폴더에 놓이므로 rel 이 메타 이름과 같으면(대소문자 무시) ``REDROP_META_NAME_CONFLICT``."""
+    meta = {MANIFEST_NAME.casefold(), README_NAME.casefold()}
+    bad = sorted(r for r in rels if r.casefold() in meta)
+    if bad:
+        raise RedropError("REDROP_META_NAME_CONFLICT",
+                          f"입력 파일 이름이 재낙하 메타 파일({README_NAME}·{MANIFEST_NAME})과 겹침: {', '.join(bad)}", rels=bad)
+
+
 def manifest(extra: dict, patch_res: dict, stats: dict, *, n_target: int, tol: float) -> dict:
     """``redrop_manifest.json`` 내용(§2.1, 고정 키 순서). extra = {platform_version, created_at, study, design, entry, case}."""
     files = [{"rel": f["rel"], "source": f["source"], "n_patched": int(f["n_patched"]), "size": int(f["size"]),
@@ -126,7 +134,7 @@ def readme_text(m: dict) -> str:
     lines += [
         "",
         "사용법",
-        f"  1. {INPUT_DIR}/ 폴더를 그대로 HPC 에 올려 starter rad({cs.get('rad_file_name')})로 제출합니다.",
+        f"  1. 이 폴더를 그대로 HPC 에 올려 starter rad({cs.get('rad_file_name')})로 제출합니다(README·manifest 는 해석에 쓰이지 않음).",
         "  2. 원본 낙하 결과와 비교하려면 같은 엔진·버전으로 돌립니다.",
         f"  3. 파일별 sha256·바뀐 줄 수는 {MANIFEST_NAME} 에 있습니다.",
         "",
@@ -137,4 +145,4 @@ def readme_text(m: dict) -> str:
 
 
 __all__ = ["check_nodeset", "align_design", "merge_coords", "manifest", "readme_text", "RedropError", "SCHEMA",
-           "MANIFEST_NAME", "README_NAME", "INPUT_DIR"]
+           "MANIFEST_NAME", "README_NAME", "check_meta_names"]

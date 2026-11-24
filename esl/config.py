@@ -309,6 +309,11 @@ SCHEMA: dict[str, Any] = {
         "disp_noise_rel_max": _num(0.0, lo_open=True),    # 0.5.7 신규(판정)
         "disp_top_n": _int(1, 1000),                      # 0.5.7 신규
         "disp_hist_bins": _int(2, 200),                   # 0.5.7 신규
+        # 선택(OPTIONAL_KEYS, v0.24.5 esl_validate_tiers.md §2): 판정 단계 — disp_rms_rel_max = PASS 상한, 아래 = 조건부 상한·
+        # MAC(검증) PASS·조건부 하한. 없으면 VALIDATION_TIER_DEFAULTS(cfg 에 주입 안 함 — 설정 해시 불변), 역전 = CONFIG_INVALID
+        "disp_rms_rel_cond_max": _num(0.0, lo_open=True),
+        "mac_min": _num(0.0, 1.0, lo_open=True),
+        "mac_cond_min": _num(0.0, 1.0, lo_open=True),
         # 선택(OPTIONAL_KEYS, v0.24.3 esl_validate_sources.md §11): ④ 검증 출처별(경계력·내력 …). 없으면
         # VALIDATION_SOURCES_DEFAULTS(cfg 에 주입 안 함 — 설정 해시 불변)
         "sources": {"enabled": _bool, "reaction_tol": _tol_map, "reaction_warn": _tol_map},
@@ -413,6 +418,11 @@ VALIDATION_DEFAULTS = {"disp_max_rel_max": 0.05, "disp_noise_rel_max": 1.0e-3, "
 # (warn < 반력 ≤ tol = PASS + 주의 표식; 없는 출처 = 주의 없음). fint 주의 5 %·불합격 10 % = 사용자 결정 2026-11-20
 # (내력 ESL 은 공유 노드·회전 관성으로 실데이터 불평형 ~1e-3 — 공통 1e-6 이면 거의 항상 REACTION FAIL).
 VALIDATION_SOURCES_DEFAULTS = {"enabled": True, "reaction_tol": {"fint": 0.10}, "reaction_warn": {"fint": 0.05}}
+# v0.24.5 ④ 판정 단계(계약 esl_validate_tiers.md §2 — D-0.24.5-VT-3) 기본값 단일 출처 — 선택 키, cfg 에 주입 안 함(설정 해시 불변).
+# disp_rms_rel_max(필수, 이름 유지) = PASS 상한, disp_rms_rel_cond_max = 조건부 PASS 상한(없으면 max(이 값, PASS 상한)),
+# mac_min = MAC(검증) PASS 하한, mac_cond_min = 조건부 하한(없으면 min(이 값, mac_min)). 읽기 = validation_tier_settings.
+# 사용자 결정 2026-11-24: 변위 RMS 5 % PASS·10 % 조건부, MAC ≥ 0.95 PASS·≥ 0.90 조건부.
+VALIDATION_TIER_DEFAULTS = {"disp_rms_rel_cond_max": 0.10, "mac_min": 0.95, "mac_cond_min": 0.90}
 # 0.8.0 누적 씬 키(계약 esl_cumulative_input.md §11): 이전 설정 파일에 없으면 이 값으로 채운다(기본값 단일 출처).
 CUMULATIVE_DEFAULTS = {"enabled": "auto", "thickness_source": "state", "epsp_agg": "auto", "h3d_epsp_mode": "auto",
                        "h3d_eq_mode": "auto", "min_increment": 1.0e-5,
@@ -421,7 +431,10 @@ OPTIONAL_SECTIONS = frozenset({"cumulative", "bforce", "jig"})
 # v0.24.0 경계력 ESL(계약 esl_bforce.md §9) 기본값 단일 출처 — 선택 절, cfg 에 주입 안 함(설정 해시 불변). 이름 후보 = 현장 확인 이름
 # "Contact Forces"·"Acceleration"(#82) 포함, 나머지는 Radioss 2026 /H3D/NODA 키워드 표시명 후보(현장 확인 후 설정에 더함).
 BFORCE_DEFAULTS = {
-    "enabled": True,
+    # v0.24.5(esl_validate_tiers.md §12 — 사용자 2026-11-24 "경계력이랑 내력은 참고로도 쓰기 어려우니 … 계산에서도 제외"): 기본 끔.
+    # false = ③ ESL 경계력·내력 산출 없음(BF_DISABLED·FINT_DISABLED) + ① 추출 request bf_on 0(워커 h3d) + ③ 보충 추출(on_demand) 없음.
+    # true 로 되돌리면 v0.24.4 와 같은 산출물(골든 시험)
+    "enabled": False,
     # v0.24.2(esl_bforce_ondemand.md §9 — D-0.24.2-BFD-7): ③ ESL 때 선택 프레임의 경계력 원자료가 01_extract 에 없으면 h3d 에서
     # 그 프레임만 보충(h3d 입력 Case, 워커가 읽음). false = v0.24.1 동작
     "on_demand": True,
@@ -468,6 +481,7 @@ OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumula
                            *(f"bforce.{k}" for k in BFORCE_DEFAULTS), "bforce.signs.cont", "bforce.signs.cont2",
                            "bforce.signs.fint", *(f"bforce.fint.{k}" for k in BFORCE_DEFAULTS["fint"]),
                            "validation.sources", *(f"validation.sources.{k}" for k in VALIDATION_SOURCES_DEFAULTS),
+                           *(f"validation.{k}" for k in VALIDATION_TIER_DEFAULTS),
                            *(f"jig.{k}" for k in SCHEMA["jig"])})
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
@@ -576,6 +590,33 @@ def validation_sources_settings(cfg: dict | None) -> dict:
     return out
 
 
+def validation_tier_settings(cfg: dict | None) -> dict:
+    """④ 판정 단계 기준(계약 esl_validate_tiers.md §2) — {disp_rms_rel_cond_max, mac_min, mac_cond_min}(실제 적용값).
+    없으면 VALIDATION_TIER_DEFAULTS, 단 조건부 상한은 max(기본, disp_rms_rel_max)·MAC 조건부 하한은 min(기본, mac_min)
+    (PASS 상한이 기본 조건부보다 큰 옛 설정도 오류 없음 — 조건부 구간 0). 명시값 역전·범위 오류 = CONFIG_INVALID.
+    cfg 는 바꾸지 않는다."""
+    vc = cfg.get("validation") if isinstance(cfg, dict) else None
+    vc = vc if isinstance(vc, dict) else {}
+    d = VALIDATION_TIER_DEFAULTS
+    for k in d:
+        if vc.get(k) is not None:
+            SCHEMA["validation"][k](f"validation.{k}", vc[k])
+    pass_max = vc.get("disp_rms_rel_max")
+    cond = vc.get("disp_rms_rel_cond_max")
+    if cond is None:
+        cond = d["disp_rms_rel_cond_max"] if pass_max is None else max(d["disp_rms_rel_cond_max"], float(pass_max))
+    elif pass_max is not None and float(cond) < float(pass_max):
+        raise _bad("validation.disp_rms_rel_cond_max",
+                   f"조건부 상한은 PASS 상한 disp_rms_rel_max 이상이어야 함 (값 {cond} < {pass_max})")
+    mac_min = float(vc["mac_min"]) if vc.get("mac_min") is not None else d["mac_min"]
+    mac_cond = vc.get("mac_cond_min")
+    if mac_cond is None:
+        mac_cond = min(d["mac_cond_min"], mac_min)
+    elif float(mac_cond) > mac_min:
+        raise _bad("validation.mac_cond_min", f"조건부 하한은 PASS 하한 mac_min 이하여야 함 (값 {mac_cond} > {mac_min})")
+    return {"disp_rms_rel_cond_max": float(cond), "mac_min": mac_min, "mac_cond_min": float(mac_cond)}
+
+
 def support_check_settings(cfg: dict | None) -> dict:
     """support.auto_check(없거나 일부만 있으면 SUPPORT_CHECK_DEFAULTS 로 채운 사본). cfg 는 바꾸지 않는다."""
     out = dict(SUPPORT_CHECK_DEFAULTS)
@@ -648,6 +689,7 @@ def validate_settings(cfg: Any) -> dict:
             raise _bad("jig.min_regions", "min_regions ≤ max_regions")
         if jc.get("spring_k_mode") == "value" and jc.get("spring_k_value") is None:
             raise _bad("jig.spring_k_value", "spring_k_mode = value 이면 spring_k_value(> 0 N/mm) 필요")
+    validation_tier_settings(cfg)               # 판정 단계 키 사이 조건(역전 = CONFIG_INVALID, 키 경로)
     sup = cfg["support"]
     if sup["candidates"] == "node_ids" and len(set(sup["node_ids"])) < 3:
         raise _bad("support.node_ids", "candidates=node_ids 이면 서로 다른 노드 ID 3개 이상 필요")

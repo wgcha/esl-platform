@@ -7,6 +7,10 @@ V-1 골든: 합성 Case 4종(bf = 경계력·내력 자료 있음, plain = 없�
 ``tests/fixtures/val_src/golden_v0242.json`` 에 기록했다. 다시 기록하면 안 된다: 깨지면 full 결과가 바뀐 것이다.
 
 npz 는 zip 항목 시각이 들어가 파일 sha 가 실행마다 다르므로 배열(이름·dtype·shape·바이트) 해시로 비교한다.
+
+v0.24.5(esl_validate_tiers.md §5-6): 판정 단계·MAC 의 의도 차이(validation.json·validation.csv·단계 요약 새 키·옛 단일 기준 판정,
+보고서 5절 판정 머리)는 ``vt_compat`` 로 v0.24.4 형식으로 되돌린 뒤 같은 골든과 비교한다(보고서 = 되돌린 문서로 다시 그린 것).
+설정은 골든 기록 당시 예시 값 ``disp_rms_rel_max: 0.01`` 을 명시(``vt_golden.cfg_text``).
 """
 from __future__ import annotations
 
@@ -20,6 +24,8 @@ import numpy as np
 import pytest
 
 import synth_case
+import vt_compat as VC
+import vt_golden as VG
 from esl import pipeline
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,7 +37,7 @@ def _read(path: str) -> str:
         return fh.read()
 
 
-CFG64_TEXT = _read(CFG).replace("disp_precision: float32", "disp_precision: float64")
+CFG64_TEXT = VG.cfg_text()          # 예시 yaml(float64) + disp_rms_rel_max 0.01(골든 기록 당시 예시 값 — v0.24.5 0.05)
 GOLDEN = os.path.join(ROOT, "tests", "fixtures", "val_src", "golden_v0242.json")
 TAG = "golden-v0243"
 _TS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
@@ -66,7 +72,7 @@ def _npz_hash(path: str) -> str:
 
 def _val_json_hash(path: str) -> str:
     with open(path, encoding="utf-8") as fh:
-        doc = json.load(fh)
+        doc = VC.back_validation(json.load(fh))                 # v0.24.5 의도 차이 되돌림
     doc.pop("created_at", None)
     (doc.get("full_solve") or {}).pop("mem_avail", None)
     return _sha(json.dumps(doc, ensure_ascii=False, indent=1).encode())
@@ -80,15 +86,22 @@ def file_hash(path: str, root: str) -> str:
         return _val_json_hash(path)
     with open(path, "rb") as fh:
         b = fh.read()
+    out = os.path.dirname(os.path.dirname(path))
+    if name == "validation.csv":                                # v0.24.5 의도 차이 되돌림(같은 쓰기 함수로 다시 씀)
+        b = VC.back_csv(b.decode("utf-8"), path, out).encode()
     if name == "report.html":
-        return _sha(_SRC_BLOCK.sub("", _norm_text(b.decode("utf-8"), root)).encode())
+        html = VC.back_report_html(out)                         # 되돌린 문서로 다시 그린 보고서(새 형식일 때)
+        return _sha(_SRC_BLOCK.sub("", _norm_text(b.decode("utf-8") if html is None else html, root)).encode())
     if os.path.basename(os.path.dirname(path)) == pipeline.D_EXPORT:
         return _sha(_norm_text(b.decode("utf-8"), root).encode())
     return _sha(b)
 
 
-def norm_summary(summ: dict) -> dict:
-    """run.json stages.validate.summary 의 v0.24.2 키만(새 키 sources 제외), solver 의 시각·메모리 값 제외."""
+def norm_summary(summ: dict, val_dir: str | None = None) -> dict:
+    """run.json stages.validate.summary 의 v0.24.2 키만(새 키 sources 제외 — v0.24.5 mac·cond_reasons 는 되돌림), solver 의
+    시각·메모리 값 제외."""
+    if val_dir is not None:
+        summ = VC.back_summary(summ, val_dir)
     out = {k: v for k, v in summ.items() if k != "sources"}
     sol = json.loads(json.dumps(out.get("solver") or {}))
     for k in _VOLATILE_SOLVER:
@@ -115,7 +128,7 @@ def snapshot(out: str, root: str) -> dict:
             files[f"{sub}/{fn}"] = file_hash(os.path.join(d, fn), root)
     with open(os.path.join(out, pipeline.RUN_JSON), encoding="utf-8") as fh:
         rj = json.load(fh)
-    return {"files": files, "summary": norm_summary(rj["stages"]["validate"]["summary"])}
+    return {"files": files, "summary": norm_summary(rj["stages"]["validate"]["summary"], vd)}
 
 
 GOLDEN_CASES = ("bf", "plain", "never", "stress")
@@ -351,7 +364,7 @@ def _mut_summary(out, **sub):
 
 @pytest.mark.parametrize("case,exp", [
     ("disabled", {"bforce": ("unavailable", "BF_DISABLED", "설정에서 꺼짐(bforce.enabled)"),
-                  "fint": ("unavailable", "FINT_DISABLED", "설정에서 꺼짐(bforce.fint.enabled)")}),
+                  "fint": ("unavailable", "FINT_DISABLED", "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)")}),
     ("extract_failed", {"bforce": ("unavailable", "BF_EXTRACT_FAILED", "보충 실패 — 프레임 6: x"),
                         "fint": ("unavailable", "BF_EXTRACT_SKIPPED", "보충 생략 — 프레임 6: y")}),
     ("diag_failed", {"bforce": ("unavailable", "BF_FAILED", "ValueError: boom"),
@@ -454,7 +467,9 @@ def test_v0243_val_6_failure_isolation(golden_runs, tmp_path, monkeypatch, how):
 @pytest.mark.parametrize("scale,band", [(1e-4, "pass"), (4e-2, "pass"), (1e-1, "warn"), (2.5e-1, "fail")])
 def test_v0243_val_q1_fint_reaction_two_stage(golden_runs, tmp_path, scale, band):
     """Q1 수정(D-0.24.3-VAL 출처별 반력 허용치 — fint 주의 5 %·불합격 10 %): 불평형 하중 주입 → 반력 ≤5 % PASS,
-    5~10 % PASS + 주의 표식, >10 % REACTION FAIL. full 은 공통 기준 1e-6 그대로(바이트 불변)."""
+    5~10 % PASS + 주의 표식, >10 % REACTION FAIL. full 은 공통 기준 1e-6 그대로(바이트 불변).
+    v0.24.5 개정(esl_validate_tiers.md §1.4 — D-0.24.5-VT-4, 의도 변경): 5~10 % = 조건부 PASS(cond_reasons REACTION),
+    reaction_warned 유지·REACTION_ABOVE_WARN 은 limits 에 붙이지 않음."""
     r = copy_case(golden_runs, "bf", str(tmp_path))
     out = r["out"]
     p = os.path.join(out, pipeline.D_ESL, "fint.npz")
@@ -474,8 +489,9 @@ def test_v0243_val_q1_fint_reaction_two_stage(golden_runs, tmp_path, scale, band
     else:
         assert "REACTION" not in v["fail_reasons"]
         assert row["reaction_warned"] is (reac > 0.05)
-        assert ("REACTION_ABOVE_WARN" in row["limits"]) is (reac > 0.05)
-    assert row["fail_reasons"] == v["fail_reasons"]
+        assert ("REACTION" in v["cond_reasons"]) is (reac > 0.05)
+        assert "REACTION_ABOVE_WARN" not in row["limits"]
+    assert row["fail_reasons"] == v["fail_reasons"] and row["cond_reasons"] == v["cond_reasons"]
     assert _root_hashes(out, golden_runs["bf"]["root"]) == _gold("bf")
     full = _j(out, pipeline.D_VAL, "validation.json")["criteria"]
     assert full["reaction_rel_max"] == 1e-6 and "reaction_warn_rel" not in full

@@ -67,8 +67,11 @@ solver:
   # (선택, v0.24.4) 새 지그 경로 SuperLU 분해 순서 — node_mmd(기본: 노드 블록 순서, tie 가 흩어진 큰 모델에서 분해 수 배 빠름) | default(예전 MMD)
   # jig_factor_order: node_mmd
 
-validation:                          # 임시 값. 사내 확인 후 교체 (esl.md Q1). 판정(PASS/FAIL) = 변위 4지표만 (계약 esl_disp_primary.md)
-  disp_rms_rel_max: 0.01             # [판정 DISP_RMS] RMS(u_val−u_rel)/max|u_rel| (전 노드, 미소 강체 제거 후)
+validation:                          # 판정(PASS·조건부 PASS·FAIL) = 변위 4지표 + MAC(검증) (계약 esl_disp_primary.md·esl_validate_tiers.md)
+  disp_rms_rel_max: 0.05             # [판정 DISP_RMS] RMS(u_val−u_rel)/max|u_rel| (전 노드, 미소 강체 제거 후) — PASS 상한(v0.24.5: 0.01 → 0.05)
+  # disp_rms_rel_cond_max: 0.10      # (선택, v0.24.5) 변위 RMS 조건부 PASS 상한(없으면 max(0.10, disp_rms_rel_max))
+  # mac_min: 0.95                    # (선택, v0.24.5) [판정 MAC] MAC(검증) = 변형 형상 일치(양쪽 선형 강체 제거) PASS 하한 (0, 1]
+  # mac_cond_min: 0.90               # (선택, v0.24.5) MAC(검증) 조건부 PASS 하한(없으면 min(0.90, mac_min)). 역전(조건부 > PASS) = 설정 오류
   disp_max_rel_max: 0.05             # [판정 DISP_MAX] max|u_val−u_rel|/max|u_rel| (전 노드)
   reaction_rel_max: 1.0e-6           # [판정 REACTION] Σ|R_321|/Σ|F_eq| (자기평형이면 ≈0)
   disp_noise_rel_max: 1.0e-3         # [판정 DISP_NOISE] 변위 저장 정밀도 잡음 δ/max|u_rel| (추가 해석 없음)
@@ -81,7 +84,7 @@ validation:                          # 임시 값. 사내 확인 후 교체 (esl
   noise_samples: 3                   # 잡음 바닥 추정 섭동 표본 수(고정 시드)
   noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
   noise_strain_rel_max: 0.05         # [참고 기준, 판정 아님] hotspot |Δε_eq|/ε_eq (잡음)
-  # sources: {enabled: true, reaction_tol: {fint: 0.10}, reaction_warn: {fint: 0.05}}   # (선택, v0.24.3) ④ 검증 출처별 — 경계력·내력 ESL 도 같은 정의·기준으로 검증(05_val/<출처>/). enabled 없으면 true, false = 전 노드만. reaction_tol = 출처별 반력 불합격 허용치, reaction_warn = 주의 허용치(없는 출처는 공통 1e-6·주의 없음)
+  # sources: {enabled: true, reaction_tol: {fint: 0.10}, reaction_warn: {fint: 0.05}}   # (선택, v0.24.3) ④ 검증 출처별 — 경계력·내력 ESL 도 같은 정의·기준으로 검증(05_val/<출처>/). enabled 없으면 true, false = 전 노드만. reaction_tol = 출처별 반력 허용치(v0.24.5: 조건부 PASS 상한), reaction_warn = 주의 허용치(v0.24.5: PASS 상한)(없는 출처는 공통 1e-6 단일·주의 없음)
 
 compare:                             # ESL 재현 정확도 전 요소 비교 (계약 esl_p2_library.md §7.2, 판정 기준은 임시값)
   min_rel: 0.1                       # valid = t* 에서 상승 중 ∧ ε_rad ≥ min_rel·max ε_rad(상승 요소)
@@ -115,7 +118,7 @@ units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표�
 
 # (선택, v0.24.0 계약 esl_bforce.md §9) 경계력 ESL — 낙하 해석이 계산한 노드 힘(접촉력·tie 체결력·관성·내력)을 하중으로. 절이 없으면 아래 값.
 # bforce:
-#   enabled: true                    # ESL 단계에서 경계력 ESL 도 계산(h3d 추출에 결과가 있을 때)
+#   enabled: false                   # (v0.24.5 기본 false — 사용자 결정, esl_validate_tiers.md §12) true = ESL 단계에서 경계력·내력 ESL 도 계산(h3d 추출에 결과가 있을 때)·추출 bf_on 1·보충 추출
 #   on_demand: true                  # (v0.24.2) ③ ESL 때 선택 프레임 원자료가 추출물에 없으면(덤프 방식 등) h3d 에서 그 프레임만 보충(h3d 입력 Case). false = 보충 안 함
 #   result_names:                    # h3d 결과 유형 이름 후보(정확 일치 → 대소문자·공백·밑줄 무시 일치). 현장 확인 이름을 앞에
 #     cont: [Contact Forces, Contact Force, CONT]          # /H3D/NODA/CONT (현장 #82 확인)
@@ -145,7 +148,7 @@ units: {label: "mm-ton-s", length: mm, force: N, stress: MPa, time: s}   # 표�
 # 맞춰 낙하 변형을 재현. tie 노드는 워커가 ESL 전에 준비(01_extract/jig_fixed — paicad fixed-scan). 절이 없으면 아래 값(esl.mech.jig.JIG_DEFAULTS).
 # jig:
 #   enabled: true                    # ③ ESL 에서 지그 ESL 도 계산(tie 준비 기록이 있을 때)
-#   methods: [fixed, prescribed, spring]   # 계산할 방식(출처 행 jig·jig_disp·jig_spring). 빼면 그 행 = JIG_DISABLED
+#   methods: [prescribed, spring]    # 계산할 방식(출처 행 jig·jig_disp·jig_spring). 빼면 그 행 = JIG_DISABLED. v0.24.5 기본에서 fixed(지그 고정) 제외(§12) — 넣으면 v0.24.4 와 같음
 #   tie_dofs: normal                 # tie 구속 성분: normal(국부 면외 — 새 기본, 3-2-1 면내 3자유도 함께) | translation(병진 123 — 옛·비교용)
 #   fix_kinds: [INTER_TYPE2_SECONDARY, INTER_TYPE2_MAIN]   # tie 로 쓸 fixed-scan 종류
 #   normal_kink_deg: 45.0            # 꺾인 노드(두 면 각 ≥ 이 값)는 두 면 법선 모두 구속

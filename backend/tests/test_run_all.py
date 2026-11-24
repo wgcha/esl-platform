@@ -85,6 +85,7 @@ def test_v_ra_1_tstar(st, facts, kind, code, key):
 
 @pytest.mark.parametrize("st,verdict,kind,code", [
     ("done", {"verdict": "PASS", "validation_id": "v1"}, "done", None),
+    ("done", {"verdict": "CONDITIONAL", "validation_id": "v1"}, "done", None),       # v0.24.5: 조건부 PASS = DONE
     ("done", {"verdict": "FAIL", "validation_id": "v1", "fail_reasons": ["DISP"]}, "stop", "VALIDATION_FAIL"),
     ("done", {"verdict": "UNDETERMINED", "validation_id": "v1", "undetermined_reason": "NOISE"}, "stop",
      "VALIDATION_UNDETERMINED"),
@@ -95,7 +96,7 @@ def test_v_ra_1_validate(st, verdict, kind, code):
     a = ra.evaluate(ss(validate=st), "validate", F(verdict=verdict))
     assert (a.kind, a.code) == (kind, code)
     if kind == "done":
-        assert a.verdict == "PASS" and a.detail["validation_id"] == "v1"
+        assert a.verdict == verdict["verdict"] and a.detail["validation_id"] == "v1"
     if code:
         assert a.detail["verdict"] == verdict["verdict"] and a.detail["validation_id"] == "v1"
 

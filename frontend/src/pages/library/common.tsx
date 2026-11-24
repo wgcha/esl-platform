@@ -1,7 +1,7 @@
 // 라이브러리 화면 공통: 표기·필터·포락 미니맵.
 import type { AnalysisFilters, EntryOut, IneligibleReason, OptdeckCases } from "../../api/types";
 import { Badge } from "../../components/ui";
-import { entryStatus } from "../../components/VerdictStatus";
+import { entryStatus, isPassing, STATUS_LABEL } from "../../components/VerdictStatus";
 import { VIRIDIS, f3, gradient, lerp } from "../../lib/colormap";
 
 export const DROP_TYPES = ["Corner", "Edge", "Face"] as const;
@@ -64,10 +64,11 @@ export function modelVersions(entries: EntryOut[]) {
   return [...m.entries()].map(([model, vs]) => ({ model, versions: sortVersions(vs) })).sort((a, b) => a.model.localeCompare(b.model));
 }
 
-/** 판정 배지. v = PASS|FAIL|UNDETERMINED|LEGACY (라이브러리 항목은 entryStatus(e.quality)), legacyVerdict = LEGACY 의 당시 verdict */
+/** 판정 배지. v = PASS|CONDITIONAL|FAIL|UNDETERMINED|LEGACY (라이브러리 항목은 entryStatus(e.quality)), legacyVerdict = LEGACY 의 당시 verdict */
 export function VerdictBadge({ v, legacyVerdict }: { v: string | null | undefined; legacyVerdict?: string | null }) {
   if (!v) return <span className="muted">–</span>;
   if (v === "PASS") return <Badge kind="ok">PASS</Badge>;
+  if (v === "CONDITIONAL") return <Badge kind="warn">{STATUS_LABEL.CONDITIONAL}</Badge>;
   if (v === "UNDETERMINED") return <span className="badge neutral">판정 불가</span>;
   if (v === "LEGACY")
     return (
@@ -86,8 +87,8 @@ export function EntryVerdict({ e }: { e: EntryOut }) {
 }
 
 // ---------------------------------------------------------------- v0.10.0 적격(esl_menu_restructure.md §7.4·§7.5)
-/** 서버 eligible 우선, 없으면(예전 서버) quality 로 같은 규칙: status PASS ∧ scheme 있음 */
-export const isEligible = (e: EntryOut) => e.eligible ?? entryStatus(e.quality) === "PASS";
+/** 서버 eligible 우선, 없으면(예전 서버) quality 로 같은 규칙: status PASS·조건부 PASS ∧ scheme 있음 */
+export const isEligible = (e: EntryOut) => e.eligible ?? isPassing(entryStatus(e.quality));
 /** 부적격 사유: LEGACY(scheme 없음) · 사유와 함께 등록된 FAIL · 판정 불가 */
 export function ineligibleOf(e: EntryOut): IneligibleReason | null {
   if (isEligible(e)) return null;
@@ -101,7 +102,7 @@ const INELIGIBLE_SUB: Record<IneligibleReason, string> = { LEGACY: "", FAIL: "FA
 /** 라이브러리 판정 배지(v0.10.0): PASS / LEGACY(+ 당시 상태 FAIL·판정 불가 또는 이전 판정 체계의 당시 verdict) */
 export function EligibilityBadge({ e }: { e: EntryOut }) {
   const r = ineligibleOf(e);
-  if (!r) return <Badge kind="ok">PASS</Badge>;
+  if (!r) return entryStatus(e.quality) === "CONDITIONAL" ? <Badge kind="warn">{STATUS_LABEL.CONDITIONAL}</Badge> : <Badge kind="ok">PASS</Badge>;
   const sub = r === "LEGACY" ? (e.quality.verdict ? `당시 ${e.quality.verdict}` : "") : INELIGIBLE_SUB[r];
   return (
     <span className="inline-actions" data-testid="legacy-badge">

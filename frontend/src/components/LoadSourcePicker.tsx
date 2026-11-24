@@ -67,7 +67,7 @@ export function LoadSourcePicker({
 }
 
 /** 최악 등급(B3 worst = LoadGrade) 문구 */
-const GRADE_TEXT: Record<LoadGrade, string> = { PASS: "PASS", caution: "주의", not_comparable: "비교용 아님", UNDETERMINED: "판정 불가", FAIL: "FAIL", NO_RESULT: "결과 없음" };
+const GRADE_TEXT: Record<LoadGrade, string> = { PASS: "PASS", CONDITIONAL: "조건부 PASS", caution: "주의", not_comparable: "비교용 아님", UNDETERMINED: "판정 불가", FAIL: "FAIL", NO_RESULT: "결과 없음" };
 
 /** 서버 확인 요청(422 LOAD_SOURCE_UNCONFIRMED) 대화상자 — 항목별 판정·비교 여부를 보이고 [확인하고 계속] 으로 load_source_ack 재요청 */
 export function LoadSourceConfirmDialog({

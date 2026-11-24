@@ -1,4 +1,4 @@
-// ④ 검증(v0.10.0 재번호 — 옛 ⑤; 주 버튼 = 검증 실행 / 라이브러리에 등록, esl_menu_restructure.md §7.1)(v0.5.7, 계약 esl_disp_primary.md §9): 판정 = 변위 4지표. 위→아래:
+// ④ 검증(v0.10.0 재번호 — 옛 ⑤; 주 버튼 = 검증 실행 / 라이브러리에 등록, esl_menu_restructure.md §7.1)(v0.5.7, 계약 esl_disp_primary.md §9): 판정 = 변위 지표 4 + MAC(검증, v0.24.5 — 단계 PASS·조건부 PASS·FAIL). 위→아래:
 //   판정 카드 → 변위 카드(컨투어·log 히스토그램·상위 노드·단면 차트) → 변형률 카드(참고, 판정 아님) → hotspot·제외 표 → 검증 이력.
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -18,7 +18,7 @@ import { ReportLink } from "../components/ReportLink";
 import { LibraryRegister, REGISTER_LABEL, RegisterReason, useRegistration } from "../components/LibraryRegister";
 import { stepPath, stepState } from "../shell/StageStepper";
 import { SourceTabs } from "../view3d/SourceTabs";
-import { defaultValSource, isLegacySource, reactionTolText, sourceRow, unavailText, valRowOf, valTabItems } from "../view3d/sources";
+import { defaultValSource, isLegacySource, isTierScheme, reactionTolText, sourceRow, unavailText, valRowOf, valTabItems } from "../view3d/sources";
 import { usePolling } from "../lib/usePolling";
 import { dt, fmt, pct, pv, sci, spv } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -35,6 +35,15 @@ export const FAIL_REASON_LABEL: Record<string, string> = {
   NOISE_FLOOR: "변위 정밀도 잡음 바닥이 기준 초과",
   FIELD_MAX_ERR: "최대변형률 요소의 ESL 오차가 기준 초과",
   FIELD_P90_ERR: "전 요소 |오차| P90이 기준 초과",
+  // v0.24.5(esl_validate_tiers.md §4.5): MAC(검증)
+  MAC: "변형 형상 일치(MAC)가 기준 미만",
+};
+
+/** 조건부 PASS 사유 코드(validation.json cond_reasons) → 설명(v0.24.5 §4.5) */
+export const COND_REASON_LABEL: Record<string, string> = {
+  DISP_RMS: "변위 RMS 오차가 PASS 기준 초과(조건부 구간)",
+  MAC: "변형 형상 일치(MAC)가 PASS 기준 미만(조건부 구간)",
+  REACTION: "반력이 PASS 기준 초과 — 받침점 주변 국부 변형 확인",
 };
 
 const plasticOf = (r: StrainRef | null | undefined) => {
@@ -166,17 +175,45 @@ function TopTable({ f }: { f: FieldSummary }) {
 const num = (x: unknown) => (typeof x === "number" ? x : undefined);
 
 const INFO_REACTION_SUB = "정보 — 지지 반력";
+/** MAC(검증) 설명 — 양쪽 선형 강체 제거 변위(N,3→3N)의 cos²θ. ③ 재현 MAC 과 강체 제거 규칙이 달라 이름으로 구분 */
+const MAC_HINT = "MAC(검증) — ESL 재해석 변위와 Radioss 변위의 변형 형상 일치(cos²θ, 1에 가까울수록 일치). 양쪽 선형 강체 제거 뒤 계산(③ 재현 MAC 과 다름)";
+const MAC_OLD_HINT = "v0.24.5 이전 검증 — 단일 기준·MAC 없음, [검증 다시 실행]하면 새 기준";
 /** 변위 비교 설명(legacy = v0.24.2 문구 그대로, 출처 탭 = 행 note) */
 const CONSISTENCY_NOTE = "ESL 재해석 변위와 Radioss 변위의 차이 — 계산·경계조건·저장 정밀도의 수치 일관성을 봅니다(물리적 차이가 아닙니다).";
 /** 출처 탭의 판정 배지 title — 등록·내보내기 기준은 legacy(전 노드 ESL) 판정 */
 const SRC_BADGE_TITLE = "이 출처 판정 — 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정";
 const STRAIN_NEED_FULL = "전체 재해석이 없어 변형률 비교를 표시할 수 없습니다";
 
-/** 판정 Stat 한 칸: 값 > 기준이면 bad, 이하이면 ok. 값이 없으면 사유에 따라 "생략"/"–" */
-function JudgeStat({ label, value, crit, skipped, hint, info, warn }: { label: string; value: number | null | undefined; crit: number | undefined; skipped?: boolean; hint?: string; info?: boolean; warn?: number }) {
+/** 단계 판정(disp_primary/2, v0.24.5 §4.5) 한 칸의 코드·기준: 코드가 fail_reasons → bad, cond_reasons → warn, 아니면 ok */
+interface TierInfo {
+  code: string;
+  failed: boolean;
+  conditional: boolean;
+  /** 조건부 기준(없으면 단일 기준 — 기존 문구) */
+  cond?: number;
+  /** "min" = 클수록 좋음(MAC) */
+  sense?: "max" | "min";
+}
+const plain = (x: number) => String(Number(x.toPrecision(3)));
+
+/** 판정 Stat 한 칸: 값 > 기준이면 bad, 이하이면 ok. 값이 없으면 사유에 따라 "생략"/"–". tier 가 있으면(새 체계) 사유 코드로 tone·2단 기준 문구 */
+function JudgeStat({ label, value, crit, skipped, hint, info, warn, tier, digits }: { label: string; value: number | null | undefined; crit: number | undefined; skipped?: boolean; hint?: string; info?: boolean; warn?: number; tier?: TierInfo; digits?: number }) {
   const has = value !== null && value !== undefined;
   // info(v0.24.3 criteria.reaction_role = "info"): 과잉 구속 지지의 반력 = 지지력 — 기준·색 없이 값만(판정 제외)
   const bad = !info && has && (!Number.isFinite(value) || (crit !== undefined && value > crit));
+  if (tier && !info) {
+    const mark = tier.sense === "min" ? "≥" : "≤";
+    const sub = crit === undefined ? undefined : tier.cond !== undefined ? `PASS ${mark} ${plain(crit)} · 조건부 ${mark} ${plain(tier.cond)}` : `기준 ${mark} ${plain(crit)}`;
+    return (
+      <Stat
+        label={label}
+        value={has ? (digits !== undefined ? fmt(value, digits) : sci(value)) : skipped ? "생략" : "–"}
+        sub={sub}
+        tone={tier.failed ? "bad" : tier.conditional ? "warn" : has && crit !== undefined ? "ok" : undefined}
+        hint={has ? hint : skipped ? "전체 재해석 생략(validation.full_solve)" : hint}
+      />
+    );
+  }
   return (
     <Stat
       label={label}
@@ -186,6 +223,14 @@ function JudgeStat({ label, value, crit, skipped, hint, info, warn }: { label: s
       hint={has ? hint : skipped ? "전체 재해석 생략(validation.full_solve)" : hint}
     />
   );
+}
+
+/** 조건부 사유 한 줄 문구(§4.5). REACTION 은 값·문턱이 있으면 옛 "반력 주의" 문구를 옮긴 형태 */
+export function condReasonText(code: string, v: Pick<ValidationOut, "reaction_rel" | "criteria">): string {
+  const base = COND_REASON_LABEL[code] ?? "";
+  const warn = num(v.criteria?.reaction_warn_rel);
+  if (code === "REACTION" && v.reaction_rel != null && warn !== undefined) return `반력 ${plain(v.reaction_rel * 100)} % — ${plain(warn * 100)} % 초과, 받침점 주변 국부 변형 확인`;
+  return base;
 }
 
 function SectionCard({ ctl }: { ctl: SectionCtl }) {
@@ -241,6 +286,15 @@ export function Stage5({ c, reload, allowed }: StageProps) {
   const skipped = !!v && v.undetermined_reason === "NO_FULL_SOLVE";
   const hsMax = num(crit.hotspot_strain_rel_err_max);
   const reactInfo = crit.reaction_role === "info";
+  // v0.24.5 새 체계(disp_primary/2): 사유 코드로 단계 표시·MAC. 옛 체계(없음·/1)는 지금 규칙 그대로 + MAC "–"
+  const tiered = !!v && isTierScheme(v.scheme);
+  const condCodes = v?.cond_reasons ?? [];
+  const tierOf = (code: string, cond?: number, sense?: "max" | "min"): TierInfo | undefined =>
+    tiered && v ? { code, failed: v.fail_reasons.includes(code), conditional: condCodes.includes(code), cond, sense } : undefined;
+  // 반력: 출처 reaction_warn 이 있으면 PASS 상한 = 주의 문턱, 조건부 상한 = 허용치(코어 §1.1)
+  const reactWarn = num(crit.reaction_warn_rel);
+  const reactPass = tiered && reactWarn !== undefined ? reactWarn : num(crit.reaction_rel_max);
+  const reactCond = tiered && reactWarn !== undefined ? num(crit.reaction_rel_max) : undefined;
   const tabsEl = items ? <SourceTabs items={items} tab={cur ?? ""} setTab={setPick} label="검증 출처" prefix="val-src" testId="val-src-tab" whyTestId="val-src-tab-why" /> : null;
   const headRight = (vv: ValidationOut | null) => (
     <span className="inline-actions">
@@ -294,12 +348,18 @@ export function Stage5({ c, reload, allowed }: StageProps) {
           <Card title="판정" right={headRight(v)}>
             {!pastVal && v0 && <RegisterReason reg={reg} />}
             <div className="stats" data-testid="judge-stats">
-              <JudgeStat label="변위 RMS (상대)" value={v.disp_rms_rel} crit={num(crit.disp_rms_rel_max)} skipped={skipped} />
-              <JudgeStat label="변위 최대 오차 (상대)" value={v.disp_max_rel} crit={num(crit.disp_max_rel_max)} skipped={skipped} />
-              <JudgeStat label="반력 (상대)" value={v.reaction_rel} crit={num(crit.reaction_rel_max)} skipped={skipped} info={reactInfo} hint={src ? reactionTolText(curRow) ?? undefined : undefined} warn={num(crit.reaction_warn_rel)} />
-              <JudgeStat label="변위 잡음 바닥" value={v.disp_noise_rel} crit={num(crit.disp_noise_rel_max)} hint="저장 정밀도가 만드는 노드 변위 잡음 δ ÷ U" />
+              <JudgeStat label="변위 RMS (상대)" value={v.disp_rms_rel} crit={num(crit.disp_rms_rel_max)} skipped={skipped} tier={tierOf("DISP_RMS", num(crit.disp_rms_rel_cond_max))} />
+              <JudgeStat label="변위 최대 오차 (상대)" value={v.disp_max_rel} crit={num(crit.disp_max_rel_max)} skipped={skipped} tier={tierOf("DISP_MAX")} />
+              {/* v0.24.5 §4.5: MAC(검증) 5번째 칸 — 같은 줄(auto-fill), 옛 결과 = "–" + 툴팁 */}
+              {tiered ? (
+                <JudgeStat label="MAC(검증)" value={v.mac} crit={num(crit.mac_min)} skipped={skipped} tier={tierOf("MAC", num(crit.mac_cond_min), "min")} digits={4} hint={MAC_HINT} />
+              ) : (
+                <JudgeStat label="MAC(검증)" value={null} crit={undefined} hint={MAC_OLD_HINT} />
+              )}
+              <JudgeStat label="반력 (상대)" value={v.reaction_rel} crit={reactPass} skipped={skipped} info={reactInfo} hint={src ? reactionTolText(curRow) ?? undefined : undefined} warn={tiered ? undefined : num(crit.reaction_warn_rel)} tier={tierOf("REACTION", reactCond)} />
+              <JudgeStat label="변위 잡음 바닥" value={v.disp_noise_rel} crit={num(crit.disp_noise_rel_max)} hint="저장 정밀도가 만드는 노드 변위 잡음 δ ÷ U" tier={tierOf("DISP_NOISE")} />
             </div>
-            {src && curRow?.reaction_warned && (
+            {src && !tiered && curRow?.reaction_warned && (
               <div className="small warn-text" role="status" data-testid="reaction-warn">
                 {curRow.limit_text[curRow.limits.indexOf("REACTION_ABOVE_WARN")] ?? "반력이 주의 문턱을 넘었습니다"}
               </div>
@@ -319,6 +379,16 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                 ))}
               </ul>
             )}
+            {condCodes.length > 0 && (
+              <ul className="reasons" data-testid="cond-reasons">
+                {condCodes.map((f) => (
+                  <li key={f} className="warn-text">
+                    {f}
+                    {condReasonText(f, v) ? ` — ${condReasonText(f, v)}` : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
           </Card>
 
           <Card title="변위 비교 (전 노드)">
@@ -329,7 +399,7 @@ export function Stage5({ c, reload, allowed }: StageProps) {
                 <div className="grid2 disp-grid">
                   <div className="subblock">
                     <h4 className="sub-title">변위 오차 분포 (log10 e/U)</h4>
-                    <DispHistogram hist={v.disp.hist} rmsCrit={num(crit.disp_rms_rel_max)} maxCrit={num(crit.disp_max_rel_max)} />
+                    <DispHistogram hist={v.disp.hist} rmsCrit={num(crit.disp_rms_rel_max)} maxCrit={num(crit.disp_max_rel_max)} rmsCondCrit={tiered ? num(crit.disp_rms_rel_cond_max) : undefined} />
                   </div>
                   <div className="subblock">
                     <h4 className="sub-title">변위 오차 상위 노드</h4>

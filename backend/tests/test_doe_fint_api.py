@@ -67,7 +67,7 @@ def test_add_fint_and_unknown_source(client, world, engine, esl_root, monkeypatc
     with engine.connect() as c:
         job = jobs_repo.get_job(c, jid)
     assert job["params"]["kind"] == "FINT" and job["params"]["doe"]["post_mode"] == "fint"
-    assert job["params"]["doe"]["fint_cfg"] == {"enabled": True, "grades": ["fint"], "view3d": True}
+    assert job["params"]["doe"]["fint_cfg"] == {"enabled": False, "grades": ["fint"], "view3d": True}   # v0.24.5 §12 기본 끔(지금 설정 사본)
     assert "bforce_cfg" not in job["params"]["doe"]
     finish_job(engine, jid)
 
@@ -99,7 +99,7 @@ def test_rank_snapshot_eval_region_and_cfg_mirror():
     from esl_platform.core.config import BeadDoeCfg
 
     d = BeadDoeCfg().model_dump()
-    assert DEFAULTS["fint"] == d["fint"] == {"enabled": True, "grades": ["fint"], "view3d": True}
+    assert DEFAULTS["fint"] == d["fint"] == {"enabled": False, "grades": ["fint"], "view3d": True}
     for k in ("eval_region", "eval_free_edge_mm", "eval_boxes"):
         assert DEFAULTS["rank"][k] == d["rank"][k]
     snap = rank_snapshot(d)

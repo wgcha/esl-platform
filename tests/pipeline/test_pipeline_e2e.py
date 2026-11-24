@@ -133,7 +133,8 @@ def test_e2e_all(case):
     assert all(h["rel_err"] < 1e-6 for h in val["hotspots"])
     assert val["hotspots"][0]["elem_id"] == tj["selected"]["elem_id"]          # rank 1 포함
     assert val["criteria"]["layers"] == ["mid"]
-    assert val["criteria"]["disp_rms_rel_max"] == 0.01      # 설정 스냅샷
+    assert val["criteria"]["disp_rms_rel_max"] == 0.05      # 설정 스냅샷(v0.24.5 예시 0.01 → 0.05)
+    assert val["criteria"]["disp_rms_rel_cond_max"] == 0.10 and val["criteria"]["mac_min"] == 0.95
 
     # 전 요소 재현 정확도(계약 esl_p2_library.md §7.2): 같은 솔버로 만든 합성 → 오차 ≈ 0 → PASS
     fs = val["field"]

@@ -1,0 +1,1085 @@
+{
+ "validation": {
+  "id": "baae87e6-704c-4dc6-a960-6bd00731f22b",
+  "esl_run_id": "3f9468b1-347e-43fc-876b-63ddc448fafe",
+  "case_id": "e08804f4-4b97-4312-860d-9acaa7cc015c",
+  "job_id": "d9e831c2-def9-4325-ac83-a094cf1fd502",
+  "disp_rms_rel": 1.1350961244350903e-11,
+  "reaction_rel": 1.1487006846410828e-11,
+  "hotspots": [
+   {
+    "rank": 1,
+    "elem_id": 51714,
+    "eps_rad": 2.490921658319418e-05,
+    "eps_val": 2.4909216690758986e-05,
+    "rel_err": 4.318273322331382e-09
+   },
+   {
+    "rank": 2,
+    "elem_id": 51480,
+    "eps_rad": 2.2597152398527334e-05,
+    "eps_val": 2.2597152278250137e-05,
+    "rel_err": 5.322670563763484e-09
+   },
+   {
+    "rank": 3,
+    "elem_id": 50088,
+    "eps_rad": 1.916339270896544e-05,
+    "eps_val": 1.9163392801115394e-05,
+    "rel_err": 4.808645096800552e-09
+   }
+  ],
+  "excluded": [],
+  "verdict": "CONDITIONAL",
+  "fail_reasons": [],
+  "criteria": {
+   "layers": [
+    "mid"
+   ],
+   "metric": "max_strain",
+   "mac_min": 0.95,
+   "full_solve": "auto",
+   "mac_cond_min": 0.9,
+   "field_min_rel": 0.1,
+   "disp_precision": "float64",
+   "disp_max_rel_max": 0.05,
+   "disp_rms_rel_max": 1e-30,
+   "reaction_rel_max": 1e-06,
+   "field_p90_err_max": 20.0,
+   "disp_noise_rel_max": 0.001,
+   "hotspot_eval_count": 3,
+   "noise_force_rel_warn": 0.1,
+   "noise_strain_rel_max": 0.05,
+   "disp_rms_rel_cond_max": 0.1,
+   "field_max_err_pct_max": 10.0,
+   "hotspot_strain_rel_err_max": 0.1
+  },
+  "field": {
+   "max": {
+    "xi": -18.75,
+    "eta": 96.15384615384616,
+    "elem_id": 51714,
+    "eps_esl": 2.4909216690758986e-05,
+    "eps_rad": 2.490921658319418e-05,
+    "err_pct": 4.3182733223313823e-07,
+    "esl_max_xi": -18.75,
+    "abs_err_pct": 4.3182733223313823e-07,
+    "eps_esl_max": 2.4909216690758986e-05,
+    "esl_max_eta": 96.15384615384616,
+    "peak_err_pct": 4.318273322331383e-07,
+    "eps_esl_max_elem_id": 51714
+   },
+   "top": [
+    {
+     "xi": -18.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51714,
+     "eps_esl": 2.4909216690758986e-05,
+     "eps_rad": 2.490921658319418e-05,
+     "err_pct": 4.3182733223313823e-07
+    },
+    {
+     "xi": -11.25,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51792,
+     "eps_esl": 2.4778475017166297e-05,
+     "eps_rad": 2.477847475085846e-05,
+     "err_pct": 1.0747547575900874e-06
+    },
+    {
+     "xi": -26.25,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51636,
+     "eps_esl": 2.4642013582255572e-05,
+     "eps_rad": 2.4642013736629736e-05,
+     "err_pct": -6.264673222275049e-07
+    },
+    {
+     "xi": -3.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51870,
+     "eps_esl": 2.4130479979038436e-05,
+     "eps_rad": 2.4130480095444595e-05,
+     "err_pct": -4.824029965890327e-07
+    },
+    {
+     "xi": -33.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51558,
+     "eps_esl": 2.381441683099264e-05,
+     "eps_rad": 2.381441749262537e-05,
+     "err_pct": -2.778286428093897e-06
+    },
+    {
+     "xi": -41.25,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51480,
+     "eps_esl": 2.2597152278250137e-05,
+     "eps_rad": 2.2597152398527334e-05,
+     "err_pct": -5.322670563763484e-07
+    },
+    {
+     "xi": -48.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51402,
+     "eps_esl": 2.1050808190124487e-05,
+     "eps_rad": 2.1050808240343244e-05,
+     "err_pct": -2.3855975821123314e-07
+    },
+    {
+     "xi": -56.25,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51324,
+     "eps_esl": 1.9228976379636805e-05,
+     "eps_rad": 1.922897653984564e-05,
+     "err_pct": -8.331636087209284e-07
+    },
+    {
+     "xi": -147.5,
+     "eta": 12.820512820512814,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50088,
+     "eps_esl": 1.9163392801115394e-05,
+     "eps_rad": 1.916339270896544e-05,
+     "err_pct": 4.808645096800551e-07
+    },
+    {
+     "xi": -147.5,
+     "eta": 2.5641025641025403,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50079,
+     "eps_esl": 1.91552842858613e-05,
+     "eps_rad": 1.9155284853517888e-05,
+     "err_pct": -2.9634463438497366e-06
+    },
+    {
+     "xi": -147.5,
+     "eta": 17.948717948717896,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50091,
+     "eps_esl": 1.8814752801400996e-05,
+     "eps_rad": 1.8814752824720263e-05,
+     "err_pct": -1.2394139788432505e-07
+    },
+    {
+     "xi": -147.5,
+     "eta": -2.5641025641025403,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50076,
+     "eps_esl": 1.8761709078960115e-05,
+     "eps_rad": 1.8761709106635852e-05,
+     "err_pct": -1.4751181526614677e-07
+    },
+    {
+     "xi": 3.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51948,
+     "eps_esl": 1.850849296008934e-05,
+     "eps_rad": 1.8508492833203517e-05,
+     "err_pct": 6.855545971969582e-07
+    },
+    {
+     "xi": -147.5,
+     "eta": -12.820512820512814,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50067,
+     "eps_esl": 1.762953465626675e-05,
+     "eps_rad": 1.7629534971076742e-05,
+     "err_pct": -1.7856965237042684e-06
+    },
+    {
+     "xi": -147.5,
+     "eta": 28.20512820512817,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50100,
+     "eps_esl": 1.7567324079303564e-05,
+     "eps_rad": 1.7567323710915335e-05,
+     "err_pct": 2.0970082568297004e-06
+    },
+    {
+     "xi": 11.25,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52026,
+     "eps_esl": 1.7395126534280875e-05,
+     "eps_rad": 1.739512713392095e-05,
+     "err_pct": -3.4471727075682282e-06
+    },
+    {
+     "xi": -63.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51246,
+     "eps_esl": 1.7181169758834475e-05,
+     "eps_rad": 1.7181170249355917e-05,
+     "err_pct": -2.8549943612990826e-06
+    },
+    {
+     "xi": -147.5,
+     "eta": -17.948717948717896,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50064,
+     "eps_esl": 1.661729146610958e-05,
+     "eps_rad": 1.6617291490958497e-05,
+     "err_pct": -1.4953650958185416e-07
+    },
+    {
+     "xi": -147.5,
+     "eta": 33.333333333333364,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50103,
+     "eps_esl": 1.6479363256567204e-05,
+     "eps_rad": 1.647936409825545e-05,
+     "err_pct": -5.107528678083278e-06
+    },
+    {
+     "xi": 18.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52104,
+     "eps_esl": 1.6165469964577622e-05,
+     "eps_rad": 1.6165468938745886e-05,
+     "err_pct": 6.345821083613412e-06
+    }
+   ],
+   "hist": {
+    "n": 889,
+    "edges": [
+     -1.0,
+     -0.9,
+     -0.8,
+     -0.7,
+     -0.6,
+     -0.5,
+     -0.3999999999999999,
+     -0.29999999999999993,
+     -0.19999999999999996,
+     -0.09999999999999998,
+     0.0,
+     0.10000000000000009,
+     0.20000000000000018,
+     0.30000000000000004,
+     0.40000000000000013,
+     0.5,
+     0.6000000000000001,
+     0.7000000000000002,
+     0.8,
+     0.9000000000000001,
+     1.0
+    ],
+    "counts": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     435,
+     454,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "n_clipped": 0,
+    "range_pct": 1.0
+   },
+   "n_ok": 889,
+   "note": "F_eq 는 u_rel(강체 제거 변위장)을 선형 탄성 모델에서 재현하는 하중이므로, 변형률(운동학량)은 요소 정식화·회전 자유도 차이만큼만 어긋나고, 응력은 소성 영역에서 탄성 과대평가된다.",
+   "rtol": 1e-06,
+   "n_low": 244,
+   "plane": {
+    "n": [
+     0.0,
+     -6.825144546224941e-18,
+     0.9999999999999998
+    ],
+    "e1": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "e2": [
+     0.0,
+     0.9999999999999998,
+     6.825144546224941e-18
+    ],
+    "origin": [
+     1150.0,
+     600.0,
+     211.54487179487268
+    ],
+    "xi_range": [
+     -150.0,
+     150.0
+    ],
+    "eta_range": [
+     -99.99999999999997,
+     99.99999999999997
+    ]
+   },
+   "worst": [
+    {
+     "xi": 18.75,
+     "eta": 96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52104,
+     "eps_esl": 1.6165469964577622e-05,
+     "eps_rad": 1.6165468938745886e-05,
+     "err_pct": 6.345821083613412e-06
+    },
+    {
+     "xi": 116.25,
+     "eta": -19.230769230769166,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 53073,
+     "eps_esl": 4.48508170924473e-06,
+     "eps_rad": 4.485081968959976e-06,
+     "err_pct": -5.790646584117637e-06
+    },
+    {
+     "xi": 146.25,
+     "eta": 19.23076923076928,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 53400,
+     "eps_esl": 8.61341592461348e-06,
+     "eps_rad": 8.613415441052882e-06,
+     "err_pct": 5.614040112402792e-06
+    },
+    {
+     "xi": 101.25,
+     "eta": 34.615384615384635,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52938,
+     "eps_esl": 4.5755215684242855e-06,
+     "eps_rad": 4.575521822946538e-06,
+     "err_pct": -5.5626934522058846e-06
+    },
+    {
+     "xi": -147.5,
+     "eta": 33.333333333333364,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50103,
+     "eps_esl": 1.6479363256567204e-05,
+     "eps_rad": 1.647936409825545e-05,
+     "err_pct": -5.107528678083278e-06
+    },
+    {
+     "xi": 108.75,
+     "eta": -3.8461538461538103,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 53001,
+     "eps_esl": 5.387662268223602e-06,
+     "eps_rad": 5.3876619961398476e-06,
+     "err_pct": 5.050126658881207e-06
+    },
+    {
+     "xi": -11.25,
+     "eta": -49.999999999999986,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51735,
+     "eps_esl": 2.7054336625550136e-06,
+     "eps_rad": 2.7054335269003742e-06,
+     "err_pct": 5.014155327691926e-06
+    },
+    {
+     "xi": -26.25,
+     "eta": -19.230769230769166,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51591,
+     "eps_esl": 5.048833530953575e-06,
+     "eps_rad": 5.048833782529992e-06,
+     "err_pct": -4.9828619427299895e-06
+    },
+    {
+     "xi": -116.25,
+     "eta": -49.999999999999986,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50643,
+     "eps_esl": 4.177593536409961e-06,
+     "eps_rad": 4.17759332976651e-06,
+     "err_pct": 4.946471207694577e-06
+    },
+    {
+     "xi": -11.25,
+     "eta": -96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51717,
+     "eps_esl": 8.784138624459694e-06,
+     "eps_rad": 8.784138201237337e-06,
+     "err_pct": 4.818029350029966e-06
+    },
+    {
+     "xi": 33.75,
+     "eta": -96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52185,
+     "eps_esl": 5.158387121917599e-06,
+     "eps_rad": 5.158386876307524e-06,
+     "err_pct": 4.761373687269776e-06
+    },
+    {
+     "xi": -18.75,
+     "eta": 73.07692307692308,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51705,
+     "eps_esl": 3.655048482994305e-06,
+     "eps_rad": 3.6550486560348e-06,
+     "err_pct": -4.734287046045157e-06
+    },
+    {
+     "xi": -78.75,
+     "eta": -96.15384615384616,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51015,
+     "eps_esl": 4.503916693398977e-06,
+     "eps_rad": 4.503916903327095e-06,
+     "err_pct": -4.661012235614369e-06
+    },
+    {
+     "xi": 86.25,
+     "eta": -34.61538461538452,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52755,
+     "eps_esl": 2.6586730244947617e-06,
+     "eps_rad": 2.6586731466443984e-06,
+     "err_pct": -4.594383360057277e-06
+    },
+    {
+     "xi": -125.0,
+     "eta": 20.51282051282055,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50562,
+     "eps_esl": 6.2399914239645735e-06,
+     "eps_rad": 6.239991710043055e-06,
+     "err_pct": -4.584597138686095e-06
+    },
+    {
+     "xi": -41.25,
+     "eta": -3.8461538461538103,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51441,
+     "eps_esl": 4.6460283773098e-06,
+     "eps_rad": 4.646028167715605e-06,
+     "err_pct": 4.511255358818398e-06
+    },
+    {
+     "xi": -3.75,
+     "eta": 3.8461538461538103,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 51834,
+     "eps_esl": 5.307004688764907e-06,
+     "eps_rad": 5.307004927663191e-06,
+     "err_pct": -4.50156513904016e-06
+    },
+    {
+     "xi": 108.75,
+     "eta": -19.230769230769166,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 52995,
+     "eps_esl": 4.659790877623546e-06,
+     "eps_rad": 4.659791084836465e-06,
+     "err_pct": -4.446828505519671e-06
+    },
+    {
+     "xi": -93.75,
+     "eta": 26.9230769230769,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50907,
+     "eps_esl": 5.429896116225045e-06,
+     "eps_rad": 5.4298958749404644e-06,
+     "err_pct": 4.443631813618595e-06
+    },
+    {
+     "xi": -130.0,
+     "eta": -10.256410256410275,
+     "valid": true,
+     "reason": "OK",
+     "elem_id": 50382,
+     "eps_esl": 5.218025229399598e-06,
+     "eps_rad": 5.218025460054775e-06,
+     "err_pct": -4.42035362625904e-06
+    }
+   ],
+   "n_hold": 11,
+   "schema": "esl/field/1",
+   "max_rad": 2.490921658319418e-05,
+   "min_rel": 0.1,
+   "n_elems": 1144,
+   "n_valid": 889,
+   "criteria": {
+    "p90_err_max": 20.0,
+    "max_err_pct_max": 10.0
+   },
+   "n_rising": 1133,
+   "sections": {
+    "xi": {
+     "at": 0.5,
+     "band": 0.02,
+     "n_elems": 52
+    },
+    "eta": {
+     "at": 0.5,
+     "band": 0.02854736051296027,
+     "n_elems": 88
+    }
+   },
+   "n_no_prev": 0,
+   "definition": {
+    "valid": "rising ∧ eps_rad ≥ min_rel·max_rad ∧ 제외 아님",
+    "rising": "v[t*] > v[t*−1]·(1+rtol), t*=첫 프레임이면 v>0 (v = Max_Strain ε_eq)",
+    "eps_esl": "검증 해 ε_eq(mid, 막 z=0 기본)",
+    "rel_err": "(eps_esl - eps_rad)/eps_rad",
+    "abs_err_pct": "100*|rel_err| (valid 요소)",
+    "max_err_pct": "max.abs_err_pct: t* 상승 요소 중 ε_rad 최대 요소의 오차"
+   },
+   "n_excluded": 0,
+   "abs_err_pct": {
+    "max": 6.345821083613412e-06,
+    "p50": 1.739425066974189e-06,
+    "p90": 3.4781198573281687e-06,
+    "p95": 3.8816423590846595e-06,
+    "p99": 4.83344237294972e-06,
+    "mean": 1.8321135007581324e-06
+   },
+   "frac_within": {
+    "5": 1.0,
+    "10": 1.0,
+    "20": 1.0
+   },
+   "frame_index": 6,
+   "prev_source": "strain_frames",
+   "reason_text": {
+    "OK": "비교 대상(t* 에서 상승 중, ε_rad ≥ min_rel·max)",
+    "LOW": "상승 중이지만 ε_rad < min_rel·max ε_rad (작은 변형률 — 상대오차가 의미 없음)",
+    "HOLD": "t* 에서 상승 중이 아님 — Max_Strain 이 이전 최대값을 유지(hold) 중이라 순간값이 아님",
+    "NO_PREV": "직전 프레임 값이 없어 상승 여부를 알 수 없음(예전 TCL 출력)",
+    "EXCLUDED": "tstar.exclude_elem_ids 로 제외"
+   },
+   "reason_codes": {
+    "0": "OK",
+    "1": "HOLD",
+    "2": "LOW",
+    "3": "EXCLUDED",
+    "4": "NO_PREV"
+   },
+   "prev_frame_index": 5
+  },
+  "dir_rel": "05_val",
+  "created_at": "2026-11-24T12:37:12.592204+09:00",
+  "stale": false,
+  "scheme": "disp_primary/2",
+  "status": "CONDITIONAL",
+  "disp_max_rel": 4.4009020591533013e-11,
+  "disp_noise_rel": 2.577172868993243e-13,
+  "undetermined_reason": null,
+  "disp": {
+   "U": 0.6738018129882174,
+   "max": 4.4009020591533013e-11,
+   "p50": 8.070037907559854e-12,
+   "p90": 1.707486755196385e-11,
+   "p99": 3.581946435179183e-11,
+   "top": [
+    {
+     "a": -150.0,
+     "b": 99.99999999999997,
+     "e": 2.9653357862410734e-11,
+     "r": 4.4009020591533013e-11,
+     "node_id": 1053,
+     "u_rel_mag": 0.6738018129884463,
+     "is_support": true
+    },
+    {
+     "a": 150.0,
+     "b": -99.99999999999997,
+     "e": 2.828072176477432e-11,
+     "r": 4.197186950173561e-11,
+     "node_id": 3161,
+     "u_rel_mag": 0.343403855066059,
+     "is_support": true
+    },
+    {
+     "a": -150.0,
+     "b": 92.30769230769236,
+     "e": 2.7544165092461292e-11,
+     "r": 4.0878734015728967e-11,
+     "node_id": 1051,
+     "u_rel_mag": 0.6180197239746666,
+     "is_support": false
+    },
+    {
+     "a": -142.5,
+     "b": 99.99999999999997,
+     "e": 2.747215546776614e-11,
+     "r": 4.077186338506711e-11,
+     "node_id": 1107,
+     "u_rel_mag": 0.6096976505660044,
+     "is_support": false
+    },
+    {
+     "a": 150.0,
+     "b": -92.3076923076923,
+     "e": 2.6339771687469296e-11,
+     "r": 3.90912745851129e-11,
+     "node_id": 3163,
+     "u_rel_mag": 0.32112614884496354,
+     "is_support": false
+    },
+    {
+     "a": 142.5,
+     "b": -99.99999999999997,
+     "e": 2.6216089334858802e-11,
+     "r": 3.890771563613652e-11,
+     "node_id": 3107,
+     "u_rel_mag": 0.32038415155646344,
+     "is_support": false
+    },
+    {
+     "a": -142.5,
+     "b": 92.30769230769236,
+     "e": 2.5496745373679153e-11,
+     "r": 3.78401258088111e-11,
+     "node_id": 1105,
+     "u_rel_mag": 0.5590667836517311,
+     "is_support": false
+    },
+    {
+     "a": -150.0,
+     "b": 84.61538461538463,
+     "e": 2.5455395182675377e-11,
+     "r": 3.7778757331898884e-11,
+     "node_id": 1049,
+     "u_rel_mag": 0.5629607979548115,
+     "is_support": false
+    },
+    {
+     "a": -135.0,
+     "b": 99.99999999999997,
+     "e": 2.53108056049337e-11,
+     "r": 3.756416963718722e-11,
+     "node_id": 1161,
+     "u_rel_mag": 0.546421700959031,
+     "is_support": false
+    },
+    {
+     "a": 150.0,
+     "b": -84.61538461538463,
+     "e": 2.44156106314569e-11,
+     "r": 3.623559652233208e-11,
+     "node_id": 3165,
+     "u_rel_mag": 0.2991087987660432,
+     "is_support": false
+    },
+    {
+     "a": 142.5,
+     "b": -92.3076923076923,
+     "e": 2.440158353654236e-11,
+     "r": 3.621477868740769e-11,
+     "node_id": 3109,
+     "u_rel_mag": 0.29929360475561984,
+     "is_support": false
+    },
+    {
+     "a": 135.0,
+     "b": -99.99999999999997,
+     "e": 2.4173798035086993e-11,
+     "r": 3.5876718597534726e-11,
+     "node_id": 3053,
+     "u_rel_mag": 0.2976705869435749,
+     "is_support": false
+    },
+    {
+     "a": -142.5,
+     "b": 84.61538461538463,
+     "e": 2.3530831125372453e-11,
+     "r": 3.492248116848556e-11,
+     "node_id": 1103,
+     "u_rel_mag": 0.5087520083646293,
+     "is_support": false
+    },
+    {
+     "a": -135.0,
+     "b": 92.30769230769236,
+     "e": 2.3460295479988964e-11,
+     "r": 3.481779809399119e-11,
+     "node_id": 1159,
+     "u_rel_mag": 0.5005389589350578,
+     "is_support": false
+    },
+    {
+     "a": -150.0,
+     "b": 76.92307692307689,
+     "e": 2.340233538691524e-11,
+     "r": 3.473177859692768e-11,
+     "node_id": 1047,
+     "u_rel_mag": 0.5091885097909961,
+     "is_support": false
+    },
+    {
+     "a": -127.5,
+     "b": 99.99999999999997,
+     "e": 2.3186250602021397e-11,
+     "r": 3.4411083726821095e-11,
+     "node_id": 1215,
+     "u_rel_mag": 0.4845433664883507,
+     "is_support": false
+    },
+    {
+     "a": 142.5,
+     "b": -84.61538461538463,
+     "e": 2.2593002629966464e-11,
+     "r": 3.3530634964856564e-11,
+     "node_id": 3111,
+     "u_rel_mag": 0.2783121351322015,
+     "is_support": false
+    },
+    {
+     "a": 150.0,
+     "b": -76.92307692307689,
+     "e": 2.2518275958937178e-11,
+     "r": 3.3419731922465085e-11,
+     "node_id": 3167,
+     "u_rel_mag": 0.27753365745185266,
+     "is_support": false
+    },
+    {
+     "a": 135.0,
+     "b": -92.3076923076923,
+     "e": 2.2474343180019912e-11,
+     "r": 3.335453058570639e-11,
+     "node_id": 3055,
+     "u_rel_mag": 0.27761726944656867,
+     "is_support": false
+    },
+    {
+     "a": 127.5,
+     "b": -99.99999999999997,
+     "e": 2.2163732565904097e-11,
+     "r": 3.2893548427260864e-11,
+     "node_id": 2999,
+     "u_rel_mag": 0.27544245092044406,
+     "is_support": false
+    }
+   ],
+   "hist": {
+    "n": 1107,
+    "counts": [
+     0,
+     0,
+     1,
+     5,
+     6,
+     13,
+     16,
+     37,
+     37,
+     63,
+     90,
+     132,
+     257,
+     287,
+     56,
+     53,
+     42,
+     12,
+     0,
+     0
+    ],
+    "n_zero": 0,
+    "edges_log10": [
+     -13.0,
+     -12.85,
+     -12.7,
+     -12.55,
+     -12.4,
+     -12.25,
+     -12.1,
+     -11.95,
+     -11.8,
+     -11.65,
+     -11.5,
+     -11.35,
+     -11.2,
+     -11.05,
+     -10.9,
+     -10.75,
+     -10.6,
+     -10.45,
+     -10.3,
+     -10.15,
+     -10.0
+    ]
+   },
+   "plane": {
+    "n": [
+     0.0,
+     -6.825144546224941e-18,
+     0.9999999999999998
+    ],
+    "e1": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "e2": [
+     0.0,
+     0.9999999999999998,
+     6.825144546224941e-18
+    ],
+    "origin": [
+     1150.0,
+     600.0,
+     211.54487179487268
+    ],
+    "xi_range": [
+     -150.0,
+     150.0
+    ],
+    "eta_range": [
+     -99.99999999999997,
+     99.99999999999997
+    ]
+   },
+   "max_rel": 4.4009020591533013e-11,
+   "n_nodes": 1107,
+   "rms_rel": 1.1350961244350903e-11,
+   "support": [
+    {
+     "e": 2.9653357862410734e-11,
+     "r": 4.4009020591533013e-11,
+     "node_id": 1053
+    },
+    {
+     "e": 2.828072176477432e-11,
+     "r": 4.197186950173561e-11,
+     "node_id": 3161
+    },
+    {
+     "e": 6.0833145916256135e-12,
+     "r": 9.02834405364236e-12,
+     "node_id": 3213
+    }
+   ],
+   "n_support": 3,
+   "max_node_id": 1053
+  },
+  "strain_ref": {
+   "n_elems": 1144,
+   "n_valid": 889,
+   "plastic": {
+    "n_plastic": 41,
+    "frac_plastic": 0.03583916083916084,
+    "n_exceed_plastic": 0
+   },
+   "exceeded": false,
+   "n_exceed": 0,
+   "frac_exceed": 0.0,
+   "p99_err_pct": 4.83344237294972e-06,
+   "max_err_pct_max": 10.0,
+   "exceeded_metrics": [],
+   "frac_exceed_valid": 0.0
+  },
+  "mac": 0.9999999999999993,
+  "cond_reasons": [
+   "DISP_RMS"
+  ]
+ },
+ "sources": {
+  "validation_id": "baae87e6-704c-4dc6-a960-6bd00731f22b",
+  "default": "full",
+  "rows": [
+   {
+    "key": "jig",
+    "available": false,
+    "code": "JIG_FIXED_SKIPPED",
+    "reason": "지그 tie 노드 준비(paicad fixed-scan)를 건너뛰어 지그 ESL 을 계산하지 않았습니다(paicad 를 쓸 수 없음(PAICAD_NOT_CONFIGURED) — bead_doe.paicad.exe 설정을 확인). (Jig fixed-scan skipped.)",
+    "status": null,
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": null,
+    "cond_reasons": [],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "jig_disp",
+    "available": false,
+    "code": "JIG_FIXED_SKIPPED",
+    "reason": "지그 tie 노드 준비(paicad fixed-scan)를 건너뛰어 지그 ESL 을 계산하지 않았습니다(paicad 를 쓸 수 없음(PAICAD_NOT_CONFIGURED) — bead_doe.paicad.exe 설정을 확인). (Jig fixed-scan skipped.)",
+    "status": null,
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": null,
+    "cond_reasons": [],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "jig_spring",
+    "available": false,
+    "code": "JIG_FIXED_SKIPPED",
+    "reason": "지그 tie 노드 준비(paicad fixed-scan)를 건너뛰어 지그 ESL 을 계산하지 않았습니다(paicad 를 쓸 수 없음(PAICAD_NOT_CONFIGURED) — bead_doe.paicad.exe 설정을 확인). (Jig fixed-scan skipped.)",
+    "status": null,
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": null,
+    "cond_reasons": [],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "full",
+    "available": true,
+    "code": null,
+    "reason": null,
+    "status": "CONDITIONAL",
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": "disp_primary/2",
+    "cond_reasons": [
+     "DISP_RMS"
+    ],
+    "reaction_role": "judge",
+    "reaction_tol": 1e-06,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": false,
+    "cond_text": "하중 기준 형상 F = K₀·u_rel · 지지 3-2-1(03_bc/support.json) · 균형 자기평형(구성상) · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이",
+    "note": "ESL 재해석 변위와 Radioss 변위의 차이 — 계산·경계조건·저장 정밀도의 수치 일관성을 봅니다(물리적 차이가 아닙니다).",
+    "limits": [],
+    "limit_text": [],
+    "comparable": true
+   },
+   {
+    "key": "bforce",
+    "available": true,
+    "code": null,
+    "reason": null,
+    "status": "CONDITIONAL",
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": "disp_primary/2",
+    "cond_reasons": [
+     "DISP_RMS"
+    ],
+    "reaction_role": "judge",
+    "reaction_tol": 1e-06,
+    "reaction_tol_key": "validation.sources.reaction_tol",
+    "reaction_warn": null,
+    "reaction_warned": false,
+    "cond_text": "하중 기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R) · 지지 3-2-1(03_bc/support.json) · 균형 관성 이완 · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이",
+    "note": "이 하중으로 정적 풀이한 변위와 Radioss 변위(강체 제거)의 차이 — 하중이 낙하 변형을 얼마나 재현하는지(물리 차이 포함)를 봅니다.",
+    "limits": [
+     "BF_TIE_MISSING"
+    ],
+    "limit_text": [
+     "tie 체결력 미포함 — 조립 부품 하중 누락"
+    ],
+    "comparable": false
+   },
+   {
+    "key": "fint",
+    "available": true,
+    "code": null,
+    "reason": null,
+    "status": "CONDITIONAL",
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": "disp_primary/2",
+    "cond_reasons": [
+     "DISP_RMS"
+    ],
+    "reaction_role": "judge",
+    "reaction_tol": 0.1,
+    "reaction_tol_key": "validation.sources.reaction_tol",
+    "reaction_warn": 0.05,
+    "reaction_warned": false,
+    "cond_text": "하중 기준 형상 F_ref = Rᵀ·F(낙하 프레임 → S3 Kabsch R) · 지지 3-2-1(03_bc/support.json) · 균형 균형 보정 없음 — 불평형은 지지 반력으로 · 목표 u_rel(S3 Kabsch) · 응답 = 검증 풀이",
+    "note": "이 하중으로 정적 풀이한 변위와 Radioss 변위(강체 제거)의 차이 — 하중이 낙하 변형을 얼마나 재현하는지(물리 차이 포함)를 봅니다.",
+    "limits": [],
+    "limit_text": [],
+    "comparable": true
+   }
+  ]
+ }
+}

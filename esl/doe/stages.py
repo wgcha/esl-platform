@@ -3358,12 +3358,18 @@ SM_REF_NPZ = "sm_ref.npz"
 SM_REF_SCHEMA = "esl/doe_sm_ref/1"
 SM_SCHEMA = 1
 SM_ROW_KEYS = ("C_lin", "C_ritz", "rho", "imbalance_rel", "umax_def")
+# v0.24.5 하위 호환 상수(D-0.24.5-VT-16 — 하드코딩 금지의 예외, 값 고정이 목적이라 설정으로 빼지 않음. 바꾸지 말 것):
+# ≤ v0.24.3 스냅샷(rank.jig 에 키 없음)에 _sm 이 설정 기본 대신 병합하는 값 = v0.24.4(main 9b6b2587) DEFAULTS rank.jig 의 같은 키.
+# 계산은 이 값을 읽지 않는다(방식 = _jig_plan 이 스냅샷 원본에서 → jig_bc.LEGACY_ABSENT fixed 만). 쓰임은 _cfg_hash 의 jig 해시
+# 보기뿐 — v0.24.5 DEFAULTS methods 가 [prescribed, spring] 으로 바뀌어도 옛 스터디 이어하기·안 추가 input_sha256 이 main 과 바이트
+# 동일(캐시 적중). 새 스냅샷은 methods 를 명시하므로(백엔드 rank_snapshot — 설정 전체 고정) 이 값과 무관
+LEGACY_JIG_MERGE: dict = {"methods": ("fixed", "prescribed", "spring")}
 
 
 def _sm(c: Ctx) -> dict | None:
     """스냅샷 doe.rank(새 스터디) → {metric, lin_form, lin_valid, imbalance_warn, jig}. 없으면 None(옛 = solve, 지표 계산 없음).
     v0.23.0 D-JIG-8: 스냅샷 rank 에 metric 키가 없으면 solve(DEFAULTS 기본이 jig 로 바뀌어도 옛 동작 유지). jig = 스냅샷 rank.jig 를
-    설정 기본 위에 합친 값(스냅샷에 없으면 None)."""
+    설정 기본 위에 합친 값(스냅샷에 없으면 None). v0.24.5: 스냅샷에 없는 LEGACY_JIG_MERGE 키는 설정 기본 대신 그 호환 상수(해시 불변)."""
     r = c.D.get("rank")
     if not isinstance(r, dict) or c.scn not in ("same", "mesh", "step", "compare", "select"):
         return None
@@ -3372,7 +3378,9 @@ def _sm(c: Ctx) -> dict | None:
     out["metric"] = r.get("metric", "solve")
     if out["metric"] not in smm.METRICS or out["lin_form"] not in smm.LIN_FORMS:
         raise EslError("CONFIG_INVALID", f"rank.metric {out['metric']} / lin_form {out['lin_form']}")
-    out["jig"] = {**base["jig"], **r["jig"]} if isinstance(r.get("jig"), dict) else None
+    rj = r.get("jig")
+    out["jig"] = ({**base["jig"], **{k: list(v) for k, v in LEGACY_JIG_MERGE.items() if k not in rj}, **rj}
+                  if isinstance(rj, dict) else None)
     # v0.24.0 평가 영역(esl_fint.md §6.2): 스냅샷에 eval_region 이 있을 때만(옛 스냅샷 = None — 계산·키 없음)
     ev_ = r.get("eval_region")
     out["eval"] = None
@@ -3393,10 +3401,14 @@ def _sm_post(c: Ctx) -> dict | None:
         return None
     plan = _lt_plan(c)
     jig_ok = False
-    if S_["metric"] == "jig" and _jig(c) is not None:         # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
-        jd = _jig_doc(c)
+    jsrc = _jig_rank_src(c) if S_["metric"] == "jig" and _jig(c) is not None else None
+    if jsrc is not None:                                      # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
+        jd = _jig_src_doc(c, jsrc)
         jig_ok = bool(jd and jd.get("status") == "ok")
-    out = {**S_, "metric_effective": tp.metric_effective(plan, S_["metric"], jig_ok), "cross_mesh": tp.cross_mesh(plan)}
+    eff = tp.metric_effective(plan, S_["metric"], jig_ok)
+    if eff == "jig" and jsrc is not None:                     # v0.24.5 §12: 지그 순위 = 첫 계산 방식의 출처 지표(jig·jd·js)
+        eff = _jig_src_row(jsrc)["metric"]
+    out = {**S_, "metric_effective": eff, "cross_mesh": tp.cross_mesh(plan)}
     ls = c.D.get("load_source")
     if ls is not None:                         # v0.24.4 P3(esl_jig_case.md §9 — 새 스냅샷만, 키 없음 = 지금 동작·바이트 동일):
         out["load_source"] = str(ls)           # 순위 기준 = 출처 행 metric 열(bd_post _ls_rank_input 에서 준비 확인 후 바꿈)
@@ -4186,6 +4198,15 @@ def _jig_plan(c: Ctx) -> tuple[str, tuple]:
     return td, tuple(ms)
 
 
+def _jig_rank_src(c: Ctx) -> str:
+    """rank.metric = jig 의 순위 출처(v0.24.5 esl_validate_tiers.md §12): 스냅샷 방식 목록(_jig_plan — 설정 순서)의 **첫 방식**의
+    출처 키(METHODS.src 열). 옛 스냅샷(키 없음 = fixed)·v0.24.4 스냅샷(fixed 가 첫째) = jig(C_jig — 바이트 동일), v0.24.5 기본
+    ([prescribed, spring] — 지그 고정 계산 제외) = jig_disp(C_jd). 이름 분기 없음."""
+    from esl.mech import jig_bc
+    ms = _jig_plan(c)[1]
+    return str(jig_bc.METHODS[ms[0]]["src"]) if ms else jig_bc.METHODS[jig_bc.basis_method()]["src"]
+
+
 def _jig_single_legacy(td: str, ms: tuple) -> bool:
     """방식 1개 ∧ 옛 산술 경로 = v0.23.0 흐름 그대로(_jig_baseline·_jig_design — 옛 스냅샷·translation+fixed 새 스냅샷 바이트 동일)."""
     return len(ms) == 1 and _jig_legacy(td, ms[0])
@@ -4649,21 +4670,23 @@ VIEW_DROP_NODAL = VIEW_DROP_BF
 _JIG_DROP_PE = ("C_solve", "rho", "imbalance_rel", "umax_def")
 VIEW_DROP_JD = tuple(dict.fromkeys(VIEW_DROP_JIG + ("C_jig", "umax_jig", "C_js", "umax_js")))
 VIEW_DROP_JS = tuple(dict.fromkeys(VIEW_DROP_JIG + ("C_jig", "umax_jig", "C_jd", "umax_jd")))
+# v0.24.5 #88 후속(모든 모드 감사): 열 need_rank — 참 = need 를 스터디 지그 순위 출처(_jig_rank_src — 스냅샷 첫 방식)의 need 로 읽음(전 노드
+# 행: 옛 스냅샷·v0.24.4 기본 = 첫 방식 fixed → C_jig 그대로, v0.24.5 기본 [prescribed, spring] = C_jd — fixed 를 끄면 전 노드 보기가 안 생기던 것).
 RANK_SOURCES = (
     {"key": "jig", "metric": "jig", "drop": VIEW_DROP_JIG, "drop_pe": _JIG_DROP_PE,
-     "umax_pe": "umax_jig", "eps_pe": None, "need": "C_jig", "sidecar": "jig", "uev_pe": "umax_jig_ev"},
+     "umax_pe": "umax_jig", "eps_pe": None, "need": "C_jig", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_jig_ev"},
     {"key": "jig_disp", "metric": "jd", "drop": VIEW_DROP_JD, "drop_pe": _JIG_DROP_PE,
-     "umax_pe": "umax_jd", "eps_pe": None, "need": "C_jd", "sidecar": "jig", "uev_pe": "umax_jd_ev"},
+     "umax_pe": "umax_jd", "eps_pe": None, "need": "C_jd", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_jd_ev"},
     {"key": "jig_spring", "metric": "js", "drop": VIEW_DROP_JS, "drop_pe": _JIG_DROP_PE,
-     "umax_pe": "umax_js", "eps_pe": None, "need": "C_js", "sidecar": "jig", "uev_pe": "umax_js_ev"},
+     "umax_pe": "umax_js", "eps_pe": None, "need": "C_js", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_js_ev"},
     {"key": "full", "metric": "effective", "drop": VIEW_DROP_FULL, "drop_pe": (), "umax_pe": None, "eps_pe": None,
-     "need": "C_jig", "sidecar": "jig", "uev_pe": "umax_ev"},
+     "need": "C_jig", "need_rank": True, "sidecar": "jig", "uev_pe": "umax_ev"},
     {"key": "bforce", "metric": "bf", "drop": VIEW_DROP_NODAL,
      "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def", "C_jig", "umax_jig"), "umax_pe": "umax_bf",
-     "eps_pe": "epsmax_bf", "need": "C_bf", "sidecar": "bforce", "uev_pe": "umax_bf_ev"},
+     "eps_pe": "epsmax_bf", "need": "C_bf", "need_rank": False, "sidecar": "bforce", "uev_pe": "umax_bf_ev"},
     {"key": "fint", "metric": "fi", "drop": VIEW_DROP_NODAL,
      "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def", "C_jig", "umax_jig"), "umax_pe": "umax_fi",
-     "eps_pe": "epsmax_fi", "need": "C_fi", "sidecar": "fint", "uev_pe": "umax_fi_ev"},
+     "eps_pe": "epsmax_fi", "need": "C_fi", "need_rank": False, "sidecar": "fint", "uev_pe": "umax_fi_ev"},
 )
 
 
@@ -4887,12 +4910,23 @@ def _rank_views(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: 
     for src in RANK_SOURCES:                                   # 출처 표 행마다(§2.1) — 이 사이드카(jig_view) 행만
         if src["sidecar"] != "jig":
             continue
-        if not _src_ready(b, src):                             # v0.24.4: need 없음 = 이 스터디가 계산하지 않은 방식(jd·js — 보기 없음).
-            continue                                           # jig·full(need C_jig)은 위 _jig_ref 와 같은 조건이라 항상 통과
+        if not _src_ready(b, {**src, "need": _src_need(c, src)}):   # v0.24.4: need 없음 = 이 스터디가 계산하지 않은 방식(jd·js — 보기 없음).
+            continue                                           # full = need_rank 열(스터디 지그 순위 출처의 need — 옛 = C_jig 그대로)
         views[src["key"]], pv = _rank_view_one(c, m, results, noise, S_, labels, src)
         if pv is not None:
             per[src["key"]] = pv
     return (views or None), per
+
+
+def _src_need(c: Ctx, src: dict) -> str:
+    """출처 행 need 열 — need_rank 열이 참이면 스터디 지그 순위 출처(_jig_rank_src)의 need(옛 스냅샷·v0.24.4 기본 = fixed 첫째 → C_jig,
+    v0.24.5 기본 = C_jd). 스냅샷 지그 설정 오류 = need 열 그대로(옛 조건)."""
+    if not src["need_rank"]:
+        return str(src["need"])
+    try:
+        return str(_jig_src_row(_jig_rank_src(c))["need"])
+    except EslError:
+        return str(src["need"])
 
 
 def _src_ready(b: dict | None, src: dict) -> bool:
@@ -4906,7 +4940,9 @@ def _src_ready(b: dict | None, src: dict) -> bool:
 def _rank_view_one(c: Ctx, m: dict, results: list, noise, S_: dict | None, labels: dict, src: dict) -> tuple[dict, dict | None]:
     """출처 행 하나의 보기(§2 — 출처 표 열만 읽음): rank(metric) → 주석 → 행 정리 → 민감도. 반환 (보기, 인라인 아니면 per_esl)."""
     me = (S_.get("metric_default") or S_["metric_effective"]) if S_ else "solve"     # load_source 가 바꾼 기준과 무관(전 노드 보기)
-    metric = src["metric"] if src["metric"] != "effective" else (me if me != "jig" else "solve")
+    side_m = {s_["metric"] for s_ in RANK_SOURCES if s_["sidecar"] == src["sidecar"] and s_["metric"] != "effective"}
+    metric = src["metric"] if src["metric"] != "effective" else ("solve" if me in side_m else me)   # 같은 사이드카 출처 지표
+    # (jig·jd·js — v0.24.5 기본 순위 jd 포함)면 전 노드 보기 = solve(옛: jig → solve 와 같음)
     kw = {"lin_form": S_["lin_form"], "lin_valid": float(S_["lin_valid"])} if S_ else {}
     R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric, **kw)
     best_clean = _annotate(c, R, results, labels)

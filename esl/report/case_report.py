@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 import esl
+from esl import val_metrics as _vm
 from esl import val_src as _vs
 from esl.display import display_path
 from esl.report import field as F
@@ -276,16 +277,23 @@ _METRIC_TEXT = {
     "noise_force_rel": "변위 정밀도 잡음 → rms(F_noise)/rms(F_eq)",
     "field_max_err_pct": "최대변형률 요소 |ε_esl − ε_rad|/ε_rad (%)",
     "field_p90_err_pct": "valid 요소 |오차| 90 분위 (%)",
+    "mac": "MAC(검증) — 변형 형상 일치 (d_val·d_rel)²/(|d_val|²·|d_rel|²), 양쪽 선형 강체 제거",
 }
 
 
-STATUS_TEXT = {"PASS": "PASS", "FAIL": "FAIL", "UNDETERMINED": "판정 불가", "LEGACY": "이전 판정 체계"}
+STATUS_TEXT = {"PASS": "PASS", "FAIL": "FAIL", "UNDETERMINED": "판정 불가", "LEGACY": "이전 판정 체계",
+               _vm.CONDITIONAL: _vm.VERDICT_TEXT[_vm.CONDITIONAL]}
+BADGE_STATUSES = ("PASS", "FAIL", _vm.CONDITIONAL)         # html.badge 로 그리는 값(나머지 = na 배지 + STATUS_TEXT)
+# 5절 판정 설명(옛 체계 문서 = v0.24.4 문구 그대로, 새 체계 = 단계·MAC — esl_validate_tiers.md §4.6)
+JUDGE_NOTE = {_vm.VERDICT_SCHEMES[0]: "판정 = 변위 4지표(전 노드, 3-2-1 지지 노드 포함). 변형률은 아래 \"참고\" 표 — 판정에 쓰지 않는다.",
+              _vm.VERDICT_SCHEME: "판정 = 변위 지표 4 + MAC(검증), 단계 PASS·조건부 PASS·FAIL(전 노드, 3-2-1 지지 노드 포함). "
+                                  "변형률은 아래 \"참고\" 표 — 판정에 쓰지 않는다."}
 UNDET_TEXT = {"NO_FULL_SOLVE": "전체 재해석 생략 — 변위 비교가 없어 판정하지 않음",
               "ZERO_DISP": "u_rel 이 전부 0(변형 없음) — 상대 지표를 정의할 수 없어 판정하지 않음"}
 
 
 def status_of(v: dict | None) -> str | None:
-    """표시 상태: scheme(verdict_scheme)이 없으면 LEGACY, 아니면 verdict (PASS|FAIL|UNDETERMINED)."""
+    """표시 상태: scheme(verdict_scheme)이 없으면 LEGACY, 아니면 verdict (PASS|CONDITIONAL|FAIL|UNDETERMINED)."""
     if not v:
         return None
     return v.get("verdict") if v.get("verdict_scheme") else "LEGACY"
@@ -293,7 +301,7 @@ def status_of(v: dict | None) -> str | None:
 
 def status_badge(v: dict | None) -> str:
     st = status_of(v)
-    if st in ("PASS", "FAIL"):
+    if st in BADGE_STATUSES:
         return H.badge(st)
     if st is None:
         return H.badge(None)
@@ -335,6 +343,9 @@ def _sec_validation(c: _Case) -> str:
     mets = v.get("metrics") or []
 
     def row(m):
+        if "grade" in m:                                   # 새 체계 judge 행: 2단 기준 문구·등급 배지(§4.6)
+            return (m["metric"], _METRIC_TEXT.get(m["metric"], ""), m.get("value"), _crit_cell(m),
+                    H.badge(m["grade"]) if m.get("grade") else '<span class="na">생략</span>')
         return (m["metric"], _METRIC_TEXT.get(m["metric"], ""), m.get("value"), m.get("criterion"),
                 H.pass_cell(m.get("pass")) if m.get("status") != "skipped" else '<span class="na">생략</span>')
 
@@ -345,7 +356,9 @@ def _sec_validation(c: _Case) -> str:
     ex = [(h["rank"], h["elem_id"], h.get("reason", "")) for h in v.get("hotspots_excluded") or []]
     out = [f'<p>판정: {status_badge(v)} '
            + (f'<span class="muted">사유 {H.esc(", ".join(v.get("fail_reasons") or []))}</span>'
-              if v.get("fail_reasons") else "") + "</p>"]
+              if v.get("fail_reasons") else "")
+           + (f' <span class="muted">조건부 {H.esc(", ".join(v["cond_reasons"]))}</span>'
+              if v.get("cond_reasons") else "") + "</p>"]
     if st == "UNDETERMINED":
         out.append(f'<p class="small">{H.esc(UNDET_TEXT.get(v.get("undetermined_reason"), v.get("undetermined_reason") or ""))}'
                    f' (full_solve={H.esc((v.get("criteria") or {}).get("full_solve", fs.get("mode")))}: '
@@ -353,7 +366,8 @@ def _sec_validation(c: _Case) -> str:
     else:
         out.append(f'<p class="small muted">S5 전체 재해석: {"수행" if fs.get("run") else "생략"} ({H.esc(fs.get("reason", ""))})</p>')
     if not legacy:
-        out.append('<p class="small muted">판정 = 변위 4지표(전 노드, 3-2-1 지지 노드 포함). 변형률은 아래 "참고" 표 — 판정에 쓰지 않는다.</p>')
+        note = JUDGE_NOTE.get(v.get("verdict_scheme"), JUDGE_NOTE[_vm.VERDICT_SCHEMES[0]])
+        out.append(f'<p class="small muted">{note}</p>')           # 상수 문구(원문 그대로 — 옛 바이트)
     out.append(H.table(["지표", "의미", "값", "기준", "판정"], [row(m) for m in judge], num=(2, 3), raw=(4,)))
     if not legacy:
         refs = [m for m in mets if m.get("role") == "reference"]
@@ -380,6 +394,15 @@ def _sec_validation(c: _Case) -> str:
     return "".join(out)
 
 
+def _crit_cell(m: dict) -> str:
+    """새 체계 judge 행 기준 칸: 단일 = 지금 문구(숫자), 2단 = "≤ 0.05 / 조건부 ≤ 0.1"(MAC 은 ≥)."""
+    c, cc = m.get("criterion"), m.get("criterion_cond")
+    if cc is None:
+        return H.fmt(c)
+    op = _vm.SENSE_OP[m.get("sense") or "max"]
+    return f"{op} {H.fmt(c)} / 조건부 {op} {H.fmt(cc)}"
+
+
 VAL_SRC_STATUS_TEXT = {"unavailable": "불가", "failed": "계산 실패", "disabled": "꺼짐", "na": "해당 없음"}
 
 
@@ -399,10 +422,12 @@ def _sec_val_sources(c: _Case) -> str:
         m = r.get("metrics") or {}
         if r.get("status") == "done":
             st = str(r.get("verdict") or "")
-            cell = (H.badge(st) if st in ("PASS", "FAIL") else
+            cell = (H.badge(st) if st in BADGE_STATUSES else
                     f'<span class="badge na">{H.esc(STATUS_TEXT.get(st, st or "—"))}</span>')
             if r.get("fail_reasons"):
                 cell += f' <span class="small muted">{H.esc(", ".join(r["fail_reasons"]))}</span>'
+            if r.get("cond_reasons"):
+                cell += f' <span class="small muted">조건부 {H.esc(", ".join(r["cond_reasons"]))}</span>'
             if r.get("undetermined_reason"):
                 cell += f' <span class="small muted">{H.esc(r["undetermined_reason"])}</span>'
             why = r.get("cond_text") or ""
@@ -416,16 +441,28 @@ def _sec_val_sources(c: _Case) -> str:
         reac = m.get("reaction_rel")
         role = r.get("reaction_role")
         rows.append((_vs.LABEL.get(pr["key"], pr["key"]) + (" (기준)" if pr["legacy"] else ""), cell,
-                     m.get("disp_rms_rel"), m.get("disp_max_rel"),
+                     m.get("disp_rms_rel"), m.get("disp_max_rel"), m.get("mac"),
                      H.esc(H.fmt(reac)) + ("" if role in (None, "judge") else ' <span class="small muted">정보</span>')
                      + ("" if role not in (None, "judge") or r.get("reaction_tol") is None
-                        else f' <span class="small muted">(허용치 ≤{H.esc(H.fmt(r["reaction_tol"]))})</span>'),
+                        else f' <span class="small muted">({H.esc(_reac_crit_text(r))})</span>'),
                      lim or "—", why))
     cap = ('<p class="small muted">같은 정의(목표 u_rel·양쪽 선형 강체 제거·Σ‖R‖/Σ‖F‖)·같은 기준값으로 출처마다 검증한 결과. '
-           "반력 허용치는 출처마다 설정(validation.sources.reaction_tol)으로 정하며 표의 괄호 값이 판정에 쓴 값이다. 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다.</p>")
+           "반력 허용치는 출처마다 설정(validation.sources.reaction_tol)으로 정하며 표의 괄호 값이 판정에 쓴 값이다. 라이브러리 등록·내보내기 기준은 전 노드 ESL 판정이다. 한계가 '비교용 아님'인 출처는 판정을 바꾸지 않고 표시만 한다."
+           + VAL_SRC_TIERS_NOTE + "</p>")
     return ("<!--val-src--><h3>출처별 판정</h3>" + cap
-            + H.table(["출처", "판정", "변위 RMS/U", "변위 최대/U", "반력 Σ‖R‖/Σ‖F‖", "한계", "조건·사유"], rows,
-                      num=(2, 3, 4), raw=(1, 4)) + "<!--/val-src-->")
+            + H.table(["출처", "판정", "변위 RMS/U", "변위 최대/U", "MAC(검증)", "반력 Σ‖R‖/Σ‖F‖", "한계", "조건·사유"], rows,
+                      num=(2, 3, 4, 5), raw=(1, 5)) + "<!--/val-src-->")
+
+
+VAL_SRC_TIERS_NOTE = (" v0.24.5 이후 검증은 MAC(검증)(변형 형상 일치)도 판정에 넣고 단계(PASS·조건부 PASS·FAIL)로 판정한다 — "
+                      "이전 검증은 MAC '—'·단일 기준 그대로.")       # 출처 표 머리 설명 끝 문장(§4.6)
+
+
+def _reac_crit_text(r: dict) -> str:
+    """출처 표 반력 괄호: 새 체계 + 주의 기준 = "PASS ≤0.05 · 조건부 ≤0.1"(§1.4), 그 밖 = "허용치 ≤<tol>"(옛 문구)."""
+    if r.get("verdict_scheme") == _vm.VERDICT_SCHEME and r.get("reaction_warn") is not None:
+        return _vm.criterion_text(r["reaction_warn"], r["reaction_tol"], fmt=".4g")
+    return f"허용치 ≤{H.fmt(r['reaction_tol'])}"
 
 
 def _field_summary(c: _Case) -> str:
@@ -731,7 +768,7 @@ def build_case_report(case_dir: str, record: dict | None = None, max_points: int
                  f'{H.esc(", ".join(sorted(set(c.missing))))}</p>')
     body = head + toc + "\n".join(H.section(i, n, inner) for i, n, inner in parts)
     data = {"map": mapd, "sec": secd}
-    doc = H.page(t, body, script=JS, data=data, version=esl.__version__)
+    doc = H.page(t, body, script=JS, data=data, version=esl.__version__, extra_css=H.cond_css(body))
     info = {"sections": [i for i, _, _ in parts], "missing": sorted(set(c.missing)),
             "n_points": None if mapd is None else mapd["n_shown"],
             "n_elems": None if mapd is None else mapd["n_total"],

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from doe_worker_support import calls, doe_worker_settings, write_fake_paicad
-from esl_test_support import API, H, create_case, make_settings_dict
+from esl_test_support import API, H, create_case, legacy_sources, make_settings_dict
 
 W = H("tok-power", True)
 R = H("tok-power")
@@ -27,11 +27,12 @@ def fake_paicad(tmp_path) -> Path:
 @pytest.fixture()
 def settings_dict(request, tmp_path, fake_paicad):
     if "no_paicad" in request.node.name:
-        return make_settings_dict(tmp_path, report={"auto": False})
+        return legacy_sources(make_settings_dict(tmp_path, report={"auto": False}))
     d = doe_worker_settings(tmp_path, fake_paicad)
     d["worker"]["slots"] = 2
     d["report"] = {**(d.get("report") or {}), "auto": False}
-    d["core"]["settings"]["jig"] = {"fix_kinds": ["RBE2"]}          # 가짜 paicad 는 RBE2 종류 클러스터를 돌려줌(실제는 INTER_TYPE2)
+    legacy_sources(d)                                               # v0.24.5 §12: 지그 고정·경계력은 기본 끔 — v0.24.4 와 같은 6 출처로 되돌려 시험
+    d["core"]["settings"]["jig"]["fix_kinds"] = ["RBE2"]            # 가짜 paicad 는 RBE2 종류 클러스터를 돌려줌(실제는 INTER_TYPE2)
     return d
 
 

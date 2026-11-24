@@ -130,7 +130,7 @@ BF, FI, JIG = vs.plan("bforce"), vs.plan("fint"), vs.plan("jig")
 @pytest.mark.parametrize("row,have,doc,summ,exp_code,exp_reason", [
     (BF, True, None, None, None, None),
     (BF, False, None, {"grade": None, "code": "BF_DISABLED"}, "BF_DISABLED", "설정에서 꺼짐(bforce.enabled)"),
-    (FI, False, None, {"grade": None, "code": "FINT_DISABLED"}, "FINT_DISABLED", "설정에서 꺼짐(bforce.fint.enabled)"),
+    (FI, False, None, {"grade": None, "code": "FINT_DISABLED"}, "FINT_DISABLED", "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)"),
     (BF, False, None, {"grade": "none", "code": "BF_NO_DATA", "reason": "추출물에 경계력 결과 없음"}, "BF_NO_DATA",
      "추출물에 경계력 결과 없음"),
     (BF, False, None, {"grade": "none", "code": "BF_EXTRACT_FAILED", "reason": "보충 실패 — x"}, "BF_EXTRACT_FAILED",
@@ -234,10 +234,12 @@ def test_v2_disp_metrics_rigid_invariance_and_reaction_definitions():
         vm.disp_metrics(X0, u_rel, u6, R, F, [0], 0.0, nid, top_n=5, hist_bins=8)
 
 
-CRIT = {"disp_rms_rel_max": 0.01, "disp_max_rel_max": 0.05, "reaction_rel_max": 1e-6, "disp_noise_rel_max": 1e-3,
+# v0.24.5(esl_validate_tiers.md §1·§2 — 의도 변경): 판정 단계 기준 3키·mac 값 추가
+CRIT = {"disp_rms_rel_max": 0.01, "disp_rms_rel_cond_max": 0.10, "disp_max_rel_max": 0.05, "mac_min": 0.95,
+        "mac_cond_min": 0.90, "reaction_rel_max": 1e-6, "disp_noise_rel_max": 1e-3,
         "hotspot_strain_rel_err_max": 0.1, "noise_strain_rel_max": 0.05}
 CCFG = {"max_err_pct_max": 10.0, "p90_err_max": 20.0}
-VALS = {"disp_rms_rel": 1e-3, "disp_max_rel": 2e-3, "reaction_rel": 0.5, "disp_noise_rel": 1e-6,
+VALS = {"disp_rms_rel": 1e-3, "disp_max_rel": 2e-3, "mac": 0.999, "reaction_rel": 0.5, "disp_noise_rel": 1e-6,
         "hotspot1_strain_rel_err": 0.01, "field_max_err_pct": 1.0, "field_p90_err_pct": 2.0,
         "noise_hotspot_strain_rel": 1e-4, "reaction_sum_rel": 1e-9, "u_rel_linear_rigid_rel": 0.1,
         "noise_force_rel": None}
@@ -245,31 +247,33 @@ VALS = {"disp_rms_rel": 1e-3, "disp_max_rel": 2e-3, "reaction_rel": 0.5, "disp_n
 
 def test_v2_metric_rows_reaction_role_and_verdict():
     j = vm.metric_rows(VALS, CRIT, CCFG, reaction_role="judge")
-    assert [m["metric"] for m in j] == ["disp_rms_rel", "disp_max_rel", "reaction_rel", "disp_noise_rel",
+    assert [m["metric"] for m in j] == ["disp_rms_rel", "disp_max_rel", "mac", "reaction_rel", "disp_noise_rel",
                                         "hotspot1_strain_rel_err", "field_max_err_pct", "field_p90_err_pct",
                                         "noise_hotspot_strain_rel", "reaction_sum_rel", "u_rel_linear_rigid_rel",
-                                        "noise_force_rel"]
-    assert vm.verdict_of(j, None) == ("FAIL", ["REACTION"])                       # 반력 판정(정정 지지)
+                                        "noise_force_rel"]                       # v0.24.5 judge 5행(mac 은 disp_max_rel 다음)
+    assert vm.verdict_of(j, None) == ("FAIL", ["REACTION"], [])                   # 반력 판정(정정 지지)
     i = vm.metric_rows(VALS, CRIT, CCFG, reaction_role="info")
     r = next(m for m in i if m["metric"] == "reaction_rel")
     assert r == {"metric": "reaction_rel", "value": 0.5, "criterion": None, "pass": None, "role": "info"}
-    assert vm.verdict_of(i, None) == ("PASS", [])                                 # info → 판정·fail_reasons 제외
-    assert vm.verdict_of(j, "NO_FULL_SOLVE") == ("UNDETERMINED", [])
+    assert vm.verdict_of(i, None) == ("PASS", [], [])                             # info → 판정·fail_reasons 제외
+    assert vm.verdict_of(j, "NO_FULL_SOLVE") == ("UNDETERMINED", [], [])
     s = vm.metric_rows(VALS, CRIT, CCFG, strain_skipped=True)
     assert all(m["value"] is None and m["status"] == "skipped" for m in s if m["role"] == "reference")
     none = vm.metric_rows({**VALS, "disp_rms_rel": None}, CRIT, CCFG)
-    assert none[0]["status"] == "skipped" and vm.verdict_of(none, None) == ("FAIL", ["DISP_RMS", "REACTION"])
+    assert none[0]["status"] == "skipped" and vm.verdict_of(none, None) == ("FAIL", ["DISP_RMS", "REACTION"], [])
 
 
 def test_v2_validation_doc_key_order_and_src_last():
-    kw = {k: None for k in ("frame", "verdict", "undetermined_reason", "esl_ref", "fail_reasons", "criteria", "noise",
+    kw = {k: None for k in ("frame", "verdict", "undetermined_reason", "esl_ref", "fail_reasons", "cond_reasons",
+                            "criteria", "noise",
                             "noise_source", "metrics", "full_solve", "hotspots", "hotspots_excluded", "reactions",
                             "reaction_sum", "disp", "strain_ref", "field", "strain_source", "created_at")}
     d = vm.validation_doc(**kw)
     assert list(d) == ["schema", "frame", "verdict", "verdict_scheme", "undetermined_reason", "esl_ref", "fail_reasons",
-                       "criteria", "noise", "noise_source", "metrics", "full_solve", "hotspots", "hotspots_excluded",
-                       "reactions", "reaction_sum", "disp", "strain_ref", "field", "strain_source", "created_at"]
-    assert d["schema"] == "esl/validation/3" and d["verdict_scheme"] == "disp_primary/1"
+                       "cond_reasons", "criteria", "noise", "noise_source", "metrics", "full_solve", "hotspots",
+                       "hotspots_excluded", "reactions", "reaction_sum", "disp", "strain_ref", "field", "strain_source",
+                       "created_at"]                                             # v0.24.5 cond_reasons(fail_reasons 다음)
+    assert d["schema"] == "esl/validation/4" and d["verdict_scheme"] == "disp_primary/2"
     d2 = vm.validation_doc(**kw, src={"key": "bforce"})
     assert list(d2)[-1] == "src" and list(d2)[:-1] == list(d)
 
@@ -306,21 +310,23 @@ def test_core_adapter_val_wrappers():
 
 
 # ---- 출처별 반력 허용치·주의(D-0.24.3-VAL: fint 주의 5 %·불합격 10 %, 사용자 결정 2026-11-20) ----
-@pytest.mark.parametrize("reac,verdict,warned", [(3e-2, "PASS", False), (7e-2, "PASS", True), (1.2e-1, "FAIL", False)])
+# v0.24.5 개정(D-0.24.5-VT-4, 의도 변경): 주의 < 반력 ≤ 허용치 = 조건부 PASS(cond_reasons REACTION), 한계 표식 없음
+@pytest.mark.parametrize("reac,verdict,warned", [(3e-2, "PASS", False), (7e-2, "CONDITIONAL", True),
+                                                 (1.2e-1, "FAIL", False)])
 def test_fint_reaction_two_stage(reac, verdict, warned):
     ms_vals = {k: 1e-6 for k in ("disp_rms_rel", "disp_max_rel")}
     row = vs.plan("fint")
     from esl import config as ec
     tol, warn = ec.source_reaction_tol(None, row["reaction_tol_key"], "fint"), ec.source_reaction_tol(None, row["reaction_warn_key"], "fint")
     assert (tol, warn) == (0.10, 0.05)
-    crit = {**CRIT, "reaction_rel_max": tol}
+    crit = {**CRIT, "reaction_rel_max": tol, "reaction_warn_rel": warn}
     ms = vm.metric_rows({**VALS, **ms_vals, "reaction_rel": reac, "disp_noise_rel": 1e-6}, crit, CCFG, reaction_role="judge")
-    v, why = vm.verdict_of(ms, None)
-    assert v == verdict and (why == ["REACTION"]) == (verdict == "FAIL")
-    r = vs.done_row(row, {"verdict": v, "fail_reasons": why, "metrics": ms, "criteria": {**crit, "reaction_warn_rel": warn}}, None)
+    v, why, cond = vm.verdict_of(ms, None)
+    assert v == verdict and (why == ["REACTION"]) == (verdict == "FAIL") and (cond == ["REACTION"]) == warned
+    r = vs.done_row(row, {"verdict": v, "fail_reasons": why, "cond_reasons": cond, "metrics": ms, "criteria": crit}, None)
     assert r["reaction_tol"] == 0.10 and r["reaction_warn"] == 0.05 and r["reaction_warned"] is warned
-    assert (vs.WARN_CODE in r["limits"]) == warned and r["comparable"] is True
-    assert (any("5 % 초과" in t for t in r["limit_text"])) == warned
+    assert vs.WARN_CODE not in r["limits"] and r["comparable"] is True and r["cond_reasons"] == cond
+    assert not any("5 % 초과" in t for t in r["limit_text"])
 
 
 @pytest.mark.parametrize("key", ["full", "bforce"])

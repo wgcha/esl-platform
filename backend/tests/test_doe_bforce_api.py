@@ -82,6 +82,7 @@ def test_per_esl_view_bforce(client, world, engine, esl_root, monkeypatch):
 
 
 def test_add_bforce_queues_run_from_post(client, world, engine, esl_root, monkeypatch):
+    from esl.doe import DEFAULTS
     from esl_platform.core.repositories import doe as doe_repo
     from esl_platform.core.repositories import jobs as jobs_repo
 
@@ -98,7 +99,7 @@ def test_add_bforce_queues_run_from_post(client, world, engine, esl_root, monkey
         steps = jobs_repo.get_steps(c, jid)
         s = doe_repo.get_study(c, sid)
     assert job["job_type"] == "DOE_RUN" and job["params"]["kind"] == "BFORCE"
-    assert job["params"]["doe"]["post_mode"] == "bforce" and job["params"]["doe"]["bforce_cfg"]["enabled"] is True
+    assert job["params"]["doe"]["post_mode"] == "bforce" and job["params"]["doe"]["bforce_cfg"]["enabled"] is DEFAULTS["bforce"]["enabled"]  # 지금 설정 사본(v0.24.5 §12 기본 끔)
     assert [(x["step_key"], x["state"]) for x in steps] == [("BD_BASELINE", "SKIPPED"), ("BD_DESIGNS", "SKIPPED"),
                                                             ("BD_POST", "PENDING"), ("BD_REGISTER", "PENDING")]
     assert s["phase"] == "DONE"
@@ -119,7 +120,7 @@ def test_bforce_cfg_mirror():
     from esl.doe import DEFAULTS
     from esl_platform.core.config import BeadDoeCfg
 
-    assert DEFAULTS["bforce"] == BeadDoeCfg().model_dump()["bforce"] == {"enabled": True, "grades": ["full", "contact"],
-                                                                         "view3d": True}
+    assert DEFAULTS["bforce"] == BeadDoeCfg().model_dump()["bforce"] == {"enabled": False, "grades": ["full", "contact"],
+                                                                         "view3d": True}   # v0.24.5 §12 기본 끔
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         assert yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))["bead_doe"]["bforce"] == DEFAULTS["bforce"]

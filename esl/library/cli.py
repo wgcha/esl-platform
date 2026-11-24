@@ -22,6 +22,7 @@ import sys
 
 import numpy as np
 
+from esl import val_metrics as _vm
 from esl.errors import EslError
 from esl.library import _util as U
 from esl.library import analysis as an
@@ -109,12 +110,12 @@ def cmd_register(a, echo) -> dict:
                  ny=lib["grid"]["ny"], axis_ref=lib["axis_ref"], top_n=lib["top_nodes"], mass=a.mass,
                  registered_by=a.by)
     q = e.meta["quality"]
-    if q["verdict"] != "PASS":
+    if not _vm.is_passing(q["verdict"]):          # 통과 = PASS·조건부 PASS(esl_validate_tiers.md §4.1 — 조건부는 사유 불필요)
         if a.confirm_fail:
             q["confirmed_fail"] = {"reason": a.confirm_fail, "by": a.by, "at": U.utcnow()}
         elif lib["require_pass"]:
             raise EslError("VALIDATION_NOT_PASS",
-                           f"검증 {q['verdict']} — PASS 가 아닌 결과는 --confirm-fail \"사유\" 로만 등록")
+                           f"검증 {q['verdict']} — PASS·조건부 PASS 가 아닌 결과는 --confirm-fail \"사유\" 로만 등록")
     b = sto.register(root, e, w, supersedes=a.supersedes, reason=f"정정: {a.confirm_fail or ''}".strip())
     echo(f"[register] {b['entry_id']} {b['product']} {b['inch']}\" {b['scenario']} {b['drop_class']}{b['orient'] or ''} "
          f"scene {b['scene']} 검증 {b['verdict']} → {sto.entry_dir(root, b['entry_id'])}")

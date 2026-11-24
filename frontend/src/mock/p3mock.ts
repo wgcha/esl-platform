@@ -13,7 +13,7 @@ const err = (status: number, code: string, message: string, extra: Record<string
   body: { detail: { code, message, ...extra } },
 });
 
-export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z", ui: { upload_slim_hint_gb: 5, library_export_enabled: true, library_export_max_entries: 50 } };
+export const MOCK_VERSION = { version: VERSION_TXT.trim(), commit: "4d927c5", built_at: "2026-10-20T11:40:00Z", ui: { upload_slim_hint_gb: 5, library_export_enabled: true, library_export_max_entries: 50, hidden_sources: [] as string[] } };
 export const MOCK_CHANGELOG = parseChangelog(CHANGELOG_MD);
 
 /** v0.7.0: 템플릿 .fem 추가(esl_opt_run.md §11 upload.allowed_ext), v0.9.0: 비드 DOE STEP(.step·.stp, esl_bead_doe.md §14) */
@@ -88,6 +88,8 @@ export class P3Mock {
   uploads = new Map<string, Upl>();
   seq = 0;
   chunkSize = 64 * 1024 ** 2;
+  /** GET /version ui.hidden_sources(v0.24.5 설정 ui.hidden_sources). 기본 [] = v0.24.4 화면, 실서버 기본 = ["bforce","fint","jig"] */
+  hiddenSources: string[] = [];
   /** 서버 업로드 프로토콜: 2 = 병렬(기본), 1 = 구 서버(protocol 필드 없음·순차 전용) */
   protocol: 1 | 2 = 2;
   maxParallel = 4;
@@ -194,7 +196,7 @@ export class P3Mock {
 
   handle(method: string, path: string, query: URLSearchParams, b: Record<string, unknown>, bodySize: number): MockResponse | null {
     let r: RegExpMatchArray | null;
-    if (method === "GET" && path === "/version") return { status: 200, body: MOCK_VERSION };
+    if (method === "GET" && path === "/version") return { status: 200, body: { ...MOCK_VERSION, ui: { ...MOCK_VERSION.ui, hidden_sources: this.hiddenSources } } };
     if (method === "GET" && path === "/changelog") return { status: 200, body: MOCK_CHANGELOG };
     if (method === "GET" && path === "/fs/browse") return this.browse(query);
     if (path.startsWith("/client-tokens")) {

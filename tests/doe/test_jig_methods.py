@@ -79,7 +79,8 @@ def _read(p):
 
 
 def new_jig(**over):
-    j = copy.deepcopy(DEFAULTS["rank"]["jig"])                # 지금 DEFAULTS = 새 스냅샷(normal·세 방식)
+    j = copy.deepcopy(DEFAULTS["rank"]["jig"])                # 지금 DEFAULTS = 새 스냅샷(normal·두 방식 — v0.24.5 §12 fixed 제외)
+    j["methods"] = ["fixed", "prescribed", "spring"]          # 이 시험 = v0.24.4 세 방식(fixed 다시 켬)
     j.update(over)
     return j
 
@@ -348,3 +349,25 @@ def test_no_method_or_source_name_branch_in_study_and_a3_code():
         assert not pat.findall(inspect.getsource(fn)), fn.__name__
     src = inspect.getsource(srcl)
     assert not pat.findall(src)
+
+
+# ---------------------------------------------------------------- v0.24.5 §12 출처 계산 제외(V-0245-VT-16 스터디)
+def test_v0245_default_snapshot_excludes_fixed_bforce_fint(study, tmp_path_factory, mp_mod, capsys):
+    """새 기본 스냅샷(rank.jig = DEFAULTS — methods [prescribed, spring], bead_doe bforce·fint 기본 끔): 지그 고정(C_jig·prep/jig.json)·
+    경계력·내력 사이드카 계산 없음, 기본 순위 metric jig = 첫 계산 방식 jig_disp(jd). 세 방식 실행(fixed 다시 켬)과 jd 값 같음."""
+    r = run_study(tmp_path_factory.mktemp("jm_def"), mp_mod, jig=copy.deepcopy(DEFAULTS["rank"]["jig"]))
+    out, post = r["out"], r["post"]
+    assert not os.path.exists(os.path.join(out, "prep", "jig.json")) and not os.path.exists(os.path.join(out, "prep", "jig.npz"))
+    for src in ("jig_disp", "jig_spring"):
+        assert U.read_json(os.path.join(out, "prep", f"{src}.json"))["status"] == "ok"
+    for ns in stg.NODAL_SOURCES:
+        assert not os.path.exists(os.path.join(out, "post", stg._nf(ns, "view")))
+        assert not os.path.exists(os.path.join(out, "prep", stg._nf(ns, "prep")))
+    assert post["metric_effective"] == "jd" and post["metric"] == "jd"               # 순위 = C_jd
+    b = designs(out)["d000"]
+    assert all(p.get("C_jig") is None and p.get("C_jd") is not None for p in b["per_esl"])
+    b3 = designs(study["out"])["d000"]
+    assert [p["C_jd"] for p in b["per_esl"]] == pytest.approx([p["C_jd"] for p in b3["per_esl"]], rel=1e-12)
+    assert study["post"]["metric_effective"] == "jig"                       # fixed 가 첫째 = 옛 동작 그대로
+    with capsys.disabled():
+        print(f"\n[VT-16 study time] default(2 methods) {r['seconds']:.2f}s vs 3 methods {study['seconds']:.2f}s")

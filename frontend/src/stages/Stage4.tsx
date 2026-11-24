@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/endpoints";
 import type { EslBforceSummary, EslFintSummary, EslPlasticSummary } from "../api/types";
@@ -6,6 +7,7 @@ import { history } from "../api/history";
 import { PastFrame } from "../components/PastBadge";
 import { Badge, Card, Empty, Stat } from "../components/ui";
 import { CaseView3D } from "../view3d/CaseView3D";
+import { isHiddenSource } from "../view3d/sources";
 import { usePolling } from "../lib/usePolling";
 import { METRIC_LABEL, fmtFixed, pct, sci, vec } from "../lib/format";
 import { StageFrame, type StageProps } from "./StageFrame";
@@ -13,8 +15,19 @@ import { blockReason, eslPrereq, submitJob, useAction } from "./common";
 import { dofText } from "../lib/format";
 import { stepPath, stepState } from "../shell/StageStepper";
 
+/** v0.24.5 설정으로 끈 노드 힘 출처의 요약 code → 문구(코어 esl/view3d_src.py REASON_TEXT 거울 — 시험이 같음 확인). 괄호 = 실제 원인
+ *  설정 키(esl/pipeline.py: 경계력 = bforce.enabled, 내력 = bforce.enabled 와 bforce.fint.enabled 둘 다 true 여야 계산) */
+export const SRC_DISABLED_TEXT: Readonly<Record<string, string>> = {
+  BF_DISABLED: "설정에서 꺼짐(bforce.enabled)",
+  FINT_DISABLED: "설정에서 꺼짐(bforce.enabled · bforce.fint.enabled)",
+};
+const disabledText = (code: string | null | undefined): string | null => (code ? SRC_DISABLED_TEXT[code] ?? null : null);
+
 /** v0.24.0 경계력 ESL 요약 한 줄(esl_bforce.md §8) — 순수 문구(시험용) */
 export function bforceLineText(b: EslBforceSummary): { text: string; warn: boolean } {
+  // v0.24.5: 설정으로 끔(grade null + BF_DISABLED)은 "자료 없음 — 다시 추출" 이 아니라 꺼진 설정 키(아래 !grade 보다 먼저)
+  const off = disabledText(b.code);
+  if (off) return { text: `경계력 ESL: ${off}`, warn: false };
   // v0.24.2(esl_bforce_ondemand.md §6): 등급 none + code(BF_NO_DATA 제외) + reason → reason 그대로(BF_EXTRACT_* 등, code 목록은 화면에 두지 않음)
   if (b.grade === "none" && b.code && b.code !== "BF_NO_DATA" && b.reason)
     return { text: `경계력 ESL: 자료 없음 — ${b.reason}`, warn: false };
@@ -47,10 +60,12 @@ function BforceLine({ b }: { b: EslBforceSummary }) {
 
 /** v0.24.0 보완 내력 ESL 요약 한 줄(esl_fint.md §8) — 순수 문구(시험용) */
 export function fintLineText(b: EslFintSummary): { text: string; warn: boolean } {
+  // v0.24.5: FINT_DISABLED(grade null) 분기는 !grade 보다 먼저 — 전에는 도달하지 못해 "/H3D/NODA/FINT 추가" 로 오안내
+  const off = disabledText(b.code);
+  if (off) return { text: `내력 ESL: ${off}`, warn: false };
   if (!b.grade || b.grade === "none" || b.code === "FINT_NO_DATA")
     return { text: `내력 ESL: 자료 없음 — ${b.reason ?? "내력 출력 없음 — 낙하 Engine 에 /H3D/NODA/FINT 추가"}`, warn: false };
   if (b.code === "FINT_FAILED") return { text: `내력 ESL: 계산 실패(${b.reason ?? "–"}) — 전 노드 ESL 결과는 그대로`, warn: true };
-  if (b.code === "FINT_DISABLED") return { text: "내력 ESL: 설정에서 꺼짐(bforce.fint.enabled)", warn: false };
   const f = (v: number | null | undefined, d = 2) => (v == null ? "–" : v.toFixed(d));
   const e = (v: number | null | undefined) => (v == null ? "–" : v.toExponential(1));
   const lim = b.limit_text ?? b.limits ?? [];
@@ -65,6 +80,29 @@ export function fintLineText(b: EslFintSummary): { text: string; warn: boolean }
   ];
   const warn = b.unbalanced === true || (b.n_shared ?? 0) > 0 || b.recon === "poor";
   return { text: parts.join(" · ") + (b.unbalanced ? " · ⚠ 내력 합 불평형(공유 노드·추출 누락 의심)" : "") + (lim.length ? ` · ⚠ ${lim.join(" · ")}` : ""), warn };
+}
+
+/** v0.24.5 ③ 결과 카드 노드 힘 출처 요약 줄 표(esl_validate_tiers.md §11): key = 출처 표 키(view3d/sources.ts) = 요약 필드 이름
+ *  (forces.<key>). 숨긴 출처(설정 ui.hidden_sources)의 줄은 그리지 않는다 — 계산·API·저장은 그대로. 거르는 곳 = visibleSummaryLines 한 곳 */
+type SummaryForces = { bforce?: EslBforceSummary | null; fint?: EslFintSummary | null };
+interface SummaryLine {
+  key: string;
+  text: (f: SummaryForces) => { text: string; warn: boolean } | null;
+  el: (f: SummaryForces) => ReactNode;
+}
+const SUMMARY_LINES: readonly SummaryLine[] = [
+  { key: "bforce", text: (f) => (f.bforce ? bforceLineText(f.bforce) : null), el: (f) => (f.bforce ? <BforceLine key="bforce" b={f.bforce} /> : null) },
+  { key: "fint", text: (f) => (f.fint ? fintLineText(f.fint) : null), el: (f) => (f.fint ? <FintLine key="fint" b={f.fint} /> : null) },
+];
+const visibleSummaryLines = (): readonly SummaryLine[] => SUMMARY_LINES.filter((l) => !isHiddenSource(l.key));
+
+/** 화면에 그릴 요약 줄(순수 — 시험용): 요약이 있고 숨기지 않은 출처만, 표 순서 */
+export function summaryLinesOf(f: SummaryForces | null | undefined): { key: string; text: string; warn: boolean }[] {
+  if (!f) return [];
+  return visibleSummaryLines().flatMap((l) => {
+    const t = l.text(f);
+    return t ? [{ key: l.key, ...t }] : [];
+  });
 }
 
 /** v0.24.0 소성 진단 한 줄(esl_fint.md §4) — 순수 문구 */
@@ -137,8 +175,7 @@ export function Stage4({ c, reload, allowed }: StageProps) {
               <Stat label="잡음 (hotspot 변형률)" value={pct(r.forces?.noise.hotspot_strain_rel, 2)} />
               <Stat label="하중 노드 수" value={r.forces?.n_nodes_loaded?.toLocaleString() ?? "–"} />
             </div>
-            {r.forces?.bforce && <BforceLine b={r.forces.bforce} />}
-            {r.forces?.fint && <FintLine b={r.forces.fint} />}
+            {r.forces && visibleSummaryLines().map((l) => l.el(r.forces!))}
             {r.forces?.plastic && (
               <div className={`small${r.forces.plastic.status === "ok" && (r.forces.plastic.frac ?? 0) > 0 ? " warn-text" : " muted"}`} data-testid="esl-plastic-line">
                 {plasticLineText(r.forces.plastic)}

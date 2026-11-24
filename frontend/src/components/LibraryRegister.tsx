@@ -8,10 +8,10 @@ import type { EntryOut, ValidationOut } from "../api/types";
 import { NO_PERMISSION } from "../app/AppContext";
 import { usePolling } from "../lib/usePolling";
 import { Badge } from "./ui";
-import { statusOf } from "./VerdictStatus";
+import { isPassing, statusOf } from "./VerdictStatus";
 
 export const REGISTER_LABEL = "라이브러리에 등록";
-export const REG_NOT_PASS = "변위 기준 PASS만 등록할 수 있습니다 — FAIL 사유는 [결과 받기(zip)]로 확인";
+export const REG_NOT_PASS = "변위 기준 PASS(조건부 PASS 포함)만 등록할 수 있습니다 — FAIL 사유는 [결과 받기(zip)]로 확인";
 export const REG_LEGACY = "현재 기준으로 다시 검증한 뒤 등록하세요";
 export const REG_STALE = "이전 입력의 검증입니다 — ④ 검증을 다시 실행한 뒤 등록하세요";
 
@@ -20,7 +20,7 @@ export function registerBlock(v: ValidationOut): string | null {
   if (v.stale) return REG_STALE;
   const s = statusOf(v);
   if (s === "LEGACY") return REG_LEGACY;
-  if (s !== "PASS") return REG_NOT_PASS;
+  if (!isPassing(s)) return REG_NOT_PASS;
   return null;
 }
 

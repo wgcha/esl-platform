@@ -317,8 +317,12 @@ validations = Table(
     Column("undetermined_reason", String, nullable=True),
     Column("disp", JSONB, nullable=True),
     Column("strain_ref", JSONB, nullable=True),
-    CheckConstraint("verdict IN ('PASS','FAIL','UNDETERMINED')", name="ck_validations_verdict"),
-    CheckConstraint("scheme IS NULL OR scheme IN ('disp_primary/1')", name="ck_validations_scheme"),
+    # 0017(계약 esl_validate_tiers.md §4.2): MAC(검증)·조건부 사유. 옛 행 mac NULL·cond_reasons []
+    Column("mac", Float, nullable=True),
+    Column("cond_reasons", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
+    CheckConstraint("verdict IN ('PASS','CONDITIONAL','FAIL','UNDETERMINED')", name="ck_validations_verdict"),
+    CheckConstraint("scheme IS NULL OR scheme IN ('disp_primary/1','disp_primary/2')", name="ck_validations_scheme"),
+    CheckConstraint("verdict <> 'CONDITIONAL' OR (scheme = 'disp_primary/2') IS TRUE", name="ck_validations_conditional"),
     CheckConstraint("verdict <> 'UNDETERMINED' OR (scheme IS NOT NULL AND undetermined_reason IS NOT NULL)",
                     name="ck_validations_undetermined"),
 )
@@ -673,7 +677,8 @@ run_alls = Table(
     CheckConstraint(f"from_step IN {_STEPS_IN}", name="ck_run_alls_from_step"),
     CheckConstraint(f"(cur_step IS NULL OR cur_step IN {_STEPS_IN}) AND (stop_step IS NULL OR stop_step IN {_STEPS_IN})",
                     name="ck_run_alls_steps"),
-    CheckConstraint("verdict IS NULL OR verdict IN ('PASS','FAIL','UNDETERMINED')", name="ck_run_alls_verdict"),
+    CheckConstraint("verdict IS NULL OR verdict IN ('PASS','CONDITIONAL','FAIL','UNDETERMINED')",
+                    name="ck_run_alls_verdict"),
     CheckConstraint("(status = 'RUNNING') = (finished_at IS NULL)", name="ck_run_alls_finished"),
 )
 # Case 당 RUNNING 체인 1개(중복 시작 방지 최종 보장), 이력(최신순)

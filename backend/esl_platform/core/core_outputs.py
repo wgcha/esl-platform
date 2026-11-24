@@ -279,7 +279,8 @@ def validation_fields(doc: dict[str, Any]) -> dict[str, Any]:
             "scheme": doc.get("verdict_scheme") or None, "undetermined_reason": doc.get("undetermined_reason") or None,
             "disp_rms_rel": metric_value(doc, "disp_rms_rel"), "reaction_rel": metric_value(doc, "reaction_rel"),
             "disp_max_rel": metric_value(doc, "disp_max_rel"), "disp_noise_rel": metric_value(doc, "disp_noise_rel"),
-            "fail_reasons": list(doc.get("fail_reasons") or []), "criteria": dict(doc.get("criteria") or {}),
+            "mac": metric_value(doc, "mac"),        # 계약 esl_validate_tiers.md §4.2: 새 체계(disp_primary/2)만 있음, 옛 문서 None
+            "fail_reasons": list(doc.get("fail_reasons") or []), "cond_reasons": list(doc.get("cond_reasons") or []), "criteria": dict(doc.get("criteria") or {}),
             "field": jsonable(fld) if fld is not None else None, "disp": jsonable(dsp) if dsp is not None else None,
             "strain_ref": jsonable(sref) if sref is not None else None}
 

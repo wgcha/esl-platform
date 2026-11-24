@@ -527,7 +527,7 @@ class BeadDoeBforceCfg(_M):
     """v0.24.0 경계력 ESL(esl_bforce.md §9): enabled = 계산(Case 에 경계력 결과가 있을 때), grades = 순위에 쓸 데이터 등급(접촉력 전용 —
     full·contact, esl_fint.md §0), view3d = 3D."""
 
-    enabled: bool = True
+    enabled: bool = False   # v0.24.5 §12 기본 끔(코어 DEFAULTS 거울) — 켜면 v0.24.4 와 같음
     grades: list[Literal["full", "fint", "contact"]] = Field(default_factory=lambda: ["full", "contact"], min_length=1)
     view3d: bool = True
 
@@ -535,7 +535,7 @@ class BeadDoeBforceCfg(_M):
 class BeadDoeFintCfg(_M):
     """v0.24.0 내력 ESL(esl_fint.md §9): enabled = 계산(Case 에 FINT 결과가 있을 때), grades = 순위에 쓸 등급(fint), view3d = 3D."""
 
-    enabled: bool = True
+    enabled: bool = False   # v0.24.5 §12 기본 끔(코어 DEFAULTS 거울) — 켜면 v0.24.4 와 같음
     grades: list[Literal["fint"]] = Field(default_factory=lambda: ["fint"], min_length=1)
     view3d: bool = True
 
@@ -588,7 +588,7 @@ class BeadDoeRankJigCfg(_M):
     # 옛 스냅샷(키 없음)의 뜻 = esl.mech.jig_bc.LEGACY_ABSENT(translation·fixed). spring_alpha 기본 0.01(메인 결정 — α=1 은 prescribed 와 구분 안 됨)
     tie_dofs: Literal["normal", "translation"] = "normal"
     methods: list[Literal["fixed", "prescribed", "spring"]] = Field(
-        default_factory=lambda: ["fixed", "prescribed", "spring"], min_length=1, max_length=3)
+        default_factory=lambda: ["prescribed", "spring"], min_length=1, max_length=3)
     normal_kink_deg: float = Field(default=45.0, gt=0, lt=180)
     aux321_dup_deg: float = Field(default=10.0, gt=0, lt=90)
     aux_reaction_warn: float = Field(default=0.05, ge=0)
@@ -1583,6 +1583,9 @@ class UiCfg(_M):
     upload_slim_hint_gb: float = Field(default=5, ge=0)               # 브라우저 업로드 h3d 가 이 크기(GB)를 넘으면 압축 모드 안내(0 = 끔)
     # v0.10.0: 라이브러리 [내보내기](다중 ESL zip) 노출. 기본 false = 화면 숨김, /library/exports API 는 전역 관리자만(그 외 403 EXPORT_DISABLED)
     library_export_enabled: bool = False
+    # v0.24.5(사용자 결정 2026-11-24, esl_validate_tiers.md §11): 화면에서 숨길 하중 출처 키(출처 표 key). 계산·API·저장 산출물·보고서는
+    # 그대로 — 화면 표시만. 기본 = 경계력·내력·지그 고정. 빈 목록 [] = v0.24.4 화면(전부 표시). GET /version ui.hidden_sources 로 전달.
+    hidden_sources: list[str] = Field(default_factory=lambda: ["bforce", "fint", "jig"])
 
 
 class LoggingCfg(_M):
@@ -2186,6 +2189,20 @@ def validate_library(s: Settings | None, *, base_dir: str | None = None) -> tupl
     return _library(s, base_dir)
 
 
+def hidden_sources_unknown(s: Settings | None) -> list[Issue]:
+    """v0.24.5 `ui.hidden_sources` 에 출처 표(코어 `esl.view3d_src.KEYS` — 화면 view3d/sources.ts 와 같은 키)에 없는 키가 있으면 경고
+    1개(거부 안 함 — 화면이 그 키를 조용히 무시하므로 오타를 시작 로그·환경 점검에 알린다). 알려진 키 목록은 코어 표 한 곳."""
+    if s is None or not s.ui.hidden_sources:
+        return []
+    from esl_worker.core_adapter import view3d_src_plan
+
+    keys = list(view3d_src_plan()["keys"])
+    bad = [k for k in s.ui.hidden_sources if k not in keys]
+    if not bad:
+        return []
+    return [Issue("ui.hidden_sources", f"ui.hidden_sources 에 모르는 출처 키 {bad} — 무시합니다(가능한 키: {keys})")]
+
+
 def misplaced_top_keys(d: Any) -> list[Issue]:
     """`hpc`(extra ignore) 밑 또는 `hpc.scx` 밑에 esl 최상위 키(Settings 필드명: scx_drive·verify_drop·bead_doe·opt_run·
     worker·storage …)를 들여쓴 경우 — pydantic 은 조용히 무시하므로 경고로 알린다. physicsai 공용 키(mode·command 등)는 계속 무시."""
@@ -2214,7 +2231,7 @@ def load_config_dict(d: dict[str, Any], *, environ: dict[str, str] | None = None
         d["profile"] = prof
     s, issues, core = validate_settings(d, base_dir=base_dir)
     lib_issues, lib = validate_library(s, base_dir=base_dir)
-    warns = misplaced_top_keys(d)
+    warns = misplaced_top_keys(d) + hidden_sources_unknown(s)
     if s is not None and s.verify_drop.enabled and s.hpc is not None and s.hpc.scx is not None \
             and str(s.hpc.scx.drive_base or "").strip().rstrip("/") == "~":
         warns.append(Issue("hpc.scx.drive_base", 'verify_drop.enabled 인데 hpc.scx.drive_base 가 "~"(공유 홈) — 검증 낙하는 전용 폴더가 '

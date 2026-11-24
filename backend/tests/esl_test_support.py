@@ -151,6 +151,15 @@ def core_settings(precision64: bool = True) -> dict[str, Any]:
     return d
 
 
+def legacy_sources(d: dict[str, Any]) -> dict[str, Any]:
+    """v0.24.5 §12: 경계력·내력·지그 고정은 기본 끔 — v0.24.4 와 같은 산출물이 필요한 시험이 설정으로 되돌린다(d = make_settings_dict 결과,
+    core.settings 에 bforce.enabled true·jig.methods 세 방식을 넣고 이미 있는 키는 보존)."""
+    cs = d["core"]["settings"]
+    cs["bforce"] = {**(cs.get("bforce") or {}), "enabled": True}
+    cs["jig"] = {**(cs.get("jig") or {}), "methods": ["fixed", "prescribed", "spring"]}
+    return d
+
+
 # 시험 워커 lease(worker.heartbeat_interval_s·lease_ttl_s). 기본 LEASE = 시험 프로세스(VM)가 CPU 경합·전체 시험 부하로
 # 수 초 멈춰도 lease 를 잃지 않는 값 — 운영 예시(10 s / 60 s)처럼 ttl 이 갱신 간격보다 충분히 김. ttl 3 s 기본에서는
 # 2.7 s 정지만으로 LEASE_LOST 가 났다(test_select_e2e_depth_ranking BD_BASELINE flake, v0.15.1 조사).

@@ -3,7 +3,7 @@
 // ④ 판정 표식은 markOf 재사용(PASS/FAIL·판정 불가·비교용 아님·⚠). 선택 항목들의 같은 출처 행 중 최악 1개를 보인다.
 import type { EntrySourceRow, EntrySourcesItem, LoadGrade, LoadSourceCheck, ValidationStatus } from "../api/types";
 import { ApiError, errorText } from "../api/client";
-import { SOURCE_ROWS, VAL_NOT_RUN_CODE, markOf, sourceRow, unavailText, type TabMark } from "./sources";
+import { SOURCE_ROWS, VAL_NOT_RUN_CODE, isHiddenSource, markOf, sourceRow, unavailText, type TabMark } from "./sources";
 
 export type LoadSourceCtx = "doe" | "opt";
 
@@ -62,7 +62,7 @@ function cellOf(item: EntrySourcesItem, key: string, label: string, ctx: LoadSou
  * optional 열 행은 어느 항목의 응답에도 없으면 그리지 않는다(옛 서버 = 이전 화면). 불가 사유가 있는 행은 disabled.
  */
 export function loadSourceOptions(data: readonly EntrySourcesItem[] | null, ctx: LoadSourceCtx): LoadSourceOption[] {
-  const shown = SOURCE_ROWS.filter((r) => !r.optional || !data || data.some((it) => it.rows.some((x) => x.key === r.key)));
+  const shown = SOURCE_ROWS.filter((r) => !isHiddenSource(r.key) && (!r.optional || !data || data.some((it) => it.rows.some((x) => x.key === r.key))));
   return shown.map((r) => {
     const base = { key: r.key, label: r.label };
     const colWhy = ctx === "opt" && r.optUnsupported ? unavailText(r.label, r.optUnsupported) : null;
@@ -132,16 +132,16 @@ export function checkEntryMark(x: { status: ValidationStatus | null; comparable:
 export function gradeMark(grade: LoadGrade, entries: readonly { status: ValidationStatus | null; comparable: boolean | null }[] = []): TabMark {
   if (grade === "NO_RESULT") return MARK_NOT_RUN;
   const nc = entries.find((x) => x.comparable === false);
-  const status: ValidationStatus = grade === "FAIL" ? "FAIL" : grade === "UNDETERMINED" ? "UNDETERMINED" : grade === "not_comparable" ? nc?.status ?? "PASS" : "PASS";
+  const status: ValidationStatus = grade === "FAIL" ? "FAIL" : grade === "UNDETERMINED" ? "UNDETERMINED" : grade === "CONDITIONAL" ? "CONDITIONAL" : grade === "not_comparable" ? nc?.status ?? "PASS" : "PASS";
   return markOf({ available: true, status, limits: grade === "caution" ? ["caution"] : [], comparable: grade === "not_comparable" || ((grade === "FAIL" || grade === "UNDETERMINED") && !!nc) ? false : true }) ?? { text: "판정 불가", tone: "muted" };
 }
 
 /** 결과 칩(순수): "하중 출처 <이름> · <최악 표식>" — 스냅샷 없으면 null(옛 작업 = 칩 없음). 최악은 load_source_check.worst(caution·not_comparable 포함), 없으면 항목에서 계산 */
 export function loadSourceChipOf(key: string | null | undefined, check: LoadSourceCheck | null | undefined): { text: string; short: string; tone: TabMark["tone"] | "none"; title: string } | null {
-  if (!key) return null;
+  if (!key || isHiddenSource(key)) return null;     // v0.24.5: 숨긴 출처의 칩은 화면에 없음(스냅샷 값은 그대로)
   const label = sourceRow(key)?.label ?? key;
   const entries = check?.entries ?? [];
-  const sev = (x: { status: ValidationStatus | null; comparable: boolean | null }) => (x.status === "FAIL" ? 5 : !x.status || x.status === "UNDETERMINED" ? 4 : x.comparable === false ? 3 : x.status === "LEGACY" ? 1 : 0);
+  const sev = (x: { status: ValidationStatus | null; comparable: boolean | null }) => (x.status === "FAIL" ? 5 : !x.status || x.status === "UNDETERMINED" ? 4 : x.comparable === false ? 3 : x.status === "LEGACY" ? 1 : x.status === "CONDITIONAL" ? 0.5 : 0);
   const worst = entries.reduce<LoadSourceCheck["entries"][number] | null>((a, x) => (!a || sev(x) > sev(a) ? x : a), null);
   const mark = check?.worst ? gradeMark(check.worst, entries) : worst ? checkEntryMark(worst) : null;
   const lines = entries.map((x) => `${x.entry_id}: ${checkEntryMark(x).text}`);

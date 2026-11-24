@@ -18,6 +18,7 @@ import os
 
 import numpy as np
 
+from esl import val_metrics as _vm
 from esl.library import _util as U
 from esl.report.html import json_text
 
@@ -89,7 +90,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 padding:4px 8px;font:inherit}
 .chip{display:inline-block;border:1px solid var(--line);border-radius:12px;padding:1px 8px;margin:2px;font-size:12px}
 .badge{display:inline-block;padding:0 6px;border-radius:4px;font-size:11.5px;font-weight:600}
-.pass{color:var(--pass)}.fail{color:var(--fail)}
+.pass{color:var(--pass)}.fail{color:var(--fail)}.cond{color:#b7791f}
 svg{display:block;max-width:100%;height:auto}
 svg text{fill:var(--muted);font-size:11px}svg .ttl{fill:var(--fg);font-size:12px;font-weight:600}
 svg .ax{stroke:var(--line);stroke-width:1}svg .gl{stroke:var(--grid);stroke-width:1}
@@ -408,12 +409,13 @@ def strip(groups, title, xlabel, w=520, fmt_tip=None) -> str:
 
 
 # ---------------------------------------------------------------- 본문
+# 판정 배지(값 → HTML). v0.24.5 조건부 PASS(esl_validate_tiers.md §4.6) 추가 — 표에 없는 값 = "—"
+_VERDICT_BADGE = {_vm.PASS: '<span class="badge pass">✓ PASS</span>', _vm.FAIL: '<span class="badge fail">✕ FAIL</span>',
+                  _vm.CONDITIONAL: f'<span class="badge cond">◐ {_vm.VERDICT_TEXT[_vm.CONDITIONAL]}</span>'}
+
+
 def _verdict(v) -> str:
-    if v == "PASS":
-        return '<span class="badge pass">✓ PASS</span>'
-    if v == "FAIL":
-        return '<span class="badge fail">✕ FAIL</span>'
-    return '<span class="muted">—</span>'
+    return _VERDICT_BADGE.get(v, '<span class="muted">—</span>')
 
 
 def _scene_label(c) -> str:
@@ -488,7 +490,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     tiles = [("항목(씬)", r["n_cases"]), ("SVD 모드 r", f"{r['svd']['n_modes']} (≥{r['svd']['threshold']:.2f})"),
              ("대표 케이스", len([lc for lc in r["load_cases"] if lc["role"] == "medoid"])),
              ("덱 subcase", _deck_tile(r)), ("셀 포락 최대 |F|", _fmt(env_max)),
-             ("PASS 비율", _pct(np.mean([c.get("verdict") == "PASS" for c in cases])) if cases else "—")]
+             ("PASS 비율(조건부 포함)", _pct(np.mean([_vm.is_passing(c.get("verdict")) for c in cases])) if cases else "—")]
     if r.get("mapping"):
         tiles.append(("매핑 보존 오차 최대", _fmt(r["mapping"]["conservation_rel_max"], 2)))
     S.append("<div class='tiles'>" + "".join(f"<div class='tile'><div class='v'>{_e(v)}</div><div class='k'>{_e(k)}"
@@ -628,7 +630,7 @@ def write(analysis_result: dict, out_html: str, arrays: dict | None = None, opt_
     ver = [(lab, [(100 * float(x["hotspot1_rel_err"]), cases[x["index"]]["cluster"],
                    f"#{x['index']} {_scene_label(cases[x['index']])}: {100 * float(x['hotspot1_rel_err']):.2f}%")
                   for x in st["verification"] if x["hotspot1_rel_err"] is not None and str(x["verdict"]) == lab])
-           for lab in ("PASS", "FAIL", "None")]
+           for lab in (*_vm.PASSING, "FAIL", "None")]
     S.append("<div class='card'>" + (strip(ver, "검증 오차 분포 (hotspot1 ε_eq 상대오차)", "%")
                                      or "<p class='muted'>검증 오차 없음</p>") + "</div>")
     ge = arrays.get("group_env_drop_class")

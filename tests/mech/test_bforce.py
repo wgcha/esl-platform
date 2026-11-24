@@ -252,7 +252,7 @@ def test_v0242_bfd12_on_demand_setting_mirror():
     c2 = copy.deepcopy(base)
     c2["bforce"] = {"on_demand": False}
     s = cf.bforce_settings(cf.validate_settings(c2))
-    assert s["on_demand"] is False and s["enabled"] is True
+    assert s["on_demand"] is False and s["enabled"] is cf.BFORCE_DEFAULTS["enabled"] is False   # v0.24.5 §12 기본 끔
     c3 = copy.deepcopy(base)
     c3["bforce"] = {"on_demand": "yes"}
     with pytest.raises(EslError) as e:

@@ -182,3 +182,19 @@ def test_view3d_cfg_has_jig_diag():
     assert DEFAULTS["view3d"]["jig_diag"] is True and BeadDoeCfg().model_dump()["view3d"]["jig_diag"] is True
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         assert yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))["bead_doe"]["view3d"]["jig_diag"] is True
+
+
+# ---------------------------------------------------------------- #88 응답에서 jig_disp·jig_spring 이 빠지던 것(DoeRankViewsOut 필드 누락)
+def test_i88_results_keep_jig_methods(client, world, engine, esl_root):
+    side = {**SIDE, "rank_views": {**SIDE["rank_views"], "jig_disp": {**VIEW, "metric": "jd"}, "jig_spring": {**VIEW, "metric": "js"}}}
+    sid = _jig_done(client, world, engine, esl_root, side=side)
+    o = api(client, "GET", f"/doe/studies/{sid}/results").json()
+    got = {k for k, v in (o["rank_views"] or {}).items() if v is not None}
+    assert {"jig_disp", "jig_spring"} <= got and o["rank_views"]["jig_disp"]["metric"] == "jd"
+
+
+def test_i88_rank_views_fields_match_service():
+    from esl_platform.api.schemas import DoeRankViewsOut
+    from esl_platform.api.services.doe import RANK_VIEWS
+
+    assert set(DoeRankViewsOut.model_fields) == set(RANK_VIEWS)

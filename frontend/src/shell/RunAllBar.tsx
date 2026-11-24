@@ -8,6 +8,7 @@ import { p3 } from "../api/p3";
 import type { Case, RunAllError, RunAllOut, StepKey } from "../api/types";
 import { NO_PERMISSION } from "../app/AppContext";
 import { REGISTER_LABEL } from "../components/LibraryRegister";
+import { isPassing } from "../components/VerdictStatus";
 import { STEP_KEYS, stepLabel } from "./StageStepper";
 
 export const RUN_ALL_LABEL = "일괄 실행";
@@ -18,6 +19,8 @@ export const RUN_ALL_BUSY_REASON = "일괄 실행 중";
 export const RUN_ALL_ARCHIVED_REASON = "보관된 Case 입니다";
 export const RUN_ALL_ALL_DONE_REASON = `모든 단계가 완료되었습니다(PASS) — ④에서 ${REGISTER_LABEL}`;
 export const RUN_ALL_DONE_TEXT = `검증 통과 — 결과를 확인하고 [${REGISTER_LABEL}]`;
+/** v0.24.5 조건부 PASS(esl_validate_tiers.md §4.1): 통과로 처리, 표식만 */
+export const RUN_ALL_DONE_COND_TEXT = `검증 조건부 PASS — 결과를 확인하고 [${REGISTER_LABEL}]`;
 export const RUN_ALL_CANCELED_TEXT = "일괄 실행 취소됨";
 export const RUN_ALL_BADGE = "일괄";
 
@@ -50,7 +53,7 @@ export function runAllButton(c: Case, allowed: boolean): { label: string; from: 
       ? RUN_ALL_ARCHIVED_REASON
       : r?.status === "RUNNING"
         ? RUN_ALL_BUSY_REASON
-        : allDone && r?.status === "DONE" && r.verdict === "PASS" && !r.superseded
+        : allDone && r?.status === "DONE" && isPassing(r.verdict) && !r.superseded
           ? RUN_ALL_ALL_DONE_REASON
           : null;
   return { label, from, disabledReason: reason };
@@ -161,7 +164,7 @@ export function RunAllBar({ c, base, allowed, ra, createError }: { c: Case; base
     );
   } else if (r.status === "DONE") {
     tone = "ok";
-    text = r.verdict === "PASS" || !r.verdict ? RUN_ALL_DONE_TEXT : `④ 검증 ${r.verdict}`;
+    text = r.verdict === "CONDITIONAL" ? RUN_ALL_DONE_COND_TEXT : !r.verdict || isPassing(r.verdict) ? RUN_ALL_DONE_TEXT : `④ 검증 ${r.verdict}`;
     tail = (
       <Link to={`${base}/step/4`} className="run-all-link">
         ④ 검증 열기

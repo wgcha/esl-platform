@@ -196,8 +196,10 @@ def test_no_method_or_source_name_branch_in_module():
 def test_legacy_absent_and_cfg_check():
     assert jig_bc.LEGACY_ABSENT == {"tie_dofs": "translation", "methods": ("fixed",)}
     assert jig_bc.tie_dofs_of({}) == "translation" and jig_bc.methods_of({}) == ("fixed",)
-    assert jig.JIG_DEFAULTS["tie_dofs"] == "normal" and jig.JIG_DEFAULTS["methods"] == ["fixed", "prescribed", "spring"]
-    assert jig_bc.tie_dofs_of(jig.JIG_DEFAULTS) == "normal" and jig_bc.methods_of(jig.JIG_DEFAULTS) == METHODS
+    # v0.24.5 §12(사용자 2026-11-24): 기본 방식에서 fixed 제외 — 옛 스냅샷 뜻(LEGACY_ABSENT)은 그대로
+    assert jig.JIG_DEFAULTS["tie_dofs"] == "normal" and jig.JIG_DEFAULTS["methods"] == ["prescribed", "spring"]
+    assert jig_bc.tie_dofs_of(jig.JIG_DEFAULTS) == "normal" and jig_bc.methods_of(jig.JIG_DEFAULTS) == tuple(
+        m for m in METHODS if m != "fixed")
     jig_bc.check_cfg(jig.JIG_DEFAULTS)
     for bad in ({"tie_dofs": "xyz"}, {"methods": []}, {"methods": ["fixed", "fixed"]}, {"methods": ["rigid"]},
                 {"spring_alpha": 5e-4}, {"spring_k_mode": "value"}, {"spring_k_mode": "value", "spring_k_value": 0},

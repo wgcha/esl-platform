@@ -4,6 +4,9 @@
 - json: 시각 키·문자열, 버전 문자열, 실행 루트 경로를 지운 뒤 정렬 직렬화의 sha256.
 - 그 외 텍스트(csv·inc·fem·html): 시각·버전·루트 경로 치환 후 sha256.
 - run.json 은 config 스냅샷(설정 예시 파일 변경 영향)·이력·시각을 빼고 비교한다.
+- v0.24.5(esl_validate_tiers.md §5-6, D-0.24.3-VAL-8 보충 선례): 판정 단계·MAC 의 의도 차이(05_val validation.json 새 키·
+  옛 단일 기준 판정, validation.csv, 보고서 5절 판정 머리)는 ``tests/pipeline/vt_compat`` 로 v0.24.4 형식으로 되돌린 뒤 비교한다
+  (보고서 = 되돌린 문서로 다시 그린 것). 나머지 값은 그대로.
 """
 from __future__ import annotations
 
@@ -12,10 +15,14 @@ import json
 import os
 import platform
 import re
+import sys
 
 import numpy as np
 
 from esl import val_src as _vs
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline"))
+import vt_compat as _vc  # noqa: E402
 
 TS = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?")
 VER = re.compile(r"(?:esl|ESL)[ _-]?v?\d+\.\d+\.\d+|\bv?0\.\d+\.\d+\b")
@@ -64,6 +71,8 @@ def digest(out: str, root: str) -> dict:
             elif f.endswith(".json"):
                 with open(p, encoding="utf-8") as fh:
                     o = json.load(fh)
+                if rel.startswith("05_val/") and f == "validation.json":
+                    o = _vc.back_validation(o)
                 if rel == "run.json":
                     for k in ("config", "history", "stages"):
                         o.pop(k, None)
@@ -73,7 +82,12 @@ def digest(out: str, root: str) -> dict:
                 with open(p, "rb") as fh:
                     b = fh.read()
                 try:
-                    t = _text(b.decode("utf-8"), root)
+                    t0 = b.decode("utf-8")
+                    if f == "validation.csv":
+                        t0 = _vc.back_csv(t0, p, out)
+                    elif rel == "07_report/report.html":
+                        t0 = _vc.back_report_html(out) or t0
+                    t = _text(t0, root)
                     if f.endswith(".html"):
                         t = ADDED_HTML.sub("", t)
                         t = re.sub(r"\d+(?:\.\d+)?\s*(?:s|초)\b", "<DUR>", t)

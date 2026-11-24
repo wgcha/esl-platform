@@ -4,7 +4,7 @@
 import { JIG_CODE_TEXT } from "../../api/doe";
 import type { DoeRankRow, DoeResultOut, DoeWarning } from "../../api/types";
 import { jigNoneText } from "../../components/DoeRanking";
-import { SOURCE_ROWS } from "../../view3d/sources";
+import { SOURCE_ROWS, isHiddenSource } from "../../view3d/sources";
 
 const SR = (key: string) => {
   const r = SOURCE_ROWS.find((x) => x.key === key);
@@ -105,8 +105,11 @@ const JIG_VIEW_DROP = ["C", "C_solve", "score_solve", "score_jig", "score_lin", 
 const JIG_VIEW_HIDE: readonly (keyof DoeResultOut)[] = ["load_transfer", "jig", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref", "jig_diag", "bforce", "view3d_bf", "view3d_bf_esl", "view3d_bf_ref", "fint", "view3d_fi", "view3d_fi_esl", "view3d_fi_ref"];
 /** 이 스터디가 그 지그 방식을 계산하지 않은 탭 사유(JIG_METHOD_NOT_RUN — 옛 스냅샷·P2c 전) */
 export const JIG_METHOD_NOT_RUN_TEXT = (label: string) => `이 스터디에서 계산하지 않은 방식입니다: ${label} — 새 스터디·복제에서 계산(rank.jig.methods)`;
-function jigMethodUnavailable(_r: DoeResultOut, key: string): string {
-  return JIG_METHOD_NOT_RUN_TEXT(SR(key).label);
+/** v0.24.5 #88 후속: 모드가 지그 ESL 을 계산하지 않음(계획 표 열 sm_jig = none — 응답 jig_plan). 복제해도 같으므로 위 문구와 구분 */
+export const JIG_MODE_NONE_TEXT = (label: string) => `이 모드는 지그 ESL 을 계산하지 않습니다: ${label} — 안·형상마다 다른 메시를 비교하는 모드라 복제해도 같습니다`;
+/** 지그 방식 탭 사유 — 계획 열(jig_plan)로만 고름(모드 이름 비교 없음). 열 값 없음(옛 응답) = 옛 문구 */
+function jigMethodUnavailable(r: DoeResultOut, key: string): string {
+  return (r.jig_plan === "none" ? JIG_MODE_NONE_TEXT : JIG_METHOD_NOT_RUN_TEXT)(SR(key).label);
 }
 
 export const REGEN_HINT_FULL = "3D 다시 만들기로 전 노드 순위를 만들 수 있습니다";
@@ -265,6 +268,14 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     add: addOfNodal(NODAL_FI),
   },
 ];
+
+/** v0.24.5 화면에 보이는 하중 출처(설정 ui.hidden_sources 가 거른 것) — 탭·순위·3D·칩·사유 줄은 이것만 읽는다 */
+export const visibleLoadSources = (): readonly LoadSource[] => LOAD_SOURCES.filter((s) => !isHiddenSource(s.key));
+/** 주 출처(순위 기준)가 숨긴 출처이면 그 행(없으면 null) — 화면이 한 줄 알림을 낸다 */
+export const hiddenPrimaryOf = (r: DoeResultOut): LoadSource | null => {
+  const me = metricEff(r);
+  return LOAD_SOURCES.find((s) => isHiddenSource(s.key) && s.primaryFor.includes(me)) ?? null;
+};
 
 /** 자료 만들기 가능 여부(행 add 열): 결과 source_add[key], 없으면 옛 거울 키(응답 폴백) */
 export function sourceAddOf(r: DoeResultOut, s: LoadSource): { available: boolean; allowed: boolean; reason?: string | null } | null {

@@ -76,8 +76,10 @@ DEFAULTS: dict = {
     "solve": {"reaction_warn": 0.01},
     "boundary": {"fastener_warn_mm": 10.0, "load_warn_mm": 20.0, "load_share_min": 0.2},
     # v0.23.2 지그 3D(esl_v0232_fixes.md §4.2): 지그 계산된 스터디의 3D 비교에 지그 응답 변위장, tie 마커 최대 수(표시만)
-    "bforce": {"enabled": True, "grades": ["full", "contact"], "view3d": True},   # v0.24.0 경계력 ESL(esl_bforce.md §9) — 사용 등급(접촉력 전용)·3D
-    "fint": {"enabled": True, "grades": ["fint"], "view3d": True},                 # v0.24.0 내력 ESL(esl_fint.md §9) — 같은 블록 형식
+    # v0.24.5(esl_validate_tiers.md §12 — 사용자 2026-11-24 "강성스터디랑 esl계산에서도 제외"): 경계력·내력 기본 끔(새 스터디 계산 0 —
+    # pydantic BeadDoeBforceCfg·yaml 2개 거울은 백엔드). true 로 되돌리면 v0.24.4 동작
+    "bforce": {"enabled": False, "grades": ["full", "contact"], "view3d": True},  # v0.24.0 경계력 ESL(esl_bforce.md §9) — 사용 등급(접촉력 전용)·3D
+    "fint": {"enabled": False, "grades": ["fint"], "view3d": True},                # v0.24.0 내력 ESL(esl_fint.md §9) — 같은 블록 형식
     # v0.23.3 jig_diag = 지그 진단 3D·하중 정의 보기(esl_jig_view.md §6). v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단
     # (d000_<pe>_e<kk>/recon.json·recon.bin — 목표 sm_ref, esl_view3d_sources.md §5.2·§7)
     "view3d": {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1,
@@ -101,7 +103,7 @@ DEFAULTS: dict = {
                      "modes_maxiter": 2000, "modes_ref321": False, "w_inplane": 0.1, "reg_force": 1e-3, "reg_modes": 0.0,
                      "ridge": 1e-8, "active_tol": 1e-3, "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1,
                      "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02,
-                     "tie_dofs": "normal", "methods": ["fixed", "prescribed", "spring"], "normal_kink_deg": 45.0,
+                     "tie_dofs": "normal", "methods": ["prescribed", "spring"], "normal_kink_deg": 45.0,   # v0.24.5 fixed 제외(§12)
                      "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto", "spring_alpha": 0.01,
                      "spring_k_value": None, "spring_alpha_scan": []}},
     # v0.24.4 Case ③ 지그 3방식(esl_jig_case.md §5.1·§11): 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더에 준비.
