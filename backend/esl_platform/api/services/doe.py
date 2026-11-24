@@ -1957,6 +1957,7 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
         out["jig"] = r["jig"]
     else:                                                     # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가
         out["jig_on_clone"] = out["rank"] is not None and _plan_sm_jig(s) == "base"
+    out["jig_plan"] = _plan_sm_jig(s)                         # v0.24.5 #88 후속: 계획 열 sm_jig(base | none) — 탭 사유 "이 모드는 지그 ESL 을 계산하지 않음"
     for k in ("view3d_ref", "view3d_esl", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref"):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}

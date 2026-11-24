@@ -2294,6 +2294,9 @@ class DoeResultOut(_Out):
     view3d_jig_esl: dict[str, str] | None = None
     view3d_jig_ref: dict[str, str] | None = None
     jig_on_clone: bool | None = None
+    # v0.24.5 #88 후속: 이 스터디 모드의 계획 표 열 sm_jig(base = 같은 메시 안 지그 계산 | none = 이 모드는 지그 ESL 을 계산하지 않음 —
+    # 화면 지그 탭 사유를 모드 이름 대신 이 값으로 고름). 모르는 조합 = null
+    jig_plan: Literal["base", "none"] | None = None
     # v0.23.3(esl_jig_view.md §5): 지그 진단 3D 요약·하중 정의 탭 보기·3D 다시 만들기 가능 여부(사이드카 post/jig_view.json — 없으면 null)
     jig_diag: "DoeJigDiagOut | None" = None
     rank_views: "DoeRankViewsOut | None" = None
