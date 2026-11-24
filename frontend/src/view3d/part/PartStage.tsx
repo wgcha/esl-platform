@@ -85,6 +85,7 @@ export function PartStage({
   msgTestId,
   loading,
   extra,
+  controls,
 }: {
   host: RefObject<HTMLDivElement>;
   scene: () => SceneApi | null;
@@ -103,13 +104,15 @@ export function PartStage({
   loading?: boolean;
   /** 칸 위에 겹쳐 둘 것(정보 줄 등) */
   extra?: ReactNode;
+  /** v0.24.6 시점 막대 앞뒤 자리 + 단축키(경계조건·하중 칩 / ⚙). 안 주면 막대 DOM 이 지금과 같다 */
+  controls?: { lead?: ReactNode; tail?: ReactNode; hotkeys?: Record<string, () => void> };
 }) {
   return (
     <div className="v3d-stage">
       <div ref={host} className={`v3d-host${className ? ` ${className}` : ""}`} data-testid={testId} data-phase={phase} tabIndex={0} aria-label={ariaLabel} {...hostProps}>
         {children}
       </div>
-      {phase === "ready" && bbox && <ViewToolbar scene={scene} modelBbox={bbox} selectionBbox={selectionBbox ?? undefined} keyTarget={host} />}
+      {phase === "ready" && bbox && <ViewToolbar scene={scene} modelBbox={bbox} selectionBbox={selectionBbox ?? undefined} keyTarget={host} lead={controls?.lead} tail={controls?.tail} hotkeys={controls?.hotkeys} />}
       {msg != null && msg !== false && (
         <div className="v3d-msg" role="status" data-testid={msgTestId}>
           {msg}

@@ -3,7 +3,7 @@
 // (backend/tests/test_doe_jig_modes_api.py 가 JIG_MODES_API_DUMP 로 저장). 모드 = 계획 표 행, 기대값은 응답의 계획 열 jig_plan 으로만 고른다.
 import { describe, expect, it } from "vitest";
 import real from "./fixtures/real_v0245_modes.json";
-import { JIG_METHOD_NOT_RUN_TEXT, JIG_MODE_NONE_TEXT, LOAD_SOURCES, tabResult, tabState } from "../pages/doe/doeTabs";
+import { JIG_STATE_TEXT, LOAD_SOURCES, tabResult, tabState } from "../pages/doe/doeTabs";
 import { SOURCE_ROWS } from "../view3d/sources";
 import type { DoeResultOut } from "../api/types";
 
@@ -40,7 +40,7 @@ describe("모든 모드: 지그 변위·스프링 탭(실제 응답)", () => {
       } else {
         for (const k of JIG_SRC) {
           expect(ts.ok[k]).toBe(false);
-          expect(ts.reason[k]).toBe(JIG_MODE_NONE_TEXT(label(k)));      // "이 모드는 지그 ESL 을 계산하지 않음"
+          expect(ts.reason[k]).toBe(JIG_STATE_TEXT.not_planned.whyMode(label(k)));      // "이 모드는 지그 ESL 을 계산하지 않음"
           expect(ts.reason[k]).not.toContain("복제에서 계산");
         }
         expect(ts.def).toBe("full");
@@ -51,6 +51,6 @@ describe("모든 모드: 지그 변위·스프링 탭(실제 응답)", () => {
   it("계획 열 없는 옛 응답 = 옛 문구 그대로(정보 삭제 없음)", () => {
     const none = Object.values(MODES).find((m) => m.sm_jig === "none")!;
     const old = { ...none.result, jig_plan: undefined } as DoeResultOut;
-    expect(tabState(old, LOAD_SOURCES).reason.jig_disp).toBe(JIG_METHOD_NOT_RUN_TEXT(label("jig_disp")));
+    expect(tabState(old, LOAD_SOURCES).reason.jig_disp).toBe(JIG_STATE_TEXT.not_planned.why(label("jig_disp")));
   });
 });

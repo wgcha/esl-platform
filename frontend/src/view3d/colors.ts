@@ -42,6 +42,27 @@ export function normalize(v: number, min: number, max: number): number {
   return Math.max(0, Math.min(1, (v - min) / (max - min)));
 }
 
+/** v0.24.6 색 위치 t(0~1): L = 0 이면 normalize 와 같음(연속). L > 0 이면 구간 중앙값으로 계단(셰이더 gpuColor 와 같은 규칙).
+ *  퇴화 범위(max ≤ min) = 0, 비유한 값 = NaN */
+export function bandT(v: number, min: number, max: number, levels: number): number {
+  const t = normalize(v, min, max);
+  if (Number.isNaN(t) || !(levels > 0) || !(max > min)) return t;
+  return (Math.min(Math.floor(t * levels), levels - 1) + 0.5) / levels;
+}
+
+/** 구간 범례 CSS 띠(왼쪽 최소 → 오른쪽 최대): 칸마다 중앙값 색, 경계에서 계단. 정지점 2L 개 */
+export function bandedGradient(levels: number, srgb: (t: number) => RGB = bluesSrgb): string {
+  if (!(levels > 0)) return BLUES_GRADIENT;
+  const stops: string[] = [];
+  for (let i = 0; i < levels; i++) {
+    const c = srgb((i + 0.5) / levels).map(Math.round);
+    const a = Math.round((100000 * i) / levels) / 1000;
+    const b = Math.round((100000 * (i + 1)) / levels) / 1000;
+    stops.push(`rgb(${c.join(",")}) ${a}%`, `rgb(${c.join(",")}) ${b}%`);
+  }
+  return `linear-gradient(90deg, ${stops.join(", ")})`;
+}
+
 /** 정점 색 채우기(선형 공간, 길이 3n). src 가 있으면 LOD: 정점 i 의 값 = values[src[i]]. lut = 선형 색표(기본 Blues) */
 export function fillVertexColors(values: ArrayLike<number>, min: number, max: number, out: Float32Array, src?: ArrayLike<number> | null, lut: Float32Array = LUT_LINEAR): Float32Array {
   const n = src ? src.length : values.length;

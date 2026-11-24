@@ -23,7 +23,7 @@ export function CaseView3D({ runId, enabled, note }: { runId: string; enabled: b
   const def = defaultCaseSource(srcs.sources);
   const [pick, setPick] = useState<string | null>(null);
   const cur = srcs.sources ? (pick && items?.find((i) => i.key === pick)?.ok ? pick : def) : null;
-  // 출처를 바꾸면 보기·하중 색·수동 범위 초기화(선택·화살표 단계는 useLoadView 가 초기화)
+  // 출처를 바꾸면 보기·하중 색 초기화(선택·화살표 단계는 useLoadView 가 초기화). 수동 범위는 출처를 바꿔도 유지(v0.24.6 §2.6) — Case(runId)가 바뀔 때만 초기화
   const [vmode, setVmode] = useState<ViewMode>("load");
   const [comp, setComp] = useState<LoadComp>("pa");
   const [manTF, setManTF] = useState<Range | null>(null);
@@ -31,9 +31,11 @@ export function CaseView3D({ runId, enabled, note }: { runId: string; enabled: b
   useEffect(() => {
     setVmode("load");
     setComp("pa");
+  }, [cur, runId]);
+  useEffect(() => {
     setManTF(null);
     setManErr(null);
-  }, [cur, runId]);
+  }, [runId]);
   useEffect(() => setPick(null), [runId]);
 
   // 출처 목록을 기다린 뒤(또는 실패해 legacy 로) manifest 를 받는다
@@ -110,6 +112,7 @@ export function CaseView3D({ runId, enabled, note }: { runId: string; enabled: b
     toolsTail: tail,
     loadField: vmode === "load" && !srcs.failed ? effComp : null,
     dispOverride,
+    plan: vmode === "load" ? "case_load" : "case_disp",
     ...(vmode !== "load" ? { dispLabel: MODE_LABEL[vmode as Exclude<ViewMode, "load">] } : {}),
     ...(range !== undefined ? { range, rangeManual, onRangeChange } : {}),
   };

@@ -51,8 +51,24 @@ export interface SceneApi {
   setProjection(p: Projection): void;
   projection(): Projection;
   onPick(cb: (e: PickEvent) => void): void;
-  stats(): { renders: number };
+  stats(): { renders: number; valueUploads?: number; colorLoops?: number };
   dispose(): void;
+
+  // ---- v0.24.6 뷰어 강화(esl_viewer_hv.md §6.3) — 선택 메서드(시험 mock 이 흉내, 없으면 카드가 옛 경로로)
+  /** 층 켜기/끄기: visible 만 바꾼다(다시 만들기 없음). 끈 층은 pick 에서 빠진다 */
+  setLayerVisible?(layer: ViewerSceneLayer, on: boolean): void;
+  /** 정점 스칼라 aValue 업로드(필드가 바뀔 때만). values 는 원 정점 순서 */
+  setField?(values: Float32Array): void;
+  /** 범례 범위·레벨 — 셰이더 uniform 만(정점 루프·버퍼 업로드 0) */
+  setLegend?(l: { min: number; max: number; levels: number }): void;
+  /** 최대·최소 표식(화면 크기 고정 점 + 라벨). 위치만 바뀌면 스프라이트를 다시 만들지 않는다 */
+  setValueMarks?(marks: ValueMark[]): void;
+  /** 원형 외곽선(특징선): base = 기준 위치(3n), pairs = 정점 쌍. pairs null = 지움 */
+  setGhostEdges?(base: Float32Array | null, pairs: Uint32Array | null): void;
+  cameraState?(): CameraState;
+  applyCameraState?(s: CameraState): void;
+  /** 사용자 조작·시점 버튼으로 카메라가 바뀔 때(applyCameraState 로 바뀐 것은 알리지 않음) */
+  onCameraChange?(cb: ((s: CameraState) => void) | null): void;
 
   // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §11.2) — 선택 모드 전용, 위 메서드 동작은 그대로. 없는 구현(시험 mock)은 선택 모드를 못 씀
   /** v0.15.1 강조 점(빨강, 화면 크기 고정·가려져도 보임) — 좌표 3·n, null = 지움 */
@@ -71,6 +87,21 @@ export interface SceneApi {
   projectCentroids?(centroids: Float32Array): Float32Array;
   /** 경계선(검정 2 px) — 선분 끝점 6 개씩, null = 지움 */
   setOverlayLines?(segments: Float32Array | null): void;
+}
+
+export type ViewerSceneLayer = "supports" | "arrows" | "ghost" | "marks";
+export interface ValueMark {
+  vertex: number;
+  position: V3;
+  text: string;
+}
+/** 카메라 공유 상태(투영은 ViewerSync 상태가 따로 맡는다). halfH = 직교 반높이, zoom = 직교 줌 */
+export interface CameraState {
+  position: V3;
+  target: V3;
+  up: V3;
+  halfH: number;
+  zoom: number;
 }
 
 export type CreateScene = (canvas: HTMLCanvasElement, opts: SceneOptions) => SceneApi;

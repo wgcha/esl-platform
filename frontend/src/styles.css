@@ -3174,50 +3174,53 @@ details.doe-chip-detail[open] > :not(summary) {
   flex-wrap: wrap;
   min-width: 0;
 }
-/* §6 결과 2열(≤2200px 1열) */
-.doe-result-2col {
+/* §6 결과 3행(v0.24.6 §7 — 행1 3D 전체 폭 · 행2 순위 표 | 개선율 · 행3 민감도 전체 폭, 각 행이 한 화면) */
+.doe-result-rows {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
   gap: var(--gap);
-  align-items: start;
+  min-width: 0;
 }
-.doe-result-2col.solo {
-  grid-template-columns: minmax(0, 1fr);
-}
-.doe-result-left,
-.doe-result-right {
+.doe-row-3d,
+.doe-row-tables,
+.doe-row-sens,
+.doe-col-rank,
+.doe-col-pe {
   display: grid;
   gap: 0.6rem;
   align-content: start;
   min-width: 0;
 }
-@media (max-width: 2200px) {
-  .doe-result-2col {
+.doe-row-tables {
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+  --tbl-max: calc(100vh - var(--topbar-h) - 18rem);
+}
+.doe-row-tables .doe-rank-wrap,
+.doe-row-tables .doe-per-esl-wrap {
+  --tbl-max: calc(100vh - var(--topbar-h) - 18rem);
+}
+/* 넘치면 표 안 스크롤·셀 줄바꿈 금지 */
+.doe-row-tables .doe-rank td,
+.doe-row-tables .doe-rank th {
+  white-space: nowrap;
+}
+/* 1500px 이하만 1열 */
+@media (max-width: 1500px) {
+  .doe-row-tables {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-/* §6.1 높이 예산(2201px 이상만 — 결과 단계 페이지 세로 스크롤 없이 결과 카드) */
-@media (min-width: 2201px) {
-  .doe-result-2col {
-    --doe-res-h: calc(100vh - var(--topbar-h) - 21rem);
-  }
-  .doe-result-left .doe-rank-wrap {
-    --tbl-max: calc(var(--doe-res-h) - 23rem);
-  }
-  /* 좁아진 왼쪽 열에서 셀 줄바꿈으로 행이 높아지지 않게(넘치면 표 안 가로 스크롤) */
-  .doe-result-left .doe-rank td,
-  .doe-result-left .doe-rank th {
-    white-space: nowrap;
-  }
-  .doe-result-left .doe-per-esl-wrap {
-    --tbl-max: 12rem;
-  }
-  .doe-result-right .doe-compare-grid .v3d-host {
-    height: calc(var(--doe-res-h) * 0.26);
-  }
-  .doe-result-right .doe-sens svg {
-    max-height: calc(var(--doe-res-h) * 0.15);
-  }
+/* 3D 칸: 한 화면에 들어오는 높이(2560 = 820px · 1920 = 702px) */
+.doe-row-3d .doe-compare-grid .v3d-host {
+  height: clamp(360px, calc(100vh - var(--topbar-h) - 22rem), 820px);
+}
+/* 민감도 svg: 전체 폭으로 늘이면 viewBox 비율로 너무 커짐 — 폭 제한·왼쪽 정렬 */
+.doe-row-sens .doe-sens svg {
+  display: block;
+  width: 100%;
+  max-width: 64rem;
+  max-height: calc(100vh - var(--topbar-h) - 8rem);
 }
 /* §7 새 스터디 ① 2열(≤2200px 1열) · 설명 ⓘ */
 .doe-inputs-cols {
@@ -4334,4 +4337,86 @@ details.card.fold > .fold-body {
   max-width: 6.5rem;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------------------------------------------------------------- v0.24.6 VW 뷰어 (경계조건·하중 칩 · ⚙ 팝오버 · 구간 겹침 범례) — 모두 칸 위 겹침/절대 위치(세로 증가 0) */
+.v3d-view-bar .v3d-chip {
+  min-width: 0;
+  padding: 0 0.5rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.v3d-view-bar .v3d-bar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 0.2rem 0.2rem;
+  background: var(--line);
+}
+.v3d-gear {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+.v3d-viewer-pop {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 4;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 13rem;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+.v3d-viewer-pop .v3d-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.v3d-legend-ov {
+  position: absolute;
+  left: 0.6rem;
+  top: 0.5rem;
+  z-index: 2;
+  max-width: 10rem;
+  padding: 0.25rem 0.4rem;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  pointer-events: none;
+  display: grid;
+  gap: 0.1rem;
+}
+.v3d-legend-ov-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v3d-legend-ov-band {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  line-height: 0;
+}
+.v3d-legend-ov-sw {
+  flex: none;
+  width: 1.1rem;
+  height: 100%;
+}
+.v3d-legend-ov-val {
+  line-height: 1;
+  transform: translateY(-50%);
+  min-height: 0.5rem;
+}
+.v3d-legend-ov-bar {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+.v3d-legend-ov-out,
+.v3d-legend-ov-max {
+  white-space: nowrap;
 }

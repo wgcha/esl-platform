@@ -1,7 +1,7 @@
 // v0.15.1 3D 시점 툴바(비드 선택 3D · 안 3D 보기 · 3D 하중 보기 공통): 정면 ±X·±Y·±Z(같은 축 다시 = 반대 방향), 등각, 꽉 차게, 선택 영역 맞춤.
 // 작은 아이콘 한 줄 — 3D 칸 오른쪽 위에 겹쳐 둔다(도구 줄 폭·주 버튼 규칙과 무관). 단축키(3D 칸에 초점): 1 = 정면(−Y), 3 = 오른쪽(+X), 7 = 위(+Z),
 // 같은 키 다시 = 반대쪽, 0 = 등각, F = 꽉 차게.
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { SceneApi } from "./sceneApi";
 import { nextSign, viewLabel, type Bbox, type ViewAxis, type ViewSign } from "./viewFit";
 
@@ -14,6 +14,9 @@ export function ViewToolbar({
   disabled,
   selectionBbox,
   keyTarget,
+  lead,
+  tail,
+  hotkeys,
 }: {
   /** 현재 장면(없으면 버튼 비활성) */
   scene: () => SceneApi | null;
@@ -24,6 +27,11 @@ export function ViewToolbar({
   selectionBbox?: () => Bbox | null;
   /** 단축키를 받을 3D 칸 */
   keyTarget?: RefObject<HTMLElement | null>;
+  /** v0.24.6 막대 앞·뒤 자리(경계조건·하중 칩 / ⚙). 안 주면 DOM 이 v0.24.5 와 같다 */
+  lead?: ReactNode;
+  tail?: ReactNode;
+  /** v0.24.6 추가 단축키(소문자 키 → 동작). 입력 칸 초점이면 무시 */
+  hotkeys?: Record<string, () => void>;
 }) {
   const [last, setLast] = useState<{ axis: ViewAxis; sign: ViewSign } | null>(null);
   const lastRef = useRef(last);
@@ -47,6 +55,8 @@ export function ViewToolbar({
   viewRef.current = view;
   const fitRef = useRef(fitAll);
   fitRef.current = fitAll;
+  const hotRef = useRef(hotkeys);
+  hotRef.current = hotkeys;
 
   useEffect(() => {
     const el = keyTarget?.current;
@@ -62,6 +72,12 @@ export function ViewToolbar({
       } else if (e.key === "f" || e.key === "F") {
         e.preventDefault();
         fitRef.current();
+      } else {
+        const h = hotRef.current?.[e.key.toLowerCase()];
+        if (h) {
+          e.preventDefault();
+          h();
+        }
       }
     };
     el.addEventListener("keydown", onKey);
@@ -91,6 +107,7 @@ export function ViewToolbar({
   const selB = selectionBbox ? selectionBbox() : null;
   return (
     <div className="v3d-view-bar" role="toolbar" aria-label="시점" data-testid="v3d-view-bar">
+      {lead}
       {axisBtn("x")}
       {axisBtn("y")}
       {axisBtn("z")}
@@ -105,6 +122,7 @@ export function ViewToolbar({
           <FitSelIcon />
         </button>
       )}
+      {tail}
     </div>
   );
 }

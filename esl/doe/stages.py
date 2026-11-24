@@ -1054,7 +1054,8 @@ def bd_post(spec: dict, echo=print) -> dict:
             warns.append(f"VIEW3D_FAILED: {did} {exc.code}")
     v3_jig, vjw = _jig_view3d(c, t, results, [BASELINE] + top)     # v0.23.2 지그 응답 3D(지그 계산된 스냅샷만 — 그 밖 바이트 동일)
     warns += vjw
-    _jig_extras(c, t, m, results, noise, S_, shown=[BASELINE] + top, v3_jig=None, source="bd_post")   # v0.23.3 사이드카(새 파일만)
+    _jig_extras(c, t, m, results, noise, S_, shown=[BASELINE] + top, v3_jig=None, source="bd_post",
+                echo=echo)                       # v0.23.3 사이드카(새 파일만) · v0.24.6 지그 변위·스프링 3D 도 사이드카에만(result.json 불변)
     for ns in NODAL_SOURCES:                     # v0.24.0 노드 힘 출처 사이드카(새 파일만 — 결과·순위 무영향)
         try:
             _ns_post(c, ns, t, bmeta, m, results, noise, S_, shown=[BASELINE] + top, source="bd_post", echo=echo)
@@ -4573,15 +4574,51 @@ def _jig_view_mesh(c: Ctx, t, did: str) -> dict:
 def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
     """v0.23.2 지그 3D(esl_v0232_fixes.md §4.1): 3D 비교 대상 안마다 e_d = 순위 행 worst 엔트리(rank._agg(per_esl, "C_jig") — 순위표 '최악 ESL' 과 같은 함수·값)로 지그 응답
     변위장 → post/view3d/<did>_jig/, 베이스라인은 쓰인 엔트리마다 d000_jig_e<kk>/. 조건 = 지그 계산됨(jig.json ok·jig.npz) ∧ 설정
-    view3d.jig. 반환 ({view3d_jig, view3d_jig_esl, view3d_jig_ref} | {}, 경고 문자열)."""
+    view3d.jig. 반환 ({view3d_jig, view3d_jig_esl, view3d_jig_ref} | {}, 경고 문자열). v0.24.6: 출처 표 v3d_store = result 행(지그 고정)
+    — 본문은 _jig_v3d_build 공용(표식 = 지그 노드 샘플 '123' 그대로 — 바이트 동일)."""
     from esl.doe import jig as jg
-    from esl.view3d import build_view
+    from esl.mech.jig_bc import MARK_TIE
     vc = c.cfg["view3d"]
     jd = _jig_doc(c)
     pz = c.p("prep", JIG_NPZ)
     if not vc.get("jig") or _jig(c) is None or jd is None or jd.get("status") != "ok" or not os.path.isfile(pz):
         return {}, []
-    z = U.load_npz(pz)
+    row = next(s_ for s_ in RANK_SOURCES if s_["v3d_store"] == "result")
+
+    def marks(x0, jidx, _rmap, smax):
+        return [(int(i), MARK_TIE) for i in jg.support_sample(x0, jidx, smax)]
+    return _jig_v3d_build(c, t, results, shown, U.load_npz(pz), row, marks)
+
+
+def _jig_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[dict, list]:
+    """v0.24.6 스터디 지그 방식 3D(esl_viewer_hv.md §8.1 — R-JIGC-2): 출처 표 행 row(v3d_store = sidecar — jig_disp·jig_spring)의 응답
+    변위장 → post/view3d/<did>_<v3d_tag>/·d000_<v3d_tag>_e<kk>/, 키 row.v3d. 조건 = view3d.jig ∧ _jig_src_ready(prep/<src>.json ok ∧
+    npz), 아니면 ({}, []). 비교 안 = shown(≠ d000) 중 per_esl 이 모두 row.need(C_<pe>) 를 가진 안, worst = rank._agg(…, need).
+    응답 = 저장 BC 재풀이(_jig_resp_rows — 강제 변위 값·스프링 바닥·k), 표식 = jig_bc.support_marks(tie ∪ 스프링 샘플 '123' + 면내 'ij').
+    실패 = 그 안·기준만 경고 VIEW3D_FAILED: <did>_<tag> <code>. 호출부는 열만 읽음(출처 이름 분기 없음)."""
+    from esl.mech import jig_bc
+    if not c.cfg["view3d"].get("jig"):
+        return {}, []
+    rd = _jig_src_ready(c, row["key"])
+    if rd is None:
+        return {}, []
+    z = rd[1]
+    bc = jig_bc.load_bc({n: z[n] for n in JIG_BC_PATTERN if n in z})
+
+    def marks(x0, _jidx, rmap, smax):
+        return jig_bc.support_marks(rmap(bc["bc_node"]), bc["bc_kind"], rmap(bc["sp_node"]), x0, smax)
+    return _jig_v3d_build(c, t, results, shown, z, row, marks)
+
+
+def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -> tuple[dict, list]:
+    """지그 응답 3D 공용(지그 고정 _jig_view3d · 방식 _jig_view3d_src): 출처 표 행 열 need·v3d·v3d_tag 만 읽음. z = 방식 npz,
+    marks(x0, jidx, rmap, smax) → [(노드 인덱스, dof)] (rmap = 기준 npz 노드 인덱스 → 보기 메시 인덱스). 안 폴더 <did>_<tag>,
+    기준 d000_<tag>_e<kk>. 기준 실패 = 비교 불가 → ({}, 경고)."""
+    from esl.doe import jig as jg
+    from esl.view3d import build_view
+    need, tag = str(row["need"]), str(row["v3d_tag"])
+    kd, ke, kr = row["v3d"]
+    vc = c.cfg["view3d"]
     zeids = [str(e) for e in z["entry_ids"].tolist()]
     order = [str(e["id"]) for e in c.D["entries"]]
     basis = _jig_basis_of(z, int(z["a"].shape[1]))
@@ -4592,52 +4629,56 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
         if did == BASELINE:
             continue
         per = (by.get(did) or {}).get("per_esl") or []
-        if not per or any(p.get("C_jig") is None for p in per):
-            continue                                            # C_jig 없음 = 그 안만 지그 3D 없음
-        e = str(rk._agg({"id": did, "per_esl": per}, "C_jig")["worst"])     # 순위 행 worst 와 같은 함수(D-0.23.2-n) — 별도 규칙 계산 금지
+        if not per or any(p.get(need) is None for p in per):
+            continue                                            # need 없음 = 그 안만 지그 3D 없음
+        e = str(rk._agg({"id": did, "per_esl": per}, need)["worst"])     # 순위 행 worst 와 같은 함수(D-0.23.2-n) — 별도 규칙 계산 금지
         if e in zeids:
             pick[did] = e
     if not pick:
         return {}, []
     smax = int(vc["jig_support_max"])
-    out = {"view3d_jig": {}, "view3d_jig_esl": {}, "view3d_jig_ref": {}}
+    out = {kd: {}, ke: {}, kr: {}}
     warns: list = []
 
     def _write(name: str, did: str, ents: list) -> dict:
         mesh = _jig_view_mesh(c, t, did)
         nid = np.asarray(mesh["node_id"], dtype=np.int64)
         if np.array_equal(nb_, nid):
-            jidx = np.asarray(z["jig_idx"], dtype=np.int64)
+            def rmap(i):
+                return np.asarray(i, dtype=np.int64)
         else:
             o = np.argsort(nid)
-            jidx = o[np.searchsorted(nid, nb_[z["jig_idx"]], sorter=o)]
+
+            def rmap(i):
+                return o[np.searchsorted(nid, nb_[np.asarray(i, dtype=np.int64)], sorter=o)]
+        jidx = rmap(z["jig_idx"])
         ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
         rows = _jig_resp_rows(c, mesh, z, jidx, ld)
-        sup = [{"node_id": int(nid[i]), "dof": "123"} for i in jg.support_sample(mesh["x0"], jidx, smax)]
+        sup = [{"node_id": int(nid[i]), "dof": d} for i, d in marks(mesh["x0"], jidx, rmap, smax)]
         names = {}
-        for (e, F), row in zip(ld, rows):
-            nm = name if name else f"{BASELINE}_jig_e{order.index(e):02d}"
+        for (e, F), rr in zip(ld, rows):
+            nm = name if name else f"{BASELINE}_{tag}_e{order.index(e):02d}"
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
-            build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=row["u"],
+            build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=rr["u"],
                        supports=sup, key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
         return names
 
     for did in [d for d in shown if d in pick]:
         try:
-            _write(f"{did}_jig", did, [pick[did]])
-            out["view3d_jig"][did] = f"{did}_jig"
-            out["view3d_jig_esl"][did] = pick[did]
+            _write(f"{did}_{tag}", did, [pick[did]])
+            out[kd][did] = f"{did}_{tag}"
+            out[ke][did] = pick[did]
         except Exception as exc:                                # noqa: BLE001 — 지그 3D 때문에 BD_POST 실패 금지
-            warns.append(f"VIEW3D_FAILED: {did}_jig {getattr(exc, 'code', type(exc).__name__)}")
-    need = sorted({e for e in out["view3d_jig_esl"].values()}, key=order.index)
-    if need:
+            warns.append(f"VIEW3D_FAILED: {did}_{tag} {getattr(exc, 'code', type(exc).__name__)}")
+    need_e = sorted({e for e in out[ke].values()}, key=order.index)
+    if need_e:
         try:
-            out["view3d_jig_ref"] = _write("", BASELINE, need)
+            out[kr] = _write("", BASELINE, need_e)
         except Exception as exc:                                # noqa: BLE001
-            warns.append(f"VIEW3D_FAILED: {BASELINE}_jig {getattr(exc, 'code', type(exc).__name__)}")
+            warns.append(f"VIEW3D_FAILED: {BASELINE}_{tag} {getattr(exc, 'code', type(exc).__name__)}")
             return {}, warns                                     # 기준 없이 안만 = 비교 불가 → 지그 3D 없음(화면은 기존 컨투어)
-    if not out["view3d_jig"]:
+    if not out[kd]:
         return {}, warns
     return out, warns
 
@@ -4672,21 +4713,30 @@ VIEW_DROP_JD = tuple(dict.fromkeys(VIEW_DROP_JIG + ("C_jig", "umax_jig", "C_js",
 VIEW_DROP_JS = tuple(dict.fromkeys(VIEW_DROP_JIG + ("C_jig", "umax_jig", "C_jd", "umax_jd")))
 # v0.24.5 #88 후속(모든 모드 감사): 열 need_rank — 참 = need 를 스터디 지그 순위 출처(_jig_rank_src — 스냅샷 첫 방식)의 need 로 읽음(전 노드
 # 행: 옛 스냅샷·v0.24.4 기본 = 첫 방식 fixed → C_jig 그대로, v0.24.5 기본 [prescribed, spring] = C_jd — fixed 를 끄면 전 노드 보기가 안 생기던 것).
+# v0.24.6(esl_viewer_hv.md §8.1 — D-0.24.6-VW-13): 열 v3d(지그 응답 3D 응답 키 3개 (안 폴더, 안 worst 엔트리, 기준 엔트리 폴더) | None)·
+# v3d_tag(폴더 꼬리표 post/view3d/<did>_<tag>·d000_<tag>_e<kk>)·v3d_store(누가 저장 — result = result.json(_jig_view3d — v0.23.2 그대로),
+# sidecar = post/jig_view.json(_jig_view3d_src — result.json 바이트 불변), None = 이 표가 만들지 않음(경계력·내력 = 노드 힘 경로 _ns_view3d
+# 가 만듦 — 정보 열)). 백엔드 거울 RANK_V3D = 열 v3d.
 RANK_SOURCES = (
     {"key": "jig", "metric": "jig", "drop": VIEW_DROP_JIG, "drop_pe": _JIG_DROP_PE,
-     "umax_pe": "umax_jig", "eps_pe": None, "need": "C_jig", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_jig_ev"},
+     "umax_pe": "umax_jig", "eps_pe": None, "need": "C_jig", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_jig_ev",
+     "v3d": ("view3d_jig", "view3d_jig_esl", "view3d_jig_ref"), "v3d_tag": "jig", "v3d_store": "result"},
     {"key": "jig_disp", "metric": "jd", "drop": VIEW_DROP_JD, "drop_pe": _JIG_DROP_PE,
-     "umax_pe": "umax_jd", "eps_pe": None, "need": "C_jd", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_jd_ev"},
+     "umax_pe": "umax_jd", "eps_pe": None, "need": "C_jd", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_jd_ev",
+     "v3d": ("view3d_jd", "view3d_jd_esl", "view3d_jd_ref"), "v3d_tag": "jd", "v3d_store": "sidecar"},
     {"key": "jig_spring", "metric": "js", "drop": VIEW_DROP_JS, "drop_pe": _JIG_DROP_PE,
-     "umax_pe": "umax_js", "eps_pe": None, "need": "C_js", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_js_ev"},
+     "umax_pe": "umax_js", "eps_pe": None, "need": "C_js", "need_rank": False, "sidecar": "jig", "uev_pe": "umax_js_ev",
+     "v3d": ("view3d_js", "view3d_js_esl", "view3d_js_ref"), "v3d_tag": "js", "v3d_store": "sidecar"},
     {"key": "full", "metric": "effective", "drop": VIEW_DROP_FULL, "drop_pe": (), "umax_pe": None, "eps_pe": None,
-     "need": "C_jig", "need_rank": True, "sidecar": "jig", "uev_pe": "umax_ev"},
+     "need": "C_jig", "need_rank": True, "sidecar": "jig", "uev_pe": "umax_ev", "v3d": None, "v3d_tag": None, "v3d_store": None},
     {"key": "bforce", "metric": "bf", "drop": VIEW_DROP_NODAL,
      "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def", "C_jig", "umax_jig"), "umax_pe": "umax_bf",
-     "eps_pe": "epsmax_bf", "need": "C_bf", "need_rank": False, "sidecar": "bforce", "uev_pe": "umax_bf_ev"},
+     "eps_pe": "epsmax_bf", "need": "C_bf", "need_rank": False, "sidecar": "bforce", "uev_pe": "umax_bf_ev",
+     "v3d": ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref"), "v3d_tag": "bf", "v3d_store": None},
     {"key": "fint", "metric": "fi", "drop": VIEW_DROP_NODAL,
      "drop_pe": ("C_solve", "rho", "imbalance_rel", "umax_def", "C_jig", "umax_jig"), "umax_pe": "umax_fi",
-     "eps_pe": "epsmax_fi", "need": "C_fi", "need_rank": False, "sidecar": "fint", "uev_pe": "umax_fi_ev"},
+     "eps_pe": "epsmax_fi", "need": "C_fi", "need_rank": False, "sidecar": "fint", "uev_pe": "umax_fi_ev",
+     "v3d": ("view3d_fi", "view3d_fi_esl", "view3d_fi_ref"), "v3d_tag": "fi", "v3d_store": None},
 )
 
 
@@ -4959,9 +5009,12 @@ def _rank_view_one(c: Ctx, m: dict, results: list, noise, S_: dict | None, label
 
 
 def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, shown: list, v3_jig: dict | None,
-                source: str) -> dict | None:
+                source: str, v3_src: dict | None = None, echo=None) -> dict | None:
     """BD_POST·3D 다시 만들기 공용(§1·§2·§4): 지그 진단 3D + 하중 정의 보기 → post/jig_view.json. v3_jig = result.json 에 지그 응답 3D 가
-    없을 때 새로 만들 값(다시 만들기), BD_POST 는 None. 조건 밖(지그 미계산·view3d.jig_diag 끔) = 아무것도 쓰지 않음(None)."""
+    없을 때 새로 만들 값(다시 만들기), BD_POST 는 None. 조건 밖(지그 미계산·view3d.jig_diag 끔) = 아무것도 쓰지 않음(None).
+    v0.24.6(esl_viewer_hv.md §8.1): 출처 표 v3d_store = sidecar 행(지그 변위·스프링) 3D 키 row.v3d·view3d_src_seconds{tag} — v3_src =
+    다시 만들기가 옛 사이드카에서 옮겨 적을 키(_jig_src_carry — 있는 행은 덮지 않음), 없는 행은 준비됐으면 새로 만듦(_jig_v3d_sidecar).
+    만들 것이 없으면 새 키 없음(옛 스터디 사이드카 바이트 동일)."""
     ready = _jig_ready(c)
     if not c.cfg["view3d"].get("jig_diag") or (ready is None and not _jig_any_ready(c)):
         return None                                           # v0.24.4 P2c: 고정 실패여도 다른 방식이 준비되면 보기(격리)
@@ -4970,6 +5023,7 @@ def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, sh
     warns: list = []
     if v3_jig:
         doc.update(v3_jig)
+    doc.update(_jig_v3d_sidecar(c, t, results, shown, v3_src or {}, warns, echo))
     try:
         if ready is not None and c.cfg["view3d"].get("jig"):   # 진단 3D 는 지그 3D(view3d.jig) 도 켜져 있을 때만 — 끄면 jig 이름 폴더 0(V-0232-3)
             doc["jig_diag"] = _jig_diag(c, t, ready[0], ready[1], labels)
@@ -4987,6 +5041,51 @@ def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, sh
     c.writer.makedirs(c.p("post"))
     c.write_json(os.path.join("post", JIG_VIEW_JSON), U.jsonable(doc))
     return doc
+
+
+def _jig_v3d_sidecar(c: Ctx, t, results: list, shown: list, keep: dict, warns: list, echo=None) -> dict:
+    """사이드카 지그 방식 3D(출처 표 v3d_store = sidecar 행마다 — 열만 읽음): keep 에 그 행 키(row.v3d[0])가 있으면 그 행 키·시간을
+    옮겨 적음(덮지 않음), 없으면 _jig_view3d_src(준비 안 됨 = 키 없음). 시간 view3d_src_seconds{tag: s}(새로 만든 행만 — 옮겨 적은
+    행은 옛 값). 실패 격리: 행마다 try — 경고만(warns), BD_POST·다시 만들기 실패 금지. 반환 = 사이드카에 더할 키(없으면 {})."""
+    out: dict = {}
+    secs: dict = {}
+    old_secs = keep.get("view3d_src_seconds") if isinstance(keep.get("view3d_src_seconds"), dict) else {}
+    for row in RANK_SOURCES:
+        if row["v3d_store"] != "sidecar":
+            continue
+        tag = str(row["v3d_tag"])
+        if isinstance(keep.get(row["v3d"][0]), dict):
+            out.update({k: keep[k] for k in row["v3d"] if k in keep})
+            if tag in old_secs:
+                secs[tag] = old_secs[tag]
+            continue
+        t0 = time.monotonic()
+        try:
+            v3, w = _jig_view3d_src(c, t, results, shown, row)
+        except Exception as exc:                                # noqa: BLE001 — 3D 때문에 보기·BD_POST 실패 금지
+            v3, w = {}, [f"VIEW3D_FAILED: {tag} {getattr(exc, 'code', type(exc).__name__)}"]
+        warns.extend(w)
+        if v3:
+            out.update(v3)
+            secs[tag] = round(time.monotonic() - t0, 3)
+            if echo is not None:
+                echo(f"[bd_post jig3d] {tag} 안 {len(v3[row['v3d'][0]])} · 기준 {len(v3[row['v3d'][2]])} · {secs[tag]:.2f}s")
+    if secs:
+        out["view3d_src_seconds"] = secs
+    return out
+
+
+def _jig_src_carry(c: Ctx) -> dict:
+    """다시 만들기: 옛 사이드카(post/jig_view.json)의 사이드카 행 3D 키(row.v3d)·view3d_src_seconds — 없으면 {}(옛 스터디 = 새로 만듦)."""
+    p = c.p("post", JIG_VIEW_JSON)
+    try:
+        old = U.read_json(p) if os.path.isfile(p) else None
+    except (OSError, ValueError):
+        old = None
+    if not isinstance(old, dict):
+        return {}
+    ks = [k for row in RANK_SOURCES if row["v3d_store"] == "sidecar" for k in row["v3d"]] + ["view3d_src_seconds"]
+    return {k: old[k] for k in ks if k in old}
 
 
 def _prune_view3d_backups(c: Ctx, keep: int) -> list:
@@ -5021,7 +5120,9 @@ def _prune_view3d_backups(c: Ctx, keep: int) -> list:
 
 def _post_view3d(c: Ctx, echo=print) -> dict:
     """§3 3D 다시 만들기(post_mode view3d): post/view3d/<새 폴더>·post/jig_view.json 만 쓴다(ranking.csv·result.json·per_esl.json·
-    designs.json·report.html·best/·안 result.json 불변). result.json 에 지그 응답 3D 가 없으면(v0.23.1 실행) 만들어 사이드카에."""
+    designs.json·report.html·best/·안 result.json 불변). result.json 에 지그 응답 3D 가 없으면(v0.23.1 실행) 만들어 사이드카에.
+    v0.24.6(esl_viewer_hv.md §8.2): 지그 변위·스프링 3D(출처 표 v3d_store = sidecar) — 옛 사이드카에 있으면 옮겨 적고, 없고 그 방식이
+    준비됐으면(prep/<src>.json ok ∧ npz) 새로 만듦(멱등). 옛 단일 경로 스터디 = 새 키 없음(v0.24.5 사이드카와 같음)."""
     c.progress(0)
     rp = c.p("post", "result.json")
     if not os.path.isfile(rp):
@@ -5038,7 +5139,8 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
     shown = [str(d) for d in res0.get("view3d") or [] if d]
     v3, vjw = ({}, []) if isinstance(res0.get("view3d_jig"), dict) else _jig_view3d(c, t, results, shown)
     c.progress(40)
-    doc = _jig_extras(c, t, m, results, noise, S_, shown=shown, v3_jig=v3 or None, source="view3d_regen")
+    doc = _jig_extras(c, t, m, results, noise, S_, shown=shown, v3_jig=v3 or None, source="view3d_regen",
+                      v3_src=_jig_src_carry(c), echo=echo)       # v0.24.6 §8.2: 지그 변위·스프링 3D — 있으면 옮겨 적고 없으면 만듦
     if doc is not None and vjw:
         doc["warnings"] = list(doc.get("warnings") or []) + vjw
         c.write_json(os.path.join("post", JIG_VIEW_JSON), U.jsonable(doc))
@@ -5047,7 +5149,8 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
         echo(f"[bd_post view3d] 이전 진단 백업 {len(gone)}개 삭제(최근 {c.cfg['view3d'].get('regen_keep_backups', 1)}개만 유지)")
     echo(f"[bd_post view3d] 지그 진단 {'있음' if doc and doc.get('jig_diag') else '없음'}"
          f" · 하중 정의 보기 {'있음' if doc and doc.get('rank_views') else '없음'}"
-         f" · 지그 응답 3D {'새로 만듦' if v3 else '기존 유지'}")
+         f" · 지그 응답 3D {'새로 만듦' if v3 else '기존 유지'}"
+         f" · 지그 방식 3D {','.join(str(r_['v3d_tag']) for r_ in RANK_SOURCES if r_['v3d_store'] == 'sidecar' and doc and r_['v3d'][0] in doc) or '없음'}")
     c.progress(100)
     files = [] if doc is None else ["post/" + JIG_VIEW_JSON]
     return {"files": files, "warnings": list((doc or {}).get("warnings") or vjw), "result": None}

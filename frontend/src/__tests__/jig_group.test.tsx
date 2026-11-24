@@ -50,14 +50,14 @@ describe("출처 표 열(소스)", () => {
     expect(it.map((i) => [i.key, i.label, i.group ?? null])).toEqual([["jig", "지그 ESL", null], ["full", "전 노드 ESL", null], ["bforce", "경계력 ESL", null], ["fint", "내력 ESL", null]]);
     expect(it[0].title).toBe(GROUPS.jig.title);
   });
-  it("스터디 LOAD_SOURCES 6행(키 = SOURCE_ROWS) · 새 방식 탭은 옛 스냅샷에서 JIG_METHOD_NOT_RUN 사유로 비활성", () => {
+  it("스터디 LOAD_SOURCES 6행(키 = SOURCE_ROWS) · 새 방식 탭은 지그 블록 없는 옛 스냅샷에서 no_jig 사유로 비활성(v0.24.6 §9)", () => {
     expect(LOAD_SOURCES.map((s) => s.key)).toEqual(SOURCE_ROWS.map((r) => r.key));
     const r = { rank_views: { jig: {} }, metric_effective: "jig", warnings: [], ranking: [], baseline: {} } as unknown as DoeResultOut;
     const ts = tabState(r);
     expect(ts.ok.jig).toBe(true);
     expect(ts.ok.jig_disp).toBe(false);
-    expect(ts.reason.jig_disp).toBe("이 스터디에서 계산하지 않은 방식입니다: 지그 변위 — 새 스터디·복제에서 계산(rank.jig.methods)");
-    expect(ts.reason.jig_spring).toContain("지그 스프링");
+    expect(ts.reason.jig_disp).toBe("이 스터디는 지그를 계산하지 않았습니다");
+    expect(ts.reason.jig_spring).toBe(ts.reason.jig_disp);   // 상태 문구는 지그 블록 없음 한 줄(방식 이름 없음)
     expect(groupFieldsOf("jig_disp")).toMatchObject({ group: "jig", short: "변위" });
     expect(groupFieldsOf("full")).toEqual({});
   });

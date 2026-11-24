@@ -2,15 +2,17 @@
 // 서버 쪽 Python(esl/view3d.py)과 같은 배치·양자화 규칙을 TS 로 흉내 낸다. 결정적(난수 없음).
 import type { View3dClusterRow, View3dOut, View3dReconOut, View3dTopRow, View3dValuesArray } from "../api/types";
 
-const NX = 48;
-const NY = 30;
+const DEF_NX = 48;
+const DEF_NY = 30;
 const LX = 620; // mm
 const LY = 380;
 const X0 = 1480;
 const NODE0 = 3001;
 
 type V3 = [number, number, number];
-const SUPPORT_VERTS = [0, NX - 1, (NY - 1) * NX + Math.floor(NX / 2)];
+const supportVerts = (nx: number, ny: number) => [0, nx - 1, (ny - 1) * nx + Math.floor(nx / 2)];
+/** v0.24.6 성능 시험 전용 판(?mockView3d=plate300k): 600×500 = 30만 노드. 기본 판은 그대로 */
+export const PLATE300K = { nx: 600, ny: 500 };
 const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const norm = (a: V3) => Math.hypot(a[0], a[1], a[2]);
@@ -21,9 +23,11 @@ export interface MockMesh {
   nodeIds: Uint32Array;
   indices: Uint32Array; // 삼각형
   quads: number[][];
+  /** 지지 정점 */
+  sup?: number[];
 }
 
-export function makeMesh(): MockMesh {
+export function makeMesh(NX = DEF_NX, NY = DEF_NY): MockMesh {
   const n = NX * NY;
   const x = new Float64Array(n * 3);
   const nodeIds = new Uint32Array(n);
@@ -51,7 +55,7 @@ export function makeMesh(): MockMesh {
       quads.push([a, b, c, d]);
       tri.push(a, b, c, a, c, d);
     }
-  return { n, x, nodeIds, indices: Uint32Array.from(tri), quads };
+  return { n, x, nodeIds, indices: Uint32Array.from(tri), quads, sup: supportVerts(NX, NY) };
 }
 
 /** 노드 법선(면적 가중, 판 법선 +z 쪽으로 통일) 과 노드 대표 면적(인접 요소 면적/절점 수 합, mm²) */
@@ -100,7 +104,8 @@ function makeForces(m: MockMesh): Float64Array {
   // 지지점이 반력으로 합을 0 으로 맞춘다(자유물체 F_eq: ΣF ≈ 0)
   const mean = [0, 0, 0];
   for (let i = 0; i < m.n; i++) for (let c = 0; c < 3; c++) mean[c] += f[i * 3 + c];
-  for (const v of SUPPORT_VERTS) for (let c = 0; c < 3; c++) f[v * 3 + c] -= mean[c] / SUPPORT_VERTS.length;
+  const sv = m.sup ?? supportVerts(DEF_NX, DEF_NY);
+  for (const v of sv) for (let c = 0; c < 3; c++) f[v * 3 + c] -= mean[c] / sv.length;
   return f;
 }
 
@@ -217,13 +222,13 @@ function packValues(n: number, fn: Float64Array, fmag: Float64Array, pa: Float64
 }
 
 // ---------------------------------------------------------------- 군집 (계약 §3.6 L3-7: 가중 최원점 초기화 + Lloyd, 난수 없음)
-export function weightedClusters(x: ArrayLike<number>, f: ArrayLike<number>, u: ArrayLike<number>, nodeIds: ArrayLike<number>, K: number): { k_actual: number; rows: View3dClusterRow[] } {
+export function weightedClusters(x: ArrayLike<number>, f: ArrayLike<number>, u: ArrayLike<number>, nodeIds: ArrayLike<number>, K: number, stride = 1): { k_actual: number; rows: View3dClusterRow[] } {
   const n = nodeIds.length;
   const idx: number[] = [];
   const w: number[] = [];
   for (let i = 0; i < n; i++) {
     const mg = Math.hypot(f[i * 3], f[i * 3 + 1], f[i * 3 + 2]);
-    if (mg > 0) (idx.push(i), w.push(mg));
+    if (mg > 0 && i % stride === 0) (idx.push(i), w.push(mg));
   }
   const m = idx.length;
   if (m === 0) return { k_actual: 0, rows: [] };
@@ -333,10 +338,24 @@ export interface MockView3d {
 }
 
 let cache: MockView3d | null = null;
+function arrMax(a: Float64Array): number {
+  let mx2 = -Infinity;
+  for (let i = 0; i < a.length; i++) if (a[i] > mx2) mx2 = a[i];
+  return mx2;
+}
+/** 주소창 ?mockView3d=plate300k 이면 30만 노드 판(mock 빌드 전용 — 실서버 번들에는 이 모듈이 없다) */
+function big(): boolean {
+  try {
+    return typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mockView3d") === "plate300k";
+  } catch {
+    return false;
+  }
+}
 
 export function mockView3d(): MockView3d {
   if (cache) return cache;
-  const m = makeMesh();
+  const isBig = big();
+  const m = isBig ? makeMesh(PLATE300K.nx, PLATE300K.ny) : makeMesh();
   const { nrm, area } = nodeNormalsAndAreas(m);
   const f = makeForces(m);
   const u = makeU(m);
@@ -364,7 +383,7 @@ export function mockView3d(): MockView3d {
     }
   const diag = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]);
   const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => fmag[b] - fmag[a] || m.nodeIds[a] - m.nodeIds[b]);
-  const supVerts = SUPPORT_VERTS;
+  const supVerts = m.sup ?? supportVerts(DEF_NX, DEF_NY);
   const supDof = ["123", "13", "3"];
   const supportSet = new Set(supVerts);
   const top: View3dTopRow[] = order.slice(0, 100).map((i, r) => ({
@@ -393,8 +412,9 @@ export function mockView3d(): MockView3d {
     }
   }
   const clusters: View3dOut["clusters"] = {};
-  for (const K of [2, 3, 4, 5]) clusters[String(K)] = weightedClusters(m.x, f, u, m.nodeIds, K);
-  const umax = Math.max(...Array.from({ length: n }, (_, i) => Math.hypot(u[i * 3], u[i * 3 + 1], u[i * 3 + 2])));
+  for (const K of [2, 3, 4, 5]) clusters[String(K)] = weightedClusters(m.x, f, u, m.nodeIds, K, isBig ? 50 : 1);
+  let umax = 0;
+  for (let i = 0; i < n; i++) umax = Math.max(umax, Math.hypot(u[i * 3], u[i * 3 + 1], u[i * 3 + 2]));
   const fit = new Float64Array(n * 3);
   const err = new Float64Array(n * 3);
   for (let i = 0; i < n; i++) {
@@ -405,7 +425,11 @@ export function mockView3d(): MockView3d {
     }
   }
   const pd = packDisp(n, [["tgt", u], ["fit", fit], ["err", err]]);
-  const maxN = (a: Float64Array) => Math.max(...Array.from({ length: n }, (_, i) => Math.hypot(a[i * 3], a[i * 3 + 1], a[i * 3 + 2])));
+  const maxN = (a: Float64Array) => {
+    let mx2 = 0;
+    for (let i = 0; i < n; i++) mx2 = Math.max(mx2, Math.hypot(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]));
+    return mx2;
+  };
   const rg = { tgt_max: maxN(u), fit_max: maxN(fit), err_max: maxN(err) };
   const q = (src: string | null) => (src ? `?src=${src}` : "");
   const built: MockView3d = {
@@ -446,7 +470,7 @@ export function mockView3d(): MockView3d {
       geometry: { name: "part.glb", bytes: glb.byteLength },
       lod: null,
       values: { name: "values.bin", bytes: packed.buf.byteLength, arrays: packed.arrays },
-      ranges: { fn_abs: { max: Math.max(...Array.from(fn).map(Math.abs)), p99: p99(fn.map(Math.abs)) }, fmag_max: fmag[order[0]], u_max: umax, pa: { max: Math.max(...pa), p99: p99(pa) } },
+      ranges: { fn_abs: { max: arrMax(fn.map(Math.abs)), p99: p99(fn.map(Math.abs)) }, fmag_max: fmag[order[0]], u_max: umax, pa: { max: arrMax(pa), p99: p99(pa) } },
       sum_f,
       sum_m,
       moment_center: c0,

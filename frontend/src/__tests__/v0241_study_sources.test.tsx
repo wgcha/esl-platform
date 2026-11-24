@@ -157,7 +157,7 @@ describe("V-0241-V3D-20 소스 규율", () => {
     expect(bad).toEqual([]);
     // 이전 시험들이 쓰는 열 값
     expect(LOAD_SOURCES.map((s) => s.recon?.kind ?? null)).toEqual(["jigdiag", null, null, null, "sidecar", "sidecar"]);
-    expect(LOAD_SOURCES.map((s) => s.add?.testid ?? null)).toEqual(["v3d-regen", null, null, null, "v3d-bf-add", "v3d-fi-add"]);
+    expect(LOAD_SOURCES.map((s) => s.add?.testid ?? null)).toEqual(["v3d-regen", "v3d-regen-jd", "v3d-regen-js", null, "v3d-bf-add", "v3d-fi-add"]);
   });
 });
 
