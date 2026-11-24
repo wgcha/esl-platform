@@ -82,6 +82,16 @@ VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-bin
                 "recon.bin": "application/octet-stream"}
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
 RANK_VIEWS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")   # v0.24.4: 코어 RANK_SOURCES 키(jig_disp·jig_spring 도 사이드카 jig_view.json)
+# v0.24.6(esl_viewer_hv.md §8.1·§8.3): 코어 RANK_SOURCES 열 v3d 거울(응답 키 3개 또는 None) — jig 만 result.json 우선, 그 밖 jig_view.json 행(jd·js)
+# 은 사이드카. bforce·fint 는 노드 힘 사이드카(NODAL_SOURCES v3d 앞 3개와 같음 — 시험). 호출부는 열만 읽음.
+RANK_V3D: dict[str, tuple[str, str, str] | None] = {
+    "jig": ("view3d_jig", "view3d_jig_esl", "view3d_jig_ref"),
+    "jig_disp": ("view3d_jd", "view3d_jd_esl", "view3d_jd_ref"),
+    "jig_spring": ("view3d_js", "view3d_js_esl", "view3d_js_ref"),
+    "full": None,
+    "bforce": ("view3d_bf", "view3d_bf_esl", "view3d_bf_ref"),
+    "fint": ("view3d_fi", "view3d_fi_esl", "view3d_fi_ref"),
+}
 BF_VIEW_JSON = "bforce_view.json"                         # v0.24.0 사이드카 post/bforce_view.json(esl_bforce.md §5.4)
 # v0.24.0 노드 힘 출처 표(코어 esl/doe/stages.py NODAL_SOURCES 거울 — esl_fint.md §5): 사이드카·응답 블록·3D 키·추가 계산 열.
 # 호출부는 열만 읽음(출처 이름 분기 없음). 행이 없는 출처 = 응답 키 null·추가 계산 404.
@@ -100,6 +110,11 @@ BF_VIEWS = tuple(NODAL_SOURCES)                           # 노드 힘 사이드
 SOURCE_ADD: dict[str, dict[str, Any]] = {
     "jig": {"kind": "VIEW3D", "post_mode": "view3d", "cfg": None, "need": "jig_ok", "plan": None, "code": "VIEW3D_REGEN",
             "block": "_UNAVAILABLE", "name": "지그 3D", "verb": "3D 를 다시 만들", "legacy": "view3d_regen"},
+    # v0.24.6(§8.2): 지그 변위·스프링 3D — 같은 작업(view3d)이 빠진 방식 3D 를 모두 만든다(멱등). 조건 = result jig.methods[src].status ok
+    # (상위 jig 블록 status 와 무관 — 지그 고정을 끈 스터디도 가능). legacy 없음(옛 응답 키 없음).
+    **{k: {"kind": "VIEW3D", "post_mode": "view3d", "cfg": None, "need": "jig_src_ok", "plan": None, "code": "VIEW3D_REGEN",
+           "block": "_UNAVAILABLE", "name": "지그 3D", "verb": "3D 를 다시 만들", "legacy": None, "src": k}
+       for k in ("jig_disp", "jig_spring")},
     **{k: {"kind": ns["kind"], "post_mode": k, "cfg": ns["cfg"], "need": "plan", "plan": ns["plan"], "code": ns["code"],
            "block": "_ADD_UNAVAILABLE", "name": ns["name"], "verb": f"{ns['name']} 을 계산할", "legacy": ns["add"]}
        for k, ns in NODAL_SOURCES.items()},
@@ -1958,15 +1973,18 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     else:                                                     # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가
         out["jig_on_clone"] = out["rank"] is not None and _plan_sm_jig(s) == "base"
     out["jig_plan"] = _plan_sm_jig(s)                         # v0.24.5 #88 후속: 계획 열 sm_jig(base | none) — 탭 사유 "이 모드는 지그 ESL 을 계산하지 않음"
-    for k in ("view3d_ref", "view3d_esl", "view3d_jig", "view3d_jig_esl", "view3d_jig_ref"):
+    for k in ("view3d_ref", "view3d_esl", *RANK_V3D["jig"]):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}
     # v0.23.3(esl_jig_view.md §4): 사이드카 병합 — view3d_jig* 는 result.json 우선, jig_diag·rank_views 는 사이드카만
     side = _jig_view_doc(ctx, s, c)
     if side is not None:
-        for k in ("view3d_jig", "view3d_jig_esl", "view3d_jig_ref"):
-            if k not in out and isinstance(side.get(k), dict):
-                out[k] = {str(a): str(b) for a, b in side[k].items() if a and b}
+        for key in RANK_VIEWS:                                # v0.24.6: 사이드카 행(jig·jd·js)의 3D 키 — 열 v3d 만 읽음, result.json 우선
+            if key in BF_VIEWS:
+                continue
+            for k in RANK_V3D[key] or ():
+                if k not in out and isinstance(side.get(k), dict):
+                    out[k] = {str(a): str(b) for a, b in side[k].items() if a and b}
         for k in ("jig_diag", "rank_views"):
             if isinstance(side.get(k), dict):
                 out[k] = side[k]
@@ -1992,7 +2010,9 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
             with ctx.engine.connect() as conn:
                 regen_why.append(_regen_block(conn, principal, s))
         why = _verb_why(row, regen_why[0])
-        adds[key] = out[row["legacy"]] = {"available": True, "allowed": why is None, "reason": why}
+        adds[key] = {"available": True, "allowed": why is None, "reason": why}
+        if row["legacy"]:                                     # 옛 키 거울(legacy 열 없음 = jd·js 행)
+            out[row["legacy"]] = adds[key]
     if adds:
         out["source_add"] = adds
     if isinstance(r.get("eval_region"), dict):                # v0.24.0 평가 영역 요약(새 스냅샷만)
@@ -2022,8 +2042,16 @@ def _jig_ok(row: dict[str, Any], s: dict[str, Any], get_r) -> bool:
     return isinstance(jig, dict) and jig.get("status") in ("ok", "poor")
 
 
+def _jig_src_ok(row: dict[str, Any], s: dict[str, Any], get_r) -> bool:
+    """v0.24.6 §8.2: 그 지그 방식이 계산된 스터디 = result jig.methods[src].status == "ok"(옛 스냅샷·methods 없음·실패 방식 = 거짓)."""
+    methods = ((get_r() or {}).get("jig") or {}).get("methods")
+    m = methods.get(row["src"]) if isinstance(methods, dict) else None
+    return isinstance(m, dict) and m.get("status") == "ok"
+
+
 NEED = {
     "jig_ok": (_jig_ok, "_UNAVAILABLE", lambda row: "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다"),
+    "jig_src_ok": (_jig_src_ok, "_UNAVAILABLE", lambda row: "그 지그 방식이 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다"),
     "plan": (lambda row, s, get_r: _plan_col(s, row["plan"]) == "base", "_UNSUPPORTED",
              lambda row: f"다른 메시 비교 방식(④·옛 ③)은 {row['name']} 을 지원하지 않습니다"),
 }

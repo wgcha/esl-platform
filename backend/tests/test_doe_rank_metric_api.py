@@ -303,7 +303,7 @@ def test_results_pass_jig_block(client, world, engine, esl_root):
                                                     "cross_mesh": False, "jig": JIG_BLOCK, "n_failed": {"jig": 1}}, [row])
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["metric"] == "jig" and o["metric_effective"] == "jig" and o["rank"]["metric_effective"] == "jig"
-    assert o["jig"] == JIG_BLOCK and o["n_failed"] == {"jig": 1}
+    assert o["jig"] == {**JIG_BLOCK, "methods": None, "tie_dofs": None} and o["n_failed"] == {"jig": 1}   # v0.24.6 새 키 null
     r0 = o["ranking"][0]
     assert (r0["score_jig"], r0["umax_jig"], r0["C_jig"]) == (0.8, 0.9, {"e1": 80.0})
     sid2 = _done(client, world, engine, esl_root, {"metric": "jig", "metric_effective": "solve", "cross_mesh": True,
@@ -331,7 +331,7 @@ def test_openapi_jig_schemas():
     assert set(sc["DoeJigOut"]["properties"]) == {"status", "code", "region_source", "n_jig", "n_regions", "n_contact", "n_patch",
                                                   "fit_mac_min", "fit_umax_err_max", "fit_mac_min_nomodes",
                                                   "fit_umax_err_max_nomodes", "cancel_rel_max", "fit_work_eff_min", "tie_rel_max", "tie_spread",
-                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries"}
+                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries", "tie_dofs", "methods"}   # v0.24.6
     assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min",
                                                          "tie_spread_min"}
     assert set(sc["DoeJigEntryOut"]["properties"]) == {"entry_id", "label", "mac", "umax_err", "mac_nomodes",
