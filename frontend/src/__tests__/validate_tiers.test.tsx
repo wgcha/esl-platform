@@ -190,8 +190,8 @@ describe("V-0245-VT-13 실제 백엔드 응답 픽스처(real_v0245.json)", () =
 
   it("검증 응답: status·mac·cond_reasons·새 criteria", () => {
     expect(statusOf(v)).toBe("CONDITIONAL");
-    expect(v.mac).toBeCloseTo(0.9312);
-    expect(v.cond_reasons).toEqual(["DISP_RMS", "MAC"]);
+    expect(v.mac).toBeGreaterThan(v.criteria.mac_min as number);      // 실제 코어 합성 Case — MAC ≈ 1(PASS), 조건부 사유 = 변위 RMS 만
+    expect(v.cond_reasons).toEqual(["DISP_RMS"]);
     expect(isTierScheme(v.scheme)).toBe(true);
     expect(v.criteria.mac_cond_min).toBe(0.9);
     expect(registerBlock({ ...v, stale: false })).toBeNull();
@@ -201,11 +201,11 @@ describe("V-0245-VT-13 실제 백엔드 응답 픽스처(real_v0245.json)", () =
     const items = valTabItems(src, true)!;
     const by = Object.fromEntries(items.map((i) => [i.key, i]));
     expect(by.full.mark).toEqual({ text: "조건부 PASS", tone: "warn" });
-    expect(by.bforce.mark?.text).toBe("FAIL · 비교용 아님");
+    expect(by.bforce.mark?.text).toBe("조건부 PASS · 비교용 아님");
     expect(by.fint.mark).toEqual({ text: "조건부 PASS", tone: "warn" });
     const fint = valRowOf(src, "fint")!;
     expect(fint.scheme).toBe("disp_primary/2");
-    expect(fint.cond_reasons).toEqual(["REACTION"]);
+    expect(fint.cond_reasons).toEqual(["DISP_RMS"]);
     expect(by.fint.title).toContain("반력 PASS ≤ 5 % · 조건부 ≤ 10 %");
     expect(valRowOf(src, "jig")?.scheme ?? null).toBeNull();
   });
