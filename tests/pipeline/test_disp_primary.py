@@ -69,11 +69,14 @@ def _m(val):
 # ---------------------------------------------------------------- 기본 산출물·스키마
 def test_default_run_is_pass_with_new_schema(base):
     val = _j(base["out"], "05_val", "validation.json")
-    assert val["schema"] == "esl/validation/3" and val["verdict_scheme"] == "disp_primary/1"
+    # v0.24.5(esl_validate_tiers.md §1.5 — 의도 변경): esl/validation/4·disp_primary/2, judge 5행(mac = MAC(검증))
+    assert val["schema"] == "esl/validation/4" and val["verdict_scheme"] == "disp_primary/2"
     assert val["verdict"] == "PASS" and val["fail_reasons"] == [] and val["undetermined_reason"] is None
+    assert val["cond_reasons"] == []
     m = _m(val)
     roles = {k: v["role"] for k, v in m.items()}
-    assert [k for k, r in roles.items() if r == "judge"] == ["disp_rms_rel", "disp_max_rel", "reaction_rel", "disp_noise_rel"]
+    assert [k for k, r in roles.items() if r == "judge"] == ["disp_rms_rel", "disp_max_rel", "mac", "reaction_rel",
+                                                             "disp_noise_rel"]
     assert {k for k, r in roles.items() if r == "reference"} == {
         "hotspot1_strain_rel_err", "field_max_err_pct", "field_p90_err_pct", "noise_hotspot_strain_rel"}
     assert all(m[k]["pass"] is None and isinstance(m[k]["exceeded"], bool) for k in roles if roles[k] == "reference")
@@ -195,14 +198,16 @@ def test_dp3_strain_reference_exceeded_but_disp_pass_is_pass(base, tmp_path):
 
 
 # ---------------------------------------------------------------- V-DP-4
-@pytest.mark.parametrize("key,old,code", [
-    ("disp_rms_rel", "disp_rms_rel_max: 0.01 ", "DISP_RMS"),
-    ("disp_max_rel", "disp_max_rel_max: 0.05 ", "DISP_MAX"),
-    ("reaction_rel", "reaction_rel_max: 1.0e-6 ", "REACTION"),
-    ("disp_noise_rel", "disp_noise_rel_max: 1.0e-3 ", "DISP_NOISE")])
-def test_dp4_each_judge_metric_alone_fails_with_its_code(base, tmp_path, key, old, code):
+# v0.24.5: 예시 disp_rms_rel_max 0.05(PASS 상한) — 단독 FAIL 은 조건부 상한(선택 키 disp_rms_rel_cond_max)도 함께 낮춤
+@pytest.mark.parametrize("key,old,code,extra", [
+    ("disp_rms_rel", "disp_rms_rel_max: 0.05 ", "DISP_RMS",
+     ("  # disp_rms_rel_cond_max: 0.10 ", "  disp_rms_rel_cond_max: 1.0e-30 ")),
+    ("disp_max_rel", "disp_max_rel_max: 0.05 ", "DISP_MAX", None),
+    ("reaction_rel", "reaction_rel_max: 1.0e-6 ", "REACTION", None),
+    ("disp_noise_rel", "disp_noise_rel_max: 1.0e-3 ", "DISP_NOISE", None)])
+def test_dp4_each_judge_metric_alone_fails_with_its_code(base, tmp_path, key, old, code, extra):
     name = old.split(":")[0]
-    val, _, rec = _validate(base, tmp_path, (old, f"{name}: 1.0e-30 "), tag=key)
+    val, _, rec = _validate(base, tmp_path, (old, f"{name}: 1.0e-30 "), *([extra] if extra else []), tag=key)
     m = _m(val)
     assert val["verdict"] == "FAIL" and val["fail_reasons"] == [code]
     assert [k for k, x in m.items() if x["role"] == "judge" and x["pass"] is False] == [key]
@@ -214,7 +219,7 @@ def test_dp5_full_solve_never_is_undetermined(base, tmp_path):
     val, out, rec = _validate(base, tmp_path, ("full_solve: auto", "full_solve: never"))
     m = _m(val)
     assert val["verdict"] == "UNDETERMINED" and val["undetermined_reason"] == "NO_FULL_SOLVE" and val["fail_reasons"] == []
-    assert val["disp"] is None and val["verdict_scheme"] == "disp_primary/1"
+    assert val["disp"] is None and val["verdict_scheme"] == "disp_primary/2"
     for k in ("disp_rms_rel", "disp_max_rel", "reaction_rel"):
         assert m[k]["value"] is None and m[k]["pass"] is None and m[k]["status"] == "skipped"
     assert m["disp_noise_rel"]["value"] is not None and m["disp_noise_rel"]["pass"] is True    # 값은 기록
@@ -356,7 +361,7 @@ def test_dp15_config_new_keys_defaults_and_example_yaml():
     ex = yaml.safe_load(open(CFG, encoding="utf-8"))
     v = ex["validation"]
     assert (v["disp_rms_rel_max"], v["disp_max_rel_max"], v["reaction_rel_max"], v["disp_noise_rel_max"],
-            v["disp_top_n"], v["disp_hist_bins"]) == (0.01, 0.05, 1e-6, 1e-3, 20, 20)
+            v["disp_top_n"], v["disp_hist_bins"]) == (0.05, 0.05, 1e-6, 1e-3, 20, 20)   # v0.24.5 0.01 → 0.05
     cfg = config.load_config(CFG)                                   # 예시 yaml 로드
     assert cfg["validation"]["disp_max_rel_max"] == 0.05
     # 신규 키가 없는 이전 설정 파일 → 기본값(esl/config.py 한 곳)
