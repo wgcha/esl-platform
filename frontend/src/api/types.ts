@@ -3406,8 +3406,8 @@ export interface DoeJigEntryOut {
 }
 /** v0.24.6 지그 방식별 결과(esl_viewer_hv.md §9.2 — 코어 result.json jig.methods[src] 그대로 통과, 옛 결과 = 응답 methods null) */
 export interface DoeJigMethodOut {
-  method: string;
-  method_name: string;
+  method: string | null;
+  method_name: string | null;
   tie_dofs: "normal" | "translation" | null;
   /** ok = 계산됨 · 그 밖(fallback·poor 가 아닌 실패 등) = 계산 실패 */
   status: string;

@@ -458,3 +458,13 @@ D-0.24.6-VW-1 범위·판정 기준, VW-2 층 토글, VW-3 원형 겹침, VW-4 �
 ## 17. 후속 (R-VW-n)
 
 - R-VW-1 P2 항목(Q-VW-1). R-VW-2 시점 동기화가 밀리면. R-VW-3 백엔드 Case `_jig_supports` → 코어 `support_marks` 위임 통일(표식 노드 바이트 변화 — 3D 다시 만들기 필요). R-VW-4 jd·js 3D 현장 소요 실측. R-VW-5 ④ 3D(Q-VW-2).
+
+---
+
+## 18. 구현 메모 (2026-11-24, v0.24.6 통합)
+
+- 통합 결과·결정 전문: `docs/decisions.md` D-0.24.6-INT-1~3(핸드오프 이관 포함). 현장 확인표 `docs/manual/field_check_v0246.md`.
+- §8.1 `v3_src` = 다시 만들기가 옛 사이드카에서 옮겨 적을 키. 3D 생성은 `_jig_extras` 안 `_jig_v3d_sidecar`. 조건에 `view3d.jig_diag` 포함 — 끄면 jd·js 3D·rank_views 없음(사이드카 자체 조건, v0.24.5 그대로).
+- §8.3 백엔드 거울 `RANK_V3D` ↔ 코어 열 v3d 는 `test_rank_v3d_mirrors_core_column` 이 실제 대조, 코어→사이드카→API 전 구간은 `backend/tests/test_doe_v0246_core_e2e.py`.
+- §9.1 `no_view` 에서는 빈 탭 [다시 만들기] 를 두지 않는다(`tabState` — 다시 만들기가 순위 보기를 못 만듦). 백엔드 `source_add` 판정(§8.2)은 그대로. 원인 구분 문구는 R-VW-6.
+- §17 에 R-VW-6 추가: 응답에 jig_diag 끔·기준 값 없음 원인을 구분하는 키(no_view 문구 정밀화).

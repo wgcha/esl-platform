@@ -78,6 +78,18 @@ describe("V-0246-VW-15 jigMethodState 4상태", () => {
     expect(ok.note).toBeNull();
   });
 
+  it("통합: no_view(예: view3d.jig_diag 끔 — rank_views 없음) 는 빈 탭 [다시 만들기] 를 두지 않음, 보기가 있으면 3D 만 없는 상태라 그대로", () => {
+    const sa = { jig_disp: { available: true, allowed: true, reason: null }, jig_spring: { available: true, allowed: true, reason: null } };
+    const r = base({ jig: jigOf({ jig_disp: method(), jig_spring: method() }), source_add: sa } as never);
+    const ts = tabState(r, LOAD_SOURCES);
+    expect(ts.ok.jig_disp).toBe(false);
+    expect(ts.add.jig_disp).toBe(false);
+    expect(ts.add.jig_spring).toBe(false);
+    const withView = tabState({ ...r, rank_views: { jig_disp: {} } } as unknown as DoeResultOut, LOAD_SOURCES);
+    expect(withView.ok.jig_disp).toBe(true);
+    expect(withView.add.jig_disp).toBe(false); // 보기 있음 = 탭 가능(3D 칸 안내가 버튼을 가짐)
+  });
+
   it("탭 사유(tabState.reason)는 상태 문구 그대로, 줄은 failed·no_view 만(jigMethod 열), 숨긴 출처는 줄도 없음", () => {
     const r = base({
       jig: jigOf({ jig_disp: method({ status: "fallback", code: "JIG_NO_TIE", detail: "d" }), jig_spring: method() }),

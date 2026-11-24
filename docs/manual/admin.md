@@ -623,6 +623,15 @@ $env:PGPASSWORD = $null
   줄을 지워도 된다(지우면 기본값 = 끔·`[prescribed, spring]`, 다음 업데이트가 새 예시 값으로 다시 채움). 고친 뒤 이미 만든 스터디는 스냅샷 그대로이고, **새 스터디·복제**부터 계산이 빠진다. 되돌리려면 `.bak_v0245` 파일을 원래 이름으로 복사한다.
 - `ui.hidden_sources` 에 출처 표에 없는 키(오타 등)가 있으면 기동은 그대로 하고 그 키만 무시한다. 대신 백엔드 시작 로그(`<런타임>\logs\backend.log`)에 `설정 경고: ui.hidden_sources 에 모르는 출처 키 ['<키>'] — 무시합니다(가능한 키: ['jig', 'jig_disp', 'jig_spring', 'full', 'bforce', 'fint'])` 1줄이 남고 환경 점검(§10) `config.valid` 가 경고로 보인다.
 
+### 4.6 v0.24.6 업데이트 안내(3D 뷰어 강화·스터디 지그 변위·스프링 3D)
+
+업데이트(§3.0)와 작업 재시작만 하면 된다. **DB migration 없음·설정 키 추가 없음**. 현장 확인표: `docs/manual/field_check_v0246.md`.
+
+- **스터디 지그 변위·스프링 3D**: 새 스터디는 BD_POST 에서 만들고 결과는 스터디 폴더 `post/jig_view.json`(새 키 `view3d_jd*`·`view3d_js*`·`view3d_src_seconds`)·`post/view3d/<안>_jd|_js`·`d000_jd|js_e<kk>` 에만 쓴다(`post/result.json` 은 그대로). 조건 = `view3d.jig`(켬) ∧ `view3d.jig_diag`(켬) ∧ 그 방식 계산 성공. 둘 중 하나를 끈 설정이면 만들지 않고, 순위 보기가 없어 탭이 사유로만 보인다.
+- **옛 스터디에 추가**: v0.24.4 이후 스터디는 화면의 [지그 3D 다시 만들기](또는 `POST /doe/studies/{id}/sources/jig_disp|jig_spring`)로 만든다. 기존 DOE_RUN 큐에 BD_POST 이후만 다시 넣으며 DB·순위는 그대로이고, 한 번에 빠진 방식 3D 를 모두 만든다(있는 것은 옮겨 적음). 방식이 없던 옛 스냅샷·실패한 방식은 409 `VIEW3D_REGEN_UNAVAILABLE`.
+- **비용**: 방식마다 지그 고정 3D 와 같은 분해 횟수(안 `view3d.top_k` + 기준 엔트리 수)라 두 방식 모두 켜져 있으면 BD_POST 가 방식 수만큼 길어진다(합성 9,801 노드 방식당 13~16 s). 메모리 피크는 분해 1개분으로 그대로. 실제 시간은 작업 로그 `[bd_post jig3d] jd|js … s` 와 `jig_view.json` 의 `view3d_src_seconds` 에 남는다.
+- **3D 뷰어**: 층·범례 구간은 브라우저 localStorage 키 `esl.v3d.viewer.v1` 1개에 저장한다(서버 설정 없음). 응답 새 키는 `GET /doe/studies/{id}/results` 의 `view3d_jd*`·`view3d_js*`·`jig.methods`·`jig.tie_dofs`(옛 결과 null).
+
 ---
 
 ## 10. 환경 점검

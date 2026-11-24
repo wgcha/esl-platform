@@ -28,7 +28,7 @@ try {
   const shot = async (name, testid) => {
     await page.waitForTimeout(2500);
     const h = await page.evaluate(() => {
-      const card = document.querySelector("[data-testid=doe-result-2col]")?.closest(".card");
+      const card = document.querySelector("[data-testid=doe-result-rows]")?.closest(".card");
       return { doc: document.documentElement.scrollHeight, cardBottom: card ? Math.round(card.getBoundingClientRect().bottom + window.scrollY) : null };
     });
     heights[name] = h;
