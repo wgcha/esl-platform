@@ -97,7 +97,7 @@ export function Field({ label, children, hint, className }: { label: string; chi
   );
 }
 
-export function Stat({ label, value, hint, sub, tone }: { label: string; value: ReactNode; hint?: string; sub?: ReactNode; tone?: "bad" | "ok" }) {
+export function Stat({ label, value, hint, sub, tone }: { label: string; value: ReactNode; hint?: string; sub?: ReactNode; tone?: "bad" | "ok" | "warn" }) {
   return (
     <div className={tone ? `stat ${tone}` : "stat"} title={hint}>
       <div className="stat-label">{label}</div>

@@ -116,8 +116,11 @@ export function caseTabItems(sources: View3dSourcesOut | null): SourceTabItem[] 
 /** ④ 검증 결과가 없는 이 검증(v0.24.3 이전)의 출처 사유 코드 — 탭은 선택 가능(본문의 [검증 다시 실행]) */
 export const VAL_NOT_RUN_CODE = "VAL_SRC_NOT_RUN";
 
-const MARK_STATUS_TEXT: Record<ValidationStatus, string> = { PASS: "PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "이전 판정" };
-const MARK_STATUS_TONE: Record<ValidationStatus, TabMark["tone"]> = { PASS: "ok", FAIL: "bad", UNDETERMINED: "muted", LEGACY: "muted" };
+const MARK_STATUS_TEXT: Record<ValidationStatus, string> = { PASS: "PASS", CONDITIONAL: "조건부 PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "이전 판정" };
+const MARK_STATUS_TONE: Record<ValidationStatus, TabMark["tone"]> = { PASS: "ok", CONDITIONAL: "warn", FAIL: "bad", UNDETERMINED: "muted", LEGACY: "muted" };
+/** 판정 체계가 단계 판정(조건부 PASS·MAC)인가 — 새 결과 "disp_primary/2". 없음·이전 체계 = 옛 단일 기준(esl_validate_tiers.md §3.2) */
+export const TIER_SCHEME = "disp_primary/2";
+export const isTierScheme = (s: string | null | undefined): boolean => s === TIER_SCHEME;
 const MARK_LIMIT_NOT_COMPARABLE = "비교용 아님";
 const MARK_LIMIT_CAUTION = "⚠";
 
@@ -131,9 +134,11 @@ export function markOf(row: Pick<ValidationSourceRow, "available" | "status" | "
 }
 
 /** 반력 허용치 문구(순수): 출처별 설정을 쓰는 행만 — "반력 허용치 ≤ 10 % · 주의 > 5 %"(판정에 쓴 값). 없으면 null */
-export function reactionTolText(row: Pick<ValidationSourceRow, "reaction_role" | "reaction_tol" | "reaction_tol_key" | "reaction_warn"> | null | undefined): string | null {
+export function reactionTolText(row: Pick<ValidationSourceRow, "reaction_role" | "reaction_tol" | "reaction_tol_key" | "reaction_warn"> & { scheme?: string | null } | null | undefined): string | null {
   if (!row || row.reaction_role !== "judge" || row.reaction_tol == null || !row.reaction_tol_key) return null;
   const p = (x: number) => `${Number((x * 100).toPrecision(3))} %`;
+  // 새 체계(v0.24.5 §4.5): 반력 PASS ≤ 주의 문턱 · 조건부 ≤ 허용치. 옛 행 = 지금 문구 그대로
+  if (isTierScheme(row.scheme) && row.reaction_warn != null) return `반력 PASS ≤ ${p(row.reaction_warn)} · 조건부 ≤ ${p(row.reaction_tol)}`;
   return `반력 허용치 ≤ ${p(row.reaction_tol)}${row.reaction_warn != null ? ` · 주의 > ${p(row.reaction_warn)}` : ""}`;
 }
 

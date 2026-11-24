@@ -1,0 +1,182 @@
+{
+ "validation": {
+  "id": "3ce4fc88-db6d-4e99-a38a-701e716dd6e6",
+  "esl_run_id": "3072103c-d67a-42fa-b53b-ba1a28b4cf8e",
+  "case_id": "9a428f23-3a06-4ad7-bbed-106dddca7941",
+  "job_id": "741f4f45-4ca0-484d-a903-0d0f604358fb",
+  "disp_rms_rel": 0.072,
+  "reaction_rel": null,
+  "hotspots": [],
+  "excluded": [],
+  "verdict": "CONDITIONAL",
+  "fail_reasons": [],
+  "criteria": {
+   "mac_min": 0.95,
+   "mac_cond_min": 0.9,
+   "disp_max_rel_max": 0.05,
+   "disp_rms_rel_max": 0.05,
+   "reaction_rel_max": 0.1,
+   "reaction_warn_rel": 0.05,
+   "disp_rms_rel_cond_max": 0.1
+  },
+  "field": null,
+  "dir_rel": "05_val",
+  "created_at": "2026-11-24T10:33:28.190248+09:00",
+  "stale": true,
+  "scheme": "disp_primary/2",
+  "status": "CONDITIONAL",
+  "disp_max_rel": 0.038,
+  "disp_noise_rel": null,
+  "undetermined_reason": null,
+  "disp": null,
+  "strain_ref": null,
+  "mac": 0.9312,
+  "cond_reasons": [
+   "DISP_RMS",
+   "MAC"
+  ]
+ },
+ "sources": {
+  "validation_id": "3ce4fc88-db6d-4e99-a38a-701e716dd6e6",
+  "default": "full",
+  "rows": [
+   {
+    "key": "jig",
+    "available": false,
+    "code": "JIG_NOT_RUN",
+    "reason": "이 ESL 결과에는 지그 ESL 이 없습니다(v0.24.4 이전 계산) — ③ ESL 을 다시 계산하면 생깁니다",
+    "status": null,
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": null,
+    "cond_reasons": [],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "jig_disp",
+    "available": false,
+    "code": "JIG_NOT_RUN",
+    "reason": "이 ESL 결과에는 지그 ESL 이 없습니다(v0.24.4 이전 계산) — ③ ESL 을 다시 계산하면 생깁니다",
+    "status": null,
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": null,
+    "cond_reasons": [],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "jig_spring",
+    "available": false,
+    "code": "JIG_NOT_RUN",
+    "reason": "이 ESL 결과에는 지그 ESL 이 없습니다(v0.24.4 이전 계산) — ③ ESL 을 다시 계산하면 생깁니다",
+    "status": null,
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": null,
+    "cond_reasons": [],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "full",
+    "available": true,
+    "code": null,
+    "reason": null,
+    "status": "CONDITIONAL",
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": "disp_primary/2",
+    "cond_reasons": [
+     "DISP_RMS",
+     "MAC"
+    ],
+    "reaction_role": null,
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": "하중 기준 형상 F = K₀·u_rel · 지지 bc321",
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": null
+   },
+   {
+    "key": "bforce",
+    "available": true,
+    "code": null,
+    "reason": null,
+    "status": "FAIL",
+    "fail_reasons": [
+     "MAC"
+    ],
+    "undetermined_reason": null,
+    "scheme": "disp_primary/2",
+    "cond_reasons": [],
+    "reaction_role": "info",
+    "reaction_tol": null,
+    "reaction_tol_key": null,
+    "reaction_warn": null,
+    "reaction_warned": null,
+    "cond_text": null,
+    "note": null,
+    "limits": [
+     "BF_TIE_MISSING"
+    ],
+    "limit_text": [
+     "tie 체결력 미포함"
+    ],
+    "comparable": false
+   },
+   {
+    "key": "fint",
+    "available": true,
+    "code": null,
+    "reason": null,
+    "status": "CONDITIONAL",
+    "fail_reasons": [],
+    "undetermined_reason": null,
+    "scheme": "disp_primary/2",
+    "cond_reasons": [
+     "REACTION"
+    ],
+    "reaction_role": "judge",
+    "reaction_tol": 0.1,
+    "reaction_tol_key": "validation.sources.reaction_tol",
+    "reaction_warn": 0.05,
+    "reaction_warned": true,
+    "cond_text": null,
+    "note": null,
+    "limits": [],
+    "limit_text": [],
+    "comparable": true
+   }
+  ]
+ }
+}

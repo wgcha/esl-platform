@@ -8,6 +8,7 @@ import { Shell } from "../../shell/Shell";
 import { usePolling } from "../../lib/usePolling";
 import { p3 } from "../../api/p3";
 import { errorText } from "../../api/client";
+import { STATUS_LABEL } from "../../components/VerdictStatus";
 import type { RunAllOut } from "../../api/types";
 import { dt } from "../../lib/format";
 import { RUN_ALL_CANCELED_TEXT, runAllStepName, stopDetailText, stopMessage } from "../../shell/RunAllBar";
@@ -16,7 +17,7 @@ import { ErrorLine } from "../../components/ui";
 /** 일괄 실행 기록 한 행의 결과 칸(§9) */
 export function runAllResultText(r: RunAllOut): string {
   if (r.status === "RUNNING") return `진행 중 — ${runAllStepName(r.cur_step)}`;
-  if (r.status === "DONE") return `완료 — ④ ${r.verdict ?? "PASS"}`;
+  if (r.status === "DONE") return `완료 — ④ ${r.verdict === "CONDITIONAL" ? STATUS_LABEL.CONDITIONAL : r.verdict ?? "PASS"}`;
   if (r.status === "CANCELED") return RUN_ALL_CANCELED_TEXT;
   const d = stopDetailText(r);
   return `${runAllStepName(r.stop_step)} 멈춤 — ${stopMessage(r)}${d ? ` (${d})` : ""}`;

@@ -8,7 +8,7 @@ import { Badge, Empty, ErrorLine } from "../components/ui";
 import { usePolling } from "../lib/usePolling";
 import { dt } from "../lib/format";
 
-const LIB_STATUS: Record<string, string> = { PASS: "PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "LEGACY(이전 판정 체계)" };
+const LIB_STATUS: Record<string, string> = { PASS: "PASS", CONDITIONAL: "조건부 PASS", FAIL: "FAIL", UNDETERMINED: "판정 불가", LEGACY: "LEGACY(이전 판정 체계)" };
 
 /** #49 라이브러리 등록 배지: 이 Case 에서 등록된 ACTIVE 항목 수 + 최신 항목 판정(툴팁) */
 function LibraryBadge({ c }: { c: Case }) {

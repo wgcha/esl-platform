@@ -22,7 +22,8 @@ export interface AnalysisForm {
   target: string;
   model: string;
   drops: string[];
-  verdict: "" | "PASS" | "FAIL";
+  /** "PASS_COND" = PASS·조건부 PASS(기본, v0.24.5), "PASS" = PASS만 */
+  verdict: "" | "PASS" | "PASS_COND" | "FAIL";
   normalization: Normalization;
   nRep: string;
   objective: Objective;
@@ -50,7 +51,7 @@ export const DEFAULT_FORM: AnalysisForm = {
   target: "",
   model: "",
   drops: [],
-  verdict: "PASS",
+  verdict: "PASS_COND",
   normalization: "none",
   nRep: "5",
   objective: "minmax",
@@ -69,7 +70,7 @@ export function toFilters(f: AnalysisForm): AnalysisFilters {
   const out: AnalysisFilters = {};
   if (f.model) out.model = [f.model];
   if (f.drops.length) out.drop_type = [...f.drops];
-  if (f.verdict) out.verdict = [f.verdict];
+  if (f.verdict) out.verdict = f.verdict === "PASS_COND" ? ["PASS", "CONDITIONAL"] : [f.verdict];
   if (f.scenario) out.scenario = [f.scenario];
   return out;
 }
@@ -220,6 +221,7 @@ export function AnalysisNew() {
             </Field>
             <Field label="판정">
               <select aria-label="필터 판정" value={f.verdict} onChange={(e) => set("verdict", e.target.value as AnalysisForm["verdict"])}>
+                <option value="PASS_COND">PASS·조건부 PASS</option>
                 <option value="PASS">PASS만</option>
                 <option value="">전체(부적격 항목은 제외)</option>
               </select>
