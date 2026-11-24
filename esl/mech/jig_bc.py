@@ -43,6 +43,8 @@ LEGACY_ABSENT: dict[str, Any] = {"tie_dofs": "translation", "methods": ("fixed",
 COL_VALUES = {"tie_value": ("zero", "target"), "tie_stiff": ("hard", "spring"), "frame": ("jig_kabsch", "part"),
               "factor": ("own", "fixed"), "dirs": ("normal_subspace", "xyz"), "aux321": ("inplane", "none")}
 KIND_TIE, KIND_AUX = 1, 2               # bc_kind: tie 구속 · 3-2-1 면내
+# v0.24.6 지그 3D 지지 표식 dof 문자열(표시만 — support_marks): tie · 3-2-1 면내. 백엔드 Case view3d JIG_TIE_DOF·JIG_AUX_DOF 와 같은 값
+MARK_TIE, MARK_AUX = "123", "ij"
 SPRING_ALPHA_MIN = 1e-3                 # α 하한(§3.4 — k → 0 이면 normal 은 면외 강체가 스프링으로만 막혀 조건수 악화)
 SPRING_K_MODES = ("auto", "value")
 BC_KEYS = ("bc_node", "bc_dir", "bc_val", "bc_kind", "sp_node", "sp_dir", "sp_k", "sp_g")
@@ -662,6 +664,26 @@ def flags(method: str, rep: dict, *, aux_rel: float, th: dict) -> dict:
         w.append("JIG_LOAD_CANCEL")
     info = ["JIG_AUX_REACTION"] if aux_rel > float(th["aux_reaction_warn"]) else []
     return {"warnings": w, "info": info, "limits": list(row["limits"])}
+
+
+# ====================================================================== (7b) 3D 지지 표식(표시만 — 계산 불변, esl_viewer_hv.md §8.1)
+def support_marks(bc_node, bc_kind, sp_node, x0, smax: int) -> list[tuple[int, str]]:
+    """지그 3D 지지 표식(D-0.24.6-VW-13): tie = 구속 행 중 bc_kind = KIND_TIE 노드 ∪ 스프링 행 노드(sp_node — 스프링 방식은 tie 가
+    구속이 아니라 스프링이라 bc_node 에 없음) → ``jig.support_sample`` 최원점 샘플 ≤ smax 개 = MARK_TIE, 3-2-1 면내(bc_kind = KIND_AUX)
+    노드 전부 = MARK_AUX — 샘플된 tie 노드와 겹치면 tie 만. 노드 인덱스 범위 밖(< 0 · ≥ len(x0)) 은 무시.
+    백엔드 Case ``api/services/view3d._jig_supports`` 와 같은 규칙(백엔드 위임 통일은 R-VW-3). 반환 [(노드 인덱스, dof)] — tie 샘플
+    순서 뒤 면내 오름차순. 순수·결정적(같은 입력 → 같은 출력)."""
+    n = int(np.asarray(x0).shape[0])
+    bn = np.asarray(bc_node, dtype=np.int64).reshape(-1)
+    bk = np.asarray(bc_kind).astype(np.int64).reshape(-1)
+    sp = np.asarray(sp_node, dtype=np.int64).reshape(-1)
+    if bk.size != bn.size:
+        raise EslError("INPUT_INVALID", f"support_marks: bc_kind 길이 {bk.size} ≠ bc_node {bn.size}")
+    ok = (bn >= 0) & (bn < n)
+    tie = jig.support_sample(x0, np.unique(np.r_[bn[ok & (bk == KIND_TIE)], sp[(sp >= 0) & (sp < n)]]), int(smax))
+    shown = set(int(i) for i in tie.tolist())
+    aux = [int(i) for i in np.unique(bn[ok & (bk == KIND_AUX)]).tolist() if int(i) not in shown]
+    return [(int(i), MARK_TIE) for i in tie.tolist()] + [(i, MARK_AUX) for i in aux]
 
 
 # ====================================================================== (8) 저장 형식(배열 — 파일 IO 는 호출자)

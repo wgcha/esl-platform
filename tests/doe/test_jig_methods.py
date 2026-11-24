@@ -202,6 +202,9 @@ def test_factor_sharing_and_spring_k_reuse(study):
     groups = len(jig_bc.factor_groups(tuple(jig_bc.METHODS)))
     diag = 1                                                    # 지그 진단 3D(_jig_diag — 고정 npz 의 BC 로 1회)
     v3 = len(study["post"].get("view3d_jig") or {}) + (1 if study["post"].get("view3d_jig_ref") else 0)
+    side = U.read_json(os.path.join(study["out"], "post", "jig_view.json"))     # v0.24.6 §8.1 지그 변위·스프링 3D(사이드카) — 방식마다
+    for row in [r_ for r_ in stg.RANK_SOURCES if r_["v3d_store"] == "sidecar"]:   # 고정 3D 와 같은 분해 횟수(표시 안 + 기준 1)
+        v3 += len(side.get(row["v3d"][0]) or {}) + (1 if side.get(row["v3d"][2]) else 0)
     assert study["calls"]["spring_k"] == 1
     assert study["calls"]["factorize"] == groups * (1 + n_designs) + diag + v3, study["calls"]
     z = U.load_npz(os.path.join(study["out"], "prep", "jig_spring.npz"))
