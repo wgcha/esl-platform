@@ -195,12 +195,27 @@ def section(id_: str, title: str, inner: str) -> str:
     return f'<section id="{esc(id_)}"><h2>{esc(title)}</h2>\n{inner}\n</section>'
 
 
+# v0.24.5 조건부 PASS 배지(esl_validate_tiers.md §4.6 — class cond). 색은 이 배지를 쓰는 보고서만 extra_css 로 덧붙인다
+# (cond_css — 조건부가 없는 보고서·옛 결과 재생성은 CSS 포함 바이트 불변).
+COND_BADGE = '<span class="badge cond">조건부 PASS</span>'
+CSS_COND = (".cond{color:#8a5a00;background:#fdf1d6}"
+            '@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .cond{color:#f2c46d;background:#3a2e14}}'
+            ':root[data-theme="dark"] .cond{color:#f2c46d;background:#3a2e14}\n')
+
+
 def badge(verdict: str | None) -> str:
     if verdict == "PASS":
         return '<span class="badge pass">PASS</span>'
     if verdict == "FAIL":
         return '<span class="badge fail">FAIL</span>'
+    if verdict == "CONDITIONAL":
+        return COND_BADGE
     return f'<span class="badge na">{esc(verdict or "N/A")}</span>'
+
+
+def cond_css(body: str) -> str:
+    """본문에 조건부 배지가 있으면 그 색 CSS, 없으면 빈 문자열(page extra_css)."""
+    return CSS_COND if 'class="badge cond"' in body else ""
 
 
 def pass_cell(p) -> str:

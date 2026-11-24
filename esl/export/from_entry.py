@@ -33,6 +33,7 @@ import numpy as np
 
 from esl.fsutil import atomic_replace
 import esl
+from esl import val_metrics as _vm
 from esl.errors import EslError
 from esl.export import AUTO_BASE, all_ids, csvout, force_mask, optistruct, plan_ids, radioss
 
@@ -137,8 +138,8 @@ def export_entry(entry_dir: str, out_dir: str, targets, cfg: dict, id_offset, *,
     val = _validation_for(meta, validation_id, warnings)
     if val is None:
         warnings.append("검증(05_val) 결과 없음 — validation.csv·reactions_321.csv 생략")
-    elif val.get("verdict") != "PASS":
-        warnings.append(f"검증 {val.get('verdict')} 상태로 내보냄")
+    elif _vm.export_warning(val.get("verdict")):           # 조건부 PASS 도 경고 문구(막지 않음 — esl_validate_tiers.md §4.1)
+        warnings.append(_vm.export_warning(val.get("verdict")))
     ecfg = cfg["export"]
     rcfg = ecfg["radioss"]
     mask = force_mask(F, ecfg["force_zero_tol_rel"])

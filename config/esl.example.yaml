@@ -67,8 +67,11 @@ solver:
   # (선택, v0.24.4) 새 지그 경로 SuperLU 분해 순서 — node_mmd(기본: 노드 블록 순서, tie 가 흩어진 큰 모델에서 분해 수 배 빠름) | default(예전 MMD)
   # jig_factor_order: node_mmd
 
-validation:                          # 임시 값. 사내 확인 후 교체 (esl.md Q1). 판정(PASS/FAIL) = 변위 4지표만 (계약 esl_disp_primary.md)
-  disp_rms_rel_max: 0.01             # [판정 DISP_RMS] RMS(u_val−u_rel)/max|u_rel| (전 노드, 미소 강체 제거 후)
+validation:                          # 판정(PASS·조건부 PASS·FAIL) = 변위 4지표 + MAC(검증) (계약 esl_disp_primary.md·esl_validate_tiers.md)
+  disp_rms_rel_max: 0.05             # [판정 DISP_RMS] RMS(u_val−u_rel)/max|u_rel| (전 노드, 미소 강체 제거 후) — PASS 상한(v0.24.5: 0.01 → 0.05)
+  # disp_rms_rel_cond_max: 0.10      # (선택, v0.24.5) 변위 RMS 조건부 PASS 상한(없으면 max(0.10, disp_rms_rel_max))
+  # mac_min: 0.95                    # (선택, v0.24.5) [판정 MAC] MAC(검증) = 변형 형상 일치(양쪽 선형 강체 제거) PASS 하한 (0, 1]
+  # mac_cond_min: 0.90               # (선택, v0.24.5) MAC(검증) 조건부 PASS 하한(없으면 min(0.90, mac_min)). 역전(조건부 > PASS) = 설정 오류
   disp_max_rel_max: 0.05             # [판정 DISP_MAX] max|u_val−u_rel|/max|u_rel| (전 노드)
   reaction_rel_max: 1.0e-6           # [판정 REACTION] Σ|R_321|/Σ|F_eq| (자기평형이면 ≈0)
   disp_noise_rel_max: 1.0e-3         # [판정 DISP_NOISE] 변위 저장 정밀도 잡음 δ/max|u_rel| (추가 해석 없음)
@@ -81,7 +84,7 @@ validation:                          # 임시 값. 사내 확인 후 교체 (esl
   noise_samples: 3                   # 잡음 바닥 추정 섭동 표본 수(고정 시드)
   noise_force_rel_warn: 0.1          # rms(F_noise)/rms(F_eq) 초과 시 경고
   noise_strain_rel_max: 0.05         # [참고 기준, 판정 아님] hotspot |Δε_eq|/ε_eq (잡음)
-  # sources: {enabled: true, reaction_tol: {fint: 0.10}, reaction_warn: {fint: 0.05}}   # (선택, v0.24.3) ④ 검증 출처별 — 경계력·내력 ESL 도 같은 정의·기준으로 검증(05_val/<출처>/). enabled 없으면 true, false = 전 노드만. reaction_tol = 출처별 반력 불합격 허용치, reaction_warn = 주의 허용치(없는 출처는 공통 1e-6·주의 없음)
+  # sources: {enabled: true, reaction_tol: {fint: 0.10}, reaction_warn: {fint: 0.05}}   # (선택, v0.24.3) ④ 검증 출처별 — 경계력·내력 ESL 도 같은 정의·기준으로 검증(05_val/<출처>/). enabled 없으면 true, false = 전 노드만. reaction_tol = 출처별 반력 허용치(v0.24.5: 조건부 PASS 상한), reaction_warn = 주의 허용치(v0.24.5: PASS 상한)(없는 출처는 공통 1e-6 단일·주의 없음)
 
 compare:                             # ESL 재현 정확도 전 요소 비교 (계약 esl_p2_library.md §7.2, 판정 기준은 임시값)
   min_rel: 0.1                       # valid = t* 에서 상승 중 ∧ ε_rad ≥ min_rel·max ε_rad(상승 요소)

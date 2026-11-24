@@ -1957,7 +1957,7 @@ def full_solve_decision(ctx: Context, sm: ShellModel, n_elems: int) -> dict:
     return {**rec, "run": True, "reason": "auto: 직접법, 메모리 충분" if avail is not None else "auto: 가용 메모리 모름"}
 
 
-VERDICT_SCHEME = _vm.VERDICT_SCHEME          # 계약 esl_disp_primary.md: 판정 = 변위 4지표, 변형률은 참고(값 원본 = val_metrics)
+VERDICT_SCHEME = _vm.VERDICT_SCHEME          # 계약 esl_validate_tiers.md: 판정 = 변위 4지표 + MAC(검증), 단계(값 원본 = val_metrics)
 VALIDATION_SCHEMA = _vm.VALIDATION_SCHEMA
 _FAIL_REASON = _vm.FAIL_REASON
 
@@ -2279,6 +2279,37 @@ def _write_val_files(ctx: Context, d: str, ev: dict, nid) -> None:
                          ((int(nid[i]), *d_rel[i], *d_val[i], dn[i]) for i in range(nid.size)), fmt)
 
 
+# echo 지표 이름(판정 행 metric → 표시) — 기준 문구는 문서 행(criterion·criterion_cond·sense)에서(§1.5)
+_ECHO_LABEL = {"disp_rms_rel": "변위 RMS", "disp_max_rel": "변위 최대", "mac": "MAC(검증)", "reaction_rel": "반력 Σ|R|/Σ|F|",
+               "disp_noise_rel": "변위 잡음 δ/U"}
+
+
+def _fmt_mac(v) -> str:
+    return "skipped" if v is None else f"{v:.4f}"
+
+
+def _judge_echo(metrics: list[dict], noise_source) -> str:
+    """legacy echo 의 판정 지표 구간: "<이름>=<값> (<기준 문구>)" — judge 행 순서, 잡음 행은 잡음 출처를 덧붙임."""
+    parts = []
+    for m in metrics:
+        if m["role"] != "judge":
+            continue
+        v = m["value"]
+        val = _fmt_mac(v) if m["metric"] == "mac" else ("skipped" if v is None else f"{v:.2e}")
+        ct = _vm.criterion_text(m["criterion"], m.get("criterion_cond"), m.get("sense", "max"))
+        tail = f", {noise_source}" if m["metric"] == "disp_noise_rel" else ""
+        parts.append(f"{_ECHO_LABEL.get(m['metric'], m['metric'])}={val} ({ct}{tail})")
+    return ", ".join(parts)
+
+
+def _reasons_echo(verdict, fail_reasons, cond_reasons) -> str:
+    """echo 사유: FAIL → " [fail]" (+ 조건부 행이 있으면 " (조건부 [cond])"), CONDITIONAL → " [cond]"."""
+    out = f" {list(fail_reasons)}" if fail_reasons else ""
+    if cond_reasons:
+        out += f" {list(cond_reasons)}" if verdict == _vm.CONDITIONAL else f" (조건부 {list(cond_reasons)})"
+    return out
+
+
 def _src_tmp_cleanup(ctx: Context, path: str) -> None:
     import shutil
     if os.path.lexists(path):
@@ -2357,7 +2388,9 @@ def stage_validate(ctx: Context) -> dict:
     delta_noise, noise_source = _disp_noise_delta(ctx, noise, model, frame_index)
     disp_noise_rel = (delta_noise / umax) if (delta_noise is not None and umax > 0) else None
 
-    crit = {"disp_rms_rel_max": vcfg["disp_rms_rel_max"], "disp_max_rel_max": vcfg["disp_max_rel_max"],
+    tcfg = _config.validation_tier_settings(ctx.cfg)       # v0.24.5 판정 단계 기준(실제 적용값 — 선택 키, 없으면 기본 규칙)
+    crit = {"disp_rms_rel_max": vcfg["disp_rms_rel_max"], "disp_rms_rel_cond_max": tcfg["disp_rms_rel_cond_max"],
+            "disp_max_rel_max": vcfg["disp_max_rel_max"], "mac_min": tcfg["mac_min"], "mac_cond_min": tcfg["mac_cond_min"],
             "reaction_rel_max": vcfg["reaction_rel_max"], "disp_noise_rel_max": vcfg["disp_noise_rel_max"],
             "hotspot_strain_rel_err_max": vcfg["hotspot_strain_rel_err_max"],
             "hotspot_eval_count": vcfg["hotspot_eval_count"],
@@ -2388,7 +2421,7 @@ def stage_validate(ctx: Context) -> dict:
                       eps_val=None if eps_sol is None else _solver_eq(eps_sol, layers),
                       reaction_role=legacy["reaction_role"], noise_force=legacy["noise_force"], created_at=_utcnow())
     val, metrics = ev["doc"], ev["doc"]["metrics"]
-    verdict, fail_reasons = val["verdict"], val["fail_reasons"]
+    verdict, fail_reasons, cond_reasons = val["verdict"], val["fail_reasons"], val["cond_reasons"]
     hots, excluded, sref, fsum = ev["hots"], ev["excluded"], ev["sref"], ev["fsum"]
     vv = ev["values"]
     disp_rms_rel, disp_max_rel, reac_abs_rel = vv["disp_rms_rel"], vv["disp_max_rel"], vv["reaction_rel"]
@@ -2397,15 +2430,12 @@ def stage_validate(ctx: Context) -> dict:
     d = ctx.fresh_dir(D_VAL)
     _write_val_files(ctx, d, ev, nid)
     srec["eval_s"][legacy["key"]] = round(_time.perf_counter() - t0 + t_eps, 4)
-    if verdict == "FAIL":
+    if verdict == _vm.FAIL:                                 # 경고 줄 = grade FAIL 행만(조건부는 echo 만 — 새 ctx 경고 없음)
         ctx.warnings.append("검증 FAIL: " + ", ".join(f"{m['metric']}({_FAIL_REASON[m['metric']]})"
-                                                     for m in metrics if m["role"] == "judge" and m["pass"] is False))
+                                                     for m in metrics if m["role"] == "judge" and m["grade"] == _vm.FAIL))
     fmt_v = lambda v: "skipped" if v is None else f"{v:.2e}"
-    ctx.echo(f"[validate] 변위 RMS={fmt_v(disp_rms_rel)} (≤{crit['disp_rms_rel_max']:g}), "
-             f"변위 최대={fmt_v(disp_max_rel)} (≤{crit['disp_max_rel_max']:g}), "
-             f"반력 Σ|R|/Σ|F|={fmt_v(reac_abs_rel)} (≤{crit['reaction_rel_max']:g}), "
-             f"변위 잡음 δ/U={fmt_v(disp_noise_rel)} (≤{crit['disp_noise_rel_max']:g}, {noise_source}) → {verdict}"
-             + (f" {fail_reasons}" if fail_reasons else "")
+    ctx.echo(f"[validate] {_judge_echo(metrics, noise_source)} → {_vm.verdict_text(verdict)}"
+             + _reasons_echo(verdict, fail_reasons, cond_reasons)
              + (f" ({undetermined_reason})" if undetermined_reason else ""))
     fa = fsum["abs_err_pct"]
     _g = lambda v, f: "skipped" if v is None else format(v, f)
@@ -2458,10 +2488,12 @@ def stage_validate(ctx: Context) -> dict:
         if e["st"]["status"] == "done":
             r = _vs.done_row(row, e["ev"]["doc"], e["doc"])
             vs = e["ev"]["values"]
-            wtxt = "" if r["reaction_warn"] is None else f", 주의 {r['reaction_warn']:g}"
+            rtxt = (f"허용치 {r['reaction_tol']:g}" if r["reaction_warn"] is None
+                    else _vm.criterion_text(r["reaction_warn"], r["reaction_tol"]))
             ctx.echo(f"[validate] {row['key']}: 변위 RMS={fmt_v(vs['disp_rms_rel'])}, 변위 최대={fmt_v(vs['disp_max_rel'])}, "
-                     f"반력 Σ|R|/Σ|F|={fmt_v(vs['reaction_rel'])}({row['reaction_role']}, 허용치 {r['reaction_tol']:g}{wtxt}) → {r['verdict']}"
-                     + (f" {r['fail_reasons']}" if r["fail_reasons"] else "")
+                     f"MAC(검증)={_fmt_mac(vs['mac'])}, "
+                     f"반력 Σ|R|/Σ|F|={fmt_v(vs['reaction_rel'])}({row['reaction_role']}, {rtxt}) → {_vm.verdict_text(r['verdict'])}"
+                     + _reasons_echo(r["verdict"], r["fail_reasons"], r["cond_reasons"])
                      + (f" ({r['undetermined_reason']})" if r["undetermined_reason"] else "")
                      + (f" · 한계 {r['limits']}" if r["limits"] else ""))
         else:
@@ -2469,8 +2501,10 @@ def stage_validate(ctx: Context) -> dict:
             ctx.echo(f"[validate] {row['key']}: 불가 {r['code']}")
         rows_out.append(r)
         ssum[row["key"]] = {"status": r["status"], "verdict": r["verdict"], "fail_reasons": r["fail_reasons"],
+                            "cond_reasons": r["cond_reasons"],
                             "undetermined_reason": r["undetermined_reason"], "code": r["code"],
-                            **{k: (r["metrics"] or {}).get(k) for k in ("disp_rms_rel", "disp_max_rel", "reaction_rel")}}
+                            **{k: (r["metrics"] or {}).get(k) for k in ("disp_rms_rel", "disp_max_rel", "reaction_rel",
+                                                                        "mac")}}
     leg_row = _vs.done_row(legacy, val, None)
     rows_all = [leg_row if row["legacy"] else next(x for x in rows_out if x["key"] == row["key"])
                 for row in _vs.VAL_PLAN]
@@ -2486,11 +2520,11 @@ def stage_validate(ctx: Context) -> dict:
     strain_short["n_plastic"] = None if sref["plastic"] is None else sref["plastic"]["n_plastic"]
     if "basis" in sref:
         strain_short.update({k: sref[k] for k in ("basis", "n_plastic_cum", "n_plastic_inc", "cum_max", "inc_max")})
-    return {"verdict": verdict, "fail_reasons": fail_reasons, "undetermined_reason": undetermined_reason,
-            "field": field_short, "strain_ref": strain_short, "noise_source": noise_source,
+    return {"verdict": verdict, "fail_reasons": fail_reasons, "cond_reasons": cond_reasons,
+            "undetermined_reason": undetermined_reason, "field": field_short, "strain_ref": strain_short, "noise_source": noise_source,
             "noise_hotspot_strain_rel": n_strain,
             "noise_force_rel": n_force, "disp_rms_rel": disp_rms_rel, "disp_max_rel": disp_max_rel,
-            "disp_noise_rel": disp_noise_rel,
+            "mac": vv["mac"], "disp_noise_rel": disp_noise_rel,
             "hotspot1_rel_err": h1, "reaction_rel": reac_abs_rel, "reaction_sum_rel": vv["reaction_sum_rel"],
             "n_hotspots_compared": len(hots), "n_hotspots_excluded": len(excluded),
             "full_solve": {k: fs[k] for k in ("mode", "run", "reason")}, "solver": solver_sum,
@@ -2533,8 +2567,8 @@ def stage_export(ctx: Context) -> dict:
         val = None
     if val is None:
         ctx.warnings.append("검증(05_val) 결과 없음 — validation.csv·reactions_321.csv 생략")
-    elif val.get("verdict") != "PASS":
-        ctx.warnings.append(f"검증 {val.get('verdict')} 상태로 내보냄")
+    elif _vm.export_warning(val.get("verdict")):            # 조건부 PASS 도 경고 문구(막지 않음 — §4.1)
+        ctx.warnings.append(_vm.export_warning(val.get("verdict")))
     F = fz["f"]
     ecfg = ctx.cfg["export"]
     rcfg = ecfg["radioss"]

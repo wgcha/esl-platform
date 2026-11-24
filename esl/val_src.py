@@ -39,7 +39,10 @@ FILE_COLS = ("load", "target")
 # 사전, 사전에 없는 출처는 공통 기준). 값은 esl/config.py VALIDATION_SOURCES_DEFAULTS["reaction_tol"].
 TOL_KEY = "validation.sources.reaction_tol"
 WARN_KEY = "validation.sources.reaction_warn"
-WARN_CODE = "REACTION_ABOVE_WARN"             # 반력 주의 표식(한계 코드와 같은 자리, 등급 caution)
+# 반력 주의 표식(한계 코드와 같은 자리, 등급 caution) — v0.24.3~v0.24.4 결과만(옛 sources.json 표시 그대로). v0.24.5
+# (esl_validate_tiers.md §1.4 — D-0.24.5-VT-4)부터 주의 < 반력 ≤ 허용치 = 조건부 PASS(cond_reasons REACTION)로 판정에 들어가므로
+# 새 결과 limits 에는 붙이지 않는다(이중 표식 금지). reaction_warned 는 같은 뜻으로 유지(정보 보존).
+WARN_CODE = "REACTION_ABOVE_WARN"
 
 VAL_PLAN: tuple[dict[str, Any], ...] = (
     # v0.24.4 지그 3방식(esl_jig_case.md §5.5): 응답 = 행 load 파일 bc 배열로 재풀이, 반력 = 지지력(정보), 한계 = jig.json limits
@@ -320,27 +323,28 @@ def src_block(row: dict[str, Any], doc: dict[str, Any] | None, sum_abs_f: float 
 def empty_row(row: dict[str, Any], st: dict[str, Any]) -> dict[str, Any]:
     """sources.json 행 — 상태가 done 이 아닐 때(verdict 이하 null·빈 값, dir null)."""
     return {"key": row["key"], "status": st["status"], "code": st.get("code"), "reason": st.get("reason"), "dir": None,
-            "verdict": None, "fail_reasons": [], "undetermined_reason": None, "metrics": None, "reaction_role": None,
+            "verdict": None, "verdict_scheme": None, "fail_reasons": [], "cond_reasons": [], "undetermined_reason": None,
+            "metrics": None, "reaction_role": None,
             "reaction_tol": None, "reaction_tol_key": None, "reaction_warn": None, "reaction_warned": False, "cond": None, "cond_text": None, "note": None, "limits": [], "limit_text": [], "comparable": None}
 
 
 ROW_METRICS = ("disp_rms_rel", "disp_max_rel", "reaction_rel", "disp_noise_rel", "reaction_sum_rel",
-               "hotspot1_strain_rel_err", "field_p90_err_pct")
+               "hotspot1_strain_rel_err", "field_p90_err_pct", "mac")           # mac = v0.24.5 MAC(검증)(끝에 추가)
 
 
 def done_row(row: dict[str, Any], doc_val: dict[str, Any], diag: dict[str, Any] | None) -> dict[str, Any]:
-    """sources.json 행 — 검증한 출처(값 = 그 출처 validation.json)."""
+    """sources.json 행 — 검증한 출처(값 = 그 출처 validation.json). v0.24.5: 반력 주의 구간(주의 < 반력 ≤ 허용치)은 판정
+    단계(조건부 PASS, cond_reasons REACTION)로 표현 — reaction_warned 는 같은 뜻으로 두고 limits 에 WARN_CODE 를 붙이지 않음."""
     vals = {m["metric"]: m.get("value") for m in doc_val.get("metrics") or []}
     crit = doc_val.get("criteria") or {}
     tol, warn, reac = crit.get("reaction_rel_max"), crit.get("reaction_warn_rel"), vals.get("reaction_rel")
     warned = bool(row["reaction_role"] == "judge" and warn is not None and reac is not None and tol is not None
                   and warn < reac <= tol)
     lim = limit_info(limit_codes(row, diag), limit_doc_text(row, diag))
-    if warned:                                  # PASS 유지 + 주의(한계와 같은 자리에 표시 — 화면 탭·보고서)
-        lim["limits"].append(WARN_CODE)
-        lim["limit_text"].append(f"반력 {reac * 100:.3g} % — {warn * 100:g} % 초과, 받침점 주변 국부 변형 확인")
     return {"key": row["key"], "status": "done", "code": None, "reason": None, "dir": row["dir"],
-            "verdict": doc_val["verdict"], "fail_reasons": list(doc_val.get("fail_reasons") or []),
+            "verdict": doc_val["verdict"], "verdict_scheme": doc_val.get("verdict_scheme"),
+            "fail_reasons": list(doc_val.get("fail_reasons") or []),
+            "cond_reasons": list(doc_val.get("cond_reasons") or []),
             "undetermined_reason": doc_val.get("undetermined_reason"),
             "metrics": {k: vals.get(k) for k in ROW_METRICS}, "reaction_role": row["reaction_role"],
             "reaction_tol": tol, "reaction_tol_key": row["reaction_tol_key"], "reaction_warn": warn,
