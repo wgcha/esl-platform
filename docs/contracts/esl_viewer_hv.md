@@ -468,3 +468,4 @@ D-0.24.6-VW-1 범위·판정 기준, VW-2 층 토글, VW-3 원형 겹침, VW-4 �
 - §8.3 백엔드 거울 `RANK_V3D` ↔ 코어 열 v3d 는 `test_rank_v3d_mirrors_core_column` 이 실제 대조, 코어→사이드카→API 전 구간은 `backend/tests/test_doe_v0246_core_e2e.py`.
 - §9.1 `no_view` 에서는 빈 탭 [다시 만들기] 를 두지 않는다(`tabState` — 다시 만들기가 순위 보기를 못 만듦). 백엔드 `source_add` 판정(§8.2)은 그대로. 원인 구분 문구는 R-VW-6.
 - §17 에 R-VW-6 추가: 응답에 jig_diag 끔·기준 값 없음 원인을 구분하는 키(no_view 문구 정밀화).
+- 검증 수정(D-0.24.6-VW-17): 계획 표 열 sync·layers 를 카드가 읽음(`usesPairSync`·`effectiveLayers`), 쌍 기본 변형 배율 = `pairScaleExp`(쌍 최대 대각선·최대 변위, §2.7 — 적재 순서 무관), no_view 는 `sourceNoView` 한 판정으로 탭·3D 행 [다시 만들기] 모두 끔(§9).

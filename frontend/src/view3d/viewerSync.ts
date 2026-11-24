@@ -3,6 +3,7 @@
 //  - useViewerSync(planKey): 2카드 쌍이 공유하는 같은 상태 + 카메라 중계. 한 카드의 회전·줌·팬·시점 버튼 → 상대 카드 applyCameraState 1회
 //    (적용 중에는 다시 내보내지 않음 — 핑퐁 금지, 출처 id 가드).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { pairScaleExp } from "./deform";
 import { readProjection, type Projection } from "./projection";
 import type { CameraState, SceneApi } from "./sceneApi";
 import { planOf, type ViewerState } from "./viewerPlan";
@@ -25,6 +26,10 @@ export interface ViewerStore {
 export interface ViewerSync extends ViewerStore {
   /** 쌍의 한 카드 장면을 등록. 반환 = 해제. 이미 다른 카드가 있으면 그 시점으로 맞춘다 */
   attach: (id: string, scene: SceneApi) => () => void;
+  /** 카드가 자기 변위 규모(대각선·최대 변위)를 쌍에 알림. 반환 = 해제. 기본 배율은 쌍 전체가 정함(적재 순서 무관) */
+  reportBasis: (id: string, b: { diag: number; umax: number }) => () => void;
+  /** 사용자가 배율을 아직 안 만졌을 때 쌍이 같이 쓰는 기본 배율 지수(알린 카드가 없으면 null) */
+  kexpDefault: number | null;
 }
 
 const initial = (planKey: string): ViewerShared => ({ ...readViewerPrefs(planKey), deformOn: false, kexp: null, real: false, proj: readProjection() });
@@ -89,5 +94,17 @@ export function useViewerSync(planKey: string): ViewerSync {
     },
     [relay],
   );
-  return useMemo(() => ({ ...store, attach }), [store, attach]);
+  const [basis, setBasis] = useState<Record<string, { diag: number; umax: number }>>({});
+  const reportBasis = useCallback((id: string, b: { diag: number; umax: number }) => {
+    setBasis((p) => (p[id]?.diag === b.diag && p[id]?.umax === b.umax ? p : { ...p, [id]: b }));
+    return () =>
+      setBasis((p) => {
+        if (!(id in p)) return p;
+        const { [id]: _drop, ...rest } = p;
+        void _drop;
+        return rest;
+      });
+  }, []);
+  const kexpDefault = useMemo(() => pairScaleExp(Object.values(basis)), [basis]);
+  return useMemo(() => ({ ...store, attach, reportBasis, kexpDefault }), [store, attach, reportBasis, kexpDefault]);
 }

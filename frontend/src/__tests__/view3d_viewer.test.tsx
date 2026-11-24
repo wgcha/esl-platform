@@ -1,5 +1,5 @@
 // V-0246-VW-1~13(프런트, W-F1): 3D 뷰어 강화 — 계획 표·층 토글·구간 범례·최대 표식·특징선·탐침·수동 범위 유지·기억·쌍 동기화·편집 보기 DOM 불변.
-import { fireEvent, render, renderHook, screen, waitFor, within, act } from "@testing-library/react";
+import { cleanup, fireEvent, render, renderHook, screen, waitFor, within, act } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,6 +74,7 @@ import { useViewerSync } from "../view3d/viewerSync";
 import { decodeValues } from "../view3d/values";
 import { useLoadView } from "../view3d/useLoadView";
 import { parseGlb } from "../view3d/glb";
+import { defaultScaleExp, pairScaleExp } from "../view3d/deform";
 
 type FakeScene = SceneApi & { calls: Record<string, unknown[][]>; emit: (e: PickEvent) => void; emitCam: (s: unknown) => void; opts: SceneOptions };
 const scene = () => h.scenes[h.scenes.length - 1] as FakeScene;
@@ -683,5 +684,140 @@ describe("⚙ 팝오버 접근성", () => {
     openGear();
     fireEvent.mouseDown(document.body);
     expect(screen.queryByTestId("v3d-viewer-pop")).toBeNull();
+  });
+});
+
+// ---- 검증 수정 2·3: 계획 표 열이 실제 동작을 결정 · 쌍 기본 배율은 적재 순서와 무관 ----
+describe("검증 수정 2 계획 표 열 = 동작 (변이 시험: 열 값을 바꾸면 동작이 바뀜)", () => {
+  const withRow = async (key: string, patch: Partial<(typeof VIEWER_PLANS)[string]>, fn: () => Promise<void>) => {
+    const orig = VIEWER_PLANS[key];
+    VIEWER_PLANS[key] = { ...orig, ...patch };
+    try {
+      await fn();
+    } finally {
+      VIEWER_PLANS[key] = orig;
+    }
+  };
+  function Pair({ planKey }: { planKey: string }) {
+    const sync = useViewerSync(planKey);
+    const a = useLoadView("r1", true, null);
+    const b = useLoadView("r1", true, null);
+    return (
+      <>
+        {a && <View3DCard view={a} options={{ title: "A", plan: planKey, viewerSync: sync }} />}
+        {b && <View3DCard view={b} options={{ title: "B", plan: planKey, viewerSync: sync }} />}
+      </>
+    );
+  }
+  const openPair = async (planKey: string) => {
+    vi.spyOn(api, "view3d").mockResolvedValue(mockView3d().manifest("r1") as View3dOut);
+    render(<Pair planKey={planKey} />);
+    await waitFor(() => expect(h.scenes.length).toBe(2));
+    await waitFor(() => expect((h.scenes[1] as FakeScene).calls["setLegend"]).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByTestId("v3d-layer-bc")).toHaveLength(2));
+  };
+  it("sync = pair: 칩·시점·변형이 상대 카드에 / sync = none 으로 바꾸면 viewerSync 를 줘도 따로", async () => {
+    await withRow("study_design", { sync: "pair" }, async () => {
+      await openPair("study_design");
+      const [sa, sb] = h.scenes as FakeScene[];
+      fireEvent.click(screen.getAllByTestId("v3d-layer-bc")[0]);
+      expect(screen.getAllByTestId("v3d-layer-bc")[1].getAttribute("aria-pressed")).toBe("false");
+      await waitFor(() => expect((sa as unknown as { hasCamCb: () => boolean }).hasCamCb()).toBe(true));
+      const n0 = (sb.calls["applyCameraState"] ?? []).length;
+      act(() => sa.emitCam({ position: [9, 9, 9], target: [0, 0, 0], up: [0, 0, 1], halfH: 1, zoom: 1 }));
+      expect((sb.calls["applyCameraState"] ?? []).length).toBe(n0 + 1);
+      cleanup();
+    });
+    h.scenes.length = 0;
+    localStorage.clear();
+    await withRow("study_design", { sync: "none" }, async () => {
+      await openPair("study_design");
+      const [sa, sb] = h.scenes as FakeScene[];
+      fireEvent.click(screen.getAllByTestId("v3d-layer-bc")[0]);
+      expect(screen.getAllByTestId("v3d-layer-bc")[0].getAttribute("aria-pressed")).toBe("false");
+      expect(screen.getAllByTestId("v3d-layer-bc")[1].getAttribute("aria-pressed")).toBe("true"); // 상대 카드 그대로
+      fireEvent.click(screen.getAllByRole("button", { name: "변형 형상" })[0]);
+      expect(screen.getAllByRole("button", { name: "변형 형상" })[1].getAttribute("aria-pressed")).toBe("false");
+      expect((sa as unknown as { hasCamCb: () => boolean }).hasCamCb()).toBe(false);
+      expect((sb as unknown as { hasCamCb: () => boolean }).hasCamCb()).toBe(false);
+    });
+  });
+  it("layers 에서 bc 를 빼면: 칩·단축키 없음 + 장면 지지 층은 사용자 값이 켬이어도 꺼짐(칩에만 적용되던 결함)", async () => {
+    await withRow("case_load", { layers: ["load", "ghost", "marks"] }, async () => {
+      renderApp(url("c-demo", 4));
+      await ready();
+      expect(screen.queryByTestId("v3d-layer-bc")).toBeNull();
+      expect(screen.getByTestId("v3d-layer-load")).toBeTruthy();
+      expect(lastOf(layerCalls("supports"))).toBe(false);
+      expect(lastOf(layerCalls("arrows"))).toBe(true);
+    });
+    h.scenes.length = 0;
+    cleanup();
+    renderApp(url("c-demo", 4)); // 원래 행: 지지 층 켬
+    await ready();
+    expect(lastOf(layerCalls("supports"))).toBe(true);
+  });
+  it("layers 에서 marks 를 빼면 최대 표식 목록이 비고 층도 꺼짐, 원래 행은 표식 1개", async () => {
+    await withRow("case_load", { layers: ["bc", "load", "ghost"] }, async () => {
+      renderApp(url("c-demo", 4));
+      await ready();
+      expect(last("setValueMarks")?.[0] ?? []).toEqual([]);
+      expect(lastOf(layerCalls("marks"))).toBe(false);
+      expect(screen.queryByTestId("v3d-opt-marks")).toBeNull();
+    });
+    h.scenes.length = 0;
+    cleanup();
+    renderApp(url("c-demo", 4));
+    await ready();
+    expect((last("setValueMarks")![0] as unknown[]).length).toBe(1);
+  });
+});
+
+describe("검증 수정 3 쌍 기본 배율 = 적재 순서와 무관한 결정적 규칙(pairScaleExp)", () => {
+  it("pairScaleExp: 쌍 최대 대각선·최대 변위 기준, 순서 바꿔도 같음, 비면 null", () => {
+    const a = { diag: 100, umax: 0.5 };
+    const b = { diag: 120, umax: 2 };
+    expect(pairScaleExp([a, b])).toBe(pairScaleExp([b, a]));
+    expect(pairScaleExp([a, b])).toBe(defaultScaleExp(120, 2));
+    expect(pairScaleExp([a])).toBe(defaultScaleExp(100, 0.5));
+    expect(pairScaleExp([a, b])).not.toBe(defaultScaleExp(100, 0.5)); // 먼저 로드된 카드(a) 기준이 아님
+    expect(pairScaleExp([])).toBeNull();
+  });
+  it("카드: A 가 먼저 로드되든 B 가 먼저든 두 카드 배율 슬라이더가 같은 값(= 쌍 규칙)", async () => {
+    const base = mockView3d().manifest("x") as View3dOut;
+    const mk = (u: number, diag: number): View3dOut => ({ ...base, bbox: { ...base.bbox, diag }, ranges: { ...base.ranges, u_max: u } }) as View3dOut;
+    const mA = mk(0.5, 100);
+    const mB = mk(5, 100);
+    const run = async (slow: "rA" | "rB") => {
+      h.scenes.length = 0;
+      vi.restoreAllMocks();
+      vi.spyOn(api, "view3d").mockImplementation(((id: string) => new Promise((res) => setTimeout(() => res(id === "rA" ? mA : mB), id === slow ? 60 : 0))) as never);
+      function P() {
+        const sync = useViewerSync("study_design");
+        const a = useLoadView("rA", true, null);
+        const b = useLoadView("rB", true, null);
+        return (
+          <>
+            {a && <View3DCard view={a} options={{ title: "A", plan: "study_design", viewerSync: sync }} />}
+            {b && <View3DCard view={b} options={{ title: "B", plan: "study_design", viewerSync: sync }} />}
+          </>
+        );
+      }
+      const r = render(<P />);
+      await waitFor(() => expect(h.scenes.length).toBe(2), { timeout: 3000 });
+      await waitFor(() => expect(screen.getAllByRole("button", { name: "변형 형상" })).toHaveLength(2));
+      fireEvent.click(screen.getAllByRole("button", { name: "변형 형상" })[0]);
+      await waitFor(() => expect(screen.getAllByLabelText("변형 확대 배율")).toHaveLength(2));
+      const v = screen.getAllByLabelText("변형 확대 배율").map((e) => (e as HTMLInputElement).value);
+      r.unmount();
+      return v;
+    };
+    const v1 = await run("rA"); // B 먼저
+    const v2 = await run("rB"); // A 먼저
+    expect(v1[0]).toBe(v1[1]);
+    expect(v2[0]).toBe(v2[1]);
+    expect(v1).toEqual(v2);
+    expect(Number(v1[0])).toBeCloseTo(defaultScaleExp(100, 5), 5); // 큰 변위(B) 기준
+    expect(Number(v1[0])).not.toBeCloseTo(defaultScaleExp(100, 0.5), 5);
   });
 });

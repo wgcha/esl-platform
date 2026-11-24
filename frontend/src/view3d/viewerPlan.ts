@@ -48,3 +48,15 @@ export function planOf(key: string): ViewerPlan {
 export function defaultPlanKey(colorBy: "load" | "disp"): string {
   return colorBy === "disp" ? "case_disp" : "case_load";
 }
+
+/** 계획 열 해석(카드·칩이 같이 씀): 쌍 상태를 공유하는가 = 열 sync */
+export function usesPairSync(planKey: string): boolean {
+  return planOf(planKey).sync === "pair";
+}
+
+/** 계획 열 layers 를 적용한 층 켬 상태: 쓸 수 없는 층은 사용자가 켜 둔 값이어도 꺼진 것(장면·칩·표식·선택 모두 이 값) */
+export function effectiveLayers(planKey: string, state: Pick<ViewerState, ViewerLayer>): Record<ViewerLayer, boolean> {
+  const p = planOf(planKey);
+  const on = (l: ViewerLayer) => p.layers.includes(l) && state[l];
+  return { bc: on("bc"), load: on("load"), ghost: on("ghost"), marks: on("marks") };
+}

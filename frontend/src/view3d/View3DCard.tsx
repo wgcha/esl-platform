@@ -16,8 +16,9 @@ import { infoLine, shortFieldName, type ProbeExtra } from "./info";
 import { marksFor } from "./marks";
 import { LegendOverlay } from "./LegendOverlay";
 import { ViewerChips, ViewerGear } from "./ViewerControls";
-import { defaultPlanKey } from "./viewerPlan";
+import { defaultPlanKey, planOf } from "./viewerPlan";
 import { useViewerStore, type ViewerSync } from "./viewerSync";
+import { effectiveLayers, usesPairSync } from "./viewerPlan";
 import { loadScene } from "./loadThree";
 import { writeProjection, type Projection } from "./projection";
 import { selectionFromPick, sceneSelection } from "./selection";
@@ -90,10 +91,14 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const [phase, setPhase] = useState<"idle" | "loading" | "ready" | "nowebgl" | "error">("idle");
   const [phaseErr, setPhaseErr] = useState<string | null>(null);
   const [data, setData] = useState<Loaded | null>(null);
-  const ownStore = useViewerStore(options?.plan ?? defaultPlanKey(colorBy));
-  const store = options?.viewerSync ?? ownStore;
+  const planKey = options?.plan ?? defaultPlanKey(colorBy);
+  const ownStore = useViewerStore(planKey);
+  // 계획 표 열 sync: pair 인 보기만 쌍 상태를 공유한다(none 이면 호출부가 viewerSync 를 줘도 카드 자체 상태)
+  const sync = options?.viewerSync && usesPairSync(planKey) ? options.viewerSync : null;
+  const store = sync ?? ownStore;
   const st = store.state;
-  const sync = options?.viewerSync ?? null;
+  // 계획 표 열 layers: 쓸 수 없는 층은 켜 둔 값이어도 꺼짐(장면·표식·선택 공통)
+  const lay = effectiveLayers(planKey, st);
   const ds = sync ? null : options?.deformSync ?? null; // viewerSync 가 있으면 deformSync 무시(호환 유지)
   const deformOn = ds ? ds.on : st.deformOn;
   const real = ds ? ds.real : st.real;
@@ -116,10 +121,17 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const n0 = manifest?.n_nodes ?? 0;
   const ovU = dov && dov.u.length === n0 * 3 ? dov.u : null;
   const umax = useMemo(() => (ovU ? maxNorm3(ovU) : manifest?.ranges.u_max ?? 0), [ovU, manifest]);
+  // 기본 배율: 쌍(viewerSync)은 두 카드가 알린 값의 최대 기준(pairScaleExp — 적재 순서 무관), 카드 하나는 자기 manifest 기준
+  const reportBasis = sync?.reportBasis;
   useEffect(() => {
-    if (manifest && kexp === null) setKexp(defaultScaleExp(diag, umax));
-  }, [manifest, kexp, diag, umax]);
-  const k = real ? 1 : scaleFromExp(kexp ?? 0);
+    if (!manifest || !reportBasis) return;
+    return reportBasis(idRef.current, { diag, umax });
+  }, [manifest, reportBasis, diag, umax]);
+  useEffect(() => {
+    if (manifest && !sync && kexp === null) setKexp(defaultScaleExp(diag, umax));
+  }, [manifest, sync, kexp, diag, umax]);
+  const kexpEff = kexp ?? sync?.kexpDefault ?? null;
+  const k = real ? 1 : scaleFromExp(kexpEff ?? 0);
   const uEff = ovU ?? data?.vals.u ?? null;
   const hasU = !!uEff;
 
@@ -265,24 +277,24 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
     if (!data || !sceneRef.current || !manifest) return;
     const s = sceneSelection(selection, arrows, manifest.supports, manifest.top);
     // 하중 층을 끄면 화살표 강조 대신 노드 표식(주황 점)으로 위치를 보인다
-    sceneRef.current.select(st.load ? s.arrowIndex : null, s.vertex);
-  }, [data, manifest, arrows, selection, st.load]);
+    sceneRef.current.select(lay.load ? s.arrowIndex : null, s.vertex);
+  }, [data, manifest, arrows, selection, lay.load]);
   // 경계조건 층을 끄면 지지 선택 해제
   useEffect(() => {
-    if (!st.bc && selection?.kind === "support") view.setSelection(null);
+    if (!lay.bc && selection?.kind === "support") view.setSelection(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [st.bc, selection]);
+  }, [lay.bc, selection]);
 
   // ---- v0.24.6 층 켜기/끄기(visible 만 — 다시 만들기·요청 없음)
-  const ghostOn = st.ghost && deformOn;
+  const ghostOn = lay.ghost && deformOn;
   useEffect(() => {
     const sc = sceneRef.current;
     if (!data || !sc?.setLayerVisible) return;
-    sc.setLayerVisible("supports", st.bc);
-    sc.setLayerVisible("arrows", st.load);
+    sc.setLayerVisible("supports", lay.bc);
+    sc.setLayerVisible("arrows", lay.load);
     sc.setLayerVisible("ghost", ghostOn);
-    sc.setLayerVisible("marks", st.marks);
-  }, [data, st.bc, st.load, st.marks, ghostOn]);
+    sc.setLayerVisible("marks", lay.marks);
+  }, [data, lay.bc, lay.load, lay.marks, ghostOn]);
   // 원형 외곽선: 처음 켤 때 1회 계산(기하별 캐시), 이후는 visible 만
   const ghostCache = useRef<ParsedGlb | null>(null);
   useEffect(() => {
@@ -296,7 +308,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   }, [data]);
 
   // ---- 최대(·최소) 표식: 지금 칠한 색 필드(영역 색 fieldOverride 는 없음)
-  const ext = useMemo(() => (field && !fo && st.marks ? marksFor(field.values, "zero") : []), [field, fo, st.marks]);
+  const ext = useMemo(() => (field && !fo && lay.marks ? marksFor(field.values, "zero") : []), [field, fo, lay.marks]);
   const marksUnit = unit === "mm" ? "mm" : unit === "MPa" ? "MPa" : "N";
   const markList = useMemo(() => {
     if (!data || !ext.length) return [];
@@ -357,8 +369,8 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const maxLine = maxMark ? `최대 ${f3(field?.values[maxMark.vertex])} @N ${data?.glb.nodeIds ? data.glb.nodeIds[maxMark.vertex] : maxMark.vertex}` : null;
   const controlProps = { store, hasBc, hasLoad, deformOn, compact };
   const hotkeys = {
-    b: () => hasBc && store.set({ bc: !st.bc }),
-    l: () => hasLoad && store.set({ load: !st.load }),
+    b: () => hasBc && planOf(planKey).layers.includes("bc") && store.set({ bc: !st.bc }),
+    l: () => hasLoad && planOf(planKey).layers.includes("load") && store.set({ load: !st.load }),
   };
 
   return (
@@ -399,7 +411,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
                 min={EXP_MIN}
                 max={EXP_MAX}
                 step={EXP_STEP}
-                value={kexp ?? 0}
+                value={kexpEff ?? 0}
                 disabled={!deformOn || real}
                 aria-label="변형 확대 배율"
                 onChange={(e) => setKexp(Number(e.target.value))}
@@ -441,7 +453,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
             <span className="small muted" data-testid="v3d-note">
               화살표 최대 = {f3(fref)} N · 길이 ∝ |F| (최소 길이 제한)
               {ao ? " · 영역 합력" : mode.kind === "cluster" ? " · 군집 모드: ΣF ≈ 0 (자기평형)" : ""}
-              {!st.load ? " · 화살표 숨김" : ""}
+              {!lay.load ? " · 화살표 숨김" : ""}
             </span>
             {field && (
               <ColorLegend

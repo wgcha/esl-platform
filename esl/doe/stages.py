@@ -4577,6 +4577,7 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
     view3d.jig. 반환 ({view3d_jig, view3d_jig_esl, view3d_jig_ref} | {}, 경고 문자열). v0.24.6: 출처 표 v3d_store = result 행(지그 고정)
     — 본문은 _jig_v3d_build 공용(표식 = 지그 노드 샘플 '123' 그대로 — 바이트 동일)."""
     from esl.doe import jig as jg
+    from esl.mech.jig_bc import MARK_TIE
     vc = c.cfg["view3d"]
     jd = _jig_doc(c)
     pz = c.p("prep", JIG_NPZ)
@@ -4585,7 +4586,7 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
     row = next(s_ for s_ in RANK_SOURCES if s_["v3d_store"] == "result")
 
     def marks(x0, jidx, _rmap, smax):
-        return [(int(i), "123") for i in jg.support_sample(x0, jidx, smax)]
+        return [(int(i), MARK_TIE) for i in jg.support_sample(x0, jidx, smax)]
     return _jig_v3d_build(c, t, results, shown, U.load_npz(pz), row, marks)
 
 

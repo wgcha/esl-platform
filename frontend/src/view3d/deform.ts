@@ -10,6 +10,11 @@ export function defaultScaleExp(diag: number, umax: number): number {
   const k0 = !(umax > 0) || !(diag > 0) ? 1 : Math.min(Math.max((0.05 * diag) / umax, 1), 1e4);
   return Math.round(Math.log10(k0) * 100) / 100;
 }
+/** 비교 쌍 공유 기본 배율(esl_viewer_hv.md §2.7, D-0.24.6-VW-17): 쌍 전체 최대 외곽 대각선·최대 변위 기준 — 카드 적재 순서와 무관(대칭) */
+export function pairScaleExp(basis: readonly { diag: number; umax: number }[]): number | null {
+  if (!basis.length) return null;
+  return defaultScaleExp(Math.max(...basis.map((b) => b.diag)), Math.max(...basis.map((b) => b.umax)));
+}
 export const scaleFromExp = (e: number): number => Math.pow(10, Math.max(EXP_MIN, Math.min(EXP_MAX, e)));
 export const defaultScale = (diag: number, umax: number): number => scaleFromExp(defaultScaleExp(diag, umax));
 
