@@ -13,9 +13,9 @@ import sys
 import time
 
 import pytest
-
 import synth_case
 import vt_golden as G
+
 from esl import config as cfgm
 from esl import pipeline
 from esl import val_src as vs
