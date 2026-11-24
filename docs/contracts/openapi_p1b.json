@@ -3616,6 +3616,152 @@
         "title": "DoeJigEntryOut",
         "type": "object"
       },
+      "DoeJigMethodOut": {
+        "description": "v0.24.6 지그 방식 한 개의 상태(esl_viewer_hv.md §9.2 — 코어 result.json jig.methods{src} 값 그대로, types.ts 와 check:api 대조).\nstatus = 코어 문자열(ok·poor·fallback·unsupported 등 — 좁히지 않고 통과), 실패 = code·detail.",
+        "properties": {
+          "bc": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bc"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "fit_mac_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Mac Min"
+          },
+          "fit_umax_err_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit Umax Err Max"
+          },
+          "limits": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Limits",
+            "type": "array"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "method_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method Name"
+          },
+          "n_jig": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Jig"
+          },
+          "spring": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spring"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tie_dofs": {
+            "anyOf": [
+              {
+                "enum": [
+                  "normal",
+                  "translation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Dofs"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DoeJigMethodOut",
+        "type": "object"
+      },
       "DoeJigOut": {
         "description": "v0.23.0 지그 순위 진단(esl_jig_rank.md §4 고정 필드명 — types.ts DoeJigOut 와 check:api 대조).",
         "properties": {
@@ -3736,6 +3882,20 @@
             ],
             "title": "Hz Ratio"
           },
+          "methods": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/DoeJigMethodOut"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Methods"
+          },
           "n_contact": {
             "title": "N Contact",
             "type": "integer"
@@ -3785,6 +3945,21 @@
           },
           "th": {
             "$ref": "#/components/schemas/DoeJigThOut"
+          },
+          "tie_dofs": {
+            "anyOf": [
+              {
+                "enum": [
+                  "normal",
+                  "translation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Dofs"
           },
           "tie_rel_max": {
             "anyOf": [
@@ -4964,6 +5139,48 @@
             ],
             "title": "View3D Fi Ref"
           },
+          "view3d_jd": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Jd"
+          },
+          "view3d_jd_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Jd Esl"
+          },
+          "view3d_jd_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Jd Ref"
+          },
           "view3d_jig": {
             "anyOf": [
               {
@@ -5005,6 +5222,48 @@
               }
             ],
             "title": "View3D Jig Ref"
+          },
+          "view3d_js": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Js"
+          },
+          "view3d_js_esl": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Js Esl"
+          },
+          "view3d_js_ref": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View3D Js Ref"
           },
           "view3d_ref": {
             "anyOf": [

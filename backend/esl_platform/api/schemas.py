@@ -2060,6 +2060,25 @@ class DoeJigEntryOut(_Out):
     rot_deg: float            # 지그 노드 Kabsch 회전각
 
 
+class DoeJigMethodOut(_Out):
+    """v0.24.6 지그 방식 한 개의 상태(esl_viewer_hv.md §9.2 — 코어 result.json jig.methods{src} 값 그대로, types.ts 와 check:api 대조).
+    status = 코어 문자열(ok·poor·fallback·unsupported 등 — 좁히지 않고 통과), 실패 = code·detail."""
+
+    method: str | None = None
+    method_name: str | None = None
+    tie_dofs: Literal["normal", "translation"] | None = None
+    status: str
+    code: str | None = None
+    detail: str | None = None
+    fit_mac_min: float | None = None
+    fit_umax_err_max: float | None = None
+    warnings: list[str] = []
+    limits: list[str] = []
+    n_jig: int | None = None
+    bc: dict[str, Any] | None = None
+    spring: dict[str, Any] | None = None
+
+
 class DoeJigOut(_Out):
     """v0.23.0 지그 순위 진단(esl_jig_rank.md §4 고정 필드명 — types.ts DoeJigOut 와 check:api 대조)."""
 
@@ -2082,6 +2101,9 @@ class DoeJigOut(_Out):
     hz_jig: list[float] = []                                # 지그 구속 고유진동수 Hz(ρ_t 기준), 끔·실패 = []
     hz_321: list[float] | None = None                       # 3-2-1 기준(modes_ref321 거짓·실패 = null)
     hz_ratio: float | None = None                           # hz_jig[0] / hz_321[0]
+    # v0.24.6(esl_viewer_hv.md §9.2): 지그 tie 자유도와 방식별 상태 — 코어 값 그대로(옛 결과 = null)
+    tie_dofs: Literal["normal", "translation"] | None = None
+    methods: dict[str, DoeJigMethodOut] | None = None
     th: DoeJigThOut
     entries: list[DoeJigEntryOut]
 
@@ -2294,6 +2316,14 @@ class DoeResultOut(_Out):
     view3d_jig_esl: dict[str, str] | None = None
     view3d_jig_ref: dict[str, str] | None = None
     jig_on_clone: bool | None = None
+    # v0.24.6(esl_viewer_hv.md §8.3): 지그 변위·스프링 3D(사이드카 post/jig_view.json 병합 — 백엔드 거울 표 RANK_V3D = 코어 RANK_SOURCES 열 v3d,
+    # 폴더 꼬리표 jd·js). 없으면 null
+    view3d_jd: dict[str, str] | None = None
+    view3d_jd_esl: dict[str, str] | None = None
+    view3d_jd_ref: dict[str, str] | None = None
+    view3d_js: dict[str, str] | None = None
+    view3d_js_esl: dict[str, str] | None = None
+    view3d_js_ref: dict[str, str] | None = None
     # v0.24.5 #88 후속: 이 스터디 모드의 계획 표 열 sm_jig(base = 같은 메시 안 지그 계산 | none = 이 모드는 지그 ESL 을 계산하지 않음 —
     # 화면 지그 탭 사유를 모드 이름 대신 이 값으로 고름). 모르는 조합 = null
     jig_plan: Literal["base", "none"] | None = None
