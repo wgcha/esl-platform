@@ -3654,6 +3654,8 @@ export interface DoeRankViewOut {
 }
 export interface DoeRankViewsOut {
   jig?: DoeRankViewOut | null;
+  jig_disp?: DoeRankViewOut | null;
+  jig_spring?: DoeRankViewOut | null;
   full?: DoeRankViewOut | null;
   bforce?: DoeRankViewOut | null;
   fint?: DoeRankViewOut | null;

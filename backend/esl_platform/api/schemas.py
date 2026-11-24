@@ -2177,6 +2177,8 @@ class DoeRankViewOut(_Out):
 
 class DoeRankViewsOut(_Out):
     jig: DoeRankViewOut | None = None
+    jig_disp: DoeRankViewOut | None = None            # v0.24.4 지그 변위(사이드카 jig_view.json rank_views — #88 응답에서 빠지던 키)
+    jig_spring: DoeRankViewOut | None = None          # v0.24.4 지그 스프링
     full: DoeRankViewOut | None = None
     bforce: DoeRankViewOut | None = None              # v0.24.0 경계력 ESL 보기(사이드카 post/bforce_view.json — esl_bforce.md §7)
     fint: DoeRankViewOut | None = None                # v0.24.0 내력 ESL 보기(사이드카 post/fint_view.json — esl_fint.md §7)

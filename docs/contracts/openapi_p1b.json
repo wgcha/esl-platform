@@ -4383,6 +4383,26 @@
                 "type": "null"
               }
             ]
+          },
+          "jig_disp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jig_spring": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeRankViewOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "DoeRankViewsOut",
