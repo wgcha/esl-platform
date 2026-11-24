@@ -3,7 +3,7 @@
 `GET /doe/studies/{sid}/designs/{did}/redrop?entry_id=` — 검증 낙하와 같은 원본 입력 폐포(`verify_drop.input_set`)·같은 노드 패치
 (`esl.verify.patch.patch_design`)를 쓰되 좌표 출처는 `run/designs/<did>/design.npz`, 제출은 하지 않는다(zip 만).
 
-- 동기 스트리밍 + 임시 폴더 `<esl_root>/_redrop/<token>/`(바뀐 파일 `input/<rel>` + manifest + README). 정리: 스트림 끝 `finally`,
+- 동기 스트리밍 + 임시 폴더 `<esl_root>/_redrop/<token>/`(바뀐 파일 `<rel>` + manifest + README — v0.24.5 부터 `input/` 단계 없음). 정리: 스트림 끝 `finally`,
   요청마다 시작 시 ttl 지난 잔여, 4xx 로 끝나면 즉시. SPDM·입력 폴더·`_doe/<sid>` 에는 쓰지 않는다(I-6).
 - 허용 판정 = 계획 표 열 `redrop`(`opt_core.doe_transfer_plan`) — 시나리오 이름으로 분기하지 않는다.
 - 응답이 시작되기 전에 모든 검사·패치가 끝난다(스트리밍 도중 오류 코드 없음).
@@ -255,7 +255,7 @@ def bundle(ctx: AppContext, principal: Principal, sid: str, did: str, entry_id: 
                  "case": {"id": case["id"], "title": case["title"], "part_title": case.get("part_title"),
                           "rad_file_name": os.path.basename(case["rad_path"])}}
         kb = verify_drop.core_case_cfg(core)["rad_max_line_kb"]
-        spec = {"base_npz": bnpz, "design_npz": dnpz, "files": info["files"], "out": os.path.join(tmp, "input"),
+        spec = {"base_npz": bnpz, "design_npz": dnpz, "files": info["files"], "out": tmp,
                 "meta_out": tmp, "max_line": int(kb) * 1024 if kb else None,
                 "base_coord_tol_mm": float(rc["base_coord_tol_mm"]), "manifest_extra": extra}
         try:
@@ -269,7 +269,7 @@ def bundle(ctx: AppContext, principal: Principal, sid: str, did: str, entry_id: 
         changed = set(m["changed"])
         files: list[tuple[str, str]] = []
         for rel, p in info["files"]:
-            files.append((os.path.join(spec["out"], *rel.split("/")) if rel in changed else p, f"{verify_redrop.INPUT_DIR}/{rel}"))
+            files.append((os.path.join(spec["out"], *rel.split("/")) if rel in changed else p, rel))
         files.append((os.path.join(tmp, verify_redrop.README_NAME), verify_redrop.README_NAME))
         files.append((os.path.join(tmp, verify_redrop.MANIFEST_NAME), verify_redrop.MANIFEST_NAME))
         files.sort(key=lambda x: (x[1] not in (verify_redrop.README_NAME, verify_redrop.MANIFEST_NAME), x[1]))

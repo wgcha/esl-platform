@@ -158,8 +158,9 @@ def test_rd9_10_18_zip_structure_and_rank_outside_best(client, world, esl_root):
     top = f"redrop_{did}_{slug}_{sid[:8]}"
     names = z.namelist()
     assert {n.split("/")[0] for n in names} == {top}
-    assert set(names) == {f"{top}/REDROP_README.txt", f"{top}/redrop_manifest.json", *(f"{top}/input/{x}" for x in RELS)}
+    assert set(names) == {f"{top}/REDROP_README.txt", f"{top}/redrop_manifest.json", *(f"{top}/{x}" for x in RELS)}
     assert not any(re.search(r"\.h3d|A001|\.out|\.sta", n) for n in names)           # 결과 파일 제외
+    assert not any("/input/" in n or n.startswith(f"{top}/input") for n in names)   # v0.24.5: input/ 단계 없음 — 하위 폴더(inc/·sub/)만 rel 그대로
     cd = r.headers["content-disposition"]
     assert f'filename="{top}.zip"' in cd and f"filename*=UTF-8''{top}.zip" in cd
     assert r.headers["x-bundle-files"] == str(len(names))
@@ -178,12 +179,12 @@ def test_rd9_10_18_zip_structure_and_rank_outside_best(client, world, esl_root):
     assert sorted(m["changed"]) == sorted(["m_0000.rad", "inc/a.inc", "sub/b.inc"])
     assert {f["rel"] for f in m["files"]} == RELS
     for f in m["files"]:                            # sha256 = zip 안 파일
-        assert hashlib.sha256(z.read(f"{top}/input/{f['rel']}")).hexdigest() == f["sha256"]
-        assert (f["source"] == "orig") == (f["rel"] == "m_0001.rad") and f["size"] == len(z.read(f"{top}/input/{f['rel']}"))
+        assert hashlib.sha256(z.read(f"{top}/{f['rel']}")).hexdigest() == f["sha256"]
+        assert (f["source"] == "orig") == (f["rel"] == "m_0001.rad") and f["size"] == len(z.read(f"{top}/{f['rel']}"))
     # 원본 파일(엔진 rad)은 바이트 동일, 패치본은 원본과 다름
-    assert z.read(f"{top}/input/m_0001.rad") == (world["c1"]["dir"] / "m_0001.rad").read_bytes()
-    assert z.read(f"{top}/input/sub/b.inc") != (world["c1"]["dir"] / "sub" / "b.inc").read_bytes()
-    assert "input/" in z.read(f"{top}/REDROP_README.txt").decode("utf-8")
+    assert z.read(f"{top}/m_0001.rad") == (world["c1"]["dir"] / "m_0001.rad").read_bytes()
+    assert z.read(f"{top}/sub/b.inc") != (world["c1"]["dir"] / "sub" / "b.inc").read_bytes()
+    assert "input/" not in z.read(f"{top}/REDROP_README.txt").decode("utf-8")
     assert not (world["base"] / "best" / did).exists() and _redrop_left(esl_root) == []
 
 
@@ -193,7 +194,7 @@ def test_rd2_base_design_zip_identical(client, world):
     m = json.loads(z.read(f"{top}/redrop_manifest.json"))
     assert m["changed"] == [] and m["nodes"]["n_moved"] == 0
     for rel in RELS:
-        assert z.read(f"{top}/input/{rel}") == (world["c1"]["dir"] / rel).read_bytes()
+        assert z.read(f"{top}/{rel}") == (world["c1"]["dir"] / rel).read_bytes()
 
 
 def test_rd18_entry_selection(client, world):
@@ -204,8 +205,8 @@ def test_rd18_entry_selection(client, world):
     assert m["entry"] == {"id": world["e2"], "label": "55QX10A Corner 2", "is_base": False}
     assert m["case"]["id"] == world["c2"]["id"]
     for rel in RELS:                                 # 그 엔트리 Case 의 폐포(엔진 rad 는 원본 그대로)
-        assert f"{top}/input/{rel}" in z.namelist()
-    assert z.read(f"{top}/input/m_0001.rad") == (world["c2"]["dir"] / "m_0001.rad").read_bytes()
+        assert f"{top}/{rel}" in z.namelist()
+    assert z.read(f"{top}/m_0001.rad") == (world["c2"]["dir"] / "m_0001.rad").read_bytes()
 
 
 # ================================================================ V-RD-8 모드 거부

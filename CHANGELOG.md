@@ -9,6 +9,7 @@
 - 설정: 코어 `validation.disp_rms_rel_cond_max`(0.10)·`mac_min`(0.95)·`mac_cond_min`(0.90). `ui.hidden_sources`(화면에서 숨길 출처, 기본 `[bforce, fint, jig]`).
 - **DB migration `0017_validation_tiers` 는 업데이트 때 자동 적용된다**(검증 표에 `mac`·`cond_reasons` 열, 판정 값에 `CONDITIONAL`). 옛 결과는 백필 없이 "이전 판정 체계"로 보인다.
 ### 변경
+- **재낙하 zip 구조**: `input/` 폴더 단계를 없앴다. 입력 파일(starter·엔진 rad·include)과 README·manifest 가 최상위 폴더 바로 아래에 함께 있어 폴더째 job 에 넣기 쉽다(include 하위 폴더는 그대로, manifest `files.rel` 은 폴더 기준). 입력 파일 이름이 메타 파일과 겹치면 `REDROP_META_NAME_CONFLICT` 로 거부한다.
 - **경계력·내력·지그 고정 출처를 화면에서 숨긴다**(표시만 — 계산·API·저장 산출물·보고서는 그대로). 보이는 출처는 지그 변위·지그 스프링·전 노드.
 - **경계력·내력·지그 고정은 기본으로 계산하지 않는다**(Case ③ 산출·보충 추출·④ 검증 풀이·강성 스터디 새 스냅샷). 코어 `bforce.enabled`·플랫폼 `bead_doe.bforce.enabled`·`bead_doe.fint.enabled` 기본 `false`, `jig.methods`·`bead_doe.rank.jig.methods` 기본 `[prescribed, spring]`. 켜면 v0.24.4 와 같은 산출물이고, 옛 스냅샷·옛 결과는 바이트 그대로다. 스터디 기본 순위 기준은 스냅샷 방식 목록의 첫 방식(새 기본 = 지그 변위)이다.
 ### 수정

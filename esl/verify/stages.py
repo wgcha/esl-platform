@@ -56,8 +56,8 @@ def vd_patch(spec: dict, echo=print) -> dict:
 
 def rd_prepare(spec: dict, echo=print) -> dict:
     """재낙하 입력 만들기(계약 esl_redrop_bundle.md §5.3) — 백엔드 동기 호출 전용(``STAGES``·``run_stage`` 에 없음).
-    spec: base_npz, design_npz, files[(rel, abs)], out(= <token>/input), meta_out(= <token>), max_line, base_coord_tol_mm,
-    manifest_extra. 바뀐 파일만 ``out/<rel>``, manifest·README 는 ``meta_out``. 반환 = manifest dict."""
+    spec: base_npz, design_npz, files[(rel, abs)], out(= <token>), meta_out(= <token> — v0.24.5 부터 out 과 같은 폴더), max_line, base_coord_tol_mm,
+    manifest_extra. 바뀐 파일만 ``out/<rel>``, manifest·README 는 ``meta_out``(메타 이름과 겹치는 rel 은 ``REDROP_META_NAME_CONFLICT``). 반환 = manifest dict."""
     from esl.verify import redrop as rd
     from esl.verify.patch import patch_design, read_node_coords
 
@@ -67,8 +67,9 @@ def rd_prepare(spec: dict, echo=print) -> dict:
     with np.load(spec["design_npz"], allow_pickle=False) as z:
         dnid = np.asarray(z["node_id"], dtype=np.int64)
         xd = np.asarray(z["x"], dtype=np.float64)
-    rd.check_nodeset(bnid, dnid)
     files = [(r, p) for r, p in spec["files"]]
+    rd.check_meta_names([r for r, _ in files])
+    rd.check_nodeset(bnid, dnid)
     max_line = spec.get("max_line")
     xf, found = read_node_coords(files, bnid, max_line=max_line)
     tol = float(spec.get("base_coord_tol_mm") or 0.0)
