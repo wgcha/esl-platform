@@ -14,6 +14,7 @@ from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories.jobs import LEASE_COLUMNS
 from ...core.state_machine import QUEUED
+from ...core.verdicts import PASSING, is_passing  # noqa: F401 - 통과 판정 한 곳(계약 esl_validate_tiers.md §4.1)
 from ..context import AppContext
 
 

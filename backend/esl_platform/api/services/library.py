@@ -44,6 +44,7 @@ from ...core.repositories import cases as cases_repo
 from ...core.repositories import jobs as jobs_repo
 from ...core.repositories import library as lib_repo
 from ...core.repositories.cases import VersionConflict
+from ...core.verdicts import PASSING, is_passing
 from ..context import AppContext
 from . import item_delete
 from .common import (
@@ -190,7 +191,7 @@ def eligibility(q: dict[str, Any] | None) -> tuple[bool, str | None]:
     if not q.get("scheme"):
         return False, "LEGACY"
     st = str(q.get("status") or q.get("verdict") or "").upper()
-    if st == "PASS":
+    if is_passing(st):                  # PASS·CONDITIONAL(조건부 PASS) = 적격(Q-VT-2 기본 가정)
         return True, None
     return False, "UNDETERMINED" if st == "UNDETERMINED" else "FAIL"
 
@@ -335,11 +336,12 @@ def _row_from_meta(meta: dict[str, Any], val: dict[str, Any], force_reason: str 
                "disp_max_rel": _num(val.get("disp_max_rel")), "disp_noise_rel": _num(val.get("disp_noise_rel")),
                "strain_exceed_frac": _num((val.get("strain_ref") or {}).get("frac_exceed")),
                "fail_reasons": list(val.get("fail_reasons") or []),
+               "mac": _num(val.get("mac")), "cond_reasons": list(val.get("cond_reasons") or []),
                "field_max_err_pct": _num(fmax), "field_p90_err_pct": _num(fp90),
                "hotspot1_rel_err": _num(q.get("hotspot1_rel_err")), "disp_rms_rel": _num(q.get("disp_rms_rel")),
                "reaction_rel": _num(q.get("reaction_rel")), "noise": q.get("noise"), "confirmed_fail": None,
                "confirmed_undetermined": None}
-    if val["verdict"] != "PASS":
+    if not is_passing(val["verdict"]):
         # FAIL → confirmed_fail, UNDETERMINED → confirmed_undetermined (같은 형식 {reason, by, by_name, at})
         quality["confirmed_undetermined" if val["verdict"] == "UNDETERMINED" else "confirmed_fail"] = {
             "reason": force_reason, "by": principal.user_id, "by_name": principal.display_name,
@@ -403,8 +405,8 @@ def register_entry(ctx: AppContext, principal: Principal, body) -> dict[str, Any
         if not val.get("scheme"):
             raise unprocessable("VALIDATION_LEGACY", "이전 판정 체계 결과는 등록할 수 없습니다 — ④에서 다시 검증하세요",
                                 verdict=val["verdict"])
-        if val["verdict"] != "PASS":
-            raise unprocessable("VALIDATION_NOT_PASS", f"검증 {val['verdict']} — 변위 기준 PASS 만 등록할 수 있습니다 "
+        if not is_passing(val["verdict"]):
+            raise unprocessable("VALIDATION_NOT_PASS", f"검증 {val['verdict']} — 변위 기준 PASS(조건부 PASS 포함)만 등록할 수 있습니다 "
                                 "(FAIL 사유는 [결과 받기(zip)]로 확인)", verdict=val["verdict"])
         cdir = case_dir(ctx, case)
         if not os.path.isdir(co.run_snapshot_dir(cdir, run["id"])):
@@ -788,8 +790,9 @@ def analysis_report(ctx: AppContext, aid: str) -> str:
 # 출처 이름으로 분기하지 않는다: 코어 계획 표(``core_adapter.val_src_plan`` = esl.val_src.VAL_PLAN)의 열(legacy·load·doc·na·
 # 한계 등급)만 읽는다. 하중 존재 = <Case 04_esl>/<load 파일> 이 있고 진단 json 이 막지 않음(코어 source_load.find 의 존재 검사와
 # 같은 후보 순서 — 노드 ID·변형 일치는 워커가 다시 확인).
-LOAD_GRADES = ("PASS", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT")     # 나쁜 쪽이 뒤
-GRADE_OF_STATUS = {"PASS": "PASS", "FAIL": "FAIL", "UNDETERMINED": "UNDETERMINED"}
+LOAD_GRADES = ("PASS", "CONDITIONAL", "caution", "not_comparable", "UNDETERMINED", "FAIL", "NO_RESULT")     # 나쁜 쪽이 뒤
+GRADE_OF_STATUS = {"PASS": "PASS", "CONDITIONAL": "CONDITIONAL", "FAIL": "FAIL", "UNDETERMINED": "UNDETERMINED"}
+CONFIRM_FREE_GRADES = PASSING     # 확인 없이 진행하는 등급(계약 esl_validate_tiers.md §4.4) — 조건부 PASS 는 칩·표 표식만
 UNSUPPORTED_CODE = "LOAD_SOURCE_UNSUPPORTED"
 
 
@@ -851,7 +854,8 @@ def _row_grade(row: dict[str, Any], limit_class: dict[str, str]) -> tuple[str, l
         classes = {limit_class.get(c, "caution") for c in row.get("limits") or []}
         if row.get("comparable") is False or "not_comparable" in classes:
             flags.append("not_comparable")
-        if "caution" in classes or row.get("reaction_warned"):
+        # 반력 주의는 옛 체계(status PASS) 행만 — 새 행은 CONDITIONAL 로 이미 표현(계약 §1.4·§4.4)
+        if "caution" in classes or (row.get("reaction_warned") and st == "PASS"):
             flags.append("caution")
     bad = [g for g in LOAD_GRADES if g in flags and g != "PASS"]      # PASS 는 다른 등급이 없을 때만
     return (bad[-1], bad) if bad else ("PASS", ["PASS"])
@@ -919,7 +923,7 @@ def _source_summary(key: str, label: str | None, ents: list[dict[str, Any]]) -> 
     worst = max((e["grade"] for e in ents), key=LOAD_GRADES.index)
     unavailable = [e["entry_id"] for e in ents if not e["load_available"]]
     return {"key": key, "label": label, "worst": worst, "n": len(ents), "unavailable_entry_ids": unavailable,
-            "needs_confirm": bool(ents) and not unavailable and worst != "PASS", "entries": ents}
+            "needs_confirm": bool(ents) and not unavailable and worst not in CONFIRM_FREE_GRADES, "entries": ents}
 
 
 def source_plan_row(key: str) -> dict[str, Any]:
@@ -963,7 +967,7 @@ def check_load_source(ctx: AppContext, key: str, entry_ids: list[str], ack: bool
     chk = {"key": key, "entries": ents_c, "worst": sm["worst"]}
     if sm["needs_confirm"] and not ack:
         bad_e = [{k: e[k] for k in ("entry_id", "status", "comparable", "validation_id", "grade", "flags", "limits")}
-                 for e in sm["entries"] if e["grade"] != "PASS"]
+                 for e in sm["entries"] if e["grade"] not in CONFIRM_FREE_GRADES]
         raise unprocessable("LOAD_SOURCE_UNCONFIRMED", f"{key} 출처에 검증 미통과·비교용 아님·주의 항목 {len(bad_e)}개 — 확인 후 "
                             "load_source_ack: true 로 다시 요청하세요", load_source=key, entries=bad_e, worst=sm["worst"])
     return chk

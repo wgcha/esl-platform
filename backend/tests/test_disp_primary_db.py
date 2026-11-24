@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 R = H("tok-power")
-HEAD = "0016"      # migration head(0016 목록 항목 삭제 기록, downgrade 미지원)
+HEAD = "0017"      # migration head(0017 ④ 검증 단계화·MAC)
 
 NEW_COLS = ("scheme", "disp_max_rel", "disp_noise_rel", "undetermined_reason", "disp", "strain_ref")
 NEW_CKS = ("ck_validations_scheme", "ck_validations_undetermined")

@@ -31,6 +31,7 @@ from .repositories import jobs as jobs_repo
 from .repositories import row_dict
 from .repositories import run_all as repo
 from .state_machine import CANCELED, FAILED, INTERRUPTED, SUCCEEDED, TERMINAL
+from .verdicts import is_passing
 
 log = logging.getLogger("esl_platform.run_all")
 
@@ -133,8 +134,8 @@ def evaluate(ss: dict[str, dict[str, Any]], step: str, facts: Any) -> Action:
         v = facts.verdict()
         if v is None:
             return Create(step)
-        if v["verdict"] == "PASS":
-            return Done("PASS", validation_id=v["validation_id"])
+        if is_passing(v["verdict"]):          # PASS·CONDITIONAL(조건부 PASS, 계약 esl_validate_tiers.md §4.1) = DONE
+            return Done(v["verdict"], validation_id=v["validation_id"])
         if v["verdict"] == "FAIL":
             return Stop(step, "VALIDATION_FAIL", verdict="FAIL", validation_id=v["validation_id"],
                         fail_reasons=v.get("fail_reasons") or [])
@@ -402,8 +403,10 @@ def advance(conn: Connection, run: dict[str, Any], case: dict[str, Any], env: En
                 continue
             return _wait(conn, run, step, job, True)
         if act.kind == "done":
-            return repo.finish(conn, run, "DONE", verdict="PASS", cur_step=step, stop_step=None, stop_code=None,
-                               stop_reason={"message": "④ 검증 PASS — 라이브러리 등록은 ④에서",
+            verdict = act.verdict
+            label = "조건부 PASS" if verdict == "CONDITIONAL" else "PASS"
+            return repo.finish(conn, run, "DONE", verdict=verdict, cur_step=step, stop_step=None, stop_code=None,
+                               stop_reason={"message": f"④ 검증 {label} — 라이브러리 등록은 ④에서",
                                             "detail": _jsonable(act.detail)})
         return _stop(conn, run, act.step, act.code or "PREREQUISITE_MISSING", act.detail)
     return _stop(conn, run, STEPS[-1], "PREREQUISITE_MISSING", {"missing": ["validate"]})

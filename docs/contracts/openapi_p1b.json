@@ -903,6 +903,7 @@
               {
                 "enum": [
                   "PASS",
+                  "CONDITIONAL",
                   "FAIL",
                   "UNDETERMINED",
                   "LEGACY"
@@ -7183,6 +7184,7 @@
             "items": {
               "enum": [
                 "PASS",
+                "CONDITIONAL",
                 "caution",
                 "not_comparable",
                 "UNDETERMINED",
@@ -7197,6 +7199,7 @@
           "grade": {
             "enum": [
               "PASS",
+              "CONDITIONAL",
               "caution",
               "not_comparable",
               "UNDETERMINED",
@@ -7244,6 +7247,7 @@
               {
                 "enum": [
                   "PASS",
+                  "CONDITIONAL",
                   "FAIL",
                   "UNDETERMINED",
                   "LEGACY"
@@ -7307,6 +7311,14 @@
             ],
             "title": "Comparable"
           },
+          "cond_reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Cond Reasons",
+            "type": "array"
+          },
           "cond_text": {
             "anyOf": [
               {
@@ -7329,6 +7341,7 @@
             "items": {
               "enum": [
                 "PASS",
+                "CONDITIONAL",
                 "caution",
                 "not_comparable",
                 "UNDETERMINED",
@@ -7343,6 +7356,7 @@
           "grade": {
             "enum": [
               "PASS",
+              "CONDITIONAL",
               "caution",
               "not_comparable",
               "UNDETERMINED",
@@ -7499,11 +7513,23 @@
             ],
             "title": "Reason"
           },
+          "scheme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheme"
+          },
           "status": {
             "anyOf": [
               {
                 "enum": [
                   "PASS",
+                  "CONDITIONAL",
                   "FAIL",
                   "UNDETERMINED",
                   "LEGACY"
@@ -7583,6 +7609,7 @@
           "worst": {
             "enum": [
               "PASS",
+              "CONDITIONAL",
               "caution",
               "not_comparable",
               "UNDETERMINED",
@@ -12004,6 +12031,7 @@
               {
                 "enum": [
                   "PASS",
+                  "CONDITIONAL",
                   "FAIL",
                   "UNDETERMINED"
                 ],
@@ -15200,6 +15228,14 @@
             "title": "Case Id",
             "type": "string"
           },
+          "cond_reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Cond Reasons",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -15306,6 +15342,17 @@
             "title": "Job Id",
             "type": "string"
           },
+          "mac": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mac"
+          },
           "reaction_rel": {
             "anyOf": [
               {
@@ -15336,6 +15383,7 @@
             "default": "LEGACY",
             "enum": [
               "PASS",
+              "CONDITIONAL",
               "FAIL",
               "UNDETERMINED",
               "LEGACY"
@@ -15369,6 +15417,7 @@
           "verdict": {
             "enum": [
               "PASS",
+              "CONDITIONAL",
               "FAIL",
               "UNDETERMINED"
             ],
@@ -15421,6 +15470,14 @@
               }
             ],
             "title": "Comparable"
+          },
+          "cond_reasons": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Cond Reasons",
+            "type": "array"
           },
           "cond_text": {
             "anyOf": [
@@ -15539,11 +15596,23 @@
             ],
             "title": "Reason"
           },
+          "scheme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheme"
+          },
           "status": {
             "anyOf": [
               {
                 "enum": [
                   "PASS",
+                  "CONDITIONAL",
                   "FAIL",
                   "UNDETERMINED",
                   "LEGACY"

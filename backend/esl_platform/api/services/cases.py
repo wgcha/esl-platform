@@ -222,7 +222,7 @@ def list_cases(ctx: AppContext, project_id: str | None, status: str | None) -> l
 
 
 def library_summary(stats: dict[str, Any] | None) -> dict[str, Any]:
-    """Case 의 라이브러리 등록 현황(#49): count = ACTIVE 항목 수, latest_status = 최신 항목 판정(PASS·FAIL·UNDETERMINED·LEGACY,
+    """Case 의 라이브러리 등록 현황(#49): count = ACTIVE 항목 수, latest_status = 최신 항목 판정(PASS·CONDITIONAL·FAIL·UNDETERMINED·LEGACY,
     라이브러리 목록 적격 배지와 같은 규칙)."""
     from .library import eligibility
 
@@ -230,7 +230,9 @@ def library_summary(stats: dict[str, Any] | None) -> dict[str, Any]:
         return {"count": 0, "latest_entry_id": None, "latest_status": None, "latest_registered_at": None}
     lt = stats.get("latest") or {}
     ok, why = eligibility(lt.get("quality"))
-    return {"count": stats["count"], "latest_entry_id": lt.get("id"), "latest_status": "PASS" if ok else why,
+    q = lt.get("quality") or {}
+    st = "CONDITIONAL" if str(q.get("status") or q.get("verdict") or "").upper() == "CONDITIONAL" else "PASS"
+    return {"count": stats["count"], "latest_entry_id": lt.get("id"), "latest_status": st if ok else why,
             "latest_registered_at": lt.get("registered_at")}
 
 

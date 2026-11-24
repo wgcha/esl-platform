@@ -16,12 +16,13 @@ import numpy as np
 from sqlalchemy.engine import Connection
 
 from esl_platform.core import core_outputs as co
+from esl_platform.core import verdicts
 from esl_platform.core.atomic import atomic_replace
 from esl_platform.core.repositories import cases as cases_repo
 
 from . import esl_snapshot
 
-VERDICT_SCHEMES = ("disp_primary/1",)       # validations.scheme 허용값(migration 0008 ck_validations_scheme)
+VERDICT_SCHEMES = verdicts.VERDICT_SCHEMES       # validations.scheme 허용값(migration 0008·0017 ck_validations_scheme)
 SHA_MAX_BYTES = 256 * 1024 * 1024
 KIND_BY_DIR = {co.D_EXTRACT: "EXTRACT", co.D_TSTAR: "TSTAR", co.D_BC: "SUPPORT", co.D_ESL: "ESL",
                co.D_VAL: "VALIDATION", co.D_EXPORT: "EXPORT", co.D_REPORT: "REPORT"}
@@ -235,7 +236,7 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
         raise RegisterError("OUTPUT_INVALID", "validation.json 이 대상 ESL 결과의 검증이 아닙니다")
     vf = co.validation_fields(val)      # 계약 esl_validate_sources.md §7.4 — 출처 ValidationOut 과 같은 변환
     verdict = vf["verdict"]
-    if verdict not in ("PASS", "FAIL", "UNDETERMINED"):
+    if verdict not in verdicts.VERDICTS:
         raise RegisterError("OUTPUT_INVALID", f"validation.json verdict 오류: {verdict}")
     # 계약 esl_disp_primary.md §7: verdict_scheme 이 있으면 scheme 에 저장, 없으면(schema 2) NULL = LEGACY
     scheme = vf["scheme"]
@@ -244,6 +245,8 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
     reason = vf["undetermined_reason"]
     if verdict == "UNDETERMINED" and (scheme is None or reason is None):
         raise RegisterError("OUTPUT_INVALID", "UNDETERMINED 판정에는 verdict_scheme·undetermined_reason 이 필요합니다")
+    if verdict == "CONDITIONAL" and scheme != "disp_primary/2":      # ck_validations_conditional 과 같은 규칙(DB 오류 전에 사유)
+        raise RegisterError("OUTPUT_INVALID", "CONDITIONAL 판정에는 verdict_scheme disp_primary/2 가 필요합니다")
     disp, reac, disp_max, disp_noise = (vf["disp_rms_rel"], vf["reaction_rel"], vf["disp_max_rel"],
                                         vf["disp_noise_rel"])
     v = cases_repo.insert_validation(
@@ -252,7 +255,7 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
         fail_reasons=vf["fail_reasons"], criteria=vf["criteria"],
         field=vf["field"], dir_rel=co.D_VAL,
         scheme=scheme, disp_max_rel=disp_max, disp_noise_rel=disp_noise, undetermined_reason=reason,
-        disp=vf["disp"], strain_ref=vf["strain_ref"],
+        disp=vf["disp"], strain_ref=vf["strain_ref"], mac=vf["mac"], cond_reasons=vf["cond_reasons"],
     )
     # 이 실행의 검증 스냅샷 runs/<esl_run_id>/05_val (라이브러리 등록·겹쳐보기 API 가 이후 검증과 무관하게 읽음)
     if os.path.isdir(co.run_snapshot_dir(cdir, run["id"])):
@@ -262,7 +265,7 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
             raise RegisterError("OUTPUT_INVALID", f"검증 산출물 스냅샷 실패: {exc}") from None
     out = {"validation_id": v["id"], "verdict": verdict, "status": verdict if scheme else "LEGACY",
            "disp_rms_rel": disp, "disp_max_rel": disp_max, "disp_noise_rel": disp_noise, "reaction_rel": reac,
-           "undetermined_reason": reason}
+           "undetermined_reason": reason, "mac": vf["mac"], "cond_reasons": vf["cond_reasons"]}
     if p.get("origin") == "library_revalidate":
         out["revalidate"] = revalidate_transition(conn, job, v)
     return out
@@ -270,7 +273,8 @@ def register_validation(conn: Connection, job: dict[str, Any], case: dict[str, A
 
 # ---------------------------------------------------------------- v0.10.0 재검증 전환(esl_menu_restructure.md §7.4)
 QUALITY_FROM_VALIDATION = ("verdict", "status", "scheme", "undetermined_reason", "disp_rms_rel", "disp_max_rel",
-                           "disp_noise_rel", "reaction_rel", "strain_exceed_frac", "fail_reasons", "field_max_err_pct",
+                           "disp_noise_rel", "reaction_rel", "strain_exceed_frac", "fail_reasons", "mac", "cond_reasons",
+                           "field_max_err_pct",
                            "field_p90_err_pct")
 
 
@@ -283,12 +287,13 @@ def _quality_from(v: dict[str, Any]) -> dict[str, Any]:
             "undetermined_reason": v.get("undetermined_reason"), "disp_rms_rel": _f(v.get("disp_rms_rel")),
             "disp_max_rel": _f(v.get("disp_max_rel")), "disp_noise_rel": _f(v.get("disp_noise_rel")),
             "reaction_rel": _f(v.get("reaction_rel")), "strain_exceed_frac": _f(sref.get("frac_exceed")),
-            "fail_reasons": list(v.get("fail_reasons") or []), "field_max_err_pct": _f(fmax),
+            "fail_reasons": list(v.get("fail_reasons") or []), "mac": _f(v.get("mac")),
+            "cond_reasons": list(v.get("cond_reasons") or []), "field_max_err_pct": _f(fmax),
             "field_p90_err_pct": _f(fp90)}
 
 
 def revalidate_transition(conn: Connection, job: dict[str, Any], v: dict[str, Any]) -> dict[str, Any]:
-    """새 검증 등록과 같은 트랜잭션: 항목이 아직 ACTIVE ∧ 같은 esl_run ∧ 새 판정 PASS(scheme 있음) → quality 판정 키·
+    """새 검증 등록과 같은 트랜잭션: 항목이 아직 ACTIVE ∧ 같은 esl_run ∧ 새 판정 PASS·조건부 PASS(scheme 있음) → quality 판정 키·
     validation_id 갱신 + quality.revalidated, force_reason·confirmed_* = null, version+1(PROMOTED). FAIL·판정 불가 → 불변
     (KEPT_LEGACY). 항목이 그사이 폐기·변경 → 불변(ENTRY_CHANGED). 항목 폴더(entry.json·raw.npz)는 바꾸지 않는다."""
     import datetime as _dt
@@ -303,7 +308,7 @@ def revalidate_transition(conn: Connection, job: dict[str, Any], v: dict[str, An
     e = lib_repo.get_entry(conn, eid, for_update=True) if eid else None
     if e is None or e["status"] != "ACTIVE" or e["esl_run_id"] != p.get("esl_run_id"):
         return {**base, "outcome": "ENTRY_CHANGED"}
-    if status != "PASS":
+    if not verdicts.is_passing(status):      # PASS·CONDITIONAL(조건부 PASS) = 승격(계약 esl_validate_tiers.md §4.1)
         return {**base, "outcome": "KEPT_LEGACY"}
     q = dict(e.get("quality") or {})
     old = q.get("status") or ("LEGACY" if not q.get("scheme") else q.get("verdict"))

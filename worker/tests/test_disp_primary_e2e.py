@@ -292,6 +292,25 @@ def test_dp_pass_case_register_status_fields_section(client, synth_inputs, worke
 
     ud = register(undetermined)
     assert ud["status"] == "UNDETERMINED" and ud["undetermined_reason"] == "ZERO_DISP"
+    # ---- V-0245-VT-9/10: 새 체계(disp_primary/2) — CONDITIONAL 등록·mac·cond_reasons 저장(코어 문서 형식은 계약 §1.5 픽스처)
+    def tier(verdict, **extra):
+        def mut(d):
+            d.update(schema="esl/validation/4", verdict_scheme="disp_primary/2", verdict=verdict, **extra)
+            d["metrics"] = [x for x in d["metrics"] if x["metric"] != "mac"] + [{"metric": "mac", "value": 0.93,
+                                                                                "criterion": 0.95, "pass": False}]
+        return mut
+
+    cd = register(tier("CONDITIONAL", cond_reasons=["MAC"], fail_reasons=[]))
+    with engine.connect() as c:
+        rowc = cases_repo.get_validation(c, cd["validation_id"])
+    assert cd["status"] == cd["verdict"] == "CONDITIONAL" and cd["mac"] == pytest.approx(0.93) and cd["cond_reasons"] == ["MAC"]
+    assert rowc["scheme"] == "disp_primary/2" and rowc["mac"] == pytest.approx(0.93) and rowc["cond_reasons"] == ["MAC"]
+    assert row3["mac"] is None and row3["cond_reasons"] == []                       # 옛 체계 행: mac NULL·[]
+    pf = register(tier("PASS", cond_reasons=[]))
+    assert pf["status"] == "PASS" and pf["mac"] == pytest.approx(0.93) and pf["cond_reasons"] == []
+    with pytest.raises(reg.RegisterError) as ei:                                     # CONDITIONAL 은 새 체계에서만
+        register(lambda d: d.update(verdict="CONDITIONAL", verdict_scheme="disp_primary/1"))
+    assert ei.value.code == "OUTPUT_INVALID"
     for bad in (lambda d: d.update(verdict="UNDETERMINED", undetermined_reason=None),
                 lambda d: d.update(verdict="UNDETERMINED", undetermined_reason="X", verdict_scheme=None),
                 lambda d: d.update(verdict_scheme="future/9"), lambda d: d.update(verdict="MAYBE")):
