@@ -183,8 +183,8 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
   view3d: {top_k: 3, jig: true, jig_support_max: 64, jig_diag: true, jig_tie_gap_mm: 5.0, regen_keep_backups: 1, recon: true}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수, v0.23.3 jig_diag = 지그 진단 3D·하중 정의 탭 자료, jig_tie_gap_mm = 지그 노드 상대 부품 찾기 거리(보고만), regen_keep_backups = 3D 다시 만들기 이전 진단 백업 유지 개수(0 = 백업 안 함), v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단(목표 sm_ref)
-  bforce: {enabled: true, grades: [full, contact], view3d: true}   # v0.24.0 경계력 ESL(esl_bforce.md §9) — Case 에 접촉력 결과가 있으면 하중 정의 탭 [경계력 ESL]: grades = 순위에 쓸 데이터 등급(접촉력 전용, contact = tie 체결력 미포함), view3d = 응답 컨투어 + 하중 화살표
-  fint: {enabled: true, grades: [fint], view3d: true}   # v0.24.0 내력 ESL(esl_fint.md §9) — Case 에 FINT(/H3D/NODA/FINT) 결과가 있으면 탭 [내력 ESL](F = s·FINT, 3-2-1 재풀이)
+  bforce: {enabled: false, grades: [full, contact], view3d: true}   # v0.24.5 기본 끔(§12 — 켜면 v0.24.4 와 같음) / v0.24.0 경계력 ESL(esl_bforce.md §9) — Case 에 접촉력 결과가 있으면 하중 정의 탭 [경계력 ESL]: grades = 순위에 쓸 데이터 등급(접촉력 전용, contact = tie 체결력 미포함), view3d = 응답 컨투어 + 하중 화살표
+  fint: {enabled: false, grades: [fint], view3d: true}   # v0.24.5 기본 끔(§12) / v0.24.0 내력 ESL(esl_fint.md §9) — Case 에 FINT(/H3D/NODA/FINT) 결과가 있으면 탭 [내력 ESL](F = s·FINT, 3-2-1 재풀이)
   case_jig: {enabled: true, timeout_s: null}   # v0.24.4 Case ③ ESL 지그 3방식 — 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더 01_extract/jig_fixed 에 준비(esl_jig_case.md §5.1 — deck 표면 캐시 jig_surf.npz 는 코어가). enabled false = 준비·fixed-scan 호출 0. timeout_s null = bead_doe.paicad.timeout_s.fixed_scan
   rank:                               # v0.10.0 ESL별 개선 지표 + v0.20.0 강성 지표(계약 esl_stiffness_metric.md §6)
     ratio_tol: 1.0e-6                 # '변화 없음' 허용치(③ 은 noise_floor 반영)
@@ -229,7 +229,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       tie_spread_min: 0.02            # 지그 노드 분포(2번째 주축 표준편차 / 대상 파트 1번째 주축 표준편차) 미달 → JIG_SUPPORT_WEAK (해시 밖)
       # v0.24.4 Case 지그 세 방식(esl_jig_case.md §11 — 코어 Case 절 jig.* 와 같은 이름·값). 옛 스냅샷(키 없음) = translation·fixed
       tie_dofs: normal                # tie 구속 성분: normal(면외 법선 + 3-2-1 면내 — 새 기본) | translation(병진 123 — 옛 동작, 비교용)
-      methods: [fixed, prescribed, spring]   # 계산할 방식(출처 행 jig·jig_disp·jig_spring) — 빼면 그 방식은 계산 안 함(spring 이 가장 무거움)
+      methods: [prescribed, spring]   # v0.24.5 기본에서 fixed 제외(§12 — 넣으면 v0.24.4 와 같음) / 계산할 방식(출처 행 jig·jig_disp·jig_spring) — 빼면 그 방식은 계산 안 함(spring 이 가장 무거움)
       normal_kink_deg: 45.0           # 노드 법선 산포 고유치 기준 꺾임각(넘으면 두 면 법선 모두 구속)
       aux321_dup_deg: 10.0            # 3-2-1 면내 행이 tie 구속 부분공간과 이 각도 이내로 겹치면 제거
       aux_reaction_warn: 0.05         # 3-2-1 면내 반력비 초과 → 정보 JIG_AUX_REACTION (해시 밖)

@@ -32,7 +32,7 @@ JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TY
                "mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05,
                "tie_spread_min": 0.02,
                # v0.24.4 새 키(esl.mech.jig.JIG_NEW_KEYS 거울 — spring_alpha 기본 0.01: 메인 결정, α=1 은 prescribed 와 구분 안 됨)
-               "tie_dofs": "normal", "methods": ["fixed", "prescribed", "spring"], "normal_kink_deg": 45.0,
+               "tie_dofs": "normal", "methods": ["prescribed", "spring"], "normal_kink_deg": 45.0,
                "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto", "spring_alpha": 0.01,
                "spring_k_value": None, "spring_alpha_scan": []}
 NEW_JIG = ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reaction_warn", "spring_k_mode", "spring_alpha",

@@ -527,7 +527,7 @@ class BeadDoeBforceCfg(_M):
     """v0.24.0 경계력 ESL(esl_bforce.md §9): enabled = 계산(Case 에 경계력 결과가 있을 때), grades = 순위에 쓸 데이터 등급(접촉력 전용 —
     full·contact, esl_fint.md §0), view3d = 3D."""
 
-    enabled: bool = True
+    enabled: bool = False   # v0.24.5 §12 기본 끔(코어 DEFAULTS 거울) — 켜면 v0.24.4 와 같음
     grades: list[Literal["full", "fint", "contact"]] = Field(default_factory=lambda: ["full", "contact"], min_length=1)
     view3d: bool = True
 
@@ -535,7 +535,7 @@ class BeadDoeBforceCfg(_M):
 class BeadDoeFintCfg(_M):
     """v0.24.0 내력 ESL(esl_fint.md §9): enabled = 계산(Case 에 FINT 결과가 있을 때), grades = 순위에 쓸 등급(fint), view3d = 3D."""
 
-    enabled: bool = True
+    enabled: bool = False   # v0.24.5 §12 기본 끔(코어 DEFAULTS 거울) — 켜면 v0.24.4 와 같음
     grades: list[Literal["fint"]] = Field(default_factory=lambda: ["fint"], min_length=1)
     view3d: bool = True
 
@@ -588,7 +588,7 @@ class BeadDoeRankJigCfg(_M):
     # 옛 스냅샷(키 없음)의 뜻 = esl.mech.jig_bc.LEGACY_ABSENT(translation·fixed). spring_alpha 기본 0.01(메인 결정 — α=1 은 prescribed 와 구분 안 됨)
     tie_dofs: Literal["normal", "translation"] = "normal"
     methods: list[Literal["fixed", "prescribed", "spring"]] = Field(
-        default_factory=lambda: ["fixed", "prescribed", "spring"], min_length=1, max_length=3)
+        default_factory=lambda: ["prescribed", "spring"], min_length=1, max_length=3)
     normal_kink_deg: float = Field(default=45.0, gt=0, lt=180)
     aux321_dup_deg: float = Field(default=10.0, gt=0, lt=90)
     aux_reaction_warn: float = Field(default=0.05, ge=0)

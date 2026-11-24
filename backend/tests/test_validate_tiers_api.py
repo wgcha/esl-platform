@@ -250,9 +250,9 @@ def test_vt10_passing_single_place():
     assert common.PASSING == verdicts.PASSING == ("PASS", "CONDITIONAL")
     assert verdicts.is_passing("CONDITIONAL") and verdicts.is_passing("PASS")
     assert not any(verdicts.is_passing(x) for x in ("FAIL", "UNDETERMINED", None, "LEGACY"))
-    vm = pytest.importorskip("esl.val_metrics")
-    if hasattr(vm, "PASSING"):                                   # 코어(묶음 C) 값과 같아야 한다
-        assert tuple(vm.PASSING) == verdicts.PASSING
+    from esl import val_metrics as vm                            # 코어(v0.24.5 통합 후 항상 있음 — skip 없음)
+
+    assert tuple(vm.PASSING) == verdicts.PASSING
 
 
 GATE_FILES = ("backend/esl_platform/api/services/library.py", "backend/esl_platform/api/services/doe.py",

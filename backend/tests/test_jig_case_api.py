@@ -64,7 +64,7 @@ def test_example_yaml_loads_and_settings_carry_new_keys():
         assert cfg.settings is not None, cfg.error_keys()
         d = bead_doe_settings(cfg.settings)
         assert d["case_jig"] == {"enabled": True, "timeout_s": None}
-        assert {k: d["rank"]["jig"][k] for k in NEW_KEYS}["methods"] == ["fixed", "prescribed", "spring"]
+        assert {k: d["rank"]["jig"][k] for k in NEW_KEYS}["methods"] == ["prescribed", "spring"]
     d0 = bead_doe_settings(None)                                  # 섹션 없음 = 기본값(코어 DEFAULTS 에 아직 없는 키도 채움)
     assert d0["case_jig"]["enabled"] is True and d0["rank"]["jig"]["tie_dofs"] == "normal"
 
@@ -293,5 +293,5 @@ def test_copy_independent_of_defaults():
 
     a = BeadDoeRankJigCfg()
     a.methods.append("x")                                           # 기본 목록이 인스턴스 간 공유되지 않음
-    assert BeadDoeRankJigCfg().methods == ["fixed", "prescribed", "spring"]
+    assert BeadDoeRankJigCfg().methods == ["prescribed", "spring"]
     assert copy.deepcopy(a).methods == a.methods
