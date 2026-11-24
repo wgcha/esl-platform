@@ -1583,6 +1583,9 @@ class UiCfg(_M):
     upload_slim_hint_gb: float = Field(default=5, ge=0)               # 브라우저 업로드 h3d 가 이 크기(GB)를 넘으면 압축 모드 안내(0 = 끔)
     # v0.10.0: 라이브러리 [내보내기](다중 ESL zip) 노출. 기본 false = 화면 숨김, /library/exports API 는 전역 관리자만(그 외 403 EXPORT_DISABLED)
     library_export_enabled: bool = False
+    # v0.24.5(사용자 결정 2026-11-24, esl_validate_tiers.md §11): 화면에서 숨길 하중 출처 키(출처 표 key). 계산·API·저장 산출물·보고서는
+    # 그대로 — 화면 표시만. 기본 = 경계력·내력·지그 고정. 빈 목록 [] = v0.24.4 화면(전부 표시). GET /version ui.hidden_sources 로 전달.
+    hidden_sources: list[str] = Field(default_factory=lambda: ["bforce", "fint", "jig"])
 
 
 class LoggingCfg(_M):

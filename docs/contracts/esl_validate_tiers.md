@@ -265,3 +265,16 @@ D-0.24.5-VT-1 항목 등급·종합(§1.1·§1.2), VT-2 MAC 정의·위치(§1.3
 
 - R-VT-1 저장 지표로 재판정만 하는 작업(다시 풀지 않음 — 옛 `compare_disp.npz` 에 d_rel·d_val 이 있어(`esl/report/field.py:357`) MAC 재계산 가능. 새 검증 행으로 등록할지·옛 행을 둘지 결정 필요).
 - R-VT-2 ③ 재현 MAC·umax 오차를 ④ 와 같은 강체 제거 규칙으로 맞출지(지금은 이름만 구분).
+
+---
+
+## 11. 화면 출처 숨김 (사용자 결정 2026-11-24 — D-0.24.5-VT-12)
+
+사용자 원문: "경계력이랑 내력은 참고로도 쓰기 어려우니 웹에서 숨겨놓자. 지그 esl도 고정은 숨기자".
+
+- **표시만**: 웹 화면에서 출처 `bforce`·`fint`·`jig`(지그 고정)를 숨긴다. 계산·API 응답·저장 산출물(sources.json·05_val 폴더·스냅샷)·보고서(07_report·DOE 보고서)는 전 출처 그대로 — 정보 삭제 없음, 설정 한 줄로 되돌림. 보이는 출처 = `jig_disp`·`jig_spring`·`full`.
+- **설정 한 키**(하드코딩 금지): `ui.hidden_sources`(backend `UiCfg.hidden_sources`, 기본 `["bforce","fint","jig"]`, `config/esl_platform*.example.yaml`). `GET /version` 의 `ui.hidden_sources` 로 전달. 코어 설정 아님(코어 변경 불필요). 키가 없거나(옛 서버) `[]` 이면 v0.24.4 화면과 같다(탭·높이 동일 — Playwright 확인).
+- **거르는 곳 한 곳**: 화면 출처 표 `view3d/sources.ts`(`setHiddenSources`·`isHiddenSource`)를 읽는 `tabItemsOf`(Case ③ 3D 탭·④ 검증 탭·판정 표식), `loadSourceOptions`(스터디·비드 최적화 하중 출처 드롭다운 — 숨긴 출처 선택 불가), `doeTabs.visibleLoadSources`(스터디 하중 정의 탭·순위·3D·사유 줄·칩), `loadSourceChipOf`(결과 칩). 출처 이름 분기 없음. AppProvider 가 `/version` 을 받으면 설정을 넣고 화면을 한 번 다시 세운다.
+- 지그 그룹은 보이는 행이 2개(변위·스프링)이면 그대로 그룹 [변위|스프링](2560 펼침·1920 팝오버 규칙 유지). 기본 탭은 보이는 첫 출처(숨긴 출처가 응답 default·스냅샷 기본이어도).
+- 스터디 순위 기준(`metric_effective`)이 숨긴 출처이면 결과 카드에 한 줄 알림("순위 기준 출처(…)는 화면에서 숨겼습니다 …", `data-testid=hidden-primary-note`) — 정보 손실 없음(계산·저장 그대로).
+- 시험: 기본 설정에서 숨김 3출처가 어떤 탭·드롭다운에도 안 보임, `[]` 이면 v0.24.4 화면과 같음(vitest `validate_tiers.test.tsx` §11, Playwright 높이·탭 `/home/claude/shots/v0245h_*`).

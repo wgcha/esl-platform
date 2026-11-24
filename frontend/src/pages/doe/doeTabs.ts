@@ -4,7 +4,7 @@
 import { JIG_CODE_TEXT } from "../../api/doe";
 import type { DoeRankRow, DoeResultOut, DoeWarning } from "../../api/types";
 import { jigNoneText } from "../../components/DoeRanking";
-import { SOURCE_ROWS } from "../../view3d/sources";
+import { SOURCE_ROWS, isHiddenSource } from "../../view3d/sources";
 
 const SR = (key: string) => {
   const r = SOURCE_ROWS.find((x) => x.key === key);
@@ -265,6 +265,14 @@ export const LOAD_SOURCES: readonly LoadSource[] = [
     add: addOfNodal(NODAL_FI),
   },
 ];
+
+/** v0.24.5 화면에 보이는 하중 출처(설정 ui.hidden_sources 가 거른 것) — 탭·순위·3D·칩·사유 줄은 이것만 읽는다 */
+export const visibleLoadSources = (): readonly LoadSource[] => LOAD_SOURCES.filter((s) => !isHiddenSource(s.key));
+/** 주 출처(순위 기준)가 숨긴 출처이면 그 행(없으면 null) — 화면이 한 줄 알림을 낸다 */
+export const hiddenPrimaryOf = (r: DoeResultOut): LoadSource | null => {
+  const me = metricEff(r);
+  return LOAD_SOURCES.find((s) => isHiddenSource(s.key) && s.primaryFor.includes(me)) ?? null;
+};
 
 /** 자료 만들기 가능 여부(행 add 열): 결과 source_add[key], 없으면 옛 거울 키(응답 폴백) */
 export function sourceAddOf(r: DoeResultOut, s: LoadSource): { available: boolean; allowed: boolean; reason?: string | null } | null {

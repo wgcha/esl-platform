@@ -387,3 +387,22 @@ def test_vt_dump_real_v0245_fixture(client, engine, case):
     out = os.environ.get("VT_DUMP")
     if out:
         Path(out).write_text(json.dumps({"validation": v, "sources": sj}, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+# ================================================================ §11 화면 출처 숨김(설정 ui.hidden_sources)
+def test_vt11_hidden_sources_setting_and_version(client):
+    from esl_platform.core.config import UiCfg
+
+    assert list(UiCfg.model_fields["hidden_sources"].default_factory()) == ["bforce", "fint", "jig"]        # 기본
+    r = client.get(f"{API}/version", headers=R)
+    assert r.status_code == 200 and r.json()["ui"]["hidden_sources"] == ["bforce", "fint", "jig"]
+    for rel in ("config/esl_platform.example.yaml", "config/esl_platform.prod.example.yaml"):
+        assert "hidden_sources: [bforce, fint, jig]" in (REPO / rel).read_text(encoding="utf-8")
+
+
+def test_vt11_hidden_sources_empty_override():
+    from esl_platform.core.config import UiCfg
+
+    base = dict(max_artifact_bytes=1, max_preview_points=10, poll_job_ms=100, poll_queue_ms=100)
+    assert UiCfg(**base).hidden_sources == ["bforce", "fint", "jig"]
+    assert UiCfg(**base, hidden_sources=[]).hidden_sources == []

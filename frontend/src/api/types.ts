@@ -1798,7 +1798,7 @@ export interface VersionOut {
   commit: string | null;
   built_at: string | null;
   /** v0.6.0: 공개 설정. upload_slim_hint_gb = 이 크기(GB) 초과 h3d 에 압축 모드 안내(0 = 끔, 없으면 5) */
-  ui?: { upload_slim_hint_gb?: number; library_export_enabled?: boolean; library_export_max_entries?: number };
+  ui?: { upload_slim_hint_gb?: number; library_export_enabled?: boolean; library_export_max_entries?: number; /** v0.24.5 화면에서 숨길 하중 출처 키(설정 ui.hidden_sources) — 없으면 숨김 없음 */ hidden_sources?: string[] };
 }
 export type ChangelogSection = "추가" | "변경" | "수정";
 /** GET /changelog 원소 */

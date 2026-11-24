@@ -7,7 +7,7 @@ import GATE_SRC_MOCK from "../mock/server.ts?raw";
 import GATE_SRC_ANALYSIS from "../pages/library/AnalysisNew.tsx?raw";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { App } from "../app/App";
 import real from "./fixtures/real_v0245.json";
 import { COND_REASON_LABEL, FAIL_REASON_LABEL, condReasonText } from "../stages/Stage5";
@@ -17,7 +17,9 @@ import { makeValidation, variantValidation } from "../mock/data";
 import { MockServer, createMockFetch } from "../mock/server";
 import { valSourceRows, valSourceOut } from "../mock/valsrcmock";
 import { checkEntryMark, gradeMark, loadSourceChipOf } from "../view3d/loadSource";
-import { isTierScheme, markOf, reactionTolText, valRowOf, valTabItems } from "../view3d/sources";
+import { SOURCE_ROWS, caseTabItems, groupFieldsOf, hiddenSourcesSig, isHiddenSource, isTierScheme, markOf, reactionTolText, setHiddenSources, valRowOf, valTabItems, visibleSourceKeys } from "../view3d/sources";
+import { loadSourceOptions } from "../view3d/loadSource";
+import { LOAD_SOURCES, hiddenPrimaryOf, visibleLoadSources } from "../pages/doe/doeTabs";
 import { DEFAULT_FORM, toFilters } from "../pages/library/AnalysisNew";
 import type { ValidationOut, ValidationSourcesOut } from "../api/types";
 
@@ -221,5 +223,94 @@ describe("V-0245-VT-13 목 서버 일관성", () => {
     const old = valSourceRows(makeValidation("v", "r", "c"), "ok");
     expect(old.find((r) => r.key === "fint")?.status).toBe("PASS");
     expect(old.find((r) => r.key === "fint")?.scheme).toBeUndefined();
+  });
+});
+
+
+// ================================================================ §11 화면 출처 숨김(설정 ui.hidden_sources — 표시만)
+const DEFAULT_HIDDEN = ["bforce", "fint", "jig"];
+afterEach(() => setHiddenSources([]));
+
+describe("§11 화면 출처 숨김: 순수", () => {
+  it("기본 3출처가 어떤 표에도 안 보이고, []이면 전부 보인다(v0.24.4 화면)", () => {
+    const rows = valSourceRows(makeValidation("v", "r", "c"), "ok", true, true);
+    const src: ValidationSourcesOut = { validation_id: "v", default: "full", rows };
+    const all = valTabItems(src, true)!.map((i) => i.key);
+    expect(all).toEqual(["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"]);
+    setHiddenSources(DEFAULT_HIDDEN);
+    expect(isHiddenSource("bforce") && isHiddenSource("fint") && isHiddenSource("jig") && !isHiddenSource("full")).toBe(true);
+    expect(valTabItems(src, true)!.map((i) => i.key)).toEqual(["jig_disp", "jig_spring", "full"]);
+    expect(visibleSourceKeys()).toEqual(["jig_disp", "jig_spring", "full"]);
+    expect(visibleLoadSources().map((x) => x.key)).toEqual(["jig_disp", "jig_spring", "full"]);
+    expect(loadSourceOptions(null, "doe").map((o) => o.key)).toEqual(["jig_disp", "jig_spring", "full"]);
+    expect(loadSourceOptions(null, "opt").map((o) => o.key)).toEqual(["jig_disp", "jig_spring", "full"]);
+    // 지그 그룹은 [변위|스프링] 2개
+    const items = valTabItems(src, true)!;
+    expect(items.map((i) => [i.key, i.group ?? null, i.short ?? null])).toEqual([["jig_disp", "jig", "변위"], ["jig_spring", "jig", "스프링"], ["full", null, null]]);
+    expect(groupFieldsOf("jig_disp").group).toBe("jig");
+    setHiddenSources([]);
+    expect(valTabItems(src, true)!.map((i) => i.key)).toEqual(all);
+    expect(visibleLoadSources().length).toBe(LOAD_SOURCES.length);
+    expect(loadSourceOptions(null, "doe").map((o) => o.key)).toEqual(SOURCE_ROWS.map((r) => r.key));
+  });
+
+  it("옛 응답(지그 행 없음)도 같은 규칙, 모르는 키는 무시, 신호 문자열", () => {
+    setHiddenSources(["bforce", "nope", "fint", "jig"]);
+    expect(hiddenSourcesSig()).toBe("bforce,fint,jig");
+    const rows = valSourceRows(makeValidation("v", "r", "c"), "ok");
+    expect(valTabItems({ validation_id: "v", default: "full", rows }, true)!.map((i) => i.key)).toEqual(["full"]);
+    setHiddenSources(undefined);
+    expect(hiddenSourcesSig()).toBe("");
+  });
+
+  it("결과 칩: 숨긴 출처는 칩 없음(스냅샷 값은 그대로), 보이는 출처는 칩", async () => {
+    const { loadSourceChipOf } = await import("../view3d/loadSource");
+    setHiddenSources(DEFAULT_HIDDEN);
+    expect(loadSourceChipOf("bforce", { key: "bforce", worst: "PASS", entries: [] })).toBeNull();
+    expect(loadSourceChipOf("jig_disp", { key: "jig_disp", worst: "PASS", entries: [] })).not.toBeNull();
+    setHiddenSources([]);
+    expect(loadSourceChipOf("bforce", { key: "bforce", worst: "PASS", entries: [] })).not.toBeNull();
+  });
+
+  it("순위 기준이 숨긴 출처면 알림 대상(hiddenPrimaryOf), 보이는 출처면 null", () => {
+    const r = { rank: { metric_effective: "jig" }, metric_effective: "jig" } as never;
+    setHiddenSources(DEFAULT_HIDDEN);
+    expect(hiddenPrimaryOf(r)?.key).toBe("jig");
+    setHiddenSources([]);
+    expect(hiddenPrimaryOf(r)).toBeNull();
+  });
+
+  it("Case ③ 탭 항목도 같은 표 한 곳에서 거른다", () => {
+    setHiddenSources(DEFAULT_HIDDEN);
+    const rows = ["jig", "jig_disp", "jig_spring", "full", "bforce", "fint"].map((key) => ({ key, available: true, code: null, reason: null, resp: true, resp_code: null, resp_reason: null, rigid: null }));
+    expect(caseTabItems({ esl_run_id: "r", default: "jig", rows } as never)!.map((i) => i.key)).toEqual(["jig_disp", "jig_spring", "full"]);
+  });
+});
+
+describe("§11 화면 출처 숨김: 화면(목 서버 /version)", () => {
+  it("기본 설정: ④ 검증 탭에 경계력·내력·지그 고정 없음, 판정 표식은 보이는 탭만", async () => {
+    renderWith(null, (s) => {
+      s.valSourcesMode = "ok";
+      s.jigRows = true;
+      s.p3.hiddenSources = DEFAULT_HIDDEN;
+    });
+    await waitFor(() => {
+      const t = screen.getByTestId("val-src-tab");
+      expect(t.querySelector("[data-tab=full]")).toBeTruthy();
+      expect(t.querySelector("[data-tab=bforce]")).toBeNull();
+      expect(t.querySelector("[data-tab=fint]")).toBeNull();
+      expect(t.querySelector("[data-tab=jig]")).toBeNull();
+      expect(t.querySelector("[data-tab=jig_disp]")).toBeTruthy();
+    });
+    expect(screen.getByTestId("val-src-tab").textContent).not.toMatch(/경계력|내력|지그 고정/);
+  });
+
+  it("설정 []: v0.24.4 화면 그대로(경계력·내력 탭 있음)", async () => {
+    renderWith(null, (s) => (s.valSourcesMode = "ok"));
+    await waitFor(() => {
+      const t = screen.getByTestId("val-src-tab");
+      expect(t.querySelector("[data-tab=bforce]")).toBeTruthy();
+      expect(t.querySelector("[data-tab=fint]")).toBeTruthy();
+    });
   });
 });
