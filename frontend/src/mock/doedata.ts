@@ -1772,6 +1772,17 @@ export class DoeMock {
     this.recs.push(r30, r31, r32);
   }
 
+  /** v0.24.7 시연(?demoDepth=1): doe-30 = 깊이면 폭 유지(D 배지·W 사유 줄·W1 꼬리표) · doe-5 = 요소 비드 깊이면 폭 유지(단면 그림 ds_dD) · doe-6 = 복제 가능(FAILED, 키 없음 = 입구 고정(이전)) — 복제 창·칩 */
+  demoDepth() {
+    this.demoShape();
+    const r30 = this.recs.find((r) => r.out.id === "doe-30");
+    if (r30) r30.out.inputs = { ...r30.out.inputs, depth_section: "floor_fixed" };
+    const r5 = this.recs.find((r) => r.out.id === "doe-5");
+    if (r5) r5.out.inputs = { ...r5.out.inputs, depth_section: "floor_fixed" };
+    const r6 = this.recs.find((r) => r.out.id === "doe-6");
+    if (r6) r6.out.phase = "FAILED";
+  }
+
   /** v0.17.1 시연·시험(?demoLadder=1): ③ 다른 모델(STEP만) 메싱 뒤 긴 사다리 경고 — doe-12 준비 완료(경고 접기) · doe-13 준비 실패(빨간 1줄) */
   demoLadder() {
     if (this.recs.some((r) => r.out.id === "doe-12")) return;

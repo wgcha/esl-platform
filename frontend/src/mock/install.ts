@@ -67,6 +67,8 @@ export function installMockFetch() {
   if (params.get("demoStepSel") === "1") server.doe.demoStepSel();
   // v0.21.0 형상 규칙 시연: ?demoShape=1 doe-30(① 부분 W·guard) · doe-31(④ 완화 직행·메시 품질 ⚠) · doe-32(③ 기준 메시 품질 미달 띠)
   if (params.get("demoShape") === "1") server.doe.demoShape();
+  // v0.24.7 깊이 단면 동작 시연: ?demoDepth=1 doe-30(깊이면 폭 유지 — D 배지·W 사유 줄·W1 꼬리표) · doe-6(복제 창 — 키 없음 = 입구 고정(이전))
+  if (params.get("demoDepth") === "1") server.doe.demoDepth();
   // v0.23.0 지그 순위 시연: ?demoJig=1 doe-40(지그 ok) · doe-41(재현 미달) · doe-42(지그 불가 → 재풀이 C)
   if (params.get("demoJig") === "1") server.doe.demoJig();
   // v0.24.0 경계력 ESL 시연: ?demoBforce=1 doe-50(contact 등급 ok) · doe-51(경계력 자료 없음)
