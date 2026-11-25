@@ -240,3 +240,107 @@ def test_one_side_deterministic(ONE):
     a = bg.one_side(g, lab, c["nodes"], c["conn"], [1, 2, 3, 4])
     b = bg.one_side(g, lab, c["nodes"], c["conn"], [4, 3, 2, 1])
     assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def _cols(g, lab, X, C, x, segs, zones, dD):
+    from scipy.spatial import cKDTree
+
+    from beadgraph.zones import bead_zones
+    M = Mesh(g, lab, X, C)
+    Z = bead_zones(M, segs, zones, "D")
+    E = np.flatnonzero(Z["E"])
+    edge = np.flatnonzero(Z["nF"] & Z["nW"] & ~Z["E"])
+    n0 = np.asarray(g["frame"]["n0"], float)
+    _d, j = cKDTree(M.P[edge]).query(M.P[E])
+    f = edge[j]
+    s = np.sign(((x - X)[f] @ n0).sum()) or 1.0
+    full = (np.abs((x - X)[f] @ n0 - s * abs(dD)) <= 1e-9) & (np.linalg.norm((x - X)[E], axis=1) > 1e-9)
+    E, f = E[full], f[full]
+
+    def ang(P):
+        d = P[E] - P[f]
+        hh = np.abs(d @ n0)
+        pl = np.linalg.norm(d - np.outer(d @ n0, n0), axis=1)
+        return np.degrees(np.arctan2(hh, pl))
+    return ang(X), ang(x)
+
+
+def _h6_df(key, dD):
+    from beadgraph.testing import conformance as cf
+    g, lab, _ = cf.classified("h6")
+    fx = cf.load_fixture("h6")
+    X, C, F = fx["x0"], fx["conn"], fx["fixed"]
+    _n, _k, segs, zones, _dv = cf.h6_recipes(g, lab, fx)[key][0]
+    bl = [{"name": "v", "kind": "DF", "segs": segs, "zones": zones, "hold": 1}]
+    nom = bg.basis(g, lab, X, bl, None, fixed=F, elems=C)[0]["nominal"]
+    B = bg.basis(g, lab, X, bl, {"v": [nom - abs(dD), nom + abs(dD)]}, fixed=F, elems=C)
+    x = bg.morph(X, B, {"v": nom + dD})
+    r = bg.check(g, lab, X, x, B, {"v": nom + dD}, elems=C)
+    n0 = np.asarray(g["frame"]["n0"], float)
+    du = (x - X)[B[0]["info"]["achieved_idx"]]
+    return g, B[0]["info"], r, float(np.abs(du - np.outer(du @ n0, n0)).max())
+
+
+def test_df_h6_pocket_v3d():
+    """V-0247-DM-3 (d): DF on the H6 pocket C (+2) — no BG_CORNER_GUARD, no inversion, floor plan ≤ 1e-9."""
+    _g, info, r, fp = _h6_df("d", 2.0)
+    assert r["inverted"] == 0 and r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["v"] <= 1e-6
+    assert not any(w["code"] == "BG_CORNER_GUARD" for w in info["warnings"]) and fp <= 1e-9
+
+
+@pytest.mark.xfail(strict=True, reason="계약 보정 필요(C1 보고): H6 ch1(channel + flare) DF +2 — 부모 바닥 필렛 sliver(변 0.2 mm) "
+                   "68 요소 뒤집힘(−2: 35, ±1: 0), entry_wave 0.472 mm > 0.05h 0.148 (flare 벽 각 15.6°~55° 섞임 — 물결이 "
+                   "아니라 각 차이를 잼); measured, not relaxed")
+def test_df_h6_unaligned_v3():
+    """V-0247-DM-3: DF on the unaligned H6 channel ch1 (+2): floor plan ≤ 1e-9 at full ramp, entry_wave ≤ 0.05h,
+    no inversion."""
+    g, info, r, fp = _h6_df("b", 2.0)
+    assert r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["v"] <= 1e-6 and fp <= 1e-9
+    assert info["entry_wave_mm"] <= 0.05 * float(g["frame"]["h_mm"])
+    assert r["inverted"] == 0
+
+
+@pytest.mark.parametrize("dD", [2.0, -2.0])
+def test_parallel_neighbours_v30(dD):
+    """V-0247-DM-30 (package part): two parallel channels 20 mm apart, both DF at ±ΔD — SELECT_BLEND_CLIPPED, no
+    leak; the inversion count is reported (range guard limits the usable range in esl — tests/doe)."""
+    c = so.parallel(gap=20.0)
+    g, lab = _cls(c)
+    X, C, F = c["nodes"], c["conn"], c["fixed"]
+    sid = [s["id"] for s in g["segments"] if s["type"] != "base"]
+    assert len(sid) == 2
+    bl = [{"name": f"v{i}", "kind": "DF", "segs": [s], "hold": 1} for i, s in enumerate(sid)]
+    B = bg.basis(g, lab, X, bl, {"v0": [7.0, 13.0], "v1": [7.0, 13.0]}, fixed=F, elems=C)
+    assert all(any(w["code"] == "SELECT_BLEND_CLIPPED" for w in b["info"]["warnings"]) for b in B)
+    assert basis_leak(B, g, lab, X, C) == []
+    x = bg.morph(X, B, {"v0": 10.0 + dD, "v1": 10.0 + dD})
+    r = bg.check(g, lab, X, x, B, {"v0": 10.0 + dD, "v1": 10.0 + dD}, elems=C)
+    assert r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["v0"] <= 1e-6
+
+
+def test_cost_df_w1_v17_v27(ONE):
+    """V-0247-DM-17·27 (package part): DF basis time ≤ 1.2 × W basis time (same band, no harmonic) on the synthetic
+    channel; W1 basis ≤ 1.2 × W basis on synth_oneside (W reference = the two-sided channel of the same size). Best of 3."""
+    import time
+
+    def best(fn):
+        t = []
+        for _ in range(3):
+            t0 = time.perf_counter()
+            fn()
+            t.append(time.perf_counter() - t0)
+        return min(t)
+    c = so.channel(theta=(45.0, 45.0))
+    g, lab = _cls(c)
+    sid = [s["id"] for s in g["segments"] if s["type"] != "base"]
+    X, C, F = c["nodes"], c["conn"], c["fixed"]
+    tw = best(lambda: bg.basis(g, lab, X, [{"name": "v", "kind": "W", "segs": sid, "hold": 1}], {"v": [36.0, 44.0]},
+                               fixed=F, elems=C))
+    tdf = best(lambda: bg.basis(g, lab, X, [{"name": "v", "kind": "DF", "segs": sid, "hold": 1}], {"v": [7.0, 13.0]},
+                                fixed=F, elems=C))
+    cb, gb_, lb = ONE["b"]
+    tw1 = best(lambda: bg.basis(gb_, lb, cb["nodes"], [{"name": "v", "kind": "W1", "segs": [2], "hold": 1}],
+                                {"v": [36.0, 44.0]}, fixed=cb["fixed"], elems=cb["conn"]))
+    print(f"\n[V-0247-DM-17/27] W {tw:.3f}s DF {tdf:.3f}s W1 {tw1:.3f}s")
+    assert tdf <= 1.2 * tw + 0.05
+    assert tw1 <= 1.2 * tw + 0.05
