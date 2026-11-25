@@ -234,6 +234,7 @@
   "BG_RAMP_SHORT": "{var}: 사용자 범위가 기본 범위보다 넓어 접합 램프 {L_mm} mm 가 필요 길이 {need_mm} mm 보다 짧습니다(실행은 계속). (Ramp {L_mm} mm shorter than {need_mm} mm needed.)",
   "BG_SHARED_CHILD": "(정보) 비드 {bead}: 공유 자식 바닥 {child} 은 제자리이고 그 벽 {n_nodes} 노드가 높이 차를 흡수합니다. (Info: shared child {child} stays; its wall absorbs the change.)",
   "BG_CORNER_GUARD": "(정보) 비드 {bead}: 바닥 코너 {n_nodes} 노드에서 사면을 가파르게 해 뒤집힘을 막았습니다(최대 {flank_max_deg}°). (Info: corner guard on {n_nodes} nodes.)",
+  "DF_ENTRY_GUARD": "(정보) 비드 {bead}: 입구 쪽 {n_nodes} 노드에서 입구 확장을 줄여 뒤집힘을 막았습니다(사면 각 변화 최대 {steep_max_deg}°). (Info: entry guard on {n_nodes} nodes.)",
   "BG_ISLAND_HELD": "(정보) 섬 {island} 에 고정 노드가 있어 강체 대신 고정 블렌딩을 적용했습니다. (Info: island {island} held by fixed nodes.)",
   "BG_RANGE_CLAMPED": "(정보) {var} 기본 범위 {from} mm 끝에서 요소가 뒤집혀 뒤집힘 없는 범위 {to} mm 로 줄였습니다(기저·한계 범위는 그대로). (Info: default range of {var} clamped from {from} to {to} mm — its ends inverted elements.)",
   "BG_BASIS_LEAK": "기저 오류: {var} 가 허용 구역 밖 {n} 노드를 움직입니다(최대 {max_mm} mm) — 구현 결함. (Basis error: {var} moves {n} nodes outside its zone.)",

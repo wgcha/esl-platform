@@ -330,14 +330,12 @@ def test_df_h6_ch1_v3_parts(dD):
           f"inverted {r['inverted']}")
 
 
-@pytest.mark.xfail(strict=True, reason="DF 보정(DM-30·31) 뒤에도 H6 ch1 뒤집힘 남음(C1 보고): +2 54·−2 36·±1 0 — +2 = 채널 "
-                   "끝(U 끝 y≈198·564~575) 입구 옆 부모 바닥 필렛 sliver(변 0.2 mm, 입구 + 부모 바닥 노드 49 + 띠 섬 옆 5), −2 = "
-                   "채널 끝 쪽 입구·벽 요소(y≈198~217·493~508) 36; measured, not relaxed")
 @pytest.mark.parametrize("dD", [2.0, -2.0])
 def test_df_h6_unaligned_v3(dD):
-    """V-0247-DM-3: H6 ch1 DF ±2 — 뒤집힘 0."""
-    _g, _info, r, _fp = _h6_df("b", dD)
+    """V-0247-DM-3: H6 ch1 DF ±2 — 뒤집힘 0(DM-32 입구 가드 — DF_ENTRY_GUARD 정보)."""
+    _g, info, r, _fp = _h6_df("b", dD)
     assert r["inverted"] == 0
+    assert info["entry_guard_n"] > 0 and any(w["code"] == "DF_ENTRY_GUARD" for w in info["warnings"])
 
 
 @pytest.mark.parametrize("dD", [2.0, -2.0])

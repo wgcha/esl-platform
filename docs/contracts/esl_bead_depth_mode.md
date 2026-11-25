@@ -84,13 +84,14 @@
 | 단계 | 규칙(근거) |
 |---|---|
 | 구역 | `bead_zones(M, segs, zones, "D")`(ZC·ZSC·공유 자식 J 를 D 와 같게 — `zones.py:176`·`:189-200`). 노드 집합 = D 와 같은 `edge = nF & nW & ~E`·`walln = nW & ~E & ~nF`(`morph.py:239-240`), E·J 그대로. 허용 요소 A_DF = D `allowed_el` ∪ 부모 바닥 ∪ 부모의 걸치지 않은 섬(W `A_el` 추가분 `:320-321`), `mov = movable_nodes(M, A_DF)` |
-| 깊이면 | nF ∪ (nC 중 벽·입구 아닌 것) = s·n0(`:255`·`:257`), **평면 0** — 조화 확장(`:307-314`)·코너 가드(`:329-360`) 없음 |
+| 깊이면 | nF ∪ (nC 중 벽·입구 아닌 것) = s·n0(`:255`·`:257`), **평면 0** — 조화 확장(`:307-314`) 없음, 깊이면 코너 가드 없음(입구 쪽 가드는 아래 "입구 가드" 행) |
 | 벽·입구 | x ∈ walln ∪ E 마다 `cKDTree(M.P[edge])` 평면 최근접 깊이면 가장자리 x_f, h = |(x − x_f)·n0|, D_col = h(x ∈ E, ≤ 1e-6 이면 D_nom)·D_nom(벽) — `:246-250` 의 거울. 법선 s·(1 − clip(h/D_col, 0, 1))·n0(입구 0), 평면 = r·n_out, r = (x − x_f)_평면·n_out / D_col. 결과: 벽(높이 비 t, 깊이면 1) 법선 t·s, 평면 (1 − t)·cotθ_local 바깥, 입구 평면 cotθ_local. 자기 골격 interior 투영이 없는 입구·벽 기둥(현 방향)의 r 상한 = interior 입구 r 의 최댓값(벽은 ×(1 − t)) — 깊이면 가장자리가 접합 구역에서 끝나는 곳의 현 과대 방지(DM-C1-1, `info.chord_capped_n`) |
 | 입구 평활·이웃 간격(DM-30·31) | 입구 노드 r_raw(위 값, 상한 뒤)를 입구 선을 따라 저역 통과: r_s(i) = Σ_j g_ij·r_raw(j)/Σ_j g_ij, j = 같은 비드 입구 노드 중 n_out_i·n_out_j > 0, g_ij = exp(−(d_ij/ρ)²)(평면 거리, 3ρ 에서 자름), ρ = `entry_smooth_rel`·h(0 = 평활 없음). 이웃 간격: d_o(i) = 다른 형상(띠 블록 others 와 같은 집합)까지 평면 거리, m_i = r_s(i)·ext > `entry_gap_rel`·d_o(i) 이면 κ_o = entry_gap_rel·d_o/m_i(≤ 1), κ_o 를 같은 가중으로 한 번 평활해 기저에 고정(선형). 입구 평면 = r_s·κ_o·n_out, 벽 = (1 − t)·r_s·κ_o(기둥 = 평면 최근접 입구)·n_out, 깊이면 가장자리·깊이면 평면 0 그대로. 직선 균일 벽은 r_s = r_raw(정확), 각이 급히 변하는 곳은 근사 — 차이 = 진단 `angle_dev_mm`. 값은 esl 이 DF 항목 키로 넘김(패키지 기본 `defaults.DF_ENTRY` 같은 값, `select.graph` 에 키 없음 — graph.json·graph sha 불변) |
 | 방향 n_out | mv = E ∪ edge ∪ walln. 노드의 자기 세그먼트 = 그 노드를 포함한 Z_W ∪ Z_F 요소의 `labels["segment"]` 값 ≥ 0(접합 구역·섬 요소 = −1, `classify.py:368-371`). nref = 최근접 골격(`_skeleton_dist(M, S, ·)` — 최근접 세그먼트 id 도 반환하게, W 호출 바이트 불변)이 **자기 세그먼트 것이고 `interior_mask` 참**이면 그 바깥 법선, 그 밖(골격 없음·끝단 투영·접합 구역·네트워크에서 남의 세그먼트 골격이 최근접)은 현 (x − x_f)_평면 정규화. 평활은 두 경우 공통 `_smooth_dirs(M, ZW \| ZF, mv, idx, nref, w_smooth_iters)`(`:270-273`). 근거: 비정렬 메시에서 짝이 비스듬하면 입구 선이 cotθ·ΔD·sin(어긋남) 만큼 물결 |
 | 공유 자식 벽 | `:259-268` 그대로(ZSC 높이 선형·평면 0 — 벽 규칙 뒤에 덮어씀, BG_SHARED_CHILD) |
 | 걸친 섬 옆 | `:337-348` 의 κ 를 walln ∪ E 평면 성분에 곱함(띠 복사 전, 잔차 R-DM-6) |
 | 부모 바닥 띠 | W 블록 `:277-305` 그대로(pf·others·SELECT_BLEND_CLIPPED·band_islands), 값 = **거리 가중 혼합**(DM-C1-2): 띠 노드 x 에 R_w 안 입구 노드 k(가까운 순 최대 8개)로 u(x) = [Σ_k w_k·u_k / Σ_k w_k] × (1 − smoothstep(d_min/R_w)) × smoothstep(d_o/R_w)(다른 형상 근처 자름 그대로), w_k = 1/(d_k² + (0.1h)²) — 한 입구 선만 가까우면 최근접 복사와 거의 같고 마주 보는 두 입구 선 사이에서 연속(E 법선 0 → 평면만). W(기존 kind) 띠는 최근접 복사 그대로(D·W 기저 바이트 불변). R_w = max(`blend.min_mm`, `blend.k`·ext·r_max, 3h), r_max = max r(E) |
+| 입구 가드(DM-32) | φ·ψ·J 0·섬 강체·허용 밖 0 뒤(최종 장): 요소 = 벽 Z_W ∪ 입구·띠 노드에 닿는 요소(필렛 sliver 포함) − 깊이면 Z_F, 대상 노드 = (E ∪ 벽 ∪ 띠) − 섬 노드의 **평면 성분만**. ±ext 에서 넓이 비 < `morph.corner.area_ratio_min` 또는 뒤집힘(`quality.flip_deg`·quad 야코비안) 요소의 대상 노드에 `shrink` 를 최대 `iters` 번 곱한 계수 c 를 기저에 고정(선형 — `_corner_guard` 그대로 호출, D 갈래 BG-D-26 과 같은 장치, 새 설정 키 없음). 법선(깊이) 불변, 띠 노드는 자기 계수. κ_o(이웃 간격)는 그대로 둠(가드 = 요소 기준, κ_o = 형상 간격 기준). 정보 `DF_ENTRY_GUARD{n_nodes, steep_max_deg}`(가드 걸린 노드가 닿는 벽 요소의 +ext 사면 각 최대 변화), info `entry_guard_n`. 직선 균일 구간 = 계수 1(시험 1·28 정확) |
 | 램프·hold | L = D 식(ext_eff = ext, `:227-229`), ψ = `_hold`, φ = `_ramp(J, allowed_n)`, Uv ×= φψ, Uv[J] = 0. **Uv[E] = 0 안 함**(`:328`·`:367` 은 D 만) |
 | 섬·바깥 0 | `:368-410` 그대로(rim_src = nF ∪ 띠), allowed_n = nmask(A_DF) ∪ 띠, Uv[~(allowed_n & mov)] = 0 |
 | 달성 | D 와 같은 법선 점검 ach = nF & φ ≥ 1 & ψ ≥ 1 & ~섬 & ~E(`:414`, c 없음)·BG_SEGMENT_SHORT. `checks.achieved`(법선)·`allowed_elements`(A_DF) 가 kind DF 처리 |
@@ -184,7 +185,7 @@
 - combo: 같은 비드 D·W(W1) 가 영향 요소 공유 → `range_guard.interacting` 자동 묶음(입구 동시 확장 점검).
 - shape_rules 없음: `range_check`·`clamp_w_ranges`·`w_clamp` 후보가 floor_fixed 깊이 기저·W1 도 같은 W 경로로.
 ### 2.3 코너 가드
-- DF 갈래에 코너 가드 없음(깊이면 강체 — 가드 대상 없음, cfg 대입 불필요, `BG_CORNER_GUARD` 없음). entry_fixed D 는 그대로. 걸친 섬 감쇠는 §1.2.1(잔차, R-DM-6).
+- DF 갈래에 깊이면 코너 가드 없음(깊이면 강체 — `BG_CORNER_GUARD` 없음). 대신 입구 쪽 가드(§1.2.1 입구 가드 행, DM-32 — 같은 `morph.corner` 설정·`_corner_guard`, 정보 `DF_ENTRY_GUARD`): DF 에서는 무너지는 쪽이 깊이면 코너에서 입구·부모 바닥 띠로 옮겨 가므로 그쪽에 같은 장치(사용자 확정 D3 "그 곳만 사면이 가팔라져도 됨"). entry_fixed D 는 그대로. 걸친 섬 감쇠는 §1.2.1(잔차, R-DM-6).
 ### 2.4 침범
 - 바깥 이동(BG-D-34·BG-X-9) 허용: DF = A_DF 1개(§1.2.1, strict 노드 규칙 BG-D-47), elems = strict(D) ∪ strict(W f0), W1 = A_W. 누출(BG-D-32)은 기저마다.
 - 다른 비드(SR-D-38)·체결부 hold ψ(BG-D-28)·섬(BG-D-29)·블렌딩 자름 = 기존 규칙. DF·W1 입구 노드에 ψ < 1 있으면 정보 `DS_HOLD_PINCH{bead, n}`.
@@ -192,7 +193,7 @@
 - DF: R_w·L = §1.2.1. W1: §1.6.3.
 - elems: 비드 blend_mm 그대로. 닿으면 자름 + `SELECT_BLEND_CLIPPED`.
 ### 2.6 진단(실패 아님)
-- `basis.json graph_vars[] += section{mode, cot_min_deg, cot_med_deg, cot_max_deg, floor_plan_max_mm(기대 0 — ψ·φ 로만 생김), angle_dev_mm(= RMS(r_s − r_raw)·ext, φ = ψ = 1 입구 — 평활로 생긴 각 유지 오차의 입구 이동 환산, 임계 없음 — DM-30; entry_wave_mm 삭제), entry_clipped_n(이웃 간격으로 줄어든 입구 노드 수 — DM-31), band_clipped, wall_no_entry_n(윗단이 입구 아닌 비드 소유 벽 노드 수 — J 에서 0, φ 로 이어짐), one_side?{segs, fixed, steep_deg, center_shift_mm}}`(floor_fixed 만).
+- `basis.json graph_vars[] += section{mode, cot_min_deg, cot_med_deg, cot_max_deg, floor_plan_max_mm(기대 0 — ψ·φ 로만 생김), angle_dev_mm(= RMS(r_s − r_raw)·ext, φ = ψ = 1 입구 — 평활로 생긴 각 유지 오차의 입구 이동 환산, 임계 없음 — DM-30; entry_wave_mm 삭제), entry_clipped_n(이웃 간격으로 줄어든 입구 노드 수 — DM-31), entry_guard_n(입구 가드 계수 < 1 노드 수 — DM-32), band_clipped, wall_no_entry_n(윗단이 입구 아닌 비드 소유 벽 노드 수 — J 에서 0, φ 로 이어짐), one_side?{segs, fixed, steep_deg, center_shift_mm}}`(floor_fixed 만).
 
 ## 3. W·D 동시 켬
 - W = 공칭 깊이 입구 폭(사용자 확정 6 — 이름·공칭·범위·결과 열 `B<n>_W` 불변), ΔW = 단면 평행 이동.
@@ -318,7 +319,7 @@
 ## 8. 시험(V-0247-DM-n, 1~30)
 1. 합성 직선 사다리꼴 채널(정렬 quad, 판 600×300, D 10, W_open 40, θ 45°·60°, 필렛 없음, 그래프) floor_fixed ΔD ±3: 달성 깊이 ±1e-6, **깊이면 전 노드 평면 변위 ≤ 1e-12**(φ = ψ = 1 구역), 입구 폭 = W_open + 2ΔD·cotθ ±1e-3, 사면 각 θ ±0.05°, A_DF 밖 max|u| ≤ 1e-9, 뒤집힘 0.
 2. 같은 메시 entry_fixed: 입구 변화 ≤ 1e-9, 깊이면 폭 = W_top − 2ΔD·cotθ ±1e-6, 각 ±0.05°, 기저 바이트 = main.
-3. 비정렬 입구 선 H6 ch1 DF ±2 floor_fixed: 뒤집힘 0, 깊이면 평면 ≤ 1e-9(φ = ψ = 1), 직선 구간(U 끝·flare 제외) 사면 각 ±1°, 허용 구역 밖 ≤ 1e-9, `angle_dev_mm` 기록(DM-30·31). (d) 포켓 C D +2: BG_CORNER_GUARD 없음·뒤집힘 0.
+3. 비정렬 입구 선 H6 ch1 DF ±2 floor_fixed: 뒤집힘 0, 깊이면 평면 ≤ 1e-9(φ = ψ = 1), 직선 구간(U 끝·flare 제외) 사면 각 ±1°, 허용 구역 밖 ≤ 1e-9, `angle_dev_mm` 기록(DM-30·31), 입구 가드 `DF_ENTRY_GUARD` 정보(DM-32). (d) 포켓 C D +2: BG_CORNER_GUARD 없음·뒤집힘 0.
 4. elems 1단(synth_bead 원형 D 6·W 40·60°) floor_fixed: 깊이면 노드 평면 이동 ≤ 1e-9, 경계 이동 cotθ·ΔD ±0.02h, 각 ±1°. 2단 경로형 = DS_FALLBACK SELECT_MULTI_TIER·기저 바이트 = entry_fixed.
 5. D·W 동시: W_top' = W_top + ΔW ±1e-3, W_open' = W_open + ΔW + 2ΔD·cotθ ±1e-3, 각 ±0.05°, 두 기저 합 = 동시 모핑 ±1e-12.
 6. θ: 그래프 45°·60° 섞인 묶음 → DS_THETA_* 없음, `section.cot_min/med/max_deg` = 해석값 ±0.1°. elems θ < 15° → DS_FALLBACK THETA_UNMEASURED, 퍼짐 → DS_THETA_SPREAD.
@@ -400,6 +401,7 @@
 - elems 조합(§1.2.2): `bead_select.derive_obj(depth_section=, section_rules=)`, 적용 판정 순서 열린 경계 → 폭 미정 → 단 수 ≥ 2 → θ, B'_D 는 `_post_basis`(섬·hold) 전에 합성, D feasible 상한 = 입구 확장 상한(m = 2), 그림 `section.ds_dD` = 조합 기저의 평면 성분(floor_fixed 비드만 키). 합성 원형 비드(60°): 경계 이동 1.2025 vs 해석 1.1547(±0.02h = 0.1 안 — run_med 3.608 이 다각형 근사), 사면 각 변화 ≤ 1°.
 - range guard·w_clamp(§2.2): floor_fixed 만 `depth_section`·`section_rules` 키 전달 → 후보 D = DF, S_1 단일·seed 비드 W1(`one_side` 측정 공용 `_w1_possible`), 항목 key += `ds`·kind `W1`, 머리 cfg_sha256 += `ds`(= `section.hash_view`) — entry_fixed 표 바이트 불변.
 - 패키지 `zones.Mesh.nmask` = 직접 색인(같은 불리언 — D·W 골든 바이트 동일) — H6 `one_side` 전 세그먼트 0.36 → 0.25 s(시험 27 ≤ 0.3 s).
-- DM-30·31(입구 평활·이웃 간격, 시험 3 결정 — 메인): 측정(entry_smooth_rel 3, entry_gap_rel 0.5) H6 ch1 뒤집힘 ±1 = 0·0, +2 = 54·−2 = 36, +3 = 110·−3 = 63, angle_dev_mm 0.272(ΔD_ext 2), entry_clipped_n 8, cot 0.862/1.001/3.229; entry_smooth_rel 1 → +2 64·−2 41, 6 → +2 33·−2 29. 직선 구간 각 변화 최대 0.149°(+2)·0.292°(−2). H5 네트워크 ±1·±2·±3 뒤집힘 0(angle_dev_mm 0.09). 남은 뒤집힘 위치: +2 = 채널 U 끝(y≈198·564~575) 입구 노드 + 부모 바닥 노드 필렛 sliver(변 0.2 mm) 49 + 띠 섬(강체) 옆 부모 바닥 5, −2 = 채널 끝 쪽 입구·벽 요소(y≈198~217·493~508) 36. 시험 `test_df_h6_unaligned_v3[±2]` xfail(strict) — 결정 대기.
+- DM-30·31(입구 평활·이웃 간격, 시험 3 결정 — 메인): 측정(entry_smooth_rel 3, entry_gap_rel 0.5) H6 ch1 뒤집힘 ±1 = 0·0, +2 = 54·−2 = 36, +3 = 110·−3 = 63, angle_dev_mm 0.272(ΔD_ext 2), entry_clipped_n 8, cot 0.862/1.001/3.229; entry_smooth_rel 1 → +2 64·−2 41, 6 → +2 33·−2 29. 직선 구간 각 변화 최대 0.149°(+2)·0.292°(−2). H5 네트워크 ±1·±2·±3 뒤집힘 0(angle_dev_mm 0.09). 남은 뒤집힘 위치: +2 = 채널 U 끝(y≈198·564~575) 입구 노드 + 부모 바닥 노드 필렛 sliver(변 0.2 mm) 49 + 띠 섬(강체) 옆 부모 바닥 5, −2 = 채널 끝 쪽 입구·벽 요소(y≈198~217·493~508) 36. → DM-32 입구 가드로 해결(아래).
+- DM-32(입구 가드, 메인 결정): H6 ch1 뒤집힘 ±1 = 0·0, ±2 = 0·0(가드 노드 477, steep_max_deg 46.094 — 채널 끝 필렛), ±3 = 27·20(남은 요소 = 띠 섬(cls island) 요소 — 섬 강체 이동(가드 전 테두리 평균)과 가드로 줄어든 옆 띠 노드의 차, 가드 요소 집합 밖·법선 이동 0; 섬을 가드에 넣고 다시 강체로 하면 ±2 가 3·1 로 나빠져 넣지 않음 — range guard 영역), ±1 가드 노드 12. H5 네트워크 ±1·±2 = 0·가드 0, ±3 = 0(가드 119, 31.699°). 직선 구간 각 ±1° 통과, 시험 1·28 정확 기준 통과(가드 1), xfail 해제.
 - (이전 측정 — DM-30 전) 시험 3 H6 ch1(channel + flare) DF: +2 뒤집힘 68(−2: 35, ±1: 0), `entry_wave_mm` 0.472 > 0.05h(0.148; ±1 에서도 0.236). 원인: (1) 부모 바닥 필렛 sliver 삼각형(변 0.2 mm) 위에서 입구 노드끼리 평면 이동이 0.3 mm 씩 달라 뒤집힘 — 띠는 다른 형상 근처에서 자르지만 입구 노드 자체(DF 규칙)는 자르지 않음, 채널 끝·flare 의 cot 최대 3.586(15.6°) → 입구 5 mm 이동; (2) `entry_wave_mm`(직선 입구 평면 이동 표준편차)는 flare 벽 각 차이(cot 0.689~3.586)를 그대로 재므로 물결 지표로 맞지 않음. 시험은 완화하지 않고 xfail(strict) — `packages/beadgraph/tests/test_one_side.py::test_df_h6_unaligned_v3`. 포켓 (d) 부분은 통과. 결정 필요(R-DM-13 후보: 입구 평면 이동의 다른 형상 근처 자름 또는 sliver 국부 평활, entry_wave 정의를 세그먼트·각 구간별로).
 

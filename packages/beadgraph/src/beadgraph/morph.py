@@ -567,6 +567,21 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     Uv[J] = 0.0
     _islands(M, Z, b, Uv, info, nF | band, nW, mov, fixed_mask)
     Uv[~(allowed_n & mov)] = 0.0
+    # DF entry guard (DM-32 — BG-D-26 device on the entry side): elements DF moves in plan (walls + parent-floor
+    # elements touching the entry or the band, floor excluded) — at ±ext an area ratio < area_ratio_min or an inverted
+    # element shrinks the plan part of its moving nodes (entry ∪ walls ∪ band); factor frozen in the basis (linear)
+    gmov = (E | walln | band) & allowed_n & mov
+    gel = (ZW | M.emask_of_nodes(E | band)) & ~ZF
+    info["entry_guard_n"] = 0
+    if gmov.any() and gel.any():
+        cE = _corner_guard(M, gel, Uv, gmov, ext, mc["corner"], float(cfg["quality"]["flip_deg"]))
+        if (cE < 1.0).any():
+            un = (Uv @ M.n0)[:, None] * M.n0[None, :]
+            Uv = un + (Uv - un) * cE[:, None]
+            info["entry_guard_n"] = int((cE < 1.0).sum())
+            info["warnings"].append({"code": "DF_ENTRY_GUARD", "level": "info", "n_nodes": info["entry_guard_n"],
+                                     "steep_max_deg": U.f3(_flank_change_deg(M, ZW & M.emask_of_nodes(cE < 1.0),
+                                                                             Uv, ext))})
     isl = lab["island"]
     island_nodes = M.nmask((isl >= 0))
     ach = nF & (phi >= 1.0) & (psi >= 1.0) & ~island_nodes & ~E
@@ -841,6 +856,21 @@ def _islands(M: Mesh, Z: dict, b: dict, Uv: np.ndarray, info: dict, rim_src: np.
             Uv[nd] = t_                                  # fully rigid (rim included — SR-D-5, residual 0)
     for iid in held:
         info["warnings"].append({"code": "BG_ISLAND_HELD", "level": "info", "island": int(iid)})
+
+
+def _flank_change_deg(M: Mesh, el, Uv, ext) -> float:
+    """max change of the wall angle (deg from the plane) at +ext over the elements ``el`` (DF_ENTRY_GUARD report)."""
+    idx = np.flatnonzero(el)
+    if idx.size == 0:
+        return 0.0
+    C = M.C[idx]
+
+    def ang(X1):
+        a, b2, d = X1[C[:, 0]], X1[C[:, 1]], X1[C[:, 2]]
+        n = np.cross(b2 - a, d - a)
+        n /= np.maximum(np.linalg.norm(n, axis=1), 1e-12)[:, None]
+        return np.degrees(np.arccos(np.clip(np.abs(n @ M.n0), 0, 1)))
+    return float(np.abs(ang(M.X + ext * Uv) - ang(M.X)).max())
 
 
 def _flank_max_deg(M: Mesh, ZW, Uv, ext):
