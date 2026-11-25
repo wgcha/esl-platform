@@ -1,5 +1,5 @@
 {
- "version": "2026-11-25.1",
+ "version": "2026-11-26.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -306,6 +306,15 @@
   "DS_CLONE_NOTE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(한쪽 입구 W 행은 꺼진 채 추가). (Info: only the depth section changes.)",
   "DS_CLONE_NOTE_ENTRY": "입구 고정에는 한쪽 입구 W 가 없어 변수 {n}개({names})가 빠집니다. (Info: one-sided W variables are dropped.)",
   "DS_CLONE_NOTE_ENTRY_NONE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(빠지는 변수 없음). (Info: only the depth section changes; no variables dropped.)",
+  "JIG_GRID_SOURCE_MISSING": "엔트리 {entry} 의 Case 에 {method} 지그 결과가 없습니다 — 그 Case 에서 ③ ESL 을 다시 실행(v0.24.4 이후)한 뒤 스터디를 복제하세요. {rank_note}(사유 {reason}). (Case jig result missing — re-run the Case ③ ESL, then clone the study.)",
+  "JIG_GRID_TIE_MISS": "형상 {did}: Case 지그 tie 묶음 {n_miss}/{n_clusters}개를 형상에서 잡지 못했습니다(구멍·와셔 면이 없거나 법선이 다름){fail}. (Jig tie clusters not captured on the shape.)",
+  "JIG_GRID_OUTSIDE": "형상 {did}: 3-2-1 지지 표본 {n}점이 격자 밖이라 값 0 으로 두었습니다(면내 강체 위치만 영향). (Info: support sample outside the grid.)",
+  "JIG_GRID_LOAD_RESID": "형상 {did}: 지그 맞춤 하중 전달 후 합력·모멘트 오차 {dF}·{dM}(기준 {tol}) — 계산은 계속합니다. (Jig load transfer residual above threshold.)",
+  "JIG_GRID_AREA_RATIO": "형상 {did}: tie 잡힌 면적비 {lo}~{hi} 가 허용 범위({rmin}~{rmax}) 밖입니다(스프링 배율 {kmin}~{kmax}). (Info: captured tie area ratio out of range.)",
+  "JIG_GRID_FRAME_SHIFT": "형상 {did}: 하중 칸(frame 정규화)과 경계 표본(배치) 위치 차 {mm} mm(기준 {tol} mm). (Info: load-cell vs BC-sample frame shift.)",
+  "JIG_GRID_CONV": "격자 크기 민감도: {cell_mm} mm 대비 {mm} mm 의 Π 차 {dpi}(기준 {tol}) — 이 차이 안의 순위 차이는 매핑 오차 범위입니다. (Info: grid-size sensitivity above threshold.)",
+  "JIG_GRID_NO_REF": "기준 형상(d000)의 {method} 격자 지그가 없거나 실패해({err}) 그 방식의 순위 기준이 없습니다. (Grid jig reference missing.)",
+  "JIG_GRID_RANK": "다른 메시 비교 — 형상마다 Case 지그를 {cell_mm} mm 격자로 매핑해 지그 {method} 로 순위를 매겼습니다(기준 d000 · 매핑 진단 참고). (Info: ranked by the grid-mapped jig.)",
   "W_USER_OFF": "사용자가 W 를 뺌",
   "W_NETWORK": "네트워크 묶기는 깊이만",
   "W_AREA": "면형 바닥 — 입구 선 없음",

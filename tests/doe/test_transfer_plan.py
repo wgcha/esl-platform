@@ -214,8 +214,8 @@ def test_redrop_column():
 def test_jig_plan_columns():
     """V-JIG-10: 5행 sm_jig·jig_fix·jig_ctx = §5.2 표, 값 ∈ JIG_VALUES, 열 지우면 CONFIG_INVALID, 불변식, metric_effective 4조합."""
     want = {"case_once": ("base", "fixed", "case"), "bmesh_once": ("base", "fixed", "mesh"),
-            "step_once": ("base", "xfer", "none"), "step_per_design": ("none", "none", "none"),
-            "compare_per_shape": ("none", "none", "none")}
+            "step_once": ("base", "xfer", "none"), "step_per_design": ("none", "grid", "shape"),   # v0.24.8 JG §2.2(의도 변경)
+            "compare_per_shape": ("none", "grid", "shape")}
     assert tp.PLAN_COLS[-4:-1] == ("sm_jig", "jig_fix", "jig_ctx") and tp.PLAN_COLS[-1] == "bf"
     for pid, row in want.items():
         p = tp.PLANS[pid]

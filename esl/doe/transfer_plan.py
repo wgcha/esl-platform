@@ -53,13 +53,13 @@ PLANS = {
                         "truth": "a_direct", "alt_designs": False,
                         "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "all", "sm_rank": "solve",
                         "bs_wpart": "none", "bs_guard": "none", "bs_route": "none", "bs_mq": "none",
-                       "sm_jig": "none", "jig_fix": "none", "jig_ctx": "none", "bf": "none"},
+                       "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none"},
     "compare_per_shape": {"redrop": "none", "dst": "shape", "reuse": "per_target", "identity": "topo+coords", "placement": "global",
                           "mask": "compare_region", "truth": "compare", "alt_designs": True,
                           "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "compare_region",
                           "sm_rank": "solve",
                           "bs_wpart": "none", "bs_guard": "none", "bs_route": "shapes", "bs_mq": "shapes",
-                         "sm_jig": "none", "jig_fix": "none", "jig_ctx": "none", "bf": "none"},
+                         "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none"},
 }
 PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega",
             "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq", "sm_jig", "jig_fix", "jig_ctx", "bf")
@@ -84,6 +84,7 @@ def plan_for(scenario: str, select_base: str | None = None) -> dict:
     badj = [k for k, vs in JIG_VALUES.items() if row[k] not in vs]
     if badj:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} 지그 열 값 오류: {badj}")
+    _check_jig_cols(pid, row)
     if row["bf"] not in BF_VALUES:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} bf 열 값 오류: {row['bf']}")
     if row["redrop"] not in RD_VALUES:
@@ -148,7 +149,33 @@ BS_VALUES = {"bs_wpart": ("graph", "none"), "bs_guard": ("basis", "none"), "bs_r
 SHAPE_SCHEMA = 1
 # v0.23.0 JIG 열(esl_jig_rank.md §5.2): sm_jig = base(베이스라인 1회 지그 계산 → 같은 메시 안 비교) | none, jig_fix = 지그 노드 출처
 # fixed(prep/fixed) | xfer(A 체결점 이전) | none, jig_ctx = 다른 부품 deck 출처 case(원 Case) | mesh(업로드 사본) | none(패치).
-JIG_VALUES = {"sm_jig": ("base", "none"), "jig_fix": ("fixed", "xfer", "none"), "jig_ctx": ("case", "mesh", "none")}
+# v0.24.8 JG(esl_jig_grid_map.md §2.2 D-0.24.8-JG-6): jig_fix += grid(Case 지그 골격을 형상에서 잡기 — 형상마다 격자 지그),
+# jig_ctx += shape(가압 하중 문맥 = Case 맞춤 하중의 형상 셀 전달 — deck·영역 재계산 없음). grid ⇔ shape, grid ⇒ sm_jig none ∧ sm_ref none.
+JIG_VALUES = {"sm_jig": ("base", "none"), "jig_fix": ("fixed", "xfer", "grid", "none"),
+              "jig_ctx": ("case", "mesh", "shape", "none")}
+JIG_KINDS = ("base", "grid", "none")
+
+
+def _check_jig_cols(pid: str, row: dict) -> None:
+    """지그 열 불변식(위반 = CONFIG_INVALID): jig_fix grid ⇔ jig_ctx shape, grid ⇒ sm_jig none ∧ sm_ref none ∧ dst ∈ {design, shape},
+    sm_jig base ⇒ jig_fix ∈ {fixed, xfer} ∧ jig_ctx ∈ {case, mesh, none}."""
+    g = row["jig_fix"] == "grid"
+    if g != (row["jig_ctx"] == "shape"):
+        raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid}: jig_fix grid ⇔ jig_ctx shape")
+    if g and not (row["sm_jig"] == "none" and row["sm_ref"] == "none" and row["dst"] in ("design", "shape")):
+        raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid}: jig_fix grid ⇒ sm_jig none ∧ sm_ref none ∧ dst design|shape")
+    if row["sm_jig"] == "base" and not (row["jig_fix"] in ("fixed", "xfer") and row["jig_ctx"] in ("case", "mesh", "none")):
+        raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid}: sm_jig base ⇒ jig_fix fixed|xfer ∧ jig_ctx case|mesh|none")
+
+
+def jig_kind(plan: dict, grid_snap: bool) -> str:
+    """지그 종류 판정 한 곳(코어 ``stages._jg_kind``·백엔드 jig_plan 공용 — D-0.24.8-JG-6): base = 계획 sm_jig base(같은 메시 지그),
+    grid = 계획 jig_fix grid ∧ grid_snap(스냅샷 rank.jig enabled ∧ rank.jig_grid enabled), 그 밖 none(옛 스냅샷·설정 끔)."""
+    if plan["sm_jig"] == "base":
+        return "base"
+    if plan["jig_fix"] == "grid" and bool(grid_snap):
+        return "grid"
+    return "none"
 
 
 def resolve_shape(spec: dict | None, defaults: dict | None = None, *, flip_deg: float | None = None) -> dict | None:
@@ -239,9 +266,12 @@ def shape_hash_view(rules: dict | None) -> dict | None:
     return {"schema": rules.get("schema"), "w_partial": rules.get("w_partial"), "range_guard": rg}
 
 
-def metric_effective(plan: dict, metric: str, jig_ok: bool = True) -> str:
+def metric_effective(plan: dict, metric: str, jig_ok: bool = True, kind: str | None = None) -> str:
     """순위에 실제로 쓰는 지표(결정 A): 계획 열 sm_rank = metric 이면 스냅샷 metric 그대로, solve 면 solve(다른 메시 비교).
-    metric = jig 는 계획 sm_jig = base ∧ sm_rank = metric ∧ jig_ok(베이스라인 지그 status ok) 일 때만 jig, 아니면 solve(D-JIG-8)."""
+    metric = jig 는 계획 sm_jig = base ∧ sm_rank = metric ∧ jig_ok(베이스라인 지그 status ok) 일 때만 jig, 아니면 solve(D-JIG-8).
+    v0.24.8 kind(``jig_kind`` 값): None = 위 식 그대로(기존 호출 바이트 동일), "grid" ∧ metric jig ∧ jig_ok → jig(격자 지그 순위)."""
+    if kind == "grid" and str(metric) == "jig" and jig_ok:
+        return "jig"
     if str(metric) == "jig":
         return "jig" if plan["sm_jig"] == "base" and plan["sm_rank"] == "metric" and jig_ok else "solve"
     return str(metric) if plan["sm_rank"] == "metric" else "solve"

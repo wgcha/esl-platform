@@ -105,7 +105,13 @@ DEFAULTS: dict = {
                      "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02,
                      "tie_dofs": "normal", "methods": ["prescribed", "spring"], "normal_kink_deg": 45.0,   # v0.24.5 fixed 제외(§12)
                      "aux321_dup_deg": 10.0, "aux_reaction_warn": 0.05, "spring_k_mode": "auto", "spring_alpha": 0.01,
-                     "spring_k_value": None, "spring_alpha_scan": []}},
+                     "spring_k_value": None, "spring_alpha_scan": []},
+             # v0.24.8 JG(esl_jig_grid_map.md §7.1 — pydantic BeadDoeRankJigGridCfg·yaml 2개 거울): 다른 메시 강성 스터디(④·옛 ③)의
+             # 지그 ESL = Case 지그를 cell_mm 공통 격자로 형상마다 매핑. 해시 밖 = grid_map.HASH_EXCLUDE(경고 임계·conv_mm·noise_floor_min)
+             "jig_grid": {"enabled": True, "cell_mm": 3.0, "conv_mm": [5.0, 10.0], "tie_capture_rel": 0.25,
+                          "tie_snap_rel": 0.75, "tie_normal_deg": 30.0, "tie_miss_frac_max": 0.1, "sample_nbr": 1,
+                          "sample_normal_deg": 45.0, "area_ratio_warn": 2.0, "conv_warn": 0.02, "frame_shift_warn": 0.5,
+                          "load_resid_warn": 1.0e-6, "noise_floor_min": 0.01}},
     # v0.24.4 Case ③ 지그 3방식(esl_jig_case.md §5.1·§11): 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더에 준비.
     # enabled false = 준비 호출 0, timeout_s null = bead_doe.paicad.timeout_s.fixed_scan(pydantic BeadDoeCaseJigCfg·yaml 2개 거울)
     "case_jig": {"enabled": True, "timeout_s": None},
