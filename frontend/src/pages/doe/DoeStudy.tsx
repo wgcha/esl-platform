@@ -11,14 +11,14 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { goneToList } from "../../components/ItemDeleteButton";
 import { api } from "../../api/endpoints";
 import { ApiError, downloadFile, errorText, request } from "../../api/client";
-import type { CompareShapeIn, DoeBeadSource, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeMeshMode, DoeMeshPart } from "../../api/types";
+import type { CompareShapeIn, DoeBeadSource, DoeDepthSection, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeMeshMode, DoeMeshPart } from "../../api/types";
 import {
   BEAD_SOURCE_NAME, MESH_MODE_HINT, MESH_MODE_NAME, NEW_RADIOS, NEW_RADIO_NAME, NEW_RADIO_NO, PHASE_NAME, SENS_REASON, autoScenario, buildSpec, compareErrorText, defaultRows, doe, doeBlockedReason, doePath,
   loadSelectAuto, partIdProblem, partsFromError, radioRequest, remeshUnavailableText, scenarioBlocked, selectSubBlocked, shapesProblem, studyRadio, warnText,
   LEGACY_STEP_LABEL, STEP_PREP_CODES, meshMethodName, radioBase, stepPrepGroups,
   isCrossMesh, isLinResult, ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
   type NewRadio,
-  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn } from "../../api/doe";
+  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn, LEGACY_DEPTH_SECTION, droppedOneSide } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, selectMesh, useBeadSelect, type AutoSeedView, type StepInfoView } from "../../components/BeadSelectCard";
 import { PartView } from "../../view3d/part/PartView";
 import { legacyViewData, sceneLayers, selectScene, selectViewData } from "../../view3d/part/adapters";
@@ -26,6 +26,7 @@ import type { PartMesh, PlanVar } from "../../view3d/part/types";
 import { fetchBinary, fileUrls } from "../../view3d/fetchFiles";
 import { parseGlb } from "../../view3d/glb";
 import { SectionMini } from "../../components/SectionMini";
+import { CloneDepthWindow, DepthSectionChip, DepthSectionRadios } from "../../components/DepthSection";
 import { STEP_LABEL } from "../../api/history";
 import type { DoeCheckOut, DoeJigDiagEntryOut, DoeJigDiagOut, DoeJigRegionsFile, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
@@ -89,7 +90,7 @@ function Steps({ job }: { job: JobOut | null | undefined }) {
 /** 시나리오 라디오(자동 판별 표시). readOnly = 상세.
  * v0.16.2(esl_bead_auto.md AD-D-1·13): ①(같은 모델)·②(다른 모델 B 메시) = 시나리오 select, 그 아래 하위 라디오 "비드: ○ 자동 탐지 ○ 직접 선택"(bead_source).
  * same·mesh 는 새로 만들지 않음 — 기존 same·mesh 스터디(상세)는 ①·② 위치에 '이전 방식' 표시 */
-function ScenarioRadio({ value, source, onChange, onSource, auto, st, readOnly, legacy }: {
+function ScenarioRadio({ value, source, onChange, onSource, auto, st, readOnly, legacy, depth }: {
   value: NewRadio;
   source: DoeBeadSource | null;
   onChange: (r: NewRadio) => void;
@@ -99,6 +100,8 @@ function ScenarioRadio({ value, source, onChange, onSource, auto, st, readOnly, 
   readOnly: boolean;
   /** 기존 same·mesh 스터디 하위 문구 */
   legacy?: string | null;
+  /** v0.24.7 새 스터디 깊이 동작 라디오(select 만 — 없으면 숨김: paicad·④·옛 서버) */
+  depth?: { value: DoeDepthSection; onChange: (v: DoeDepthSection) => void; disabled: boolean } | null;
 }) {
   // v0.18.0: ③ 도 select(select_base step) — ①②③ 모두 하위 라디오 "비드"
   const base = radioBase(value) ?? "case";
@@ -137,6 +140,7 @@ function ScenarioRadio({ value, source, onChange, onSource, auto, st, readOnly, 
           })}
         </span>
       )}
+      {isSel && !legacy && depth && <DepthSectionRadios value={depth.value} onChange={depth.onChange} disabled={depth.disabled} name="doe-depth-section" />}
       {auto && !readOnly && (
         <span className="small muted" data-testid="doe-auto">
           자동 판별: {NEW_RADIO_NO[auto]} {NEW_RADIO_NAME[auto]}
@@ -189,9 +193,13 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
   /** v0.24.4 P3 하중 출처("" = 기본 — 요청에 필드 없음) · 서버 확인 요청(422) 본문 */
   const [loadSource, setLoadSource] = useState("");
   const [lsConfirm, setLsConfirm] = useState<UnconfirmedDetail | null>(null);
+  /** v0.24.7 깊이 동작(null = 서버 설정 기본) */
+  const [dsChoice, setDsChoice] = useState<DoeDepthSection | null>(null);
   const blocked = st ? doeBlockedReason(st, scenario) : null;
   const isCompare = scenario === "compare";
   const isSelect = scenario === "select";
+  const dsDefault = st?.depth_section ?? null;
+  const dsOn = isSelect && !!dsDefault;
   /** ② B 메시 기준 select */
   const meshBase = isSelect && selectBase === "mesh";
   /** v0.18.0 ③ STEP 기준 select(esl_step_graph.md SG-D-1·3) */
@@ -362,6 +370,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
               scenario,
               entry_ids: ids,
               ...selectBody(),
+              ...(dsOn ? { depth_section: dsChoice ?? dsDefault! } : {}),
               ...ls,
               ...(meshBase ? { part_title: form.partTitle.trim() || null, inch: inchVal } : {}),
               ...(stepBase ? { props: { t: Number(form.t), E: Number(form.E), nu: Number(form.nu) } } : {}),
@@ -392,7 +401,7 @@ function NewStudy({ projectId, st, stError }: { projectId: string; st: DoeSettin
     <>
       <div className="page-title-row">
         <h1 className="page-title">새 강성 평가 스터디</h1>
-        <ScenarioRadio value={radio} source={source} onChange={setChosen} onSource={setSource} auto={auto} st={st} readOnly={false} />
+        <ScenarioRadio value={radio} source={source} onChange={setChosen} onSource={setSource} auto={auto} st={st} readOnly={false} depth={dsOn ? { value: dsChoice ?? dsDefault!, onChange: setDsChoice, disabled: !allowed || busy } : null} />
         <span className="spacer" />
         {ids.length > 0 && <LoadSourcePicker entryIds={ids} ctx="doe" value={loadSource} onChange={setLoadSource} defaultKey={st?.load_source_default} disabled={!allowed || busy} />}
         <PrimaryButton label="입력 준비" onClick={() => prepare()} disabledReason={reason()} busy={busy} />
@@ -1576,7 +1585,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const pd = params.data;
   useEffect(() => {
     if (!pd || !st || !s || rows) return;
-    const spec = s.doe?.spec ?? null;
+    const spec = s.doe?.spec ?? s.inputs.spec_prefill ?? null;
     const base = defaultRows(pd.params, st.doe.default_types ?? ["D", "W"]);
     setRows(spec ? base.map((r) => {
       const x = spec.params.find((q) => q.name === r.name);
@@ -1732,11 +1741,14 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       setBusy(false);
     }
   }
-  async function clone() {
+  /** select 스터디 = 복제 창(깊이 동작 선택) 먼저, 그 밖 = 지금처럼 즉시 복제 */
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const depthFrom: DoeDepthSection = s?.inputs.depth_section ?? LEGACY_DEPTH_SECTION;
+  async function clone(to?: DoeDepthSection) {
     setBusy(true);
     setError(null);
     try {
-      const r = await doe.clone(id);
+      const r = await doe.clone(id, to && to !== depthFrom ? { depth_section: to } : null);
       nav(doePath(projectId, r.id));
     } catch (e) {
       setError(errorText(e));
@@ -1826,11 +1838,17 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
           />
         )}
         {s && <Badge kind={phase === "FAILED" ? "bad" : phase === "DONE" ? "ok" : "info"}>{PHASE_NAME[s.phase]}</Badge>}
+        {s && isSelect && <DepthSectionChip value={s.inputs.depth_section} />}
         <span className="spacer" />
         {(phase === "DONE" || phase === "FAILED") && allowed && (
-          <button type="button" className="btn small ghost" disabled={busy} onClick={clone} title="같은 입력으로 새 연구(재실행)">
-            복제
-          </button>
+          <span className="doe-ds-wrap">
+            <button type="button" className="btn small ghost" disabled={busy} aria-expanded={isSelect ? cloneOpen : undefined} onClick={() => (isSelect ? setCloneOpen((o) => !o) : void clone())} title="같은 입력으로 새 연구(재실행)">
+              복제
+            </button>
+            {isSelect && cloneOpen && (
+              <CloneDepthWindow from={depthFrom} notes={st?.depth_section_notes} dropped={droppedOneSide(s?.doe?.spec ?? s?.inputs.spec_prefill, pd?.params)} busy={busy} onClone={(v) => void clone(v)} onCancel={() => setCloneOpen(false)} />
+            )}
+          </span>
         )}
         <PrimaryButton label={primary.label} onClick={primary.onClick} disabledReason={primary.reason} busy={busy} />
       </div>

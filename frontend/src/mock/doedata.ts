@@ -8,8 +8,8 @@ import type {
 } from "../api/types";
 import EXAMPLE_YAML from "../../../config/esl_platform.example.yaml?raw";
 import { mockView3d } from "./view3dmock";
-import type { DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
-import { graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate, stepAutoSeed, stepPlan } from "./graphmock";
+import type { DoeDepthSection, DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
+import { MOCK_MESSAGES, graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate, stepAutoSeed, stepPlan } from "./graphmock";
 import { selAutoSeed, selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
 
 interface MockResponse {
@@ -75,6 +75,9 @@ function exampleYaml(section: string, key: string): unknown {
   return undefined;
 }
 
+/** v0.24.7 서버 검증 흉내(DEPTH_SECTIONS 밖 = 422) */
+const MOCK_DEPTH_VALUES: string[] = ["entry_fixed", "floor_fixed"];
+
 /** v0.21.0 새 스터디 스냅샷 shape_rules 목 값(계약 §6 기본값 — 화면은 스냅샷에서만 읽음) */
 export const MOCK_SHAPE_RULES: DoeShapeRules = {
   schema: 1,
@@ -89,6 +92,9 @@ export const MOCK_SHAPE_RULES: DoeShapeRules = {
 
 export function makeDoeSettings(): DoeSettingsOut {
   return {
+    // v0.24.7 DM 깊이 단면 동작 — 새 스터디 기본(설정 bead_doe.depth_section = floor_fixed, 계약 §5.2)·복제 창 안내 문구(서버 text)
+    depth_section: "floor_fixed",
+    depth_section_notes: { DS_CLONE_NOTE: MOCK_MESSAGES.DS_CLONE_NOTE.replace(/\s*\(Info[^)]*\)\s*$/, ""), DS_CLONE_NOTE_ENTRY: MOCK_MESSAGES.DS_CLONE_NOTE_ENTRY.replace(/\s*\(Info[^)]*\)\s*$/, "") },
     // v0.20.0 하중 전달(esl_load_transfer.md §13.6) — 모든 모드 공통 최상위 칸, 새 스터디 기본 work
     load_transfer: { method: exampleYaml("load_transfer", "method") as DoeLoadTransferMethod, cell_size_mm: exampleYaml("load_transfer", "cell_size_mm") as number | null, cell_choices_mm: exampleYaml("load_transfer", "cell_choices_mm") as (number | null)[], cell_min_mm: exampleYaml("load_transfer", "cell_min_mm") as number },
     rank: { metric: exampleYaml("rank", "metric") as DoeRankMetric, lin_form: exampleYaml("rank", "lin_form") as "ritz" | "taylor", lin_valid: exampleYaml("rank", "lin_valid") as number, imbalance_warn: exampleYaml("rank", "imbalance_warn") as number },
@@ -1766,6 +1772,17 @@ export class DoeMock {
     this.recs.push(r30, r31, r32);
   }
 
+  /** v0.24.7 시연(?demoDepth=1): doe-30 = 깊이면 폭 유지(D 배지·W 사유 줄·W1 꼬리표) · doe-5 = 요소 비드 깊이면 폭 유지(단면 그림 ds_dD) · doe-6 = 복제 가능(FAILED, 키 없음 = 입구 고정(이전)) — 복제 창·칩 */
+  demoDepth() {
+    this.demoShape();
+    const r30 = this.recs.find((r) => r.out.id === "doe-30");
+    if (r30) r30.out.inputs = { ...r30.out.inputs, depth_section: "floor_fixed" };
+    const r5 = this.recs.find((r) => r.out.id === "doe-5");
+    if (r5) r5.out.inputs = { ...r5.out.inputs, depth_section: "floor_fixed" };
+    const r6 = this.recs.find((r) => r.out.id === "doe-6");
+    if (r6) r6.out.phase = "FAILED";
+  }
+
   /** v0.17.1 시연·시험(?demoLadder=1): ③ 다른 모델(STEP만) 메싱 뒤 긴 사다리 경고 — doe-12 준비 완료(경고 접기) · doe-13 준비 실패(빨간 1줄) */
   demoLadder() {
     if (this.recs.some((r) => r.out.id === "doe-12")) return;
@@ -1951,7 +1968,7 @@ export class DoeMock {
   paramsOf(r: Rec): DoeParam[] {
     if (r.out.scenario !== "select") return DEFAULT_PARAMS;
     if (!r.sel) return [];
-    if (r.sel.input.schema_version === 2) return graphParams(r.sel.input, r.out.inputs.shape_rules).params;
+    if (r.sel.input.schema_version === 2) return graphParams(r.sel.input, r.out.inputs.shape_rules, r.out.inputs.depth_section).params;
     return selParams(r.sel.input, r.sel.derived, this.settings.select?.fixed_policy ?? "warn").params;
   }
   private selectCells(r: Rec, m: DoeMatrixOut): DoePreviewCell[] {
@@ -2039,7 +2056,7 @@ export class DoeMock {
     if (method === "GET" && (sub === "/params" || sub === "/plan-view")) {
       if (!prepReady) return notReady();
       if (!rec.sel || rec.selDropped) return err(409, "SELECTION_MISSING", rec.selDropped ? "비드 선택을 저장한 뒤에 하세요 — 기준 메시가 바뀌어 저장된 선택을 쓸 수 없습니다" : "비드 선택을 먼저 저장하세요.", rec.selDropped ? { reason: "SELECTION_DROPPED" } : {});
-      return ok(sub === "/params" ? selParams(rec.sel.input as DoeSelectionIn, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : withBoundary(rec, selPlan(rec.sel.input as DoeSelectionIn, this.settings)));
+      return ok(sub === "/params" ? selParams(rec.sel.input as DoeSelectionIn, rec.sel.derived, this.settings.select?.fixed_policy ?? "warn") : withBoundary(rec, selPlan(rec.sel.input as DoeSelectionIn, this.settings, rec.out.inputs.depth_section)));
     }
     if (method === "POST" && (sub === "/matrix" || sub === "/preview") && !rec.sel) {
       if (!prepReady) return notReady();
@@ -2097,12 +2114,12 @@ export class DoeMock {
     }
     if (method === "GET" && sub === "/select/basis" && rec.sel?.input.schema_version === 2) {
       if (!rec.out.doe?.preview) return err(409, "PREVIEW_NOT_READY", "미리보기 전이라 기저가 없습니다.");
-      const bs = graphBasis(rec.sel.input, rec.out.inputs.shape_rules);
+      const bs = graphBasis(rec.sel.input, rec.out.inputs.shape_rules, rec.out.inputs.depth_section);
       return query.get("meta") === "1" ? ok(bs.meta) : { status: 200, body: bs.bin };
     }
     if (method === "GET" && (sub === "/params" || sub === "/plan-view") && rec.sel?.input.schema_version === 2) {
       if (!prepReady) return notReady();
-      return ok(sub === "/params" ? graphParams(rec.sel.input, rec.out.inputs.shape_rules) : rec.out.inputs.select_base === "step" ? stepPlan(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
+      return ok(sub === "/params" ? graphParams(rec.sel.input, rec.out.inputs.shape_rules, rec.out.inputs.depth_section) : rec.out.inputs.select_base === "step" ? stepPlan(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
     }
     return null;
   }
@@ -2471,6 +2488,7 @@ export class DoeMock {
       const props = b.props as DoeStudyOut["inputs"]["props"];
       if ((b.scenario === "step" || b.select_base === "step") && props && !(props.t > 0 && props.E > 0 && props.nu >= 0 && props.nu < 0.5)) return err(422, "INVALID_PARAMS", "쉘 물성이 올바르지 않습니다(t>0, E>0, 0≤ν<0.5).");
       if (b.select_base === "step" && !props) return err(422, "INVALID_PARAMS", "쉘 물성이 필요합니다.");
+      if (b.depth_section != null && (b.scenario !== "select" || !MOCK_DEPTH_VALUES.includes(b.depth_section as DoeDepthSection))) return err(422, "INVALID_PARAMS", "depth_section 은 강성 스터디 select 에서 entry_fixed·floor_fixed 만 허용합니다.");
       const id = this.id("doe");
       const rec: Rec = {
         out: {
@@ -2488,6 +2506,7 @@ export class DoeMock {
             mesh_size_mm: typeof b.mesh_size_mm === "number" ? b.mesh_size_mm : null,
             // v0.16.2 select: bead_source 항상, select_base 는 mesh 일 때만(AD-D-22)
             // v0.17.0 새 select 스터디 = schema 2(BG-D-35)
+            ...(b.scenario === "select" && (b.depth_section ?? this.settings.depth_section) ? { depth_section: (b.depth_section ?? this.settings.depth_section) as DoeDepthSection } : {}),
             ...(b.scenario === "select" ? { bead_source: (b.bead_source as "auto" | "manual" | undefined) ?? "manual", select_schema: 2 as const, ...(b.select_base === "mesh" ? { select_base: "mesh" as const } : {}) } : {}),
             // v0.18.0 ③ STEP 기준: select_base step + 메시 방식(④ 와 같은 값)
             ...(b.scenario === "select" && b.select_base === "step" ? { select_base: "step" as const, part_title: null, mesh_mode: co.mesh_mode ?? null, mesh_refine: b.mesh_refine === false ? false : true } : {}),
@@ -2593,8 +2612,17 @@ export class DoeMock {
         return ok(this.studyOut(rec), 202);
       }
       if (method === "POST" && sub === "/clone") {
+        const ds = b.depth_section as DoeDepthSection | undefined;
+        if (ds != null && (rec.out.scenario !== "select" || !MOCK_DEPTH_VALUES.includes(ds))) return err(422, "INVALID_PARAMS", "depth_section 은 강성 스터디 select 만, entry_fixed·floor_fixed 만 허용합니다.");
         const id = this.id("doe");
-        const n: Rec = { out: { ...rec.out, id, title: String(b.title ?? `${rec.out.title} (복제)`), phase: "PREP", version: 1, prep: null, doe: null, created_at: this.ctx.now(), created_by_name: this.ctx.me().display_name }, jobIds: [], pending: null, cells: null, result: null, stepUpload: rec.stepUpload, sel: rec.sel ? { ...rec.sel, rev: 1 } : null };
+        // v0.24.7 §6.1: 깊이 동작 키(키 없음 + entry 요청 = 키 없음), 원 spec → spec_prefill(floor→entry 는 한쪽 입구 W 변수 제외)
+        const { depth_section: odc, spec_prefill: _osp, ...oin } = rec.out.inputs;
+        const to = ds ?? odc;
+        const keepKey = to === "floor_fixed" || (to === "entry_fixed" && odc != null);
+        const origSpec = rec.out.doe?.spec ?? rec.out.inputs.spec_prefill ?? null;
+        const w1 = rec.sel && rec.sel.input.schema_version === 2 && odc === "floor_fixed" ? new Set(graphParams(rec.sel.input, rec.out.inputs.shape_rules, "floor_fixed").params.filter((x) => x.w_side === "one").map((x) => x.name)) : new Set<string>();
+        const prefill = origSpec && rec.out.scenario === "select" ? { ...origSpec, params: origSpec.params.filter((x) => to === "floor_fixed" || !w1.has(x.name)) } : null;
+        const n: Rec = { out: { ...rec.out, inputs: { ...oin, ...(keepKey && to ? { depth_section: to } : {}), ...(prefill ? { spec_prefill: prefill } : {}) }, id, title: String(b.title ?? `${rec.out.title} (복제)`), phase: "PREP", version: 1, prep: null, doe: null, created_at: this.ctx.now(), created_by_name: this.ctx.me().display_name }, jobIds: [], pending: null, cells: null, result: null, stepUpload: rec.stepUpload, sel: rec.sel ? { ...rec.sel, rev: 1 } : null };
         n.jobIds.push(this.ctx.newJob(n.out.project_id, "DOE_PREP", { bead_doe_id: id }).id);
         this.recs.push(n);
         return ok(this.studyOut(n), 201);
