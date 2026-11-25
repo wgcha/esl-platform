@@ -259,6 +259,25 @@ def _quad_jacobian(X, Cq):
     return D.min(axis=1) / np.maximum(np.abs(D).max(axis=1), 1e-300)
 
 
+def quad_corner_min(X, Cq, n_ref=None):
+    """min corner sine of each quad on its own diagonal-normal plane (corner Jacobian, sign only meaningful) or — n_ref
+    given (k, 3) — about that fixed normal (e.g. the rest normal): <= 0 = concave (or inverted) corner even when the 2x2
+    Gauss-point Jacobian stays positive (DF entry guard — esl contract esl_bead_depth_mode §1.2.1, DM-34)."""
+    P = np.asarray(X, np.float64)[np.asarray(Cq, np.int64)]
+    if n_ref is None:
+        n = np.cross(P[:, 2] - P[:, 0], P[:, 3] - P[:, 1])
+    else:
+        n = np.array(n_ref, np.float64, copy=True)
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-300)
+    out = np.full(len(P), np.inf)
+    for c in range(4):
+        a, b, d = P[:, c], P[:, (c + 1) % 4], P[:, (c - 1) % 4]
+        e1, e2 = b - a, d - a
+        s = np.einsum("ij,ij->i", np.cross(e1, e2), n)
+        out = np.minimum(out, s / np.maximum(np.linalg.norm(e1, axis=1) * np.linalg.norm(e2, axis=1), 1e-300))
+    return out
+
+
 def inverted_count(nodes, x, elems, flip_deg: float = 60.0) -> int:
     """elements with a moved node that are inverted: quad Jacobian <= 0 or element normal rotated > flip_deg."""
     X0 = np.asarray(nodes, np.float64)

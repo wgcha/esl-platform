@@ -195,6 +195,59 @@ def _corner_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, ext
     return c
 
 
+def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, ext: float, cg: dict,
+                    flip_deg: float):
+    """DF entry guard (esl contract §1.2.1 — DM-32·34): ``_corner_guard`` one pass at a time (its criteria — area ratio of
+    parent-floor elements, normal flip, Gauss-point quad Jacobian — shrink the plan part of the flagged elements' moving
+    nodes) plus concave quads (a corner Jacobian <= 0 at ±ext on the element's own plane or about its rest normal, > 0 at
+    rest — ``checks.quad_corner_min``): their moving nodes' plan part and — wall nodes ``wall`` only — their normal part
+    shrink (a flat fillet corner on the entry line folds when the wall node below only drops: the element plane turns
+    about the entry line), up to ``cg["iters"]`` passes, ``shrink`` once per pass. Pass 2.. re-check only the elements
+    with a node whose factor changed (the others are as in pass 1 — exact). -> (plan factor c, normal factor cn (wall
+    nodes), elements still flagged after the last pass — 0 normal). Same plan factors as ``_corner_guard`` where no
+    quad turns concave."""
+    from .checks import quad_corner_min
+    c = np.ones(M.n)
+    cn = np.ones(M.n)
+    el = np.asarray(el, bool)
+    if not el.any() or ext <= 0:
+        return c, cn, 0
+    un = (U @ M.n0)[:, None] * M.n0[None, :]
+    upl = U - un
+    shrink, iters = float(cg["shrink"]), int(cg["iters"])
+    one = dict(cg, iters=1)
+
+    def flagged(sub):
+        idx = np.flatnonzero(sub)
+        C = M.C[idx]
+        Ud = un * cn[:, None] + upl * c[:, None]
+        cs = _corner_guard(M, sub, Ud, moved, ext, one, flip_deg)
+        bc = np.zeros(idx.size, bool)
+        qi = np.flatnonzero(C[:, 3] >= 0)
+        if qi.size:
+            Cq = C[qi]
+            nq0 = np.cross(M.X[Cq[:, 2]] - M.X[Cq[:, 0]], M.X[Cq[:, 3]] - M.X[Cq[:, 1]])
+            cq0 = (quad_corner_min(M.X, Cq) > 0.0) & (quad_corner_min(M.X, Cq, nq0) > 0.0)
+            for sgn in (1.0, -1.0):
+                X1 = M.X + sgn * ext * Ud
+                bc[qi] |= cq0 & (np.minimum(quad_corner_min(X1, Cq), quad_corner_min(X1, Cq, nq0)) <= 0.0)
+        nd = np.unique(C[bc][C[bc] >= 0])
+        sn = cs < 1.0
+        left = bc | (sn[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)
+        return cs, nd[moved[nd]], int(left.sum())
+    sub = el
+    for _ in range(iters):
+        cs, nd, _left = flagged(sub)
+        if (cs >= 1.0).all() and nd.size == 0:
+            return c, cn, 0
+        pl = cs < 1.0
+        pl[nd] = True
+        c[pl] *= shrink
+        cn[nd[wall[nd]]] *= shrink
+        sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
+    return c, cn, flagged(sub)[2]
+
+
 def _var_ext(rng, nominal):
     lo, hi = (float(v) for v in rng)
     return max(abs(hi - nominal), abs(lo - nominal))
@@ -555,7 +608,7 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     ent_idx = np.flatnonzero(E)
     r_max = float(rE[ent_idx].max()) if ent_idx.size else 0.0
     Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext * r_max, 3.0 * h)
-    band, _on_par = _band(M, Z, Rw, ent_idx, Uv, info, mix_h=h)
+    band, _on_par = _band(M, Z, Rw, ent_idx, Uv, info, mix_h=h, isl_obstacle=True)
     A_el = _allowed_wide(M, Z)
     allowed_n = M.nmask(A_el) | band
     if info.get("band_islands"):
@@ -573,12 +626,15 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     gmov = (E | walln | band) & allowed_n & mov
     gel = (ZW | M.emask_of_nodes(E | band)) & ~ZF
     info["entry_guard_n"] = 0
+    info["entry_guard_left"] = 0
     if gmov.any() and gel.any():
-        cE = _corner_guard(M, gel, Uv, gmov, ext, mc["corner"], float(cfg["quality"]["flip_deg"]))
+        cE, cN, info["entry_guard_left"] = _df_entry_guard(M, gel, Uv, gmov, walln, ext, mc["corner"],
+                                                           float(cfg["quality"]["flip_deg"]))
         if (cE < 1.0).any():
             un = (Uv @ M.n0)[:, None] * M.n0[None, :]
-            Uv = un + (Uv - un) * cE[:, None]
+            Uv = un * cN[:, None] + (Uv - un) * cE[:, None]
             info["entry_guard_n"] = int((cE < 1.0).sum())
+            info["entry_guard_wall_n"] = int((cN < 1.0).sum())
             info["warnings"].append({"code": "DF_ENTRY_GUARD", "level": "info", "n_nodes": info["entry_guard_n"],
                                      "steep_max_deg": U.f3(_flank_change_deg(M, ZW & M.emask_of_nodes(cE < 1.0),
                                                                              Uv, ext))})
@@ -641,12 +697,7 @@ def _entry_fix(M: Mesh, Z: dict, eI: np.ndarray, r_raw: np.ndarray, n_e: np.ndar
             return v.copy()
         return np.asarray(W @ v).ravel() / np.asarray(W.sum(axis=1)).ravel()
     r_s = smooth(r_raw)
-    p = Z["parent"]
-    others = ~(Z["parent_floor"] | Z["ZF"] | Z["ZW"] | Z["ZI"])
-    isl = M.lab["island"]
-    on_par = [x["id"] for x in M.graph["islands"] if x["parent"] == p and not x["straddle"]]
-    others &= ~np.isin(isl, on_par)
-    n_oth = M.nmask(others)
+    n_oth = M.nmask(_others_el(M, Z, True))           # DM-33: parent-floor islands are obstacles (same set as the band)
     kap = np.ones(n)
     if n_oth.any():
         d_o, _ = cKDTree(M.P[n_oth]).query(M.P[eI])
@@ -712,7 +763,7 @@ def _one_w1(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, e
     bl = cfg["blend"]
     Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext, 3.0 * h)
     ent_o = np.flatnonzero(E & openm)
-    band, on_par = _band(M, Z, Rw, ent_o, Uv, info, mix_h=h)
+    band, on_par = _band(M, Z, Rw, ent_o, Uv, info, mix_h=h, isl_obstacle=True)
     Lf = M.laplacian(ZF)
     dir_zero = (nC | nSC | nI | J | M.nmask(~(ZF | ZW)) & ~E)
     free = nF & ~hm & ~E & ~dir_zero & ~band & ~fx
@@ -759,24 +810,36 @@ def _one_w1(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, e
             "zones": sorted(int(z) for z in (b.get("zones") or ()))}
 
 
-def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info: dict, mix_h: float | None = None):
+def _others_el(M: Mesh, Z: dict, isl_obstacle: bool) -> np.ndarray:
+    """"other shapes" element mask of the parent-floor band / DF entry gap: everything outside the parent floor, the bead
+    floor / walls and the bead's islands. W (``isl_obstacle`` False): the parent's non-straddling islands are not
+    others (they move rigidly with the band). DF·W1 (True — esl contract §1.2.1·§1.6.3, DM-33): every island on the
+    parent floor is an obstacle (stays, the band fades next to it, the entry gap d_o sees it)."""
+    others = ~(Z["parent_floor"] | Z["ZF"] | Z["ZW"] | Z["ZI"])
+    if not isl_obstacle:
+        isl = M.lab["island"]
+        on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == Z["parent"] and not i["straddle"]]
+        others &= ~np.isin(isl, on_par)
+    return others
+
+
+def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info: dict, mix_h: float | None = None,
+          isl_obstacle: bool = False):
     """parent-floor blend band (W·DF·W1 — one internal function, contract esl_bead_depth_mode §9): parent-floor nodes
     within R_w of the source entry nodes ``src_idx`` copy the nearest source displacement × (1 − smoothstep(d/R_w)),
     or — ``mix_h`` given (DF·W1, DM-C1-2) — the distance-weighted mix of the up to ``BAND_MIX_K`` nearest sources
     within R_w, w_k = 1/(d_k² + (0.1h)²) (continuous between facing entry lines; W keeps the nearest copy),
-    clipped near other zones (SELECT_BLEND_CLIPPED); parent-floor islands touched by the band move rigidly with it.
+    clipped near other zones (SELECT_BLEND_CLIPPED); parent-floor islands touched by the band move rigidly with it (W) or
+    — ``isl_obstacle`` (DF·W1, DM-33) — are other zones (stay, the band fades next to them; no ``band_islands``).
     -> (band node mask, ids of the parent's non-straddling islands). Uv / info updated in place."""
     lab = M.lab
     p = Z["parent"]
     E, nF, nW = Z["E"], Z["nF"], Z["nW"]
-    ZF, ZW, ZI = Z["ZF"], Z["ZW"], Z["ZI"]
     band = np.zeros(M.n, bool)
     pf = M.nmask(Z["parent_floor"]) & ~E & ~nF & ~nW
-    others = ~(Z["parent_floor"] | ZF | ZW | ZI)
     isl = lab["island"]
     on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == p and not i["straddle"]]
-    others &= ~np.isin(isl, on_par)
-    n_oth = M.nmask(others)
+    n_oth = M.nmask(_others_el(M, Z, isl_obstacle))
     pf &= ~n_oth
     info["blend_mm"] = Rw
     if src_idx.size and pf.any():
@@ -805,8 +868,9 @@ def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info
         else:
             Uv[bidx] = Uv[src_idx[je[sel]]] * w[:, None]
         band[bidx] = True
-        bi = np.unique(isl[M.emask_of_nodes(band) & (isl >= 0)])
-        info["band_islands"] = [int(x) for x in bi if int(x) in on_par]
+        if not isl_obstacle:
+            bi = np.unique(isl[M.emask_of_nodes(band) & (isl >= 0)])
+            info["band_islands"] = [int(x) for x in bi if int(x) in on_par]
     return band, on_par
 
 
