@@ -224,8 +224,8 @@ def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict
     return bad
 
 
-def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, ext: float, cg: dict,
-                    flip_deg: float, qual: dict | None = None):
+def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, floor: np.ndarray,
+                    ext: float, cg: dict, flip_deg: float, qual: dict | None = None):
     """DF entry guard (esl contract §1.2.1 — DM-32·34): ``_corner_guard`` one pass at a time (its criteria — area ratio of
     parent-floor elements, normal flip, Gauss-point quad Jacobian — shrink the plan part of the flagged elements' moving
     nodes) plus concave quads (a corner Jacobian <= 0 at ±ext on the element's own plane or about its rest normal, > 0 at
@@ -234,7 +234,8 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
     about the entry line), up to ``cg["iters"]`` passes, ``shrink`` once per pass. Pass 2.. re-check only the elements
     with a node whose factor changed (the others are as in pass 1 — exact). ``qual`` {jac_min, tri_angle_min_deg} (the
     caller's range-guard criteria, None = off — DM-35): elements that turn newly bad at ±ext (``_qual_new_bad``) shrink
-    the plan part of their moving nodes too. -> (plan factor c, normal factor cn (wall nodes), (elements still flagged by
+    the plan part of their moving nodes too (and, when they touch an ``entry`` node, the normal part of their wall nodes
+    — entry fillet slivers; deeper wall elements keep the depth). -> (plan factor c, normal factor cn (wall nodes), (elements still flagged by
     the inversion / area / concave criteria after the last pass — 0 normal, elements still newly bad by ``qual``)). Same
     plan factors as ``_corner_guard`` where no quad turns concave and ``qual`` is off."""
     from .checks import quad_corner_min
@@ -265,12 +266,15 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
         nd = np.unique(C[bc][C[bc] >= 0])
         bq = _qual_new_bad(M, C, Ud, ext, qual) if qual else np.zeros(idx.size, bool)
         ndq = np.unique(C[bq][C[bq] >= 0])
+        bqe = bq & ~(floor[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)      # off the floor edge: wall normal too
+        ndqe = np.unique(C[bqe][C[bqe] >= 0])
+        ndq_w = ndqe[moved[ndqe] & wall[ndqe]]
         sn = cs < 1.0
         left = bc | (sn[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)
-        return cs, nd[moved[nd]], ndq[moved[ndq]], (int(left.sum()), int(bq.sum()))
+        return cs, nd[moved[nd]], ndq[moved[ndq]], ndq_w, (int(left.sum()), int(bq.sum()))
     sub = el
     for _ in range(iters):
-        cs, nd, ndq, _left = flagged(sub)
+        cs, nd, ndq, ndq_w, _left = flagged(sub)
         if (cs >= 1.0).all() and nd.size == 0 and ndq.size == 0:
             return c, cn, (0, 0)
         pl = cs < 1.0
@@ -278,8 +282,19 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
         pl[ndq] = True
         c[pl] *= shrink
         cn[nd[wall[nd]]] *= shrink
+        cn[ndq_w] *= shrink
         sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
-    return c, cn, flagged(sub)[3]
+    # shrink^iters did not settle (a corner flat to ~1e-5 at rest folds under any motion): freeze the moving nodes of
+    # the elements still flagged by the inversion / area / concave criteria (the limit of the shrink), re-check
+    for _ in range(iters):
+        cs, nd, _ndq, _w, (left, _ql) = flagged(sub)
+        if left == 0:
+            break
+        c[cs < 1.0] = 0.0
+        c[nd] = 0.0
+        cn[nd[wall[nd]]] = 0.0
+        sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
+    return c, cn, flagged(sub)[4]
 
 
 def _var_ext(rng, nominal):
@@ -666,7 +681,7 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
         qual = {"jac_min": b.get("guard_jac_min"), "tri_angle_min_deg": b.get("guard_tri_angle_min_deg")}
         qual = {k: float(v) for k, v in qual.items() if v is not None} or None
         cE, cN, (info["entry_guard_left"], info["entry_guard_qual_left"]) = _df_entry_guard(
-            M, gel, Uv, gmov, walln, ext, mc["corner"], float(cfg["quality"]["flip_deg"]), qual)
+            M, gel, Uv, gmov, walln, nF, ext, mc["corner"], float(cfg["quality"]["flip_deg"]), qual)
         if (cE < 1.0).any():
             un = (Uv @ M.n0)[:, None] * M.n0[None, :]
             Uv = un * cN[:, None] + (Uv - un) * cE[:, None]

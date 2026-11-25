@@ -5,3 +5,5 @@
 - DM-35(추가 결정 필요했음): range guard 품질 기준(jac_min·tria_angle_min_deg 새 위반)을 DF 입구 가드에 넘김(DF 항목 guard_jac_min·guard_tri_angle_min_deg — esl _pkg_item, D.df_guard_q = range guard 켬일 때만). 없으면 rg floor D = [7.925,8.0] blocked(tri_angle −0.15 머리카락 요소). 있으면 [5.675, 8.0] limited(hi 8.0 = 91538 벽 바닥 quad jac 0.301 머리카락 — entry_fixed 도 hi 8.0 같은 요소).
 - info entry_guard_left(뒤집힘·넓이·오목) / entry_guard_qual_left(품질 — 정보만)
 - 시험 추가: packages test_one_side::test_df_h6_ch1_default_range_ends_v3, tests/doe/test_depth_section_dfx.py(rg ch1 entry [6.35,8.0] / floor [5.675,8.0]), test_depth_section §2.6 키
+- 가드 보강: (a) shrink^iters 로 안 풀리는 요소(쉼 모서리 sine ~1e-5) → 대상 노드 동결(계수 0) 후 재점검, (b) 품질 기준 걸린 요소 중 깊이면(nF) 노드 없는 것 → 벽 노드 법선도 줄임. rg: ch1 floor [5.6, 8.15] (entry [6.35,8.0]), ch2(b13) floor [6.5, 8.075] (entry [6.2, 8.075]). 패키지 89 pass.
+- 표 스크립트 /tmp/dfx/table.py → /tmp/dfx/table.json (H6·H5 auto_seed 비드)
