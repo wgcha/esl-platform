@@ -53,10 +53,13 @@ def allowed_elements(graph, labels, nodes, elems, segs, zones=(), kind: str = "D
     walls, islands), the shared children's wall part on the S side (wall whose nearest F-floor element is an S element —
     BG-D-23 Z_SC), owned islands and straddling islands touching an S floor element (D6).
     W: S elements + junction zones + owned / straddling islands + the parent floor and its non-straddling islands (blend
-    band R_w, BG-D-30) — children stay (not allowed)."""
+    band R_w, BG-D-30) — children stay (not allowed).
+    DF (depth, floor width kept — esl_bead_depth_mode §1.2.1): the D set ∪ the parent floor and its non-straddling
+    islands (A_DF). W1 (one-sided width, §1.6.3): the W set."""
     lab = {k: np.asarray(v, np.int64) for k, v in labels.items()}
     cls, seg, jz, tr, isl, fl = (lab[k] for k in ("cls", "segment", "junction_zone", "transition", "island", "floor"))
     K = conn or _Conn(graph, nodes, elems)
+    base = {"DF": "D", "W1": "W"}.get(kind, kind)
     S = sorted({int(s) for s in segs})
     sg = {s["id"]: s for s in graph["segments"]}
     F = sg[S[0]]["floor"]
@@ -87,7 +90,7 @@ def allowed_elements(graph, labels, nodes, elems, segs, zones=(), kind: str = "D
     for c in children:
         tids = [t["id"] for t in graph["transitions"] if t["type"] == "parent-child" and t["child"] == c]
         cw = wall_el & np.isin(tr, tids)
-        if kind != "D" or not cw.any():
+        if base != "D" or not cw.any():
             continue
         if listed[c] and listed[c] <= set(S):          # exclusive child: whole subtree rigid with the bead
             sub = subtree(c)
@@ -112,7 +115,7 @@ def allowed_elements(graph, labels, nodes, elems, segs, zones=(), kind: str = "D
             A |= e
         elif i["straddle"] and touchS[K.C[e][K.C[e] >= 0]].any():
             A |= e
-    if kind == "W":
+    if base == "W" or kind == "DF":
         if p is not None and p >= 0:
             A |= floor_el & (fl == p)
             A |= np.isin(isl, [i["id"] for i in graph["islands"] if i["parent"] == p and not i["straddle"]]) & (isl >= 0)
@@ -170,7 +173,8 @@ def basis_leak(basis, graph=None, labels=None, nodes=None, elems=None) -> list[d
 
 
 def achieved(graph, labels, nodes, x, basis, values, elems=None) -> dict:
-    """D: max |Δh − s·Δv| over the achieved nodes; W: |ΔW_measured − Δv| (entry nodes at full ramp)."""
+    """D / DF: max |Δh − s·Δv| over the achieved nodes; W: |ΔW_measured − Δv| (entry nodes at full ramp, both sides ->
+    2 × the median skeleton-distance change); W1: one side -> 1 × the change."""
     x0 = np.asarray(nodes, np.float64)
     x = np.asarray(x, np.float64)
     n0 = np.asarray(graph["frame"]["n0"], float)
@@ -182,7 +186,7 @@ def achieved(graph, labels, nodes, x, basis, values, elems=None) -> dict:
         if idx.size == 0:
             out[v["name"]] = None
             continue
-        if v["kind"] == "D":
+        if v["kind"] in ("D", "DF"):
             dh = (x[idx] - x0[idx]) @ n0
             out[v["name"]] = float(np.abs(dh - v["info"]["sign"] * dv).max())
         else:
@@ -190,7 +194,8 @@ def achieved(graph, labels, nodes, x, basis, values, elems=None) -> dict:
                 M = _PlanOnly(graph, x0)
             d0, _n, _i = _skeleton_dist(M, v["segs"], M.plan(x0[idx]))
             d1, _n, _i = _skeleton_dist(M, v["segs"], M.plan(x[idx]))
-            out[v["name"]] = float(abs(2.0 * (np.median(d1) - np.median(d0)) - dv))
+            fac = 1.0 if v["kind"] == "W1" else 2.0
+            out[v["name"]] = float(abs(fac * (np.median(d1) - np.median(d0)) - dv))
     return out
 
 

@@ -456,6 +456,49 @@ STDLIB = {"copy", "hashlib", "json", "math", "time", "os", "sys", "ast", "functo
           "struct", "re", "typing", "dataclasses"}
 
 
+def depth_section_checks() -> dict:
+    """V-0247-DM-1·18 (package part, 1.2.0): kind DF on the synthetic 45° / 60° channel (floor plan 0, entry
+    W_open + 2ΔD·cotθ, angle kept, no inversion) and kind W1 on the one-sided fixture b (achieved ≤ 1e-3, fixed walls 0)."""
+    from .. import basis as _basis
+    from .. import check as _check
+    from .. import classify as _classify
+    from .. import morph as _morph
+    from . import synth_oneside as so
+    bad, out = [], {}
+    for th in (45.0, 60.0):
+        c = so.channel(theta=(th, th))
+        X, C, F = c["nodes"], c["conn"], c["fixed"]
+        g, lab = _classify(X, C, F)
+        sid = [s["id"] for s in g["segments"] if s["type"] != "base"]
+        bl = [{"name": "v", "kind": "DF", "segs": sid, "hold": 1}]
+        B = _basis(g, lab, X, bl, {"v": [7.0, 13.0]}, fixed=F, elems=C)
+        x = _morph(X, B, {"v": 13.0})
+        r = _check(g, lab, X, x, B, {"v": 13.0}, elems=C)
+        m = c["meta"]
+        xm = (X[:, 0] > m["x_range"][0] + 80) & (X[:, 0] < m["x_range"][1] - 80) & (np.abs(X[:, 2]) < 1e-9)
+        e0 = xm & (np.abs(X[:, 1] - m["y_entry"][0]) < 1e-6)
+        e1 = xm & (np.abs(X[:, 1] - m["y_entry"][1]) < 1e-6)
+        wo = float(np.median(x[e1, 1]) - np.median(x[e0, 1]))
+        want = m["W_open"] + 6.0 / np.tan(np.radians(th))
+        fl = B[0]["info"]["achieved_idx"]
+        fp = float(np.abs((x - X)[fl][:, :2]).max()) if len(fl) else 1.0
+        out[f"DF{int(th)}"] = {"W_open": wo, "floor_plan": fp, "inverted": r["inverted"]}
+        if abs(wo - want) > 1e-3 or fp > 1e-12 or r["inverted"] or r["achieved"]["v"] > 1e-6:
+            bad.append(f"DF {th}: {out[f'DF{int(th)}']}")
+    c = so.oneside("b")
+    X, C, F = c["nodes"], c["conn"], c["fixed"]
+    g, lab = _classify(X, C, F)
+    bl = [{"name": "w", "kind": "W1", "segs": [2], "hold": 1, "ramp": "end"}]
+    B = _basis(g, lab, X, bl, {"w": [36.0, 44.0]}, fixed=F, elems=C)
+    x = _morph(X, B, {"w": 44.0})
+    r = _check(g, lab, X, x, B, {"w": 44.0}, elems=C)
+    out["W1b"] = {"achieved": r["achieved"]["w"], "inverted": r["inverted"], "outside": r["outside"]["max_mm"]}
+    if r["achieved"]["w"] is None or r["achieved"]["w"] > 1e-3 or r["inverted"] or r["outside"]["max_mm"] > 1e-9:
+        bad.append(f"W1 b: {out['W1b']}")
+    out["bad"] = bad
+    return out
+
+
 def purity() -> list[str]:
     """package modules (testing generators excepted) import only stdlib / numpy / scipy."""
     root = os.path.dirname(HERE)
@@ -490,8 +533,8 @@ def fixtures_size() -> int:
 
 # ------------------------------------------------------------------------------------------- report
 def selftest(full: bool = True) -> dict:
-    from .. import RULES, __version__, validate
-    rep = {"beadgraph_version": __version__, "rules": RULES, "checks": {}}
+    from .. import OUTPUT_VERSION, RULES, __version__, validate
+    rep = {"beadgraph_version": __version__, "output_version": OUTPUT_VERSION, "rules": RULES, "checks": {}}
 
     def put(name, bad, **extra):
         rep["checks"][name] = {"ok": not bad, "problems": bad, **extra}
@@ -529,6 +572,8 @@ def selftest(full: bool = True) -> dict:
         put("V-BG-6 h5 morph", m5.pop("bad"), metrics=m5)
         sb = stepboss_morph()
         put("V-BG-19 step-straddling bosses (BG-D-47)", sb.pop("bad"), metrics=sb)
+        ds = depth_section_checks()
+        put("V-0247-DM DF·W1 (1.2.0)", ds.pop("bad"), metrics=ds)
         bad = purity()
         try:
             validate(g)
@@ -550,8 +595,8 @@ def selftest(full: bool = True) -> dict:
 
 def write_expected() -> dict:
     """maintainers: refresh expected.json after a RULES bump (MINOR) — never for a PATCH."""
-    from .. import MORPH_RULES, RULES, __version__
-    out = {"rules": RULES, "morph_rules": MORPH_RULES, "version": __version__}
+    from .. import MORPH_RULES, OUTPUT_VERSION, RULES
+    out = {"rules": RULES, "morph_rules": MORPH_RULES, "version": OUTPUT_VERSION}
     for nm in ("h5", "h6"):
         g, lab, _ = classified(nm)
         out[nm] = {"graph_sha256": graph_sha(g), "labels_sha256": labels_sha(lab),

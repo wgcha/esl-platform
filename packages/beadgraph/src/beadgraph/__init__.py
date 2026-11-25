@@ -11,13 +11,21 @@ Stable API (changing a signature or the schema major number = MAJOR):
     morph(nodes, basis, values) -> ndarray
     check(graph, labels, nodes, x, basis, values, cfg=None) -> dict
     validate(graph) -> None
+    one_side(graph, labels, nodes, elems, segs, *, min_nodes=3) -> dict      (1.2.0)
+
+Versions (esl contract esl_bead_depth_mode.md §5.1): ``__version__`` = package (wheel) version; ``OUTPUT_VERSION`` =
+the version written into graph.json (``version``) — it only moves when RULES or MORPH_RULES move, so a MINOR that adds
+new basis kinds (1.2.0: DF, W1, one_side) keeps the graph.json / D·W basis bytes (and the esl graph sha) unchanged.
 """
 from __future__ import annotations
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
+OUTPUT_VERSION = "1.1.0"  # graph.json header version: = the __version__ of the last RULES / MORPH_RULES bump
 SCHEMA = "beadgraph/1"
 RULES = 1                 # classification output rules (graph.json bytes) — bump = MINOR + expected.json update
-MORPH_RULES = 2           # morph basis numerics — bump = MINOR, esl recomputes bases
+MORPH_RULES = 2           # morph basis numerics of kinds D·W — bump = MINOR, esl recomputes bases
+DF_RULES = 1              # kind DF numerics (depth, floor width kept) — esl basis reuse key
+W1_RULES = 1              # kind W1 numerics (one-sided entry width) — esl basis reuse key
 
 # submodules first: the API functions below share names with two submodules (classify, morph) and must win the
 # package attribute (a later ``from .morph import x`` does not rebind it once the module is loaded)
@@ -27,8 +35,9 @@ from . import morph as _morph_mod  # noqa: E402,F401
 from .classify import CLS, LABEL_KEYS, BeadgraphError  # noqa: E402
 from .defaults import DEFAULTS  # noqa: E402
 
-__all__ = ["classify", "apply_edits", "resolve", "basis", "morph", "check", "validate", "graph_bytes", "DEFAULTS",
-           "SCHEMA", "RULES", "MORPH_RULES", "__version__", "BeadgraphError", "CLS", "LABEL_KEYS"]
+__all__ = ["classify", "apply_edits", "resolve", "basis", "morph", "check", "validate", "graph_bytes", "one_side",
+           "DEFAULTS", "SCHEMA", "RULES", "MORPH_RULES", "DF_RULES", "W1_RULES", "OUTPUT_VERSION", "__version__",
+           "BeadgraphError", "CLS", "LABEL_KEYS"]
 
 
 def _mesh_input(nodes, elems, fixed=None):
@@ -134,6 +143,15 @@ def morph(nodes, basis, values):
 def check(graph, labels, nodes, x, basis, values, cfg=None, elems=None):
     from .checks import check as _c
     return _c(graph, labels, nodes, x, basis, values, cfg=cfg, elems=elems)
+
+
+@_guard
+def one_side(graph, labels, nodes, elems, segs, *, min_nodes=3):
+    """per-segment one-sided entry measurement (esl_bead_depth_mode §1.6.2) -> {seg id: {side, n_open, n_other,
+    d_open, d_edge_open, d_fixed, width, floor, run, fixed{child, shared, junction, edge, own_wall}, ok, reason}}."""
+    from .oneside import one_side as _o
+    nodes, elems, _f = _mesh_input(nodes, elems)
+    return _o(graph, labels, nodes, elems, segs, min_nodes=min_nodes)
 
 
 def validate(graph):

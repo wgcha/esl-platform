@@ -160,7 +160,7 @@ def prep_graph(mesh: dict, fixed_ids, cfg: dict | None, out_dir: str, guard=None
         gc["limits"] = gl
     g = guard or (lambda p: p)
     st = {"ok": False, "code": None, "sha256": None, "rules": bg.RULES, "morph_rules": bg.MORPH_RULES,
-          "beadgraph_version": bg.__version__, "n_segments": 0, "n_junction_zones": 0, "n_islands": 0,
+          "beadgraph_version": bg.OUTPUT_VERSION, "n_segments": 0, "n_junction_zones": 0, "n_islands": 0,
           "seconds": 0.0, "warnings": []}
     if not sc["graph"].get("enabled", True):
         st["code"] = "DISABLED"

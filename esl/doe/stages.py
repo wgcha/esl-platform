@@ -6851,7 +6851,7 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     if v2:                                      # v0.17.0 BG-D-39: 그래프 경로 판·패키지 판 + 램프(BG_RAMP_SHORT 판단)
         bg = _bgr()._bg()
         meta.update(graph_algo=_bgr().GRAPH_ALGO, morph_rules=bg.MORPH_RULES, rules_graph=bg.RULES,
-                    beadgraph_version=bg.__version__,
+                    beadgraph_version=bg.OUTPUT_VERSION,
                     graph_vars=[{"name": v["name"], "kind": v["kind"], "nominal": float(v["nominal"]),
                                  "ramp_mm": float(v["info"]["ramp_mm"])} for v in getattr(D, "graph_basis", [])])
     c.write_json(os.path.relpath(pj, c.out), meta)

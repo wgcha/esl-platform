@@ -18,6 +18,7 @@ morph(nodes, basis, values) -> ndarray                                     # x0 
 check(graph, labels, nodes, x, basis, values, cfg=None, elems=None) -> dict  # outside / achieved / island residual / inverted
 validate(graph) -> None                                                    # ValueError on schema violation
 graph_bytes(graph) -> bytes                                                # canonical graph.json bytes
+one_side(graph, labels, nodes, elems, segs, *, min_nodes=3) -> dict         # 1.2.0: one-sided entry measurement
 ```
 
 - input: `nodes (n,3)` float64 mm, `elems (m,4)` 0-based (triangle 4th = -1), optional fixed node indices. Inches: convert
@@ -25,7 +26,9 @@ graph_bytes(graph) -> bytes                                                # can
   change the result (V-BG-4).
 - `labels` = `{cls (0 floor, 1 wall, 2 island, 3 lance), floor, segment, transition, island, junction_zone, tier}` int32,
   input element order, -1 = none.
-- `beads` for `basis` = `[{name, kind: "D"|"W", segs: [segment id…], zones?: [junction-zone id…], hold: 0|1}]`; grouping,
+- `beads` for `basis` = `[{name, kind: "D"|"W"|"DF"|"W1", segs: [segment id…], zones?: [junction-zone id…], hold: 0|1}]`
+  (1.2.0: `DF` = depth with the floor width and each wall's flank angle kept — the entry widens by cotθ·ΔD per wall;
+  `W1` = one-sided entry width — the open side moves ΔW, the fixed side stays; `ramp: "end"`, `min_nodes`); grouping,
   ties and names are the caller's job. `ranges` = default range per variable (fixes the ramp length and corner guard).
   `elems` is required by `basis` (connectivity).
 - Classification errors raise `BeadgraphError` with `.code` in `TOO_LARGE | TIMEOUT | NO_FLOOR | ERROR`.
@@ -43,11 +46,18 @@ graph_bytes(graph) -> bytes                                                # can
 1.0.0 = RULES 1, MORPH_RULES 1. 1.1.0 (esl v0.19.1) = RULES 1, MORPH_RULES 2 — a straddling island's rim nodes on a
 foreign wall are held like its foreign-floor contact; basis and checks share `zones.movable_nodes` (BG-D-47). Record `beadgraph_version`, `rules`, `morph_rules` with every product.
 
+1.2.0 (esl v0.24.7, contract esl_bead_depth_mode.md §5.1) = RULES 1, MORPH_RULES 2, new `DF_RULES` 1 (kind DF),
+`W1_RULES` 1 (kind W1), new function `one_side`. `OUTPUT_VERSION` = "1.1.0" is written into graph.json (`version`) and
+only moves when RULES or MORPH_RULES move — graph.json and the D·W basis bytes of 1.1.0 are unchanged, so a consumer's
+graph sha (and esl `BG_GRAPH_STALE`) does not change with this MINOR. `python -m beadgraph version` prints
+`version`, `output_version`, `rules`, `morph_rules`, `df_rules`, `w1_rules`.
+
 ## Checks
 
 `python -m beadgraph selftest [--json]` (exit 0 = pass) or `pytest --pyargs beadgraph.testing`: H6 / H5 classification
 accuracy, determinism against `expected.json`, numbering / orientation / rigid-transform invariance, morph metrics,
-import purity. No gmsh needed. The generators `testing/synth_h5.py`, `testing/synth_h6.py`, `testing/synth_stepboss.py` need the `[synth]` extra.
+import purity, DF·W1 on the synthetic aligned-quad fixtures (`testing/synth_oneside.py` — numpy only). No gmsh needed.
+The generators `testing/synth_h5.py`, `testing/synth_h6.py`, `testing/synth_stepboss.py` need the `[synth]` extra.
 
 ## physicsai-platform
 

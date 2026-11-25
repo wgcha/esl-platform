@@ -480,9 +480,9 @@ def _assemble(ctx, zones, elem_jz, holes, upE, dnE, fixed_arr, nodes, elems, war
                       "d_eq": f3(h["d_eq"]), "area": f3(h["area"]), "circularity": f3(h["circularity"]),
                       "owner_floor": F(eff_piece_of(h["owner_floor"], rgs, root)), "owner_island": imap[h["owner_island"]],
                       "lance_slot": bool(h["lance_slot"]), "fixed": bool(h["fixed"]), "n_nodes": int(len(h["nodes"]))})
-    from . import MORPH_RULES, RULES, SCHEMA, __version__
+    from . import MORPH_RULES, OUTPUT_VERSION, RULES, SCHEMA
     graph = {
-        "schema": SCHEMA, "version": __version__, "rules": RULES, "morph_rules": MORPH_RULES,
+        "schema": SCHEMA, "version": OUTPUT_VERSION, "rules": RULES, "morph_rules": MORPH_RULES,
         "input": {"n_nodes": int(t.n), "n_elems": int(t.m), "n_tri": int(t.tri.sum()), "n_fixed": int(fixed_arr.size),
                   "sha256": input_sha256(nodes, elems, fixed_arr)},
         "cfg": cfg, "cfg_sha256": U.sha256_json(cfg),
