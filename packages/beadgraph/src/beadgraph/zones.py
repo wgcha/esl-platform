@@ -59,8 +59,12 @@ class Mesh:
         self._lap = None
 
     def nmask(self, emask) -> np.ndarray:
-        e = np.asarray(emask, bool).astype(np.float64)
-        return np.asarray(self.incT @ e).ravel() > 0
+        """element mask -> node mask (nodes of the marked elements). Direct index scatter (same boolean as incT @ e > 0)."""
+        C = self.C[np.asarray(emask, bool)]
+        out = np.zeros(self.n, bool)
+        v = C.ravel()
+        out[v[v >= 0]] = True
+        return out
 
     def emask_of_nodes(self, nmask) -> np.ndarray:
         return np.asarray(self.inc @ np.asarray(nmask, float)).ravel() > 0
