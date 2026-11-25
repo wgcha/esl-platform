@@ -86,14 +86,14 @@
 | 구역 | `bead_zones(M, segs, zones, "D")`(ZC·ZSC·공유 자식 J 를 D 와 같게 — `zones.py:176`·`:189-200`). 노드 집합 = D 와 같은 `edge = nF & nW & ~E`·`walln = nW & ~E & ~nF`(`morph.py:239-240`), E·J 그대로. 허용 요소 A_DF = D `allowed_el` ∪ 부모 바닥 ∪ 부모의 걸치지 않은 섬(W `A_el` 추가분 `:320-321`), `mov = movable_nodes(M, A_DF)` |
 | 깊이면 | nF ∪ (nC 중 벽·입구 아닌 것) = s·n0(`:255`·`:257`), **평면 0** — 조화 확장(`:307-314`)·코너 가드(`:329-360`) 없음 |
 | 벽·입구 | x ∈ walln ∪ E 마다 `cKDTree(M.P[edge])` 평면 최근접 깊이면 가장자리 x_f, h = |(x − x_f)·n0|, D_col = h(x ∈ E, ≤ 1e-6 이면 D_nom)·D_nom(벽) — `:246-250` 의 거울. 법선 s·(1 − clip(h/D_col, 0, 1))·n0(입구 0), 평면 = r·n_out, r = (x − x_f)_평면·n_out / D_col. 결과: 벽(높이 비 t, 깊이면 1) 법선 t·s, 평면 (1 − t)·cotθ_local 바깥, 입구 평면 cotθ_local |
-| 방향 n_out | W 와 같은 호출 — mv = E ∪ edge ∪ walln, `_skeleton_dist(M, S, ·)` → nref, `_smooth_dirs(M, ZW \| ZF, mv, idx, nref, w_smooth_iters)`(`:270-273`). 골격 거리 inf(골격 없음 — 면형·merge) 노드는 nref = 현 (x − x_f)_평면 정규화. 근거: 비정렬 메시에서 짝이 비스듬하면 입구 선이 cotθ·ΔD·sin(어긋남) 만큼 물결 |
+| 방향 n_out | mv = E ∪ edge ∪ walln. 노드의 자기 세그먼트 = 그 노드를 포함한 Z_W ∪ Z_F 요소의 `labels["segment"]` 값 ≥ 0(접합 구역·섬 요소 = −1, `classify.py:368-371`). nref = 최근접 골격(`_skeleton_dist(M, S, ·)` — 최근접 세그먼트 id 도 반환하게, W 호출 바이트 불변)이 **자기 세그먼트 것이고 `interior_mask` 참**이면 그 바깥 법선, 그 밖(골격 없음·끝단 투영·접합 구역·네트워크에서 남의 세그먼트 골격이 최근접)은 현 (x − x_f)_평면 정규화. 평활은 두 경우 공통 `_smooth_dirs(M, ZW \| ZF, mv, idx, nref, w_smooth_iters)`(`:270-273`). 근거: 비정렬 메시에서 짝이 비스듬하면 입구 선이 cotθ·ΔD·sin(어긋남) 만큼 물결 |
 | 공유 자식 벽 | `:259-268` 그대로(ZSC 높이 선형·평면 0 — 벽 규칙 뒤에 덮어씀, BG_SHARED_CHILD) |
 | 걸친 섬 옆 | `:337-348` 의 κ 를 walln ∪ E 평면 성분에 곱함(띠 복사 전, 잔차 R-DM-6) |
 | 부모 바닥 띠 | W 블록 `:277-305` 그대로(pf·others·SELECT_BLEND_CLIPPED·band_islands), Uv[띠] = Uv[최근접 E]·w(E 법선 0 → 평면만). R_w = max(`blend.min_mm`, `blend.k`·ext·r_max, 3h), r_max = max r(E) |
 | 램프·hold | L = D 식(ext_eff = ext, `:227-229`), ψ = `_hold`, φ = `_ramp(J, allowed_n)`, Uv ×= φψ, Uv[J] = 0. **Uv[E] = 0 안 함**(`:328`·`:367` 은 D 만) |
 | 섬·바깥 0 | `:368-410` 그대로(rim_src = nF ∪ 띠), allowed_n = nmask(A_DF) ∪ 띠, Uv[~(allowed_n & mov)] = 0 |
 | 달성 | D 와 같은 법선 점검 ach = nF & φ ≥ 1 & ψ ≥ 1 & ~섬 & ~E(`:414`, c 없음)·BG_SEGMENT_SHORT. `checks.achieved`(법선)·`allowed_elements`(A_DF) 가 kind DF 처리 |
-| info | D 키 + `blend_mm`·`band_n`·`cot_min/med/max`(φ = ψ = 1 인 E 의 r)·`entry_wave_mm`(§2.6) |
+| info | D 키 + `blend_mm`·`band_n`·`cot_min/med/max`(φ = ψ = 1 인 E 의 r)·`entry_wave_mm`·`wall_no_entry_n`(§2.6) |
 - 성질: 노드 기둥마다 실제 각 유지(θ 측정·평균 없음), 깊이면 평면 0(구성), 입구 = 그 벽의 cotθ_local·ΔD — 양쪽·한쪽·벽마다 다른 각 모두. 판 외곽에 닿은 깊이면도 평면 0.
 - 적용: E ≠ ∅ 인 모든 그래프 비드 — 세그먼트(양쪽·한쪽)·**네트워크 묶기·면형 바닥·merge 구간** 포함. E = ∅ 만 entry_fixed + `DS_FALLBACK{reason: W_ENTRY_NONE}`.
 - 이름 `B<n>_D` 그대로(basis.json `graph_vars[].kind` = "D" + `section.mode = floor_fixed`), 대칭 묶기(BG-D-21) = 구성 비드 DF 의 합. 띠·허용 구역 코드는 W·DF·W1 공용 내부 함수 1개(§9 — D·W 바이트 불변).
@@ -169,7 +169,7 @@
 | 배타 자식(Z_C) | 자식 강체 s·n0 하강(BG-D-23) → 고정 쪽 벽 평행 이동 | 유지 | 유지 | – |
 | 공유 자식 벽(Z_SC — 고리 안 플래토) | 벽 높이 선형: 발 ΔD 하강·위 고정, 평면 0 | **가팔라짐** tanθ_f' = (h_f + ΔD)/r_f | 유지 | DS_ONE_SIDE steep_deg(+ΔD_ext 값), Q-DM-4 |
 | 이웃 비드·접합 구역(J, step 벽) | J 0, 램프가 L 안에서 깊이를 줄임(지금 그대로) | 유지(램프 밖) | 유지(램프 밖) | 잔차 = §2.6 |
-| 비드 소유 벽(self·other 전이) | DF 벽 규칙(자기 깊이면 가장자리 중심), 윗단 = J → 램프 | J 행과 같음 | 유지 | DS_ONE_SIDE `own_wall`, F-DM-3 |
+| 비드 소유 벽(self·other 전이) | DF 벽 규칙(자기 깊이면 가장자리 중심), 윗단 = J 에서 0·램프 φ 로 이어짐 | J 행과 같음 | 유지 | DS_ONE_SIDE `own_wall`, 진단 `wall_no_entry_n`, F-DM-3 |
 - 판 외곽 자유 모서리 쪽: DF 는 깊이면 평면 0 이라 정상. W1 변수만 불가(W_ONE_SIDE_EDGE, Q-DM-6 — 조화 확장의 자연 경계).
 
 ## 2. 범위·판정(floor_fixed 만 — entry_fixed 는 지금 식·바이트)
@@ -190,7 +190,7 @@
 - DF: R_w·L = §1.2.1. W1: §1.6.3.
 - elems: 비드 blend_mm 그대로. 닿으면 자름 + `SELECT_BLEND_CLIPPED`.
 ### 2.6 진단(실패 아님)
-- `basis.json graph_vars[] += section{mode, cot_min_deg, cot_med_deg, cot_max_deg, floor_plan_max_mm(기대 0 — ψ·φ 로만 생김), entry_wave_mm(직선(nout = nref)·φ = ψ = 1 입구 노드 평면 이동량의 표준편차, +ΔD_ext), band_clipped, one_side?{segs, fixed, steep_deg, center_shift_mm}}`(floor_fixed 만).
+- `basis.json graph_vars[] += section{mode, cot_min_deg, cot_med_deg, cot_max_deg, floor_plan_max_mm(기대 0 — ψ·φ 로만 생김), entry_wave_mm(직선(nout = nref)·φ = ψ = 1 입구 노드 평면 이동량의 표준편차, +ΔD_ext), band_clipped, wall_no_entry_n(윗단이 입구 아닌 비드 소유 벽 노드 수 — J 에서 0, φ 로 이어짐), one_side?{segs, fixed, steep_deg, center_shift_mm}}`(floor_fixed 만).
 
 ## 3. W·D 동시 켬
 - W = 공칭 깊이 입구 폭(사용자 확정 6 — 이름·공칭·범위·결과 열 `B<n>_W` 불변), ΔW = 단면 평행 이동.
@@ -341,7 +341,7 @@
 26. W 사유 갱신: W_ONE_SIDE 꼬리표, W_ENTRY_NONE·W_ONE_SIDE_EDGE·W_TIE_MIXED 합성 1개씩, entry_fixed·옛 스터디 W_ENTRY_ONE_SIDE 새 문구, 순서 고정(첫 일치).
 27. 비용: H6 derive 에 `one_side` 추가 ≤ 0.3 s(전 세그먼트), synth_oneside W1 기저 ≤ W 기저 시간 × 1.2.
 28. **비대칭 벽**: 한쪽 45°·반대쪽 60° 채널 — 각 벽이 자기 각 ±0.05°, 입구 이동 = 벽마다 cotθ·ΔD ±1e-3. 변이 대조: 평균 θ 조합식(B_D + 2cotθ_b·B_W)은 깊이면 평면 변위로 실패.
-29. **적용 범위**: 네트워크 묶기(H5 고리 + T), 면형 바닥 포켓(H6 (d)), merge 구간, 판 외곽을 따라가는 채널(18c), 한쪽 입구(18 a·b·d) — 모두 DS_FALLBACK 없음, 깊이면 평면 ≤ 1e-9, 각 ±0.5°(직선 구간), 뒤집힘 0. 입구 노드 0 인 합성 = W_ENTRY_NONE + entry_fixed 바이트.
+29. **적용 범위**: 네트워크 묶기(H5 고리 + T), 면형 바닥 포켓(H6 (d)), merge 구간, 판 외곽을 따라가는 채널(18c), 한쪽 입구(18 a·b·d) — 모두 DS_FALLBACK 없음, 깊이면 평면 ≤ 1e-9, 각 ±0.5°(직선 구간), 뒤집힘 0, 네트워크 T 접합 근처 `entry_wave_mm` ≤ 0.1h·뒤집힘 0. 입구 노드 0 인 합성 = W_ENTRY_NONE + entry_fixed 바이트.
 30. **이웃 압축**: 간격 20 mm 평행 채널 2개 동시 +ΔD_ext — SELECT_BLEND_CLIPPED, range guard 가 usable 상한을 줄임(뒤집힘·넓이 비 기준 그대로), 막지 않고 표에 표시.
 
 ## 9. 작업 분해(파일 소유 겹침 없음)
@@ -384,5 +384,5 @@
 - 그래프 floor_fixed 를 조합식(B_D + 2cotθ_b·B_W* + cotθ_b·B_W1*)에서 패키지 kind DF(깊이면 가장자리 중심 닮음)로 — §1.2.1. elems 는 조합 그대로(§1.2.2).
 - 이유: 조합은 W 기저 있는 구간만·비드 평균 θ·가상 범위/θ 규칙/DS_THETA_*·DS_PARTIAL 장치 과다. DF 는 노드마다 실제 각, 깊이면 평면 0, 네트워크·면형·merge·한쪽·판 외곽 모두 적용(E = ∅ 만 대체).
 - W1 = 변수 전용(`ramp: "end"` 만, 조합·가상 범위 삭제), one_side 는 W1 변수·사유 판정 전용 — §1.6. W_ONE_SIDE_EDGE·Q-DM-6 은 W1 변수에만.
-- 판: `DF_RULES = 1` 신규(§5.1), RULES·MORPH_RULES·OUTPUT_VERSION·GRAPH_ALGO 불변. 띠·허용 구역은 W·DF·W1 공용 내부 함수 1개(§9 — v0.24.9 위치 U(kind U)가 그대로 사용, 부모 바닥 띠 노드 하중 따라감은 v0.24.9 `load_follow`).
+- 허용 구역 A_DF = D allowed_el ∪ 부모 바닥 ∪ 부모의 걸치지 않은 섬(구역 계산 `bead_zones(…, "D")`). 판: `DF_RULES = 1` 신규(§5.1), RULES·MORPH_RULES·OUTPUT_VERSION·GRAPH_ALGO 불변. 띠·허용 구역은 W·DF·W1 공용 내부 함수 1개(§9 — v0.24.9 위치 U(kind U)가 그대로 사용, 부모 바닥 띠 노드 하중 따라감은 v0.24.9 `load_follow`).
 - 시험 1·3·6·7·10~13·16·17·19·21 교체, 28~30 추가(§8), 후속 R-DM-5 삭제·R-DM-11·12 추가(§12).
