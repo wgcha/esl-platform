@@ -7,13 +7,10 @@
 - (이번 커밋) graph_section ds_dD(DM-12 그림 교정), tests/morph/test_section.py(25), tests/doe/test_depth_section.py(4), config yaml 2개 + pydantic BeadDoeCfg.depth_section·depth_section_rules(_fill_missing)
 
 ## 남은 일 (순서)
-### C1 나머지
-1. elems floor_fixed(§1.2.2·§1.3): `bead_select.derive_obj(…, depth_section=)` → 1단·닫힌 경계·폭 있음·θ(section.cot_from_run(run_med = bead_select.py:1217-1226 값))이면 B'_D = section.compose(B_D, [(B_W(f=0), 2cot)]) (`_width_basis` floor_follow 0), 아니면 DS_FALLBACK{W_OPEN_BOUNDARY|W_WIDTH_UNDEFINED|SELECT_MULTI_TIER|THETA_UNMEASURED}, DS_THETA_SPREAD; feasible open_cap(m=2); D 행 section; W 사유(src elems). stages BD_MATRIX 의 bsel.derive_obj 호출에 floor_fixed 만 키 전달(derive_obj_v2 안의 elems d1 호출도).
-2. range_guard_table(…, depth_section=)(bead_graph.py ~1480~ `_candidate_bases`)·BD_LOADS·w_clamp: floor_fixed 후보 = DF + W1, 표 머리 cfg_sha·key += ds(floor_fixed 만). stages BD_LOADS 의 range_guard_table 호출에 floor_fixed 만 키.
-3. paicad_io: floor_fixed 스냅샷이면 스터디 정보 DS_ENGINE_NATIVE 1개(계획 열 na), W_PAICAD_NONE 사유.
-4. derive_v2(API 진입)에 depth_section·section_rules 통과 + doc["beads"][].w_reason{code,text}(옛 스터디도 w_reason_of).
-5. 경고 보강: DS_HOLD_PINCH(info.hold_pinch_n > 0), DS_ONE_SIDE.steep_deg ← DF info steep_deg(basis 후), W1 그림 ds_dW(section.fig_ds_dW1 — 열린 쪽 방향 필요).
-6. 시험 3(H6 ch1 DF), 4(elems), 6, 12(range_guard), 13, 17·27(비용), 22(ties), 30(평행 채널 — synth_oneside.parallel 있음).
+### C1 — 완료(2026-11-25, 커밋 c5288343·3bf7c142·7a5d1fd6·(문서))
+- 1~6 전부 구현·시험. DM-C1-1~6 계약 본문·§15 구현 메모·decisions DM-23~29 반영. findings 옮김.
+- 남은 결정 1건: 시험 3 H6 ch1 DF +2 뒤집힘 68·entry_wave 0.472 mm(xfail strict, 계약 §15) — 메인/사용자.
+- B1 에 필요: `bead_select.derive(…, depth_section=, section_rules=)`·`bead_graph.derive_v2(…, depth_section=, section_rules=)` 키(floor_fixed 스냅샷만 넘김), 응답 beads[].w_reason{code,text}(이미 코어가 채움), paicad `paicad_io.w_reasons(doc)`·`section_info(ds)`. DS_ONE_SIDE += open_side_deg, DS_HOLD_PINCH{bead, var, n}.
 ### B1 (backend)
 - schemas.py: DoeStudyIn.depth_section Literal|None, 복제 본문 모델 {title?, depth_section?}(extra 422), DoeStudyOut.inputs.depth_section·spec_prefill, DoeSettingsOut.depth_section, params 행 section·w_side, beads w_reason{code,text}
 - services/doe.py create: select 시나리오 스냅샷 params.doe.depth_section(+rules) = 요청 or 설정(entry_fixed 면 키 생략 — BG-D-36 선례? 계약 §5 "entry_fixed 는 어떤 문서에도 키를 쓰지 않음"), clone(): section.clone_depth + spec_prefill(원 doe.spec) + DS_CLONE_NOTE; select 밖 depth_section 422 INVALID_PARAMS
@@ -25,7 +22,7 @@
 - 전체 시험 순서(동시 금지): pytest tests/ → packages/beadgraph + selftest → backend → worker → vitest → typecheck·build·check:api·dump_openapi --check
 
 ## 시험 상태
-- 패키지 78 pass/1 xfail, 골든 9 pass, section 25 pass, depth_section 4 pass. 전체 스위트 미실행.
+- 패키지 83 pass/2 skip/1 xfail(시험 3 ch1), selftest PASS, tests/doe/test_depth_section*·tests/morph 51 pass.
 
 ## 다음 명령
 - source /tmp/rdenv_v0247.sh (REPO_ROOT=/home/claude/wt_v0247, PYTHONPATH += packages/beadgraph/src)

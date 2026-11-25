@@ -85,11 +85,11 @@
 |---|---|
 | 구역 | `bead_zones(M, segs, zones, "D")`(ZC·ZSC·공유 자식 J 를 D 와 같게 — `zones.py:176`·`:189-200`). 노드 집합 = D 와 같은 `edge = nF & nW & ~E`·`walln = nW & ~E & ~nF`(`morph.py:239-240`), E·J 그대로. 허용 요소 A_DF = D `allowed_el` ∪ 부모 바닥 ∪ 부모의 걸치지 않은 섬(W `A_el` 추가분 `:320-321`), `mov = movable_nodes(M, A_DF)` |
 | 깊이면 | nF ∪ (nC 중 벽·입구 아닌 것) = s·n0(`:255`·`:257`), **평면 0** — 조화 확장(`:307-314`)·코너 가드(`:329-360`) 없음 |
-| 벽·입구 | x ∈ walln ∪ E 마다 `cKDTree(M.P[edge])` 평면 최근접 깊이면 가장자리 x_f, h = |(x − x_f)·n0|, D_col = h(x ∈ E, ≤ 1e-6 이면 D_nom)·D_nom(벽) — `:246-250` 의 거울. 법선 s·(1 − clip(h/D_col, 0, 1))·n0(입구 0), 평면 = r·n_out, r = (x − x_f)_평면·n_out / D_col. 결과: 벽(높이 비 t, 깊이면 1) 법선 t·s, 평면 (1 − t)·cotθ_local 바깥, 입구 평면 cotθ_local |
+| 벽·입구 | x ∈ walln ∪ E 마다 `cKDTree(M.P[edge])` 평면 최근접 깊이면 가장자리 x_f, h = |(x − x_f)·n0|, D_col = h(x ∈ E, ≤ 1e-6 이면 D_nom)·D_nom(벽) — `:246-250` 의 거울. 법선 s·(1 − clip(h/D_col, 0, 1))·n0(입구 0), 평면 = r·n_out, r = (x − x_f)_평면·n_out / D_col. 결과: 벽(높이 비 t, 깊이면 1) 법선 t·s, 평면 (1 − t)·cotθ_local 바깥, 입구 평면 cotθ_local. 자기 골격 interior 투영이 없는 입구·벽 기둥(현 방향)의 r 상한 = interior 입구 r 의 최댓값(벽은 ×(1 − t)) — 깊이면 가장자리가 접합 구역에서 끝나는 곳의 현 과대 방지(DM-C1-1, `info.chord_capped_n`) |
 | 방향 n_out | mv = E ∪ edge ∪ walln. 노드의 자기 세그먼트 = 그 노드를 포함한 Z_W ∪ Z_F 요소의 `labels["segment"]` 값 ≥ 0(접합 구역·섬 요소 = −1, `classify.py:368-371`). nref = 최근접 골격(`_skeleton_dist(M, S, ·)` — 최근접 세그먼트 id 도 반환하게, W 호출 바이트 불변)이 **자기 세그먼트 것이고 `interior_mask` 참**이면 그 바깥 법선, 그 밖(골격 없음·끝단 투영·접합 구역·네트워크에서 남의 세그먼트 골격이 최근접)은 현 (x − x_f)_평면 정규화. 평활은 두 경우 공통 `_smooth_dirs(M, ZW \| ZF, mv, idx, nref, w_smooth_iters)`(`:270-273`). 근거: 비정렬 메시에서 짝이 비스듬하면 입구 선이 cotθ·ΔD·sin(어긋남) 만큼 물결 |
 | 공유 자식 벽 | `:259-268` 그대로(ZSC 높이 선형·평면 0 — 벽 규칙 뒤에 덮어씀, BG_SHARED_CHILD) |
 | 걸친 섬 옆 | `:337-348` 의 κ 를 walln ∪ E 평면 성분에 곱함(띠 복사 전, 잔차 R-DM-6) |
-| 부모 바닥 띠 | W 블록 `:277-305` 그대로(pf·others·SELECT_BLEND_CLIPPED·band_islands), Uv[띠] = Uv[최근접 E]·w(E 법선 0 → 평면만). R_w = max(`blend.min_mm`, `blend.k`·ext·r_max, 3h), r_max = max r(E) |
+| 부모 바닥 띠 | W 블록 `:277-305` 그대로(pf·others·SELECT_BLEND_CLIPPED·band_islands), 값 = **거리 가중 혼합**(DM-C1-2): 띠 노드 x 에 R_w 안 입구 노드 k(가까운 순 최대 8개)로 u(x) = [Σ_k w_k·u_k / Σ_k w_k] × (1 − smoothstep(d_min/R_w)) × smoothstep(d_o/R_w)(다른 형상 근처 자름 그대로), w_k = 1/(d_k² + (0.1h)²) — 한 입구 선만 가까우면 최근접 복사와 거의 같고 마주 보는 두 입구 선 사이에서 연속(E 법선 0 → 평면만). W(기존 kind) 띠는 최근접 복사 그대로(D·W 기저 바이트 불변). R_w = max(`blend.min_mm`, `blend.k`·ext·r_max, 3h), r_max = max r(E) |
 | 램프·hold | L = D 식(ext_eff = ext, `:227-229`), ψ = `_hold`, φ = `_ramp(J, allowed_n)`, Uv ×= φψ, Uv[J] = 0. **Uv[E] = 0 안 함**(`:328`·`:367` 은 D 만) |
 | 섬·바깥 0 | `:368-410` 그대로(rim_src = nF ∪ 띠), allowed_n = nmask(A_DF) ∪ 띠, Uv[~(allowed_n & mov)] = 0 |
 | 달성 | D 와 같은 법선 점검 ach = nF & φ ≥ 1 & ψ ≥ 1 & ~섬 & ~E(`:414`, c 없음)·BG_SEGMENT_SHORT. `checks.achieved`(법선)·`allowed_elements`(A_DF) 가 kind DF 처리 |
@@ -104,6 +104,7 @@
 
 ### 1.3 θ
 - 그래프: 측정·평균 없음(DF 가 노드마다 실제 각). 표시·feasible 용 `section.cot_deg` = atan(1/cot_med)(DF info), 진단 cot_min/max_deg.
+- derive 시점(API·params 행 — 기저 전)의 cotθ(feasible·`section.cot_deg`)는 추정값: `one_side` run/D 세그먼트 중앙값(양쪽 입구는 (entry_width − floor_width)/2/D). 기저가 생긴 뒤 basis.json 진단 cot_min/med/max 가 실제 값(DM-C1-4).
 - elems: cotθ = run_med / D_1nom(`bead_select.py:1217-1226`). run_med ≤ 0 ∨ θ < `theta_min_deg`(15) → entry_fixed + `DS_FALLBACK{reason: THETA_UNMEASURED}`, 경계 거리(dd) 5·95 백분위로 잰 θ 차 > `theta_spread_deg`(5) → 정보 `DS_THETA_SPREAD{bead, min_deg, max_deg}`. 두 규칙은 elems 에만.
 
 ### 1.4 적용·대체
@@ -154,7 +155,7 @@
 | 고정 쪽 | Z_F ∪ Z_W 노드 중 쪽 = −σ_o 인 벽·가장자리·경계 노드 = **0**(Dirichlet) |
 | 깊이면 안 | 평면 조화 확장(Dirichlet: 열린 쪽 값, 고정 쪽 0, 자식·공유 자식 벽·섬 둘레·J = 0 — W 와 같은 연산자·자유 집합) → 직선 구간 선형으로 늘어남, 법선 성분 0 |
 | 램프 | `ramp: "end"`(유일 값) = J 중 **고정 쪽 interior 투영 노드는 램프 원점에서 뺌**(Dirichlet 0 만 — 이웃 비드가 옆으로 붙어도 열린 쪽이 ΔW 에 닿음). L = max(`ramp_k`·ext, `ramp_k`·h), ext_eff = ext(한쪽 이동량 = ΔW) |
-| 블렌딩 띠 | 열린 쪽 E 에서만, R_w = max(`blend.min_mm`, `blend.k`·ext, 3h) — W 식의 한쪽 이동량 ½ext → ext |
+| 블렌딩 띠 | 열린 쪽 E 에서만, R_w = max(`blend.min_mm`, `blend.k`·ext, 3h) — W 식의 한쪽 이동량 ½ext → ext. 값 = DF 와 같은 거리 가중 혼합(§1.2.1 띠 행, DM-C1-2) |
 | hold·섬·바깥 0 | ψ(BG-D-28)·섬 강체·걸친 섬(BG-D-27·47)·`movable_nodes`·A_W1 = A_W(BG-X-9 `allowed_elements(S_1, "W")`)·`BG_BASIS_LEAK` = W 규칙 그대로 |
 | 달성 | φ = ψ = 1·직선 표본 열린 쪽 E 의 골격 거리 중앙값 변화 = ΔW ± 1e-3(W 의 ×2 → ×1). `checks.achieved` 가 kind W1 처리 |
 - 효과(사용자 합의): ΔW 에 깊이면 폭 +ΔW·W1 +ΔW, 고정 쪽 불변, **깊이면·입구 중심선이 열린 쪽으로 ΔW/2 치우침**. 변수 행 표시 "한쪽 입구만 이동"(§4).
@@ -174,7 +175,7 @@
 
 ## 2. 범위·판정(floor_fixed 만 — entry_fixed 는 지금 식·바이트)
 ### 2.1 feasible
-- D: [지금 하한, min(D_nom(1+depth_max_rel), D_nom + W_ref·width_max_rel/(m·cot))] — **입구 확장 상한**. 그래프: entry_width 있는 비드 m = 2·W_ref = S_2 entry_width 길이 가중, S_2 = ∅ ∧ W1_nom 있는 비드 m = 1·W_ref = W1_nom, cot = cot_med(DF). 둘 다 없는 비드(면형·네트워크·merge) = D_nom(1+depth_max_rel) 만(나머지는 range guard §2.2). elems: m = 2, W_ref = W_nom, cot = §1.3. (W_entry − W_floor_min)/2 항 없음.
+- D: [지금 하한, min(D_nom(1+depth_max_rel), D_nom + W_ref·width_max_rel/(m·cot))] — **입구 확장 상한**. 그래프: entry_width 있는 비드 m = 2·W_ref = S_2 entry_width 길이 가중, S_2 = ∅ ∧ W1_nom 있는 비드 m = 1·W_ref = W1_nom, cot = cot_med(DF — derive 시점은 §1.3 추정값, DM-C1-4). 둘 다 없는 비드(면형·네트워크·merge) = D_nom(1+depth_max_rel) 만(나머지는 range guard §2.2). elems: m = 2, W_ref = W_nom, cot = §1.3. (W_entry − W_floor_min)/2 항 없음.
 - W(양쪽): 하한 = W_nom − (W_top_nom − W_floor_min), W_top_nom = W_nom − 2D_nom·cot(45° 면 지금 식). 상한 그대로. 기본 범위 그대로.
 - **W1**: 하한 = W1_nom − (F_nom − W_floor_min), 상한 = W1_nom·(1 + width_max_rel), 기본 범위 = W1_nom·(1 ± `select.range` W 비율). API 거울 `_graph_rows` 같은 식(`section` 함수 공용).
 ### 2.2 range_guard·combo·range_check
@@ -224,7 +225,8 @@
 - 새 스냅샷: 코어 derive summary·`params.json beads[].w_reason{code}`. API(`DoeParamsOut.beads`·선택 derive 응답)는 옛 스터디도 응답 때 같은 함수로 계산(저장 안 함).
 - 화면: 변수 표 비드 묶음 안 W 자리 1줄 — W 행 없음 = 회색 "W 사용 불가 · <문구>"(체크 칸 없음), 기본 끔 = W 행 체크 해제 + 줄 끝 사유, W1 행 = 이름 옆 꼬리표 "한쪽"(툴팁 "한쪽 입구만 이동"). 새 버튼 0.
 ### 4.4 대칭 묶기(DM-15)
-- floor_fixed: 422 `BG_TIE_NOMINAL` 의 "같은 W 유무"는 S_2 기준(W1 이전 — 원 선택이 그대로 유효). W1 은 구성원 모두 W1 ∧ 열린 쪽 방위가 대칭 축 거울(평균 n_out 거울 내적 ≥ cos 30°) ∧ |W1_nom 차| ≤ 2·`sym_tol_mm` 일 때만 묶음 W 1개(합), 아니면 그 묶음 W 없음 + W_TIE_MIXED. D 묶음은 그대로.
+- floor_fixed: 422 `BG_TIE_NOMINAL` 의 "같은 W 유무"는 S_2 기준(W1 이전 — 원 선택이 그대로 유효). W1 은 구성원 모두 W1 ∧ 열린 쪽 방위가 대칭 축 거울(아래 정의) ∧ |W1_nom 차| ≤ 2·`sym_tol_mm` 일 때만 묶음 W 1개(합), 아니면 그 묶음 W 없음 + W_TIE_MIXED. D 묶음은 그대로.
+- 거울 연산(DM-C1-5, `section.tie_mirror_ok`): 비드마다 c = S_1 골격 점의 길이 가중 도심(판 평면), v = 열린 쪽 평균 바깥 방향(골격 선분 왼쪽 법선 × σ_o 의 길이 가중 합, 정규화 — 합 0 이면 없음). 대표(묶음 첫 비드)와 구성원 쌍마다 대칭면 법선 m = (c_m − c_대표)/‖·‖, 거울(v) = v − 2(v·m)m, 거울(v_대표)·v_m ≥ cos 30° 이면 통과. 도심 거리 < h 또는 방향 없음 = 판정 불가 → W_TIE_MIXED. DS_ONE_SIDE `open_side_deg` = atan2(v) (판 평면 e1 기준).
 
 ## 5. 하위 호환 · 해시 · 설정 · 판
 - 키 없음·entry_fixed 명시: 지금 경로 → `prep/select/{graph.json, range_guard.json, w_clamp.json}`, `prep/input.json`, `select/<sha12>/{basis.npz, basis.bin, basis.json, params.json, derived.json}`, matrix·design.npz·result.json·ranking.csv·보고서·view3d·input_sha256 main 1d71d983 바이트 동일. entry_fixed 는 어떤 문서·해시 보기에도 키를 쓰지 않음(기본값 키 생략 — BG-D-36 선례). W1·`one_side` 는 호출되지 않음.
@@ -330,7 +332,7 @@
 15. API·화면: 모르는 값 422, 스냅샷 = inputs, 복제 = §6.1(V-0247-DM-24), 라디오 기본·요청·select 외 숨김, 칩, W 사유 줄·W1 꼬리표, D 배지, SectionMini ds_dD, 2560·1920 새 스터디 scrollHeight 증가 ≤ 28 px, 스터디 화면 ±0.
 16. 그림: 그래프 floor_fixed(floor_center) ds_dD = 깊이면 0·입구 cotθ, 그래프 entry_fixed = 깊이면 축소 방향, elems entry_fixed = 0, W1 ds_dW 열린 쪽 +1·고정 쪽 0.
 17. 비용: DF 기저 시간 ≤ W 기저 시간 × 1.2(같은 띠·조화 없음), 합성 120×80(9,801 노드) 비드 5개 BD_MATRIX·range_guard 준비 비 기록.
-18. **W1 합성**(패키지 `beadgraph.testing.synth_oneside` — 정렬 quad, gmsh 없음, 결정적): (a) 고리 띠(바닥 −10, 플랜지 0) 안 공유 자식 플래토(−4), θ 45°·60°, (b) 채널 옆 형제 포켓(step 접합 구역 — 이웃 비드), (c) 판 외곽을 따라가는 채널, (d) 배타 자식 플래토. W1 ΔW ±4(a·b·d): 열린 쪽 입구·벽·가장자리 이동 = ΔW ±1e-3(직선·φ = 1), **고정 쪽 노드 |u| ≤ 1e-12**, 깊이면 폭 변화 = ΔW ±1e-3, 열린 쪽 사면 각 ±0.05°, 고정 쪽 사면 변화 0(1e-9), 달성 W1 ≤ 1e-3, A_W 밖 ≤ 1e-9·누출 0·뒤집힘 0, (b) 열린 쪽 φ = 1(고정 쪽 J 가 램프 원점 아님). (c) W1 없음 + W_ONE_SIDE_EDGE(깊이는 29). 측정 `one_side`: side·d_o·d_eo·d_f = 해석값 ±0.5h, fixed 분류 = (a) shared·(b) junction·(c) edge·(d) child.
+18. **W1 합성**(패키지 `beadgraph.testing.synth_oneside` — 정렬 quad, gmsh 없음, 결정적): (a) 고리 띠(바닥 −10, 플랜지 0) 안 공유 자식 플래토(−4), θ 45°·60°, (b) 채널 옆 형제 포켓(step 접합 구역 — 이웃 비드), (c) 판 외곽을 따라가는 채널, (d) 배타 자식 플래토. W1 ΔW ±4(a·b·d): 열린 쪽 입구·벽·가장자리 이동 = ΔW ±1e-3(직선·φ = 1), **고정 쪽 노드 |u| ≤ 1e-12**, 깊이면 폭 변화 = ΔW ±1e-3, 열린 쪽 사면 각 ±0.05°, 고정 쪽 사면 변화 0(1e-9), 달성 W1 ≤ 1e-3, A_W 밖 ≤ 1e-9·누출 0·뒤집힘 0, (b) 열린 쪽 φ = 1(고정 쪽 J 가 램프 원점 아님). (c) W1 없음 + W_ONE_SIDE_EDGE(깊이는 29) — 합성 판 외곽 채널은 분류기(RULES 1)가 깊이면을 area 로 두어(골격 없음 → AREA) 재현 불가 → `oneside.measure(edge_nodes=…)` 강제 외곽 마스크 단위 시험으로 대체(DM-C1-3). 측정 `one_side`: side·d_o·d_eo·d_f = 해석값 ±0.5h, fixed 분류 = (a) shared·(b) junction·(c) edge·(d) child.
 19. **DF 한쪽**(18 의 a·b·d, ΔD ±3): 달성 깊이 ±1e-6, 깊이면 평면 ≤ 1e-12(φ = ψ = 1), 열린 쪽 입구 이동 = ΔD·cotθ ±1e-3, 열린 쪽 θ ±0.05°, (d) 고정 쪽 θ ±0.05°, (a) 고정 쪽 θ' = atan((h_f + ΔD)/r_f) ±0.05° + DS_ONE_SIDE steep_deg, (b) 램프 밖 깊이면 폭 ≤ 1e-6·잔차는 section 진단에만, 뒤집힘 0.
 20. D·W1 동시: W_top' = W_top + ΔW, W1' = W1 + ΔW + cotθ·ΔD ±1e-3, 두 기저 합 = 동시 모핑 ±1e-12.
 21. 구간·변수: S_2·S_1·S_0 섞인 비드 → W 변수 = S_2 만(W1 없음); S_2 = ∅ 비드 → `B<n>_W` = W1·`w_side: one`·use_default true·W_ONE_SIDE 꼬리표; 옛 규칙(w_partial 없음) S_1 ⊂ S → W 없음 W_PARTIAL_OLD; 세 경우 모두 D = DF 전 구간.
@@ -386,3 +388,16 @@
 - W1 = 변수 전용(`ramp: "end"` 만, 조합·가상 범위 삭제), one_side 는 W1 변수·사유 판정 전용 — §1.6. W_ONE_SIDE_EDGE·Q-DM-6 은 W1 변수에만.
 - 허용 구역 A_DF = D allowed_el ∪ 부모 바닥 ∪ 부모의 걸치지 않은 섬(구역 계산 `bead_zones(…, "D")`). 판: `DF_RULES = 1` 신규(§5.1), RULES·MORPH_RULES·OUTPUT_VERSION·GRAPH_ALGO 불변. 띠·허용 구역은 W·DF·W1 공용 내부 함수 1개(§9 — v0.24.9 위치 U(kind U)가 그대로 사용, 부모 바닥 띠 노드 하중 따라감은 v0.24.9 `load_follow`).
 - 시험 1·3·6·7·10~13·16·17·19·21 교체, 28~30 추가(§8), 후속 R-DM-5 삭제·R-DM-11·12 추가(§12).
+
+## 15. 구현 메모(C1, 2026-11-25 — work/findings.md 에서 옮김, 결정 D-0.24.7-DM-23~29)
+- DM-C1-1(§1.2.1 벽·입구): 자기 interior 골격 투영이 없는 열(세그먼트 끝·고리 모서리·접합 옆)은 최근접 깊이면 가장자리까지 현으로 r 을 재는데 가장자리가 접합 구역에서 끝나면 r 이 4 배 이상 튐(합성 고리 a: 입구 12 mm 이동·뒤집힘 6) → r ≤ interior 입구 r 최대(벽 ×(1 − t)), `info.chord_capped_n`.
+- DM-C1-2(§1.2.1·§1.6.3 띠): H5 네트워크(고리 + T) DF +2 에서 마주 보는 입구 선 사이 20 mm 판 띠의 최근접 복사가 이등분선에서 불연속(뒤집힘 2) → DF·W1 띠 = 거리 가중 혼합(K = 8, ε = 0.1h — `beadgraph.morph.BAND_MIX_K·BAND_MIX_EPS_H`, DF_RULES·W1_RULES 1 정의의 일부). 측정: H5 네트워크 DF ±2 뒤집힘 0(시험 29 통과), ±3 = 1·2(range guard 영역). W 띠 = 최근접 복사(골든 바이트 동일).
+- DM-C1-3(§8-18c): W_ONE_SIDE_EDGE 는 강제 외곽 마스크 단위 시험(`tests/doe/test_depth_section_c1.py::test_one_side_edge_forced_mask_v18c`, 패키지 `test_w1_rejects_two_sided_and_edge`).
+- DM-C1-4(§1.3·§2.1): derive 시점 cot = one_side run/D 추정값(basis.json 진단이 실제 값).
+- DM-C1-5(§4.4): W1 대칭 거울 검사 구현(위 정의). 상수 `section.W1_TIE_MIRROR_DEG = 30`(계약 규칙 값 — 설정 아님).
+- DM-C1-6(§2.6): `wall_no_entry_n` = 비드 소유 벽 노드 ∩ J 수(윗단 = J 판정 대신 근사).
+- elems 조합(§1.2.2): `bead_select.derive_obj(depth_section=, section_rules=)`, 적용 판정 순서 열린 경계 → 폭 미정 → 단 수 ≥ 2 → θ, B'_D 는 `_post_basis`(섬·hold) 전에 합성, D feasible 상한 = 입구 확장 상한(m = 2), 그림 `section.ds_dD` = 조합 기저의 평면 성분(floor_fixed 비드만 키). 합성 원형 비드(60°): 경계 이동 1.2025 vs 해석 1.1547(±0.02h = 0.1 안 — run_med 3.608 이 다각형 근사), 사면 각 변화 ≤ 1°.
+- range guard·w_clamp(§2.2): floor_fixed 만 `depth_section`·`section_rules` 키 전달 → 후보 D = DF, S_1 단일·seed 비드 W1(`one_side` 측정 공용 `_w1_possible`), 항목 key += `ds`·kind `W1`, 머리 cfg_sha256 += `ds`(= `section.hash_view`) — entry_fixed 표 바이트 불변.
+- 패키지 `zones.Mesh.nmask` = 직접 색인(같은 불리언 — D·W 골든 바이트 동일) — H6 `one_side` 전 세그먼트 0.36 → 0.25 s(시험 27 ≤ 0.3 s).
+- **미충족(보고)** 시험 3 H6 ch1(channel + flare) DF: +2 뒤집힘 68(−2: 35, ±1: 0), `entry_wave_mm` 0.472 > 0.05h(0.148; ±1 에서도 0.236). 원인: (1) 부모 바닥 필렛 sliver 삼각형(변 0.2 mm) 위에서 입구 노드끼리 평면 이동이 0.3 mm 씩 달라 뒤집힘 — 띠는 다른 형상 근처에서 자르지만 입구 노드 자체(DF 규칙)는 자르지 않음, 채널 끝·flare 의 cot 최대 3.586(15.6°) → 입구 5 mm 이동; (2) `entry_wave_mm`(직선 입구 평면 이동 표준편차)는 flare 벽 각 차이(cot 0.689~3.586)를 그대로 재므로 물결 지표로 맞지 않음. 시험은 완화하지 않고 xfail(strict) — `packages/beadgraph/tests/test_one_side.py::test_df_h6_unaligned_v3`. 포켓 (d) 부분은 통과. 결정 필요(R-DM-13 후보: 입구 평면 이동의 다른 형상 근처 자름 또는 sliver 국부 평활, entry_wave 정의를 세그먼트·각 구간별로).
+
