@@ -975,6 +975,67 @@ export function withJigViews(res: DoeResultOut, ids: { entry_id: string; label: 
     view3d_regen: { available: true, allowed: true, reason: null },
   };
 }
+/** v0.24.8 격자 지그 결과(esl_jig_grid_map.md §3·§5·§6) — ④ 형상 직접 비교(새 스냅샷): jig_plan grid · jig.transfer grid + jig.grid 진단 · jig.methods{jig_disp·jig_spring}.grid ·
+ *  rank_views jig_disp·jig_spring(jd·js 보기) · view3d_jd·js 3D 키 · 순위 noise_floor 표식(행 noise). 지그 고정 보기·지그 진단·영역은 없음(§5). plain = 같은 자료에서 transfer·grid 만 뺀 높이 대조용 */
+export function withJigGrid(res: DoeResultOut, opts: { plain?: boolean; cellMm?: number; noiseFloor?: number | null } = {}): DoeResultOut {
+  const cell = opts.cellMm ?? 3;
+  const nf = opts.noiseFloor === undefined ? 0.03 : opts.noiseFloor;
+  const j = withJig(res, "ok");
+  const noiseOf = (x: { improvement: number }) => nf != null && Math.abs(x.improvement) < nf;
+  // 3 mm 매핑 오차 범위 안의 형상 하나(개선율 ≈ 1 %) — 행 noise 표식 시연
+  const ranking = j.ranking.map((r, i, all) => {
+    const score = i === all.length - 1 && all.length > 2 ? 0.992 : r.score;
+    const improvement = +(1 - score).toFixed(4);
+    return { ...r, score, improvement, noise: noiseOf({ improvement }) };
+  }).sort((a, b) => a.score - b.score || a.id.localeCompare(b.id)).map((r, i) => ({ ...r, rank: i + 1 }));
+  const ids = (j.esl ?? []).map((e) => ({ entry_id: e.entry_id, label: e.label ?? e.entry_id }));
+  const eorder = ids.map((e) => e.entry_id);
+  const shown = j.view3d.filter((d) => d !== "d000");
+  const v3 = (tag: "jd" | "js") => {
+    const dir: Record<string, string> = {};
+    const esl: Record<string, string> = {};
+    const ref: Record<string, string> = {};
+    for (const d of shown) {
+      const e = ranking.find((x) => x.id === d)?.worst_entry_id ?? eorder[0];
+      if (!e) continue;
+      dir[d] = `${d}_${tag}`;
+      esl[d] = e;
+      ref[e] = `d000_${tag}_e${String(Math.max(0, eorder.indexOf(e))).padStart(2, "0")}`;
+    }
+    return shown.length ? { [`view3d_${tag}`]: dir, [`view3d_${tag}_esl`]: esl, [`view3d_${tag}_ref`]: ref } : {};
+  };
+  const mview = (scale: number) => {
+    const v = j.rank_views!.jig!;
+    const rows = (v.ranking as unknown as Record<string, unknown>[]).map((r) => {
+      const score = +(1 - (1 - Number(r.score)) * scale).toFixed(4);
+      return { ...r, score, improvement: +(1 - score).toFixed(4), noise: noiseOf({ improvement: +(1 - score).toFixed(4) }) } as Record<string, unknown>;
+    }).sort((a, b) => Number(a.score) - Number(b.score) || String(a.id).localeCompare(String(b.id))).map((r, i) => ({ ...r, rank: i + 1 }));
+    return { ...v, ranking: rows };
+  };
+  const gm = (method: string, name: string, spring: boolean, k: number) => ({
+    method, method_name: name, tie_dofs: "normal" as const, status: "ok", code: null, detail: null, fit_mac_min: 0.994 - 0.001 * k, fit_umax_err_max: 0.021 + 0.004 * k,
+    warnings: [], limits: [], n_jig: 38, bc: null, spring: spring ? { k_mode: "auto", alpha: 1.0, k_value: null } : null,
+    ...(opts.plain ? {} : { grid: { n_ok: ranking.length, n_failed: 0, case_recon_mac_min: 0.994 - 0.001 * k, recon_mac_d000: 0.987 - 0.002 * k, recon_umax_err_d000: 0.034 + 0.006 * k, alpha: spring ? 1.0 : null,
+      conv: [{ cell_mm: 5, dpi_max: 0.012 + 0.004 * k, dumax_max: 0.018, mac_min: 0.998 }, { cell_mm: 10, dpi_max: 0.031, dumax_max: 0.04, mac_min: 0.993 }] } }),
+  });
+  const jig: DoeJigOut = {
+    ...j.jig!, status: "ok", region_source: null, n_regions: 0, n_contact: 0, n_patch: 0, n_modes: 0, hz_jig: [], hz_321: null, hz_ratio: null, tie_dofs: "normal",
+    methods: { jig_disp: gm("prescribed", "강제 변위", false, 0), jig_spring: gm("spring", "스프링", true, 1) },
+    ...(opts.plain ? {} : { transfer: "grid" as const, grid: {
+      cell_mm: cell, n_groups: 1, n_shapes: ranking.length, n_shapes_failed: 0, tie_miss_max: 0, tie_area_ratio_min: 0.93, tie_area_ratio_max: 1.07, k_scale_min: 0.98, k_scale_max: 1.03,
+      noise_floor: nf, load_dF_max: 3e-12, load_dM_max: 5e-12, corr_rel_max: 0.004, small_frac_max: 0.12, frame_shift_max_mm: 0, sample_outside_max: 0, warnings: [] } }),
+  };
+  const warnings = [...res.warnings, { code: "JIG_GRID_RANK", level: "info" as const, message: "순위 = 격자 지그(다른 메시 — 매핑 진단 참고)" }, { code: "JIG_GRID_AREA_RATIO", name: ranking[ranking.length - 1]?.id ?? "d001" }];
+  const { view3d_jig: _a, view3d_jig_esl: _b, view3d_jig_ref: _c, jig_diag: _d, view3d_regen: _e, ...rest } = j;
+  return {
+    ...rest, ranking, jig, warnings,
+    metric_effective: "jig", rank: { ...(j.rank ?? {}), metric_effective: "jig", cross_mesh: false },
+    noise_floor: nf, ratio_tol: nf ?? res.ratio_tol,
+    jig_plan: "grid", jig_on_clone: null,
+    rank_views: { jig_disp: mview(1) as never, jig_spring: mview(0.8) as never, full: j.rank_views!.full },
+    ...v3("jd"), ...v3("js"),
+  } as DoeResultOut;
+}
 /** v0.24.0 경계력 ESL(esl_bforce.md §5.6·§7): kind ok = contact 등급 보기·3D·칩, none = Case 경계력 자료 없음(탭 비활성 + [경계력 ESL 계산]) */
 export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut {
   const ids = (res.esl ?? []).map((e) => ({ entry_id: e.entry_id, label: e.label ?? e.entry_id }));
@@ -1770,6 +1831,21 @@ export class DoeMock {
     r32.out.version = 6;
     r32.jobIds.push(doneAt("doe-32", "DOE_PREP", "2026-11-15T03:00:05Z", "2026-11-15T03:05:00Z"), doneAt("doe-32", "DOE_PREVIEW", "2026-11-15T03:10:00Z", "2026-11-15T03:13:00Z"), doneAt("doe-32", "DOE_RUN", "2026-11-15T03:20:00Z", "2026-11-15T03:31:00Z"));
     this.recs.push(r30, r31, r32);
+  }
+
+  /** v0.24.8 시연·시험(?demoJigGrid=1): ④ 형상 직접 비교 — doe-60 = 격자 지그(jd·js 3D·noise_floor 표식) · doe-61 = 같은 자료 transfer·grid 없음(높이 대조) ·
+   *  doe-62 = 옛 스냅샷(jig_plan none, jig_on_clone 참) · doe-63 = 옛 스냅샷(jig_on_clone 거짓 — rank.jig_grid 꺼짐) */
+  demoJigGrid() {
+    if (this.recs.some((r) => r.out.id === "doe-60")) return;
+    const t20 = this.recs.find((r) => r.out.id === "doe-20")!;
+    const mk = (id: string, title: string, at: string, result: DoeResultOut): Rec => ({ ...t20, out: { ...t20.out, id, title, created_at: at }, jobIds: [...t20.jobIds], result });
+    const base = t20.result!;
+    this.recs.push(
+      mk("doe-60", "Ch/R 형상 비교 — 격자 지그 3 mm(v0.24.8)", "2026-11-26T01:00:00Z", withJigGrid(base)),
+      mk("doe-61", "Ch/R 형상 비교 — 격자 지그(대조: 진단 없음)", "2026-11-26T02:00:00Z", withJigGrid(base, { plain: true })),
+      mk("doe-62", "Ch/R 형상 비교 — 옛 스냅샷(복제하면 격자)", "2026-11-26T03:00:00Z", { ...base, jig_plan: "none", jig_on_clone: true }),
+      mk("doe-63", "Ch/R 형상 비교 — 옛 스냅샷(격자 설정 꺼짐)", "2026-11-26T04:00:00Z", { ...base, jig_plan: "none", jig_on_clone: false }),
+    );
   }
 
   /** v0.24.7 시연(?demoDepth=1): doe-30 = 깊이면 폭 유지(D 배지·W 사유 줄·W1 꼬리표) · doe-5 = 요소 비드 깊이면 폭 유지(단면 그림 ds_dD) · doe-6 = 복제 가능(FAILED, 키 없음 = 입구 고정(이전)) — 복제 창·칩 */

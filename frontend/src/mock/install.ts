@@ -71,6 +71,8 @@ export function installMockFetch() {
   if (params.get("demoDepth") === "1") server.doe.demoDepth();
   // v0.23.0 지그 순위 시연: ?demoJig=1 doe-40(지그 ok) · doe-41(재현 미달) · doe-42(지그 불가 → 재풀이 C)
   if (params.get("demoJig") === "1") server.doe.demoJig();
+  // v0.24.8 격자 지그 시연: ?demoJigGrid=1 doe-60(④ 격자 지그 — jd·js 3D·매핑 오차 표식) · doe-61(대조) · doe-62·63(옛 스냅샷 — 복제 안내 2종)
+  if (params.get("demoJigGrid") === "1") server.doe.demoJigGrid();
   // v0.24.0 경계력 ESL 시연: ?demoBforce=1 doe-50(contact 등급 ok) · doe-51(경계력 자료 없음)
   if (params.get("demoBforce") === "1") server.doe.demoBforce();
   if (params.get("demoPc") === "1") {
