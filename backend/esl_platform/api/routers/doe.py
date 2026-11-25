@@ -23,6 +23,7 @@ from ..schemas import (
     DoePlanOut,
     DoePerEslOut,
     DoeResultOut,
+    DoeCloneIn,
     DoeRunIn,
     DoeSelectAutoOut,
     DoeSelectDeriveIn,
@@ -127,10 +128,10 @@ def doe_run(sid: str, body: DoeRunIn, request: Request, principal: Principal = D
 
 
 @router.post("/doe/studies/{sid}/clone", response_model=DoeStudyOut, status_code=201)
-def doe_clone(sid: str, request: Request, body: dict[str, Any] | None = Body(default=None),
+def doe_clone(sid: str, request: Request, body: DoeCloneIn | None = Body(default=None),
               principal: Principal = Depends(get_principal)) -> dict[str, Any]:
-    """같은 입력으로 새 연구 + DOE_PREP(본문 {title?})."""
-    return svc.clone(get_ctx(request), principal, sid, body)
+    """같은 입력으로 새 연구 + DOE_PREP(본문 {title?, depth_section?} — 모르는 키·값 422, depth_section 은 select 만, v0.24.7 §6.1)."""
+    return svc.clone(get_ctx(request), principal, sid, body.model_dump(exclude_unset=True) if body is not None else None)
 
 
 @router.get("/doe/studies/{sid}/results", response_model=DoeResultOut)
