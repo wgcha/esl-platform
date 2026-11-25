@@ -195,23 +195,54 @@ def _corner_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, ext
     return c
 
 
+def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict) -> np.ndarray:
+    """elements (rows of C) that turn newly bad at ±ext: quad Gauss Jacobian ≥ jac_min at rest and < at ±ext, triangle
+    min angle ≥ tri_angle_min_deg at rest and < at ±ext (esl range guard criteria — values given by the caller)."""
+    from .checks import _quad_jacobian
+    bad = np.zeros(len(C), bool)
+    q = C[:, 3] >= 0
+    jm, tm = qual.get("jac_min"), qual.get("tri_angle_min_deg")
+    if jm is not None and q.any():
+        j0 = _quad_jacobian(M.X, C[q])
+        for sgn in (1.0, -1.0):
+            bad[q] |= (j0 >= jm) & (_quad_jacobian(M.X + sgn * ext * Ud, C[q]) < jm)
+    if tm is not None and (~q).any():
+        T = C[~q][:, :3]
+
+        def mina(P):
+            p = P[T]
+            out = np.full(len(T), 180.0)
+            for i in range(3):
+                v1, v2 = p[:, (i + 1) % 3] - p[:, i], p[:, (i + 2) % 3] - p[:, i]
+                cs_ = np.einsum("ij,ij->i", v1, v2) / np.maximum(np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1),
+                                                                1e-300)
+                out = np.minimum(out, np.degrees(np.arccos(np.clip(cs_, -1.0, 1.0))))
+            return out
+        a0 = mina(M.X)
+        for sgn in (1.0, -1.0):
+            bad[~q] |= (a0 >= tm) & (mina(M.X + sgn * ext * Ud) < tm)
+    return bad
+
+
 def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, ext: float, cg: dict,
-                    flip_deg: float):
+                    flip_deg: float, qual: dict | None = None):
     """DF entry guard (esl contract §1.2.1 — DM-32·34): ``_corner_guard`` one pass at a time (its criteria — area ratio of
     parent-floor elements, normal flip, Gauss-point quad Jacobian — shrink the plan part of the flagged elements' moving
     nodes) plus concave quads (a corner Jacobian <= 0 at ±ext on the element's own plane or about its rest normal, > 0 at
     rest — ``checks.quad_corner_min``): their moving nodes' plan part and — wall nodes ``wall`` only — their normal part
     shrink (a flat fillet corner on the entry line folds when the wall node below only drops: the element plane turns
     about the entry line), up to ``cg["iters"]`` passes, ``shrink`` once per pass. Pass 2.. re-check only the elements
-    with a node whose factor changed (the others are as in pass 1 — exact). -> (plan factor c, normal factor cn (wall
-    nodes), elements still flagged after the last pass — 0 normal). Same plan factors as ``_corner_guard`` where no
-    quad turns concave."""
+    with a node whose factor changed (the others are as in pass 1 — exact). ``qual`` {jac_min, tri_angle_min_deg} (the
+    caller's range-guard criteria, None = off — DM-35): elements that turn newly bad at ±ext (``_qual_new_bad``) shrink
+    the plan part of their moving nodes too. -> (plan factor c, normal factor cn (wall nodes), (elements still flagged by
+    the inversion / area / concave criteria after the last pass — 0 normal, elements still newly bad by ``qual``)). Same
+    plan factors as ``_corner_guard`` where no quad turns concave and ``qual`` is off."""
     from .checks import quad_corner_min
     c = np.ones(M.n)
     cn = np.ones(M.n)
     el = np.asarray(el, bool)
     if not el.any() or ext <= 0:
-        return c, cn, 0
+        return c, cn, (0, 0)
     un = (U @ M.n0)[:, None] * M.n0[None, :]
     upl = U - un
     shrink, iters = float(cg["shrink"]), int(cg["iters"])
@@ -232,20 +263,23 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
                 X1 = M.X + sgn * ext * Ud
                 bc[qi] |= cq0 & (np.minimum(quad_corner_min(X1, Cq), quad_corner_min(X1, Cq, nq0)) <= 0.0)
         nd = np.unique(C[bc][C[bc] >= 0])
+        bq = _qual_new_bad(M, C, Ud, ext, qual) if qual else np.zeros(idx.size, bool)
+        ndq = np.unique(C[bq][C[bq] >= 0])
         sn = cs < 1.0
         left = bc | (sn[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)
-        return cs, nd[moved[nd]], int(left.sum())
+        return cs, nd[moved[nd]], ndq[moved[ndq]], (int(left.sum()), int(bq.sum()))
     sub = el
     for _ in range(iters):
-        cs, nd, _left = flagged(sub)
-        if (cs >= 1.0).all() and nd.size == 0:
-            return c, cn, 0
+        cs, nd, ndq, _left = flagged(sub)
+        if (cs >= 1.0).all() and nd.size == 0 and ndq.size == 0:
+            return c, cn, (0, 0)
         pl = cs < 1.0
         pl[nd] = True
+        pl[ndq] = True
         c[pl] *= shrink
         cn[nd[wall[nd]]] *= shrink
         sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
-    return c, cn, flagged(sub)[2]
+    return c, cn, flagged(sub)[3]
 
 
 def _var_ext(rng, nominal):
@@ -627,9 +661,12 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     gel = (ZW | M.emask_of_nodes(E | band)) & ~ZF
     info["entry_guard_n"] = 0
     info["entry_guard_left"] = 0
+    info["entry_guard_qual_left"] = 0
     if gmov.any() and gel.any():
-        cE, cN, info["entry_guard_left"] = _df_entry_guard(M, gel, Uv, gmov, walln, ext, mc["corner"],
-                                                           float(cfg["quality"]["flip_deg"]))
+        qual = {"jac_min": b.get("guard_jac_min"), "tri_angle_min_deg": b.get("guard_tri_angle_min_deg")}
+        qual = {k: float(v) for k, v in qual.items() if v is not None} or None
+        cE, cN, (info["entry_guard_left"], info["entry_guard_qual_left"]) = _df_entry_guard(
+            M, gel, Uv, gmov, walln, ext, mc["corner"], float(cfg["quality"]["flip_deg"]), qual)
         if (cE < 1.0).any():
             un = (Uv @ M.n0)[:, None] * M.n0[None, :]
             Uv = un * cN[:, None] + (Uv - un) * cE[:, None]

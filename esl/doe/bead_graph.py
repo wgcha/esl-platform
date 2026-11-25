@@ -1144,6 +1144,7 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
     D.norm_cfg_tol = float(sc["graph"]["sym_tol_mm"])
     D.cfg1 = cfg1
     D.shape_rules = shape_rules
+    D.df_guard_q = _df_guard_q(_guard_rules(shape_rules))   # DM-35(floor_fixed DF 항목만 씀)
     D.depth_section = depth_section                    # 스냅샷 값 그대로(None = 키 없음)
     D.section_rules = section_rules
     D.section_plan = spl
@@ -1811,7 +1812,20 @@ def _pkg_item(D, b, typ: str) -> dict:
     if kind == "DF":                                    # DM-30·31 입구 평활·이웃 간격(스냅샷 depth_section_rules)
         r = _rules_full(D.section_rules)
         pk.update(entry_smooth_rel=float(r["entry_smooth_rel"]), entry_gap_rel=float(r["entry_gap_rel"]))
+        q = getattr(D, "df_guard_q", None)              # DM-35 입구 가드 품질 기준 = range guard 기준(켬일 때만)
+        if q:
+            pk.update(q)
     return pk
+
+
+def _df_guard_q(rg) -> dict | None:
+    """DF 입구 가드에 넘기는 품질 기준(DM-35): range guard 블록(켬)의 jac_min·tria_angle_min_deg → 패키지 DF 항목 키
+    guard_jac_min·guard_tri_angle_min_deg(값 None 인 키는 뺌). 꺼짐·없음 = None(가드 = 뒤집힘·넓이 비·오목만)."""
+    if not isinstance(rg, dict):
+        return None
+    q = {"guard_jac_min": rg.get("jac_min"), "guard_tri_angle_min_deg": rg.get("tria_angle_min_deg")}
+    q = {k: float(v) for k, v in q.items() if v is not None and not isinstance(v, bool)}
+    return q or None
 
 
 def _rules_full(rules) -> dict:
@@ -2039,6 +2053,7 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
             "exclude": seed.get("exclude") or bs._norm_set(None, "exclude", 10_000_000),
             "graph": {"sha256": graph_sha_of(graph), "rules": int(graph["rules"]), "edits": {}}}
     D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_ids, shape_rules=_no_guard(rules), **dskw)
+    D.df_guard_q = _df_guard_q(rg)                      # DM-35: 행렬 기저(derive 의 shape_rules)와 같은 기준
     by = {b.id: b for b in D.beads}
     skipped = []
     for bid, typ, _src in trimmed:
