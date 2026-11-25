@@ -57,7 +57,7 @@ def test_jig_methods_and_tie_dofs_pass_through(client, world, engine, esl_root):
     assert o["jig"]["tie_dofs"] == "translation"
     got = o["jig"]["methods"]
     assert set(got) == {"jig_disp", "jig_spring", "jig"}
-    assert got["jig_disp"] == M_OK and got["jig_spring"] == M_SPR                      # 값 그대로(bc·spring dict 포함)
+    assert got["jig_disp"] == {**M_OK, "grid": None} and got["jig_spring"] == {**M_SPR, "grid": None}                      # 값 그대로(bc·spring dict 포함)
     assert got["jig"]["status"] == "fallback" and got["jig"]["code"] == "JIG_NO_TIE" and got["jig"]["detail"] == M_FAIL["detail"]
 
 
@@ -122,7 +122,7 @@ def test_methods_model_mirrors_core_fields():
     from esl_platform.api.schemas import DoeJigMethodOut
 
     assert set(DoeJigMethodOut.model_fields) == {"method", "method_name", "tie_dofs", "status", "code", "detail", "fit_mac_min",
-                                                 "fit_umax_err_max", "warnings", "limits", "n_jig", "bc", "spring"}
+                                                 "fit_umax_err_max", "warnings", "limits", "n_jig", "bc", "spring", "grid"}   # v0.24.8 grid
 
 
 def test_source_add_jd_js_listed_and_202(client, world, engine, esl_root):  # noqa: F811

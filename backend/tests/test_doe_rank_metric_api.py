@@ -338,7 +338,7 @@ def test_openapi_jig_schemas():
     assert set(sc["DoeJigOut"]["properties"]) == {"status", "code", "region_source", "n_jig", "n_regions", "n_contact", "n_patch",
                                                   "fit_mac_min", "fit_umax_err_max", "fit_mac_min_nomodes",
                                                   "fit_umax_err_max_nomodes", "cancel_rel_max", "fit_work_eff_min", "tie_rel_max", "tie_spread",
-                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries", "tie_dofs", "methods"}   # v0.24.6
+                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries", "tie_dofs", "methods", "transfer", "grid"}   # v0.24.6 · v0.24.8 transfer·grid
     assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min",
                                                          "tie_spread_min"}
     assert set(sc["DoeJigEntryOut"]["properties"]) == {"entry_id", "label", "mac", "umax_err", "mac_nomodes",
