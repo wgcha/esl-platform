@@ -2644,6 +2644,10 @@ export interface DoeSettingsShapeRules {
   mesh_route: { relaxed_direct: { enabled: boolean; min_faces: number | null } };
 }
 export interface DoeSettingsOut {
+  /** v0.24.7 설정 bead_doe.depth_section(새 스터디 기본 — 옛 서버면 없음 = 라디오 숨김) */
+  depth_section?: DoeDepthSection | null;
+  /** v0.24.7 복제 창 안내 문구(원본 resources/doe_messages.json — 화면에 문구 거울 없음). DS_CLONE_NOTE(입구→깊이면) · DS_CLONE_NOTE_ENTRY({n}·{names} 치환, 깊이면→입구) */
+  depth_section_notes?: { DS_CLONE_NOTE?: string | null; DS_CLONE_NOTE_ENTRY?: string | null } | null;
   /** v0.24.4 P3 설정 bead_doe.load_source_default(기본 null = 순위 지표 기준) */
   load_source_default?: string | null;
   /** v0.21.0 형상 규칙 설정 요약(표시용 — 새 스냅샷 판정은 study.inputs.shape_rules, 옛 서버면 없음) */
@@ -3016,7 +3020,16 @@ export interface DoeCheckStepGraph {
   fixed_transfer: { enabled: boolean; mode: "auto" | "xyz" | "hole" };
   region: { mode: DoeRegionMode };
 }
+/** v0.24.7 DM 깊이 단면 동작(esl_bead_depth_mode.md §1.1) — entry_fixed = 입구 고정(깊이면 좁아짐), floor_fixed = 깊이면 폭 유지(입구 넓어짐) */
+export type DoeDepthSection = "entry_fixed" | "floor_fixed";
+/** v0.24.7 복제 본문(§6 — select 스터디만 depth_section, 없으면 원 값) */
+export interface DoeCloneIn {
+  title?: string | null;
+  depth_section?: DoeDepthSection;
+}
 export interface DoeStudyIn extends DoeCheckIn {
+  /** v0.24.7 select 만(없으면 서버 설정 depth_section) */
+  depth_section?: DoeDepthSection;
   title?: string | null;
   props?: DoeProps | null;
   mesh_size_mm?: number | null;
@@ -3123,6 +3136,10 @@ export interface DoeStudyOut {
     /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) */
     load_source?: string | null;
     load_source_check?: LoadSourceCheck | null;
+    /** v0.24.7 깊이 단면 동작 스냅샷(select 만 — 키 없음 = 옛 스터디 = "입구 고정(이전)") */
+    depth_section?: DoeDepthSection | null;
+    /** v0.24.7 select 복제만 — 원 doe.spec(변수 표 초기값, §6.1) */
+    spec_prefill?: DoeSpec | null;
   };
   phase: DoePhase;
   version: number;
@@ -3194,6 +3211,20 @@ export interface DoeBead {
   warnings?: DoeWarning[] | null;
   /** v0.16.1 select 비드 섬 수(params 비드 행) */
   islands_n?: number | null;
+  /** v0.24.7 W 사용 불가·기본 끔 사유(§4.1 — text 는 서버 문구 그대로, 화면 거울 없음). 사유 없음 = 키 없음/null */
+  w_reason?: DoeWReason | null;
+}
+/** v0.24.7 W 사유 1건 */
+export interface DoeWReason {
+  code: string;
+  text: string;
+}
+/** v0.24.7 D 행 단면 판정(floor_fixed 만): applied = false 이면 입구 고정으로 대체(reason = DS_FALLBACK 사유 코드) */
+export interface DoeParamSection {
+  mode: DoeDepthSection;
+  cot_deg?: number | null;
+  applied: boolean;
+  reason?: string | null;
 }
 export interface DoeParam {
   name: string;
@@ -3212,6 +3243,10 @@ export interface DoeParam {
   /** v0.21.0 W 행: 폭 정보가 있는 구간 앵커·길이 비율(부분일 때만) */
   w_segs?: number[] | null;
   w_cover?: number | null;
+  /** v0.24.7 D 행(floor_fixed 만) */
+  section?: DoeParamSection | null;
+  /** v0.24.7 W 행: "one" = 한쪽 입구 W1(floor_fixed 만) */
+  w_side?: "one" | null;
 }
 export interface DoeParamsOut {
   beads: DoeBead[];
@@ -4096,6 +4131,8 @@ export interface DoeSection {
   s: number[];
   z: number[];
   dz_dD: Record<string, number[]>;
+  /** v0.24.7 깊이 단위 변화당 가로(s) 변위 — 단별. 키·값 없음 = 0(옛 응답·입구 고정 elems). 한쪽 비드는 열린 쪽만 값(§6) */
+  ds_dD?: Record<string, number[]> | null;
   ds_dW: number[];
   dz_dW: number[];
 }

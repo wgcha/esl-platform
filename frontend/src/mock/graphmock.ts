@@ -4,8 +4,9 @@
 // (코너·짧은 띠·spur → 접합 구역(D7), 고리 변 side, 앵커 = 격자 요소 최소 index). 결정적(난수 없음).
 import type {
   BeadGraph, BgSegment, DoeBasisMeta, DoeBead, DoeBeadDerived, DoeBeadSelGraph, DoeDeriveOut, DoeDerivedGraph, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectAutoOut, DoeSelectGraphOut,
-  DoeGuard, DoeSelectViewManifest, DoeSelectionV2, DoeShapeRules, DoeWarning, XY,
+  DoeDepthSection, DoeGuard, DoeSelectViewManifest, DoeSelectionV2, DoeShapeRules, DoeWarning, XY,
 } from "../api/types";
+import MESSAGES from "../../../resources/doe_messages.json";
 import { writeBasis } from "../view3d/select/basis";
 import { writeGraphBin, type GraphLabels } from "../view3d/select/graph";
 import { EMPTY_SET, compress } from "../view3d/select/ranges";
@@ -323,16 +324,29 @@ export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null): 
   return { status: 200, body: out };
 }
 
-/** 변수(BG-D-22): B<n>_D · B<n>_W(k 없음). 대칭 묶기 = 작은 id 변수 1개 + group_members */
-export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null): DoeParamsOut {
+/** v0.24.7 서버 문구 원본(resources/doe_messages.json) — 목 서버가 API text 로 동봉(화면은 text 를 그대로 씀) */
+export const MOCK_MESSAGES = (MESSAGES as { messages: Record<string, string> }).messages;
+const kor = (code: string) => (MOCK_MESSAGES[code] ?? code).replace(/\s*\((?:Info|Warn)[^)]*\)\s*$/, "");
+export const mockWReason = (code: string) => ({ code, text: kor(code) });
+
+/** 변수(BG-D-22): B<n>_D · B<n>_W(k 없음). 대칭 묶기 = 작은 id 변수 1개 + group_members.
+ *  v0.24.7 depth_section = floor_fixed: D 행 section·W 없는 비드 = 첫 비드 W1(한쪽 입구)·그 밖 W 사유(마지막 비드 = 입구 없음 → D 입구 고정 대체 + DS_FALLBACK) */
+export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds?: DoeDepthSection | null): DoeParamsOut {
   const r = resolve(sel, shape);
   if ("bad" in r) return { beads: [], params: [], warnings: [] };
   const tieOf = (id: string) => (sel.ties ?? []).find((t) => t.includes(id)) ?? null;
   const beads: DoeBead[] = [];
   const params: DoeParam[] = [];
+  const warnings: DoeWarning[] = [];
+  const floor = ds === "floor_fixed";
+  const noW = r.beads.filter((x) => !(x.vars.includes("W") && x.W != null)).map((x) => x.id);
   r.beads.forEach((b, i) => {
     const sk = b.segs[0]?.skeleton?.[1] ?? [0, 0];
-    beads.push({ id: b.id, k: i + 1, shape: "select", sense: b.segs[0]?.rel_depth < 0 ? "concave" : "convex", center_ab: [sk[0], sk[1]], nominal: { depth: b.D, width: b.W ?? 0 }, fixed_overlap: false, png: null, kind: "select", name: b.name, n_tiers: 1, W_nom: b.W, W_min: b.W, W_max: b.W, blend_mm: b.W ? 12 : 0, warnings: [], islands_n: 0 });
+    const hasW = b.vars.includes("W") && b.W != null;
+    const oneSide = floor && !hasW && noW[0] === b.id;
+    const none = floor && !hasW && !oneSide;
+    const fellBack = none && noW[noW.length - 1] === b.id;
+    beads.push({ id: b.id, k: i + 1, shape: "select", sense: b.segs[0]?.rel_depth < 0 ? "concave" : "convex", center_ab: [sk[0], sk[1]], nominal: { depth: b.D, width: b.W ?? 0 }, fixed_overlap: false, png: null, kind: "select", name: b.name, n_tiers: 1, W_nom: b.W, W_min: b.W, W_max: b.W, blend_mm: b.W ? 12 : 0, warnings: [], islands_n: 0, ...(none ? { w_reason: mockWReason(fellBack ? "W_ENTRY_NONE" : "W_AREA") } : {}) });
     const t = tieOf(b.id);
     if (t && t[0] !== b.id) return;
     const up = b.id.toUpperCase();
@@ -344,12 +358,17 @@ export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null): 
       const mg = mockGuard(p.name, p.type as "D" | "W", p.nominal, p.default_range, p.feasible);
       return { ...p, guard: mg.guard, default_range: mg.def, feasible: mg.feasible, use_default: mg.use_default };
     };
-    if (b.vars.includes("D"))
-      params.push(guarded({ name: `${up}_D`, type: "D", bead: b.id, tier: b.tier, nominal: b.D, feasible: [0.5, +Math.min(b.D * 2, b.W != null ? (b.W - Wf) / 2 : b.D * 2).toFixed(2)], feasible_source: "estimate", default_range: range(b.D, 0.3), use_default: true, group_members: others("D") }));
+    if (b.vars.includes("D")) {
+      const fellBack = floor && !hasW && !oneSide && noW[noW.length - 1] === b.id;
+      params.push(guarded({ name: `${up}_D`, type: "D", bead: b.id, tier: b.tier, nominal: b.D, feasible: [0.5, +Math.min(b.D * 2, b.W != null ? (b.W - Wf) / 2 : b.D * 2).toFixed(2)], feasible_source: "estimate", default_range: range(b.D, 0.3), use_default: true, group_members: others("D"), ...(floor ? { section: { mode: "floor_fixed" as const, cot_deg: 45, applied: !fellBack, ...(fellBack ? { reason: "W_ENTRY_NONE" } : {}) } } : {}) }));
+      if (fellBack) warnings.push({ code: "DS_FALLBACK", level: "info", bead: b.id, var: `${up}_D`, reason: "W_ENTRY_NONE", message: kor("DS_FALLBACK").replace("{bead}", b.id).replace("{var}", `${up}_D`).replace("{reason}", "W_ENTRY_NONE") });
+    }
+    if (oneSide)
+      params.push(guarded({ name: `${up}_W`, type: "W", bead: b.id, nominal: 18, feasible: [10, 27], feasible_source: "estimate", default_range: range(18, 0.2), use_default: true, group_members: others("W"), w_side: "one" }));
     if (b.vars.includes("W") && b.W != null)
       params.push(guarded({ name: `${up}_W`, type: "W", bead: b.id, nominal: b.W, feasible: [+(2 * b.D + Wf).toFixed(2), +(b.W * 1.5).toFixed(2)], feasible_source: "estimate", default_range: range(b.W, 0.2), use_default: true, group_members: others("W"), ...(b.wSegs ? { w_segs: b.wSegs, w_cover: b.wCover } : {}) }));
   });
-  return { beads, params, warnings: [] };
+  return { beads, params, warnings };
 }
 
 /** 평면도(목): 외곽 = 격자 bbox, 비드 = 구성 세그먼트 골격 */
@@ -385,10 +404,10 @@ export function graphPlan(sel: DoeSelectionV2): DoePlanOut {
 }
 
 /** 기저(목): D = 그 세그먼트 바닥 노드를 부모에서 멀어지는 쪽 n0 로 1(자손 생략), W = 없음(0 변위) */
-export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null): { meta: DoeBasisMeta; bin: ArrayBuffer; params: DoeParam[] } {
+export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds?: DoeDepthSection | null): { meta: DoeBasisMeta; bin: ArrayBuffer; params: DoeParam[] } {
   const m = graphMesh();
   const r = resolve(sel, shape);
-  const ps = graphParams(sel, shape);
+  const ps = graphParams(sel, shape, ds);
   const vars: { idx: number[]; vec: number[] }[] = [];
   const meta: DoeBasisMeta = { schema: "esl/bead_select_basis/1", sha256: "", selection_sha256: graphSelSha(sel), n_nodes: m.n, vars: [] };
   for (const p of ps.params) {

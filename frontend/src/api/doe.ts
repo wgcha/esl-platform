@@ -6,7 +6,7 @@ import type {
   DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeJigRegionsFile, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
   DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
-  DoeGuard, DoeParam as DoeParamRow, DoeRankMq, DoeShapeRoute, DoeShapeRules, XY,
+  DoeCloneIn, DoeDepthSection, DoeGuard, DoeParam as DoeParamRow, DoeRankMq, DoeShapeRoute, DoeShapeRules, XY,
 } from "./types";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -63,6 +63,8 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
   };
   const lt = normalizeLoadTransferCfg(r.load_transfer);
   return {
+    ...(r.depth_section === "entry_fixed" || r.depth_section === "floor_fixed" ? { depth_section: r.depth_section } : {}),
+    ...(isObj(r.depth_section_notes) ? { depth_section_notes: { DS_CLONE_NOTE: str(r.depth_section_notes.DS_CLONE_NOTE) || null, DS_CLONE_NOTE_ENTRY: str(r.depth_section_notes.DS_CLONE_NOTE_ENTRY) || null } } : {}),
     ...(typeof r.load_source_default === "string" ? { load_source_default: r.load_source_default } : {}),
     ...(lt ? { load_transfer: lt } : {}),
     enabled: r.enabled === true,
@@ -266,7 +268,11 @@ export const doe = {
   runCompare: (id: string, version: number) => request<DoeStudyOut>("POST", `/doe/studies/${id}/run`, { body: { version } }),
   deleteCheck: (id: string) => request<DeleteCheckOut>("GET", `/doe/studies/${id}/delete-check`),
   remove: (id: string) => request<DeleteOut>("DELETE", `/doe/studies/${id}`),
-  clone: (id: string, title?: string | null) => request<DoeStudyOut>("POST", `/doe/studies/${id}/clone`, { body: title ? { title } : {} }),
+  /** v0.24.7 본문 {title?, depth_section?}(select 스터디만 depth_section — §6.1). 문자열 = 옛 호출(title 만) */
+  clone: (id: string, body?: string | DoeCloneIn | null) => {
+    const b: DoeCloneIn = typeof body === "string" ? { title: body } : body ?? {};
+    return request<DoeStudyOut>("POST", `/doe/studies/${id}/clone`, { body: { ...(b.title ? { title: b.title } : {}), ...(b.depth_section ? { depth_section: b.depth_section } : {}) } });
+  },
   results: (id: string) => request<DoeResultOut>("GET", `/doe/studies/${id}/results`).then(normalizeResult),
   /** §11.4 ESL별 지표(순위 행에 per_esl 이 없을 때) */
   perEsl: (id: string, designs: string[], view?: string | null) =>
@@ -660,7 +666,7 @@ export function stepPrepGroups(prep: StepPrep | null | undefined, triaWarnFrac =
 /** v0.16.2 자동 탐지 단계 이름(AUTO_DETECT_FAILED.step) */
 const AUTO_STEP_NAME: Record<string, string> = { version: "형상 엔진 확인", assem_full: "조립 읽기", fixed: "체결 스캔", extract0: "형상 읽기", extract: "비드 인식", tag: "메시 대응" };
 /** v0.16.2 정보 수준 자동 탐지 코드(서버가 level 을 안 줄 때도 ⓘ) */
-const AUTO_INFO = new Set(["BG_W_PARTIAL", "RG_RANGE_LIMITED", "RG_COMBO_LIMITED", "RG_COMBO_SKIPPED", "RG_UNCHECKED", "RG_BUDGET", "MESH_ROUTE_RELAXED", "AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD", "BG_RANGE_CLAMPED", "FIXED_XFER_NONE", "FIXED_XFER_UNMATCHED", "STEP_GRAPH_REGION"]);
+const AUTO_INFO = new Set(["BG_W_PARTIAL", "RG_RANGE_LIMITED", "RG_COMBO_LIMITED", "RG_COMBO_SKIPPED", "RG_UNCHECKED", "RG_BUDGET", "MESH_ROUTE_RELAXED", "AUTO_GROUP_DROPPED", "AUTO_SLOPE_DIFF", "AUTO_HINT_UNAVAILABLE", "GRAPH_RASTER_COARSE", "BG_SHARED_CHILD", "BG_CORNER_GUARD", "BG_ISLAND_HELD", "BG_RANGE_CLAMPED", "FIXED_XFER_NONE", "FIXED_XFER_UNMATCHED", "STEP_GRAPH_REGION", "DS_FALLBACK", "DS_THETA_SPREAD", "DS_ONE_SIDE", "DS_HOLD_PINCH", "DS_ENGINE_NATIVE", "DS_CLONE_NOTE"]);
 /** v0.16.2 자동 탐지·건너 잇기 경고 1줄(인자 포함) — 서버 문구가 없을 때. AUTO_DETECT_FAILED = {code, message, step, detail}(detail = 안쪽 paicad·코어 코드) */
 function autoWarnText(w: Record<string, unknown>): string {
   const n = (v: unknown) => (typeof v === "number" ? Number(v.toFixed(1)).toString() : String(v ?? "?"));
@@ -783,6 +789,40 @@ const guardLimit = (reason: string | null | undefined, rules: DoeShapeRules | nu
   const v = reason === "jac" ? g?.jac_min : reason === "tri_angle" ? g?.tria_angle_min_deg : reason === "area_ratio" ? g?.area_ratio_min : reason === "new_fail" ? g?.max_new_fail_ratio : null;
   return v != null ? ` (기준 ${v}${reason === "tri_angle" ? "°" : ""})` : "";
 };
+// ---------------------------------------------------------------- v0.24.7 깊이 단면 동작(esl_bead_depth_mode.md §7) — 라벨·툴팁 상수는 여기 한 곳(경고·사유 문구는 서버 text)
+export const DEPTH_SECTIONS: readonly DoeDepthSection[] = ["entry_fixed", "floor_fixed"];
+/** 옛 스터디(키 없음) 호환 값 — 서버 LEGACY_DEPTH_SECTION 과 같은 뜻(화면은 칩에 "(이전)"을 붙임) */
+export const LEGACY_DEPTH_SECTION: DoeDepthSection = "entry_fixed";
+export const DEPTH_SECTION_LABEL: Record<DoeDepthSection, string> = {
+  entry_fixed: "입구 고정(깊이면 좁아짐)",
+  floor_fixed: "깊이면 폭 유지(입구 넓어짐)",
+};
+export const DEPTH_SECTION_TITLE = "깊이 동작";
+export const DEPTH_SECTION_TIP = "선택(요소) 비드는 입구 고정에서 사면이 가팔라짐 · 한쪽 입구 비드는 입구가 한쪽만 넓어짐(중심선 치우침)";
+/** 스터디 머리 칩: 키 없음 = "입구 고정(이전)" */
+export function depthSectionChip(v: DoeDepthSection | null | undefined): { text: string; legacy: boolean } {
+  if (v === "floor_fixed") return { text: "깊이면 폭 유지", legacy: false };
+  if (v === "entry_fixed") return { text: "입구 고정", legacy: false };
+  return { text: "입구 고정(이전)", legacy: true };
+}
+export const DEPTH_FALLBACK_BADGE = "입구 고정";
+export const W_ONE_SIDE_TAG = "한쪽";
+export const W_ONE_SIDE_TIP = "한쪽 입구만 이동";
+export const W_UNAVAILABLE_LEAD = "W 사용 불가";
+/** 복제 창 안내 1줄(원 값과 다를 때). floor→entry = 빠지는 W1 변수 이름 치환({n}·{names}), 0개면 줄 없음 */
+export function cloneDepthNote(notes: DoeSettingsOut["depth_section_notes"] | undefined, from: DoeDepthSection, to: DoeDepthSection, dropped: string[]): string | null {
+  if (from === to) return null;
+  if (to === "floor_fixed") return notes?.DS_CLONE_NOTE ?? null;
+  const t = notes?.DS_CLONE_NOTE_ENTRY;
+  if (!t || !dropped.length) return null;
+  return t.replace("{n}", String(dropped.length)).replace("{names}", dropped.join(", "));
+}
+/** 원 spec 변수 중 한쪽 입구 W(w_side one) — 입구 고정 복제 때 빠지는 것 */
+export function droppedOneSide(spec: DoeSpec | null | undefined, params: DoeParam[] | null | undefined): string[] {
+  const one = new Set((params ?? []).filter((p) => p.w_side === "one").map((p) => p.name));
+  return (spec?.params ?? []).map((x) => x.name).filter((n) => one.has(n));
+}
+
 const gr = (v: XY) => `${Number(v[0].toFixed(2))}~${Number(v[1].toFixed(2))}`;
 /** 변수 표 guard 꼬리표: limited·blocked·unchecked 만(ok·없음 = null) — 라벨·종류·툴팁 */
 export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules | null): { label: string; kind: "info" | "warn" | "neutral"; tip: string } | null {
