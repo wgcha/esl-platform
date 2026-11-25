@@ -363,3 +363,59 @@ B'_D = B_D + 2cotθ_b·B_W*(S_2) + cotθ_b·B_W1*(S_1) — 구간 S_2·S_1 = §1
 - F-DM-3 복제 스터디 비드별 S_2·S_1·S_0 수, 고정 쪽 종류(child·shared·junction·edge·own_wall n — `DS_ONE_SIDE`·서버 LLM 진단), W 사유(W_ONE_SIDE·W_ONE_SIDE_EDGE·W_ENTRY_NONE), DS_FALLBACK 목록.
 - F-DM-4 section 진단 floor_resid_mm·angle_resid_deg·steep_deg(한쪽 비드), 3D 미리보기로 열린 쪽만 넓어짐·중심선 치우침 눈 확인(B_D 끝값·W1 끝값).
 - F-DM-5 B8 깊이 기울기(%/mm) 원 −1.98 대비 복제 값, 순위와 재낙하 소성 변형률 순서 일치 여부.
+
+## 14. 검토 개정 2 (2026-11-25 — 이 절이 앞 절과 충돌하면 우선, 본문 반영 후 이 절은 "반영됨" 표시만 남김)
+
+### 14.1 검토 결론
+- 초안·개정 1 의 그래프 floor_fixed = `B_D + 2cotθ_b·B_W*(S_2) + cotθ_b·B_W1*(S_1)`(조합)는 맞지만 세 가지 약점이 있다.
+  1. **적용 범위**: W 기저가 있는 구간(S_2 ∪ S_1)에서만 된다. 네트워크 묶기·면형 바닥(area·plateau)·merge 구간·판 외곽 옆은 entry_fixed 대체. #88 의 W 불가 사유를 아직 모르므로(F-DM-1) 사용자 목적("#88 에서 깊이면 폭 유지")이 사유에 따라 무산될 수 있다.
+  2. **정확도**: 비드 1개 평균 θ_b 를 쓴다. D 닮음은 노드마다 실제 run/rise(`morph.py:249-251`)라 좌우 벽 각이 다르거나 길이 방향으로 각이 변하면 깊이면이 (cotθ_local − cotθ_b)·ΔD 만큼 변한다(45°·40° 섞임, ΔD 3 → 0.57 mm).
+  3. **장치**: 가상 범위 W*, W1* `ramp: "all"`, θ 규칙 2개(설정·해시), DS_THETA_*·DS_PARTIAL, S_2·S_1 조합 분류가 깊이 하나를 위해 필요하다.
+- 개정 1 이 이미 패키지를 고친다(W1). 같은 판에서 **닮음 중심만 바꾼 깊이 기저**를 넣으면 세 약점이 모두 없어진다 → 그래프 floor_fixed 는 조합이 아니라 패키지 새 kind **DF**.
+
+### 14.2 그래프 floor_fixed = 패키지 kind `DF`(깊이면 가장자리 중심 닮음) — §1.2·§1.3·§1.4·§1.6.4 의 그래프 부분 대체
+- 정의(변수 ΔD 당 변위, D 기저의 거울): 벽·입구 노드 x ∈ (E ∪ 벽) 마다 평면 최근접 **깊이면 가장자리 노드** x_f, h = |(x − x_f)·n0|, D_col = (x ∈ E 면 h, 아니면 D_nom — `morph.py:249` 의 거울).
+  - 법선: u_n = s·(1 − clip(h/D_col, 0, 1))·n0 → 가장자리 s·n0, 입구 0.
+  - 평면: u_p = (x − x_f)_평면 / D_col → 가장자리 0, 벽(높이 비 t) (1 − t)·cotθ_local 바깥, 입구 cotθ_local 바깥.
+  - 깊이면(가장자리·안·배타 자식·섬): s·n0 강체, **평면 성분 0**(조화 확장 불필요). 공유 자식 벽·걸친 섬·J·hold ψ·램프 φ = D 갈래 그대로.
+  - 입구가 움직이므로 부모 바닥 블렌딩 띠·허용 구역·`movable_nodes`·바깥 0 점검은 **W 갈래 규칙**(`morph.py:277-305`·`:315-322`, `allowed_elements(S, "W")`)을 그대로 쓴다. R_w = max(`blend.min_mm`, `blend.k`·max|u_p(E)|·ΔD_ext, 3h), 램프 L = D 식.
+  - 방향 평활: 골격이 있는 세그먼트는 u_p 방향 = W 의 바깥 방향장(`_skeleton_dist` + `_smooth_dirs`), 크기 = (x − x_f)_평면·n_out / D_col(수직 run — 노드 짝 어긋남에 무관). 골격이 없는 면형 바닥은 현(x − x_f) 방향을 nref 로 같은 평활. 근거: 비정렬 메시에서 최근접 짝이 비스듬하면 입구 선이 (cotθ·ΔD)·sin(어긋남) 만큼 물결친다.
+  - 코너 가드 없음(깊이면이 강체라 가드 대상 없음 — §2.3 의 `corner.iters = 0` 대입도 불필요). 부모 쪽 오목 코너·이웃 비드 사이 압축은 range guard(§2.2)가 범위로 막는다.
+- 성질: 노드 기둥마다 **실제 각 유지**(θ 측정·평균 없음), 깊이면 평면 변위 0(가정 아님 — 구성), 입구는 그 벽의 cotθ_local·ΔD 만큼. 입구가 한쪽뿐이면 그 쪽만, 양쪽이면 양쪽, 벽마다 각이 달라도 각각. 판 외곽에 닿은 깊이면도 평면 0 이라 문제없음(§1.6.4 "판 외곽 = 불가" 행은 깊이에서 삭제, Q-DM-6 은 W1 변수에만 남음).
+- 적용 범위: 자기 벽에 입구 노드가 있는 모든 그래프 비드 — 세그먼트(양쪽·한쪽)·**네트워크 묶기·면형 바닥·merge 구간** 포함. 입구 노드가 하나도 없는 비드만 entry_fixed + `DS_FALLBACK{reason: W_ENTRY_NONE}`.
+- 이름 `B<n>_D` 그대로(kind 만 DF, basis.json `graph_vars[].kind` 는 "D" 유지 + `section.mode = floor_fixed`). 대칭 묶기 = 구성 비드 DF 의 합. 달성 깊이(BG-D-33) = 법선 성분으로 D 와 같은 점검.
+- 판: `DF_RULES = 1`(신규, W1_RULES 와 같은 취급 — floor_fixed basis.json `df_rules`, 기저 재사용 조건). RULES·MORPH_RULES·OUTPUT_VERSION·GRAPH_ALGO 는 §5.1 그대로.
+
+### 14.3 따라 바뀌는 것
+| 항목 | 개정 1 | 개정 2 |
+|---|---|---|
+| §1.2 그래프 조합식 | B_D + 2cotθ_b·B_W* + cotθ_b·B_W1* | 삭제 → kind DF. **elems 는 조합 그대로**(B_D + 2cotθ·B_W(f=0), cotθ = run_med/D_1 — esl 코드, 패키지 무관) |
+| §1.3 θ(그래프) | 길이 가중 평균·실패 규칙 | 삭제. 표시용 `section.cot_deg` = DF 기저 입구 평면 크기의 중앙값·`cot_min_deg`·`cot_max_deg`(진단). `theta_min_deg`·`theta_spread_deg` 는 **elems 에만** 적용 |
+| §1.4 표 | S_2·S_1·S_0 조합·DS_PARTIAL | 그래프 = 전 구간 DF(입구 없는 비드만 대체). DS_PARTIAL·DS_THETA_*(그래프) 삭제 |
+| §1.5 계획 표 | graph: compose pkg_w, one_side pkg_w1, theta seg_fields | graph: compose **pkg_df**, one_side pkg_w1(**W1 변수 전용**), theta **none**, feasible open_cap, fig **floor_center**. `compose()`·`w_virtual_range()` 는 elems 전용 |
+| §1.6 W1 | 변수 + 조합(`ramp: "all"`) | **변수 전용**(`ramp: "end"` 만, `"all"` 삭제). 조건 "S_2 = ∅ 일 때만 W1 변수" 그대로. `one_side()` 측정은 W1 변수·사유 판정에만 |
+| §1.6.4 검산 | k = cotθ 조합 | DF 가 직접 만족. 고정 쪽 표(배타 자식·공유 자식 벽·J·비드 소유 벽)는 D 갈래 동작 설명으로 유지, "판 외곽" 행 삭제 |
+| §2.1 D 상한 | W_nom·width_max_rel/(m·cotθ_b) | entry_width(또는 W1_nom)가 있는 비드: D_nom + W_ref·width_max_rel/(m·cot_med), 없는 비드(면형·네트워크): D_nom(1+depth_max_rel) 만 — 나머지는 range guard |
+| §2.3 코너 가드 | cfg iters 0 대입 | DF 갈래에 가드 없음(대입 불필요) |
+| §2.4 허용 구역 | strict(D) ∪ strict(W*) ∪ strict(W1*) | DF = W 규칙 허용 구역 1개 |
+| §2.6 진단 | floor_resid_mm·angle_resid_deg(조합 잔차) | `floor_plan_max_mm`(기대 0 — ψ·φ 로만 생김)·`entry_wave_mm`(입구 선 물결 = 직선 구간 입구 이동량의 표준편차)·`cot_min/med/max_deg`·`band_clipped` |
+| §5 해시 | hash_view = ds·theta 2·one_side_min_nodes | 그래프 = ds·one_side_min_nodes(·df_rules·w1_rules 는 basis.json). theta 2개는 elems 비드가 있을 때만 |
+| §6.1 복제 경고 | "한쪽 입구 W 행은 꺼진 채 추가" | 그대로. entry → floor 에서 D 는 모든 비드에 적용됨(대체 목록이 있으면 그 비드만 DS_FALLBACK) |
+| §9 C1 소유 | W1·one_side | + `morph.py` DF 갈래, `checks.py` DF 달성·허용 구역, `conformance.py` DF 점검, `DF_RULES` |
+
+### 14.4 시험 교체·추가(V-0247-DM-n)
+- 1' (교체) 합성 직선 채널 floor_fixed ΔD ±3: 달성 깊이 ±1e-6, **깊이면 전 노드 평면 변위 ≤ 1e-12**(φ = ψ = 1 구역), 입구 폭 = W_open + 2ΔD·cotθ ±1e-3, 사면 각 ±0.05°, 허용 구역 밖 ≤ 1e-9, 뒤집힘 0.
+- 28 **비대칭 벽**: 한쪽 45°·반대쪽 60° 채널 — 각 벽이 자기 각 ±0.05°, 입구 이동 = 벽마다 cotθ·ΔD ±1e-3(조합식은 이 시험을 통과 못 함 — 변이 대조로 고정).
+- 29 **적용 범위**: 네트워크 묶기(H5 고리 + T), 면형 바닥 포켓(H6 (d)), merge 구간, 판 외곽을 따라가는 채널, 한쪽 입구(synth_oneside a·b·d) — 모두 DS_FALLBACK 없음, 깊이면 평면 ≤ 1e-9, 각 ±0.5°(직선 구간), 뒤집힘 0. 입구 노드 0 인 합성 = W_ENTRY_NONE + entry_fixed 바이트.
+- 30 **비정렬 입구 선**: H6 ch1 D +2 — `entry_wave_mm` ≤ 0.05h, 각 ±1°.
+- 31 **이웃 압축**: 간격 20 mm 평행 채널 2개 동시 +ΔD_ext — SELECT_BLEND_CLIPPED, range guard 가 usable 상한을 줄임(뒤집힘·넓이 비 기준 그대로), 막지 않고 표에 표시.
+- 6·7·19(조합 한쪽)·21 의 조합 관련 단언은 삭제하거나 DF 기준으로 바꾼다. 18·20·22(W1 변수)는 그대로(`ramp: "all"` 단언만 삭제). 10 변이 = graph compose → none 이면 entry_fixed 바이트.
+- 17' 비용: DF 기저 시간 ≤ W 기저 시간 × 1.2(같은 띠·조화 없음).
+
+### 14.5 미결 갱신
+- Q-DM-4(공유 자식 벽 쪽 가팔라짐)·Q-DM-5(복제 미리 채움 = 모든 select 복제) = 기본 그대로. Q-DM-6 = W1 변수에만 해당(깊이는 해결).
+- 새 미결 없음. 후속: R-DM-5(세그먼트별 θ) 삭제(DF 가 해결), R-DM-11 elems 도 DF 식으로(지금 조합 — run_med 평균 θ), R-DM-12 DF 를 새 entry_fixed 의 대체로 쓸지(그림·문구 통일).
+
+### 14.6 뒤 버전과의 접점(계약 esl_jig_grid_map.md·esl_bead_pos_u.md)
+- v0.24.9 위치 U 는 패키지 W 갈래의 쪽 부호 변형(kind U)이라 이 판의 띠·허용 구역 일반화(W 규칙을 DF·W1 이 공유)를 그대로 쓴다 → C1 은 띠·허용 구역 코드를 kind 별 복사 대신 **공용 내부 함수 1개**로 뺀다(D·W 바이트 불변 조건).
+- floor_fixed 에서 부모 바닥 띠 노드가 평면으로 ≤ cotθ·ΔD 움직이고 노드 하중이 따라간다(entry_fixed 의 깊이면 축소와 같은 크기 — 이번 판은 그대로, v0.24.9 `load_follow` 에서 다룸).
