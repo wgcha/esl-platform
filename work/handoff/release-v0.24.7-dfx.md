@@ -7,3 +7,4 @@
 - 시험 추가: packages test_one_side::test_df_h6_ch1_default_range_ends_v3, tests/doe/test_depth_section_dfx.py(rg ch1 entry [6.35,8.0] / floor [5.675,8.0]), test_depth_section §2.6 키
 - 가드 보강: (a) shrink^iters 로 안 풀리는 요소(쉼 모서리 sine ~1e-5) → 대상 노드 동결(계수 0) 후 재점검, (b) 품질 기준 걸린 요소 중 깊이면(nF) 노드 없는 것 → 벽 노드 법선도 줄임. rg: ch1 floor [5.6, 8.15] (entry [6.35,8.0]), ch2(b13) floor [6.5, 8.075] (entry [6.2, 8.075]). 패키지 89 pass.
 - 표 스크립트 /tmp/dfx/table.py → /tmp/dfx/table.json (H6·H5 auto_seed 비드)
+- 시도 후 되돌림: 품질 요소의 벽 법선 축소를 깊은 벽(깊이면 노드 없음)까지 넓히면 b13 rg [6.5,8.075] 이지만 깊은 벽 노드가 0 으로 줄어 ±2.4 뒤집힘 1·entry_guard_left 5(걸친 섬 isl24 옆) → 입구에 닿는 요소만(최종). b13 floor [7.4, 8.375] blocked(머리카락 요소: 벽 quad 97039 jac 0.302 z≈3, 섬 tri 96179 10.15°) — 남은 문제.

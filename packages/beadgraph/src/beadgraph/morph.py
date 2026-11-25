@@ -224,20 +224,21 @@ def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict
     return bad
 
 
-def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, floor: np.ndarray,
+def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, entry: np.ndarray,
                     ext: float, cg: dict, flip_deg: float, qual: dict | None = None):
-    """DF entry guard (esl contract §1.2.1 — DM-32·34): ``_corner_guard`` one pass at a time (its criteria — area ratio of
-    parent-floor elements, normal flip, Gauss-point quad Jacobian — shrink the plan part of the flagged elements' moving
-    nodes) plus concave quads (a corner Jacobian <= 0 at ±ext on the element's own plane or about its rest normal, > 0 at
-    rest — ``checks.quad_corner_min``): their moving nodes' plan part and — wall nodes ``wall`` only — their normal part
-    shrink (a flat fillet corner on the entry line folds when the wall node below only drops: the element plane turns
-    about the entry line), up to ``cg["iters"]`` passes, ``shrink`` once per pass. Pass 2.. re-check only the elements
-    with a node whose factor changed (the others are as in pass 1 — exact). ``qual`` {jac_min, tri_angle_min_deg} (the
-    caller's range-guard criteria, None = off — DM-35): elements that turn newly bad at ±ext (``_qual_new_bad``) shrink
-    the plan part of their moving nodes too (and, when they touch an ``entry`` node, the normal part of their wall nodes
-    — entry fillet slivers; deeper wall elements keep the depth). -> (plan factor c, normal factor cn (wall nodes), (elements still flagged by
-    the inversion / area / concave criteria after the last pass — 0 normal, elements still newly bad by ``qual``)). Same
-    plan factors as ``_corner_guard`` where no quad turns concave and ``qual`` is off."""
+    """DF entry guard (esl contract §1.2.1 — DM-32·34·35). Pass k (up to ``cg["iters"]``): ``_corner_guard`` one pass
+    (its criteria — area ratio of parent-floor elements, normal flip, Gauss-point quad Jacobian) + concave quads (a corner
+    Jacobian <= 0 at ±ext on the element's own plane or about its rest normal, > 0 at rest — ``checks.quad_corner_min``)
+    + ``qual`` {jac_min, tri_angle_min_deg} (the caller's range-guard criteria, None = off): elements newly bad at ±ext
+    (``_qual_new_bad``). Flagged elements: plan part of their moving nodes × ``shrink``; concave ones and quality ones
+    touching an ``entry`` node also the normal part of their ``wall`` nodes (a flat fillet corner on the entry line folds
+    when the wall node below only drops — the element plane turns about the entry line); deeper wall nodes keep the depth.
+    Pass 2.. re-checks only elements with a node whose factor changed (the others are as in pass 1 — exact). If passes run
+    out with elements still flagged by inversion / area / concave (a corner flat to ~1e-5 at rest folds under any
+    motion): their moving nodes are frozen (plan 0; normal 0 only for wall nodes next to the entry — the shrink limit)
+    and re-checked. -> (plan factor c, normal factor cn, (elements still flagged by inversion / area / concave — 0
+    normal, elements still newly bad by ``qual``)). Same plan factors as ``_corner_guard`` where no quad turns concave and
+    ``qual`` is off."""
     from .checks import quad_corner_min
     c = np.ones(M.n)
     cn = np.ones(M.n)
@@ -248,6 +249,7 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
     upl = U - un
     shrink, iters = float(cg["shrink"]), int(cg["iters"])
     one = dict(cg, iters=1)
+    ne = M.nmask(M.emask_of_nodes(entry))               # nodes of elements touching the entry
 
     def flagged(sub):
         idx = np.flatnonzero(sub)
@@ -266,7 +268,7 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
         nd = np.unique(C[bc][C[bc] >= 0])
         bq = _qual_new_bad(M, C, Ud, ext, qual) if qual else np.zeros(idx.size, bool)
         ndq = np.unique(C[bq][C[bq] >= 0])
-        bqe = bq & ~(floor[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)      # off the floor edge: wall normal too
+        bqe = bq & (entry[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)       # entry-fillet elements: wall normal too
         ndqe = np.unique(C[bqe][C[bqe] >= 0])
         ndq_w = ndqe[moved[ndqe] & wall[ndqe]]
         sn = cs < 1.0
@@ -292,7 +294,7 @@ def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, w
             break
         c[cs < 1.0] = 0.0
         c[nd] = 0.0
-        cn[nd[wall[nd]]] = 0.0
+        cn[nd[wall[nd] & ne[nd]]] = 0.0                  # depth frozen only next to the entry (fillet slivers)
         sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
     return c, cn, flagged(sub)[4]
 
@@ -681,7 +683,7 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
         qual = {"jac_min": b.get("guard_jac_min"), "tri_angle_min_deg": b.get("guard_tri_angle_min_deg")}
         qual = {k: float(v) for k, v in qual.items() if v is not None} or None
         cE, cN, (info["entry_guard_left"], info["entry_guard_qual_left"]) = _df_entry_guard(
-            M, gel, Uv, gmov, walln, nF, ext, mc["corner"], float(cfg["quality"]["flip_deg"]), qual)
+            M, gel, Uv, gmov, walln, E, ext, mc["corner"], float(cfg["quality"]["flip_deg"]), qual)
         if (cE < 1.0).any():
             un = (Uv @ M.n0)[:, None] * M.n0[None, :]
             Uv = un * cN[:, None] + (Uv - un) * cE[:, None]
