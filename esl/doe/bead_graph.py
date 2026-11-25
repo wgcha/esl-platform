@@ -935,14 +935,24 @@ def param_beads(D) -> list[dict]:
 def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *,
                   fixed_node_ids=(), index=None, mesh_sha256: str | None = None,
                   w_clamp: dict | None = None, range_guard: dict | None = None,
-                  shape_rules: dict | None = None) -> GraphDerived:
+                  shape_rules: dict | None = None, depth_section: str | None = None,
+                  section_rules: dict | None = None) -> GraphDerived:
     """normalized schema 2 selection -> GraphDerived (arrays — worker basis / tests).
+    v0.24.7 DM: depth_section(스냅샷 값, None = 옛 = entry_fixed)·section_rules(스냅샷 depth_section_rules) — floor_fixed 면
+    계획 표 graph 행(esl.morph.section) 열로 D = 패키지 kind DF(입구 노드 없으면 D + DS_FALLBACK), W 없는 한쪽 입구 비드 = W1.
     v0.21.0(새 스냅샷만): shape_rules.w_partial → W 를 S_W 에만(SH-4~9), shape_rules.range_guard 가 있으면 range_guard 표
     (``range_guard_table``)를 맞는 변수에 적용(SH-15·16) — 맞지 않으면 guard.state unchecked + RG_UNCHECKED."""
     from esl.doe import bead_select as bs
     from esl.mesh import features
+    from esl.morph import section as sec
     sc = select_cfg(cfg)
     wp = _w_partial(shape_rules)
+    ds = sec.resolve(depth_section)
+    spl = sec.row_plan(ds, "graph")
+    if sec.is_floor(ds) and section_rules is None:      # 스냅샷 rules 없음 = 지금 설정(DEFAULTS 거울)
+        from esl.doe import settings as _settings
+        section_rules = (_settings(cfg if isinstance(cfg, dict) and "select" in cfg else None)
+                         ["depth_section_rules"])
     ix = index or bs.mesh_index(mesh)
     if graph is not None and labels is not None:
         g2, l2 = edited_graph(graph, labels, (norm.get("graph") or {}).get("edits"), mesh)
@@ -1015,6 +1025,9 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
             gb.range_default["W"] = [_r(Wn * (1.0 - float(rg["width_rel"]))), _r(Wn * (1.0 + float(rg["width_rel"])))]
             gb.range_feasible["W"] = [_r(min(2.0 * D + wfl, Wn * (1.0 - float(rg["width_rel"])))),
                                       _r(max(Wn * (1.0 + float(rg["width_rel"])), Wn * (1.0 + float(rg["width_max_rel"]))))]
+        gb.depth_kind, gb.w_side, gb.section, gb.w_reason = "D", None, None, None
+        if spl["compose"] != "none" or spl["one_side"] != "none":     # v0.24.7 DM floor_fixed(계획 열)
+            _floor_fixed_bead(gb, b, g2, l2, mesh, spl, sec, section_rules or {}, sc, wp, net, wfl, D, lo, hi)
         gb.range_basis = copy.deepcopy(gb.range_default)   # ramp / corner guard frozen here (BG-D-24), even if clamped
         sm = np.isin(l2["segment"], ids) | (np.isin(l2["junction_zone"], zones) & (l2["junction_zone"] >= 0))
         sm &= ~excl
@@ -1037,9 +1050,125 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
     D.norm_cfg_tol = float(sc["graph"]["sym_tol_mm"])
     D.cfg1 = cfg1
     D.shape_rules = shape_rules
+    D.depth_section = depth_section                    # 스냅샷 값 그대로(None = 키 없음)
+    D.section_rules = section_rules
+    D.section_plan = spl
+    if spl["one_side"] != "none":
+        _tie_mixed(D, sc)
     if _guard_rules(shape_rules) is not None:          # v0.21.0 SH-14·15: 준비 표 적용(맞지 않는 변수 = unchecked)
         apply_range_guard(D, range_guard, cfg)
     return D
+
+
+def _entry_any(g2, l2, mesh, ids, zones) -> bool:
+    """비드 입구 노드(E = 벽 ∩ 부모 바닥) ≥ 1 — DF 적용 조건(§1.4)."""
+    from beadgraph.zones import Mesh, bead_zones
+    M = Mesh(g2, l2, np.asarray(mesh["x0"], np.float64), _conn(mesh))
+    return bool(bead_zones(M, ids, zones, "D")["E"].any())
+
+
+def _floor_fixed_bead(gb, b, g2, l2, mesh, spl, sec, rules, sc, wp, net, wfl, D, lo, hi) -> None:
+    """v0.24.7 DM(§1.2.1·§1.6·§2.1·§4) 그래프 비드 1개: D 종류(DF|대체 D), W1(S_2 = ∅ ∧ S_1), floor_fixed feasible, W 사유."""
+    bg = _bg()
+    rg = sc["range"]
+    ids, zones = gb.seg_ids, gb.zone_ids
+    mn = int(rules["one_side_min_nodes"])
+    osd = bg.one_side(g2, l2, np.asarray(mesh["x0"], np.float64), _conn(mesh), ids, min_nodes=mn)
+    runs = [float(osd[s_]["run"]) / max(float(g2["segments"][s_]["D"]), 1e-9) for s_ in ids
+            if osd[s_]["run"] is not None and osd[s_]["run"] > 0]
+    cot = float(np.median(runs)) if runs else None
+    entry = _entry_any(g2, l2, mesh, ids, zones) if spl["compose"] == "pkg_df" else False
+    gb.depth_kind = "DF" if entry else "D"
+    applied = gb.depth_kind == "DF"
+    gb.section = {"mode": "floor_fixed", "cot_deg": (sec._deg_of_cot(cot) if cot else None), "applied": applied}
+    if not applied:
+        gb.section["reason"] = "W_ENTRY_NONE"
+        gb.warnings.append({"code": "DS_FALLBACK", "bead": b["id"], "var": var_name(b["id"], "D"),
+                            "reason": "W_ENTRY_NONE"})
+    # W: S_2 (지금 규칙) / W1 (S_2 = ∅ 일 때만)
+    s2 = w_segs(g2, ids)
+    ln = {s_: float(g2["segments"][s_]["length"] or 1.0) for s_ in ids}
+    s1 = [s_ for s_ in ids if g2["segments"][s_]["entry_width"] is None and osd[s_]["ok"]]
+    s1_edge = [s_ for s_ in ids if osd[s_]["reason"] == "EDGE"]
+    user_vars = b.get("vars")
+    one = False
+    if spl["one_side"] == "pkg_w1" and not net and not s2 and s1 and "W" not in gb.vars and \
+            (user_vars is None or "W" in user_vars) and (wp or len(s1) == len(ids)):
+        one = True
+        lw = np.array([ln[s_] for s_ in s1])
+        W1 = float(np.sum(lw * np.array([float(osd[s_]["width"]) for s_ in s1])) / lw.sum())
+        F1 = float(np.sum(lw * np.array([float(osd[s_]["floor"]) for s_ in s1])) / lw.sum())
+        gb.vars = sorted(set(gb.vars) | {"W"})
+        gb.W_nom, gb.F_nom, gb.w_side = W1, F1, "one"
+        gb.w_seg_ids = sorted(s1)
+        gb.w_cover = _r(sum(ln[s_] for s_ in s1) / sum(ln.values())) if len(s1) < len(ids) else None
+        gb.one_side = {int(g2["segments"][s_]["anchor"]): osd[s_] for s_ in s1}
+        Wr = float(rg["width_rel"])
+        gb.range_default["W"] = [_r(W1 * (1.0 - Wr)), _r(W1 * (1.0 + Wr))]
+        f_lo, f_hi = sec.w1_feasible(W1, F1, wfl, float(rg["width_max_rel"]))
+        gb.range_feasible["W"] = [_r(min(f_lo, W1 * (1.0 - Wr))), _r(max(f_hi, W1 * (1.0 + Wr)))]
+    # feasible D (입구 확장 상한)
+    if gb.W_nom is not None and gb.w_side is None:
+        parts = [(gb.W_nom, 2.0)]
+        Wn = gb.W_nom
+        gb.range_feasible["W"][0] = _r(min(sec.w_lo_floor_fixed(Wn, D, cot, wfl), Wn * (1.0 - float(rg["width_rel"]))))
+    elif one:
+        parts = [(gb.W_nom, 1.0)]
+    else:
+        parts = []
+    fd_hi = sec.feasible_open_cap(D, parts, cot, float(rg["depth_max_rel"]), float(rg["width_max_rel"]))
+    gb.range_feasible["D"] = [gb.range_feasible["D"][0], _r(max(fd_hi, hi))]
+    one_segs = [s_ for s_ in ids if osd[s_]["ok"]]
+    if one or (applied and one_segs):
+        fx = {k: int(sum(osd[s_]["fixed"][k] for s_ in one_segs)) for k in ("child", "shared", "junction", "own_wall")}
+        gb.warnings.append({"code": "DS_ONE_SIDE", "level": "info", "bead": b["id"],
+                            "segs": sorted(int(g2["segments"][s_]["anchor"]) for s_ in one_segs), "fixed": fx,
+                            "steep_deg": None})
+    facts = {"src": "graph", "floor_fixed": True, "user_off": user_vars is not None and "W" not in user_vars,
+             "network": net, "area": all(g2["segments"][s_]["type"] in ("area", "plateau") for s_ in ids),
+             "merged": any(g2["segments"][s_].get("merged") for s_ in ids), "s2": len(s2), "s1": len(s1),
+             "s1_edge": bool(s1_edge) and not s1, "w_partial": wp,
+             "partial": (0 < len(s2) < len(ids)) if s2 else (0 < len(s1) < len(ids))}
+    gb.w_reason = None if "W" in gb.vars else sec.w_reason(facts)
+
+
+def _tie_mixed(D, sc) -> None:
+    """§4.4(DM-15) floor_fixed 대칭 묶음: 구성원 W 종류(양쪽·한쪽·없음)가 다르거나 W1 공칭 차 > 2·sym_tol → 그 묶음 W 없음 +
+    W_TIE_MIXED(422 아님, D 묶음 유지). W1 열린 쪽 거울 검사는 공칭 차로 대신(구현 메모)."""
+    tol = float(sc["graph"]["sym_tol_mm"])
+    by = {b.id: b for b in D.beads}
+    for grp in D.norm.get("ties") or []:
+        bs_ = [by[x] for x in grp if x in by]
+        kinds = {("W" in b.vars, getattr(b, "w_side", None)) for b in bs_}
+        mixed = len(kinds) > 1
+        if not mixed and all(getattr(b, "w_side", None) == "one" for b in bs_):
+            ws = [b.W_nom for b in bs_]
+            mixed = max(ws) - min(ws) > 2.0 * tol
+        if mixed and any(getattr(b, "w_side", None) == "one" for b in bs_):
+            for b in bs_:
+                b.vars = [v for v in b.vars if v != "W"]
+                b.W_nom, b.w_side, b.w_reason = None, None, "W_TIE_MIXED"
+                b.range_default["W"] = b.range_feasible["W"] = None
+
+
+def w_reason_of(derived, bead) -> str | None:
+    """API·params.json 용 W 사유(§4.3): floor_fixed 비드는 derive 값, 그 밖(entry_fixed·옛 스터디)은 지금 조건으로 계산."""
+    if getattr(bead, "src", "graph") != "graph":
+        return None
+    if getattr(bead, "w_reason", None) is not None or "W" in (bead.vars or []):
+        return getattr(bead, "w_reason", None)
+    from esl.morph import section as sec
+    g = derived.graph
+    ids = bead.seg_ids
+    s2 = w_segs(g, ids)
+    user = (next((b for b in derived.norm["beads"] if b["id"] == bead.id), {}) or {}).get("vars")
+    facts = {"src": "graph", "floor_fixed": False, "user_off": user is not None and "W" not in user,
+             "network": any("network" in x for x in next((b for b in derived.norm["beads"] if b["id"] == bead.id),
+                                                          {}).get("segs", [])),
+             "area": all(g["segments"][s_]["type"] in ("area", "plateau") for s_ in ids),
+             "merged": any(g["segments"][s_].get("merged") for s_ in ids), "s2": len(s2), "s1": 0,
+             "w_partial": _w_partial(getattr(derived, "shape_rules", None)), "partial": 0 < len(s2) < len(ids)}
+    return sec.w_reason(facts)
 
 
 def _empty_graph(mesh):
@@ -1104,6 +1233,10 @@ def params_rows_v2(derived: GraphDerived, cfg: dict | None = None) -> list[dict]
             if typ == "W" and getattr(b, "w_cover", None) is not None:
                 out[-1]["w_segs"] = [derived.graph["segments"][s]["anchor"] for s in b.w_seg_ids]
                 out[-1]["w_cover"] = b.w_cover
+            if typ == "D" and getattr(b, "section", None) is not None:      # v0.24.7 DM(floor_fixed 만)
+                out[-1]["section"] = copy.deepcopy(b.section)
+            if typ == "W" and getattr(b, "w_side", None) == "one":
+                out[-1]["w_side"] = "one"
     out.sort(key=lambda r: r["name"])
     return out
 
@@ -1134,19 +1267,28 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         if b.src != "graph":
             continue
         for typ in b.vars:
-            pk_list.append({"name": var_name(b.id, typ), "kind": typ, "segs": _var_segs(b, typ), "zones": b.zone_ids,
-                            "hold": b.hold_fixed, "bead": b.id})
+            kind = typ
+            if typ == "D" and getattr(b, "depth_kind", "D") == "DF":          # v0.24.7 DM: floor_fixed 깊이 기저
+                kind = "DF"
+            elif typ == "W" and getattr(b, "w_side", None) == "one":         # v0.24.7 DM: 한쪽 입구 W1
+                kind = "W1"
+            pk = {"name": var_name(b.id, typ), "kind": kind, "segs": _var_segs(b, typ), "zones": b.zone_ids,
+                  "hold": b.hold_fixed, "bead": b.id, "typ": typ}
+            if kind == "W1":
+                pk.update(ramp="end", min_nodes=int(derived.section_rules["one_side_min_nodes"]))
+            pk_list.append(pk)
     ranges = {}
     for p in pk_list:
         b0 = by[p["bead"]]
         carrier = (tie.get(b0.id) or [b0.id])[0]
-        r = rows[var_name(carrier, p["kind"])]
-        nom = b0.D_nom if p["kind"] == "D" else b0.W_nom
-        rb = (getattr(by.get(carrier), "range_basis", None) or {}).get(p["kind"])
+        r = rows[var_name(carrier, p["typ"])]
+        nom = b0.D_nom if p["typ"] == "D" else b0.W_nom
+        rb = (getattr(by.get(carrier), "range_basis", None) or {}).get(p["typ"])
         lo, hi = (float(v) for v in (rb or r["default_range"]))   # original default range (BD_LOADS clamp keeps L)
         ext = max(abs(hi - float(r["nominal"])), abs(lo - float(r["nominal"])))
         ranges[p["name"]] = [nom - ext, nom + ext]
-    gB = bg.basis(g, lx, X, pk_list, ranges, cfg=mc, fixed=fx, elems=C) if pk_list else []
+    gB = bg.basis(g, lx, X, [{k: v for k, v in p.items() if k != "typ"} for p in pk_list], ranges, cfg=mc,
+                  fixed=fx, elems=C) if pk_list else []
     # Verifier fix v0.17.0: allowed nodes from the graph labels (not the basis zone) — a node of an element outside A_v
     # is outside (BG-D-32 leak check here, BG-D-34 design check via design_checks_v2)
     strict = strict_allowed_nodes(g, lx, X, C, gB) if gB else {}
@@ -1167,14 +1309,14 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         if v["info"].get("short"):
             b0.warnings.append({"code": "BG_SEGMENT_SHORT", "bead": b0.id, "var": v["name"],
                                 "length_mm": _r(sum(float(g["segments"][s]["length"] or 0.0)
-                                                    for s in _var_segs(b0, v["kind"]))),
+                                                    for s in _var_segs(b0, "W" if v["kind"] in ("W", "W1") else "D"))),
                                 "ramp_mm": _r(v["info"]["ramp_mm"])})
             continue
         lo, hi = ranges[v["name"]]
         for end in (lo, hi):
             x = bg.morph(X, [v], {v["name"]: end})
             err = achieved(g, lx, X, x, [v], {v["name"]: end}).get(v["name"])
-            lim = tol if v["kind"] == "D" else 1e-3
+            lim = tol if v["kind"] in ("D", "DF") else 1e-3
             if err is not None and err > lim:
                 _bad("BG_ACHIEVED_MISMATCH", f"{v['name']}: 달성 오차 {err:.3g} mm", var=v["name"], err_mm=err)
     derived.graph_basis = gB

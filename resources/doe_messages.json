@@ -1,5 +1,5 @@
 {
- "version": "2026-11-20.1",
+ "version": "2026-11-25.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -296,6 +296,30 @@
   "RG_FAILED": "변수 범위 품질 점검 계산에 실패했습니다({code}) — 기본 범위를 줄이지 않고 진행합니다. (Range guard failed — ranges unchanged.)",
   "RG_OUTSIDE_GUARD": "이 안은 요소 품질 점검으로 정한 안전 범위 밖의 값을 씁니다: {vars}. (This design uses values outside the quality-checked safe range.)",
   "MESH_ROUTE_RELAXED": "큰 모델(STEP 면 {n_faces} ≥ {min_faces})이라 cad 를 건너뛰고 완화 메싱(cad_relaxed)으로 바로 시작했습니다 — {id} {name}. (Info: large model — started with relaxed meshing, cad skipped.)",
-  "MESH_QUALITY_RANK": "메시 품질 미달(Fail {fail_ratio}, tria {tria_pct} %) — 순위 신뢰도가 낮습니다(순위는 그대로, 품질 통과 최상위를 함께 보세요). (Mesh quality below threshold — ranking less reliable.)"
+  "MESH_QUALITY_RANK": "메시 품질 미달(Fail {fail_ratio}, tria {tria_pct} %) — 순위 신뢰도가 낮습니다(순위는 그대로, 품질 통과 최상위를 함께 보세요). (Mesh quality below threshold — ranking less reliable.)",
+  "DS_FALLBACK": "비드 {bead} {var}: 깊이면 폭 유지를 적용하지 못해 입구 고정으로 계산합니다(사유 {reason}). (Info: depth section falls back to entry-fixed.)",
+  "DS_THETA_SPREAD": "비드 {bead}: 사면 각이 구간마다 다릅니다({min_deg}°~{max_deg}°) — 대표 각으로 입구 확장을 계산했습니다. (Info: flank angle spread.)",
+  "DS_ONE_SIDE": "비드 {bead}: 입구가 한쪽만 있는 구간이 있어 그쪽 입구만 넓어집니다(중심선 치우침). (Info: one-sided entry — the bead centre line shifts.)",
+  "DS_HOLD_PINCH": "비드 {bead}: 체결부 가까운 입구 노드 {n}개는 덜 움직입니다. (Info: entry nodes held near fasteners.)",
+  "DS_ENGINE_NATIVE": "형상 엔진(paicad) 경로는 깊이 단면을 엔진 규칙대로 바꿉니다 — '깊이면 폭 유지' 선택은 적용되지 않습니다. (Info: depth section not applied on the engine path.)",
+  "DS_CLONE_NOTE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(한쪽 입구 W 행은 꺼진 채 추가). (Info: only the depth section changes.)",
+  "DS_CLONE_NOTE_ENTRY": "입구 고정에는 한쪽 입구 W 가 없어 변수 {n}개({names})가 빠집니다. (Info: one-sided W variables are dropped.)",
+  "W_USER_OFF": "사용자가 W 를 뺌",
+  "W_NETWORK": "네트워크 묶기는 깊이만",
+  "W_AREA": "면형 바닥 — 입구 선 없음",
+  "W_EDIT_MERGED": "합친 구간은 폭을 잴 수 없음",
+  "W_TIE_MIXED": "대칭 묶음의 폭 종류가 달라 깊이만 묶음",
+  "W_ONE_SIDE_EDGE": "반대쪽이 판 가장자리 — 한쪽 이동 불가",
+  "W_ENTRY_NONE": "입구 선을 찾지 못함",
+  "W_ENTRY_ONE_SIDE": "입구 선이 한쪽만 있음 — '깊이면 폭 유지' 스터디에서 한쪽 W 가능",
+  "W_PARTIAL_OLD": "일부 구간만 폭(옛 규칙) — 새 스터디에서 가능",
+  "W_OPEN_BOUNDARY": "경계가 판 가장자리에 닿음",
+  "W_WIDTH_UNDEFINED": "폭을 잴 수 없음",
+  "W_PAICAD_NONE": "형상 엔진이 폭 변수를 내지 않음",
+  "W_ONE_SIDE": "한쪽 입구만 이동 — 열린 쪽 입구·벽·깊이면 가장자리가 ΔW 이동, 반대쪽 고정(중심선 ΔW/2 치우침)",
+  "W_SHORT": "구간이 짧아 폭을 바꿀 수 없음",
+  "W_GUARD_BLOCKED": "요소 품질 점검에서 막힘",
+  "W_FIXED_SKIP": "고정 노드 정책(skip)으로 기본 끔",
+  "W_PAICAD_DEFAULT_OFF": "형상 엔진 기본값이 끔"
  }
 }
