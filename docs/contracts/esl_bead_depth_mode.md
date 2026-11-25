@@ -256,7 +256,8 @@
 | params.doe·bead_does.inputs | depth_section(+ depth_section_rules) | 생성 때 고정, 복제 = §6.1 | 키 없음 |
 | bead_does.inputs | `spec_prefill`(select 복제만 — 원 `doe.spec`, §6.1) | 복제 때 | 없음 |
 | DoeStudyOut.inputs | depth_section·spec_prefill | 값 | null(화면 "입구 고정(이전)") |
-| DoeSettingsOut | depth_section | 설정값 | – |
+| DoeSettingsOut | depth_section · `depth_section_notes{DS_CLONE_NOTE, DS_CLONE_NOTE_ENTRY, DS_CLONE_NOTE_ENTRY_NONE}`(복제 창 문구, 영문 꼬리 없음) | 설정값 | – |
+| 경고 DS_FALLBACK·DS_THETA_SPREAD·DS_ONE_SIDE·DS_HOLD_PINCH·DS_ENGINE_NATIVE (params·derive·selection 응답) | `message`(문구 원본 doe_messages.json, 자리 채움·영문 꼬리 없음 — 응답 때만) | 응답 때 | 같음 |
 | params[] D 행 | section{…} | floor_fixed 만 | 없음 |
 | params[] W 행 | `w_side: "one"`(W1 만) | floor_fixed 만 | 없음 |
 | beads[](params·derive) | w_reason{code, text} | 응답 때 | 같음(표시만) |
@@ -281,11 +282,11 @@
 - 순수 함수 `clone_depth` = 키 결정·dropped 계산(원 spec 변수 중 원 params.json 행 `w_side = one` 인 W) — 백엔드 `clone()` 은 그 결과만 씀.
 
 ## 7. 화면(2560×1440, 새 버튼 0 — 복제 창의 [복제]·[취소] 는 사용자 지시 "복제 창")
-- 새 스터디(`DoeStudy.tsx` NewStudy): select 시나리오일 때 기존 옵션 줄에 라디오 2개 "깊이 동작 ○ 입구 고정(깊이면 좁아짐) ● 깊이면 폭 유지(입구 넓어짐)", 기본 = 설정, paicad·④ 숨김. 툴팁: 선택(요소) 비드는 입구 고정에서 사면이 가팔라짐 · 한쪽 입구 비드는 입구가 한쪽만 넓어짐(중심선 치우침). 같은 줄 우선, 안 되면 +1줄 ≤ 28 px.
-- **복제 창**(select 스터디만 — 그 밖 시나리오는 지금처럼 즉시 복제): 헤더 [복제] → 버튼 아래 작은 창(≤ 3줄, 가로 스크롤 없음): 1줄 = 같은 라디오 2개(기본 = 원 값, 키 없음 = 입구 고정), 2줄 = 원 값과 다르게 고르면 `DS_CLONE_NOTE` 문구 1줄(같으면 없음), 3줄 = [복제] [취소]. 요청 = `doe.clone(id, {depth_section})`(`api/doe.ts:269` 시그니처 += 선택 키).
+- 새 스터디(`DoeStudy.tsx` NewStudy): select 시나리오일 때 **시나리오 선택 줄 아래**(비드 정의 하위 라디오 줄 다음, 통합 때 실제 위치로 고침 — D-0.24.7-INT-4)에 라디오 2개 "깊이 동작 ○ 입구 고정(깊이면 좁아짐) ● 깊이면 폭 유지(입구 넓어짐)", 기본 = 설정, paicad·④ 숨김. 툴팁: 선택(요소) 비드는 입구 고정에서 사면이 가팔라짐 · 한쪽 입구 비드는 입구가 한쪽만 넓어짐(중심선 치우침). 같은 줄 우선, 안 되면 +1줄 ≤ 28 px.
+- **복제 창**(select 스터디만 — 그 밖 시나리오는 지금처럼 즉시 복제): 헤더 [복제] → 버튼 아래 작은 창(≤ 3줄, 가로 스크롤 없음): 1줄 = 같은 라디오 2개(기본 = 원 값, 키 없음 = 입구 고정), 2줄 = 원 값과 다르게 고르면 안내 1줄(같으면 없음 — 문구는 `GET /doe/settings` 의 `depth_section_notes`: 입구→깊이면 `DS_CLONE_NOTE`, 깊이면→입구 `DS_CLONE_NOTE_ENTRY`({n}·{names} 를 화면이 채움)·빠지는 변수 0개면 `DS_CLONE_NOTE_ENTRY_NONE`), 3줄 = [복제] [취소]. 요청 = `doe.clone(id, {depth_section})`(`api/doe.ts:269` 시그니처 += 선택 키).
 - 복제된 스터디 변수 표: `s.doe?.spec ?? s.inputs.spec_prefill` 로 행 미리 채움(지금 식).
-- 스터디 머리 칩 1개(load_source 칩 옆): "깊이면 폭 유지" | "입구 고정" | "입구 고정(이전)".
-- 변수 표: D 행 DS_FALLBACK 배지 "입구 고정"(툴팁 사유), W 사유 1줄·W1 꼬리표(§4.3).
+- 스터디 머리 칩 1개(**스터디 제목 줄**, 상태 배지 옆 — 통합 때 실제 위치로 고침, D-0.24.7-INT-4): "깊이면 폭 유지" | "입구 고정" | "입구 고정(이전)".
+- 변수 표: D 행 DS_FALLBACK 배지 "입구 고정"(툴팁 = 응답 경고 DS_FALLBACK 의 `message` — bead·var·reason 채움, 영문 "(Info: …)" 꼬리 없음), W 사유 1줄·W1 꼬리표(§4.3).
 - SectionMini: 깊이 점선 = (s + ΔD·ds_dD, z + ΔD·dz_dD), ds_dD 없으면 0. 한쪽 비드는 열린 쪽만 벌어진 그림(fig side).
 - 3D 미리보기(basis.bin, `GET …/select/basis`): 형식 불변, D vec = DF(그래프)·조합(elems) → 입구 넓어짐(한쪽 비드는 한쪽만)이 바로 보임.
 
@@ -405,3 +406,9 @@
 - DM-32(입구 가드, 메인 결정): H6 ch1 뒤집힘 ±1 = 0·0, ±2 = 0·0(가드 노드 477, steep_max_deg 46.094 — 채널 끝 필렛), ±3 = 27·20(남은 요소 = 띠 섬(cls island) 요소 — 섬 강체 이동(가드 전 테두리 평균)과 가드로 줄어든 옆 띠 노드의 차, 가드 요소 집합 밖·법선 이동 0; 섬을 가드에 넣고 다시 강체로 하면 ±2 가 3·1 로 나빠져 넣지 않음 — range guard 영역), ±1 가드 노드 12. H5 네트워크 ±1·±2 = 0·가드 0, ±3 = 0(가드 119, 31.699°). 직선 구간 각 ±1° 통과, 시험 1·28 정확 기준 통과(가드 1), xfail 해제.
 - (이전 측정 — DM-30 전) 시험 3 H6 ch1(channel + flare) DF: +2 뒤집힘 68(−2: 35, ±1: 0), `entry_wave_mm` 0.472 > 0.05h(0.148; ±1 에서도 0.236). 원인: (1) 부모 바닥 필렛 sliver 삼각형(변 0.2 mm) 위에서 입구 노드끼리 평면 이동이 0.3 mm 씩 달라 뒤집힘 — 띠는 다른 형상 근처에서 자르지만 입구 노드 자체(DF 규칙)는 자르지 않음, 채널 끝·flare 의 cot 최대 3.586(15.6°) → 입구 5 mm 이동; (2) `entry_wave_mm`(직선 입구 평면 이동 표준편차)는 flare 벽 각 차이(cot 0.689~3.586)를 그대로 재므로 물결 지표로 맞지 않음. 시험은 완화하지 않고 xfail(strict) — `packages/beadgraph/tests/test_one_side.py::test_df_h6_unaligned_v3`. 포켓 (d) 부분은 통과. 결정 필요(R-DM-13 후보: 입구 평면 이동의 다른 형상 근처 자름 또는 sliver 국부 평활, entry_wave 정의를 세그먼트·각 구간별로).
 
+## 15.1 통합 메모(2026-11-25, 결정 D-0.24.7-INT-1~6)
+- 설정 거울 5키: `depth_section_rules` = theta_min_deg·theta_spread_deg·one_side_min_nodes·entry_smooth_rel(0..10)·entry_gap_rel((0,1]) — DEFAULTS·pydantic·yaml 2 같은 이름(`tests/doe/test_depth_section.py::test_defaults_mirror_v14`).
+- 백엔드 ↔ 코어: 대역 없이 실제 코어로 끝까지 이어지는 시험 `backend/tests/test_doe_v0247_core_e2e.py`(합성 한쪽 입구 그래프 → floor_fixed 스터디 → D 행 section·W1 행 w_side·beads[].w_reason, entry_fixed 는 W 행 없음·W_ENTRY_ONE_SIDE·derive 인수 `depth_section=None`·`section_rules=None`).
+- 응답 문구: 복제 창 문구 = `GET /doe/settings.depth_section_notes`(원본 doe_messages.json, 영문 꼬리 제거), 빠지는 변수 없는 깊이면→입구 복제용 새 문구 `DS_CLONE_NOTE_ENTRY_NONE`(백엔드 복제 경고도 같은 문구), DS_* 경고에 `message` 동봉(D 배지 툴팁).
+- 화면 위치 2곳은 구현 그대로(§7 고침): 깊이 동작 칩 = 스터디 제목 줄, 새 스터디 라디오 = 시나리오 선택 아래.
+- 요청 타입 `DoeStudyIn.depth_section`·`DoeCloneIn.depth_section` = `Literal | null`(OpenAPI nullable ↔ `api/types.ts` `| null`, `npm run check:api`).

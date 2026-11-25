@@ -5674,6 +5674,20 @@
             ],
             "title": "Depth Section"
           },
+          "depth_section_notes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth Section Notes"
+          },
           "doe": {
             "additionalProperties": true,
             "title": "Doe",
@@ -17821,7 +17835,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.24.6"
+    "version": "0.24.7"
   },
   "openapi": "3.1.0",
   "paths": {

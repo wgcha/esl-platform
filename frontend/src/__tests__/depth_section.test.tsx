@@ -31,13 +31,13 @@ describe("순수 함수·상수(라벨은 api/doe.ts 한 곳)", () => {
     expect(depthSectionChip(null).legacy).toBe(true);
   });
 
-  it("복제 안내: 같으면 없음, 입구→깊이면 = DS_CLONE_NOTE, 깊이면→입구 = {n}·{names} 치환(0개면 줄 없음)", () => {
-    const notes = { DS_CLONE_NOTE: "깊이 동작만 바뀝니다", DS_CLONE_NOTE_ENTRY: "변수 {n}개({names})가 빠집니다" };
+  it("복제 안내: 같으면 없음, 입구→깊이면 = DS_CLONE_NOTE, 깊이면→입구 = {n}·{names} 치환(0개면 _NONE 문구)", () => {
+    const notes = { DS_CLONE_NOTE: "깊이 동작만 바뀝니다", DS_CLONE_NOTE_ENTRY: "변수 {n}개({names})가 빠집니다", DS_CLONE_NOTE_ENTRY_NONE: "빠지는 변수 없음" };
     expect(cloneDepthNote(notes, "entry_fixed", "entry_fixed", [])).toBeNull();
     expect(cloneDepthNote(notes, "floor_fixed", "floor_fixed", ["B3_W"])).toBeNull();
     expect(cloneDepthNote(notes, "entry_fixed", "floor_fixed", [])).toBe("깊이 동작만 바뀝니다");
     expect(cloneDepthNote(notes, "floor_fixed", "entry_fixed", ["B3_W", "B5_W"])).toBe("변수 2개(B3_W, B5_W)가 빠집니다");
-    expect(cloneDepthNote(notes, "floor_fixed", "entry_fixed", [])).toBeNull();
+    expect(cloneDepthNote(notes, "floor_fixed", "entry_fixed", [])).toBe("빠지는 변수 없음");
     expect(cloneDepthNote(undefined, "entry_fixed", "floor_fixed", [])).toBeNull();
   });
 

@@ -455,6 +455,16 @@ def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) ->
                           "fillet_max_r_mm": float(df["fillet_max_r_mm"]), "kinds": list(df["kinds"])}}
 
 
+DEPTH_NOTE_KEYS = ("DS_CLONE_NOTE", "DS_CLONE_NOTE_ENTRY", "DS_CLONE_NOTE_ENTRY_NONE")
+
+
+def _depth_section_notes() -> dict[str, str]:
+    """복제 창 안내 문구 원본 = doe_messages.json(자리 {n}·{names} 는 화면이 채움). 영문 "(Info: …)" 꼬리는 뺀다."""
+    from . import doe_select as sel_svc
+
+    return {k: sel_svc._INFO_TAIL.sub("", up_svc.doe_text(k)) for k in DEPTH_NOTE_KEYS}
+
+
 def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[str, Any]:
     c = cfg(ctx)
     st = status(ctx)
@@ -474,6 +484,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "rank": _rank_settings(c),
             "shape_rules": _shape_settings(c),
             "depth_section": str(c["depth_section"]),        # v0.24.7 DM §5.2 새 select 스터디 기본(복제 창 라디오·새 스터디 라디오 기본)
+            "depth_section_notes": _depth_section_notes(),   # v0.24.7 복제 창 안내 문구(resources/doe_messages.json — 영문 꼬리 없이, 화면에 문구 거울 없음)
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
                        "max_tiers": int(sc["max_tiers"]),
@@ -1858,6 +1869,8 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         if cd["changed"]:
             if cd["dropped"]:
                 txt = up_svc.doe_text("DS_CLONE_NOTE_ENTRY", n=len(cd["dropped"]), names=", ".join(cd["dropped"]))
+            elif cd["to"] == "entry_fixed":
+                txt = up_svc.doe_text("DS_CLONE_NOTE_ENTRY_NONE")        # 깊이면→입구, 빠지는 변수 없음
             else:
                 txt = up_svc.doe_text("DS_CLONE_NOTE")
             clone_warns.append({"code": "DS_CLONE_NOTE", "from": cd["from"], "to": cd["to"], "dropped": list(cd["dropped"]),

@@ -1954,6 +1954,7 @@ class DoeSettingsOut(_Out):
     select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
     select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
     depth_section: Literal["entry_fixed", "floor_fixed"] | None = None   # v0.24.7 DM 새 스터디 기본 깊이 단면 동작(설정 bead_doe.depth_section)
+    depth_section_notes: dict[str, str] | None = None   # v0.24.7 복제 창 안내 문구 {DS_CLONE_NOTE, DS_CLONE_NOTE_ENTRY({n}·{names} 자리), DS_CLONE_NOTE_ENTRY_NONE}
 
 
 class DoeCheckOut(_Out):

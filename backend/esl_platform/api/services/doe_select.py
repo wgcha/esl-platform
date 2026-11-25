@@ -497,6 +497,29 @@ def w_reason_doc(v: Any) -> dict[str, str] | None:
     return {"code": code, "text": up_svc.doe_text(code)}
 
 
+_INFO_TAIL = re.compile(r"\s*\(Info[^)]*\)\s*$")
+DS_TEXT_CODES = ("DS_FALLBACK", "DS_THETA_SPREAD", "DS_ONE_SIDE", "DS_HOLD_PINCH", "DS_ENGINE_NATIVE")
+
+
+def ds_text(key: str, **kw: Any) -> str:
+    """doe_messages.json 문구 + 자리 채움, 영문 "(Info: …)" 꼬리 없이(화면 툴팁·안내용 — 문구 원본은 서버 한 곳)."""
+    from . import uploads as up_svc
+
+    return _INFO_TAIL.sub("", up_svc.doe_text(key, **kw))
+
+
+def with_ds_text(warns: Any) -> Any:
+    """경고 목록의 DS_* 항목(message 없는 것)에 message(bead·var 등 자리 채움)를 붙인 새 목록(응답 때만 — DB·파일에는 쓰지 않음)."""
+    if not isinstance(warns, list):
+        return warns
+    out = []
+    for w in warns:
+        if isinstance(w, dict) and w.get("code") in DS_TEXT_CODES and not w.get("message"):
+            w = {**w, "message": ds_text(str(w["code"]), **{k: v for k, v in w.items() if k not in ("code", "message") and isinstance(v, (str, int, float))})}
+        out.append(w)
+    return out
+
+
 def with_w_reason(beads: list[Any], fresh: dict[str, Any] | None = None) -> list[Any]:
     """그래프 비드(src graph) 행에 w_reason{code, text}|null 을 붙인 새 목록(응답 때만 — DB 요약·파일에는 쓰지 않음, §4.3).
     비드에 값이 없으면 fresh(같은 선택의 지금 derive 비드 id → 값)에서 — 옛 스터디도 응답 때 계산."""
@@ -508,7 +531,10 @@ def with_w_reason(beads: list[Any], fresh: dict[str, Any] | None = None) -> list
         v = b.get("w_reason")
         if v is None and fresh:
             v = fresh.get(str(b["id"]))
-        out.append({**b, "w_reason": w_reason_doc(v)})
+        nb = {**b, "w_reason": w_reason_doc(v)}
+        if "warnings" in nb:
+            nb["warnings"] = with_ds_text(nb["warnings"])        # DS_* message(bead·var 포함 — D 배지 툴팁)
+        out.append(nb)
     return out
 
 
@@ -849,7 +875,7 @@ def params_w_reason(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: 
             fresh = {str(b["id"]): b.get("w_reason") for b in full.get("beads") or [] if isinstance(b, dict) and "id" in b}
         except DomainError:
             fresh = None
-    return {**table, "beads": with_w_reason(table["beads"], fresh)}
+    return {**table, "beads": with_w_reason(table["beads"], fresh), **({"warnings": with_ds_text(table["warnings"])} if "warnings" in table else {})}
 
 
 def job_selection(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -913,6 +939,7 @@ def derive_out(ctx: AppContext, principal: Principal, sid: str, body) -> dict[st
     d.setdefault("slope_suggested", {})
     if sel_schema(norm) == 2:
         d["beads"] = with_w_reason(d.get("beads"))       # v0.24.7 DM §4.3: W 사유 {code, text}(응답 때만)
+        d["warnings"] = with_ds_text(d.get("warnings"))
     return d
 
 

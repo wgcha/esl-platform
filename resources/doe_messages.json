@@ -305,6 +305,7 @@
   "DS_ENGINE_NATIVE": "형상 엔진(paicad) 경로는 깊이 단면을 엔진 규칙대로 바꿉니다 — '깊이면 폭 유지' 선택은 적용되지 않습니다. (Info: depth section not applied on the engine path.)",
   "DS_CLONE_NOTE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(한쪽 입구 W 행은 꺼진 채 추가). (Info: only the depth section changes.)",
   "DS_CLONE_NOTE_ENTRY": "입구 고정에는 한쪽 입구 W 가 없어 변수 {n}개({names})가 빠집니다. (Info: one-sided W variables are dropped.)",
+  "DS_CLONE_NOTE_ENTRY_NONE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(빠지는 변수 없음). (Info: only the depth section changes; no variables dropped.)",
   "W_USER_OFF": "사용자가 W 를 뺌",
   "W_NETWORK": "네트워크 묶기는 깊이만",
   "W_AREA": "면형 바닥 — 입구 선 없음",

@@ -94,7 +94,7 @@ export function makeDoeSettings(): DoeSettingsOut {
   return {
     // v0.24.7 DM 깊이 단면 동작 — 새 스터디 기본(설정 bead_doe.depth_section = floor_fixed, 계약 §5.2)·복제 창 안내 문구(서버 text)
     depth_section: "floor_fixed",
-    depth_section_notes: { DS_CLONE_NOTE: MOCK_MESSAGES.DS_CLONE_NOTE.replace(/\s*\(Info[^)]*\)\s*$/, ""), DS_CLONE_NOTE_ENTRY: MOCK_MESSAGES.DS_CLONE_NOTE_ENTRY.replace(/\s*\(Info[^)]*\)\s*$/, "") },
+    depth_section_notes: { DS_CLONE_NOTE: MOCK_MESSAGES.DS_CLONE_NOTE.replace(/\s*\(Info[^)]*\)\s*$/, ""), DS_CLONE_NOTE_ENTRY: MOCK_MESSAGES.DS_CLONE_NOTE_ENTRY.replace(/\s*\(Info[^)]*\)\s*$/, ""), DS_CLONE_NOTE_ENTRY_NONE: MOCK_MESSAGES.DS_CLONE_NOTE_ENTRY_NONE.replace(/\s*\(Info[^)]*\)\s*$/, "") },
     // v0.20.0 하중 전달(esl_load_transfer.md §13.6) — 모든 모드 공통 최상위 칸, 새 스터디 기본 work
     load_transfer: { method: exampleYaml("load_transfer", "method") as DoeLoadTransferMethod, cell_size_mm: exampleYaml("load_transfer", "cell_size_mm") as number | null, cell_choices_mm: exampleYaml("load_transfer", "cell_choices_mm") as (number | null)[], cell_min_mm: exampleYaml("load_transfer", "cell_min_mm") as number },
     rank: { metric: exampleYaml("rank", "metric") as DoeRankMetric, lin_form: exampleYaml("rank", "lin_form") as "ritz" | "taylor", lin_valid: exampleYaml("rank", "lin_valid") as number, imbalance_warn: exampleYaml("rank", "imbalance_warn") as number },

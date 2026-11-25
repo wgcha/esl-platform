@@ -196,7 +196,7 @@ def test_depth_section_settings_mirror():
     m = BeadDoeCfg().model_dump()
     assert m["depth_section"] == DEFAULTS["depth_section"] == "floor_fixed"
     assert m["depth_section_rules"] == DEFAULTS["depth_section_rules"]
-    assert set(m["depth_section_rules"]) == {"theta_min_deg", "theta_spread_deg", "one_side_min_nodes"}
+    assert set(m["depth_section_rules"]) == {"theta_min_deg", "theta_spread_deg", "one_side_min_nodes", "entry_smooth_rel", "entry_gap_rel"}
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))["bead_doe"]
         assert y["depth_section"] == m["depth_section"], p

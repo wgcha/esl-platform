@@ -2646,8 +2646,8 @@ export interface DoeSettingsShapeRules {
 export interface DoeSettingsOut {
   /** v0.24.7 설정 bead_doe.depth_section(새 스터디 기본 — 옛 서버면 없음 = 라디오 숨김) */
   depth_section?: DoeDepthSection | null;
-  /** v0.24.7 복제 창 안내 문구(원본 resources/doe_messages.json — 화면에 문구 거울 없음). DS_CLONE_NOTE(입구→깊이면) · DS_CLONE_NOTE_ENTRY({n}·{names} 치환, 깊이면→입구) */
-  depth_section_notes?: { DS_CLONE_NOTE?: string | null; DS_CLONE_NOTE_ENTRY?: string | null } | null;
+  /** v0.24.7 복제 창 안내 문구(원본 resources/doe_messages.json — 화면에 문구 거울 없음). DS_CLONE_NOTE(입구→깊이면) · DS_CLONE_NOTE_ENTRY({n}·{names} 치환, 깊이면→입구) · DS_CLONE_NOTE_ENTRY_NONE(깊이면→입구, 빠지는 변수 없음) */
+  depth_section_notes?: { DS_CLONE_NOTE?: string | null; DS_CLONE_NOTE_ENTRY?: string | null; DS_CLONE_NOTE_ENTRY_NONE?: string | null } | null;
   /** v0.24.4 P3 설정 bead_doe.load_source_default(기본 null = 순위 지표 기준) */
   load_source_default?: string | null;
   /** v0.21.0 형상 규칙 설정 요약(표시용 — 새 스냅샷 판정은 study.inputs.shape_rules, 옛 서버면 없음) */
@@ -3025,11 +3025,11 @@ export type DoeDepthSection = "entry_fixed" | "floor_fixed";
 /** v0.24.7 복제 본문(§6 — select 스터디만 depth_section, 없으면 원 값) */
 export interface DoeCloneIn {
   title?: string | null;
-  depth_section?: DoeDepthSection;
+  depth_section?: DoeDepthSection | null;
 }
 export interface DoeStudyIn extends DoeCheckIn {
   /** v0.24.7 select 만(없으면 서버 설정 depth_section) */
-  depth_section?: DoeDepthSection;
+  depth_section?: DoeDepthSection | null;
   title?: string | null;
   props?: DoeProps | null;
   mesh_size_mm?: number | null;

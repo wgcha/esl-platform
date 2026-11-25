@@ -64,7 +64,7 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
   const lt = normalizeLoadTransferCfg(r.load_transfer);
   return {
     ...(r.depth_section === "entry_fixed" || r.depth_section === "floor_fixed" ? { depth_section: r.depth_section } : {}),
-    ...(isObj(r.depth_section_notes) ? { depth_section_notes: { DS_CLONE_NOTE: str(r.depth_section_notes.DS_CLONE_NOTE) || null, DS_CLONE_NOTE_ENTRY: str(r.depth_section_notes.DS_CLONE_NOTE_ENTRY) || null } } : {}),
+    ...(isObj(r.depth_section_notes) ? { depth_section_notes: { DS_CLONE_NOTE: str(r.depth_section_notes.DS_CLONE_NOTE) || null, DS_CLONE_NOTE_ENTRY: str(r.depth_section_notes.DS_CLONE_NOTE_ENTRY) || null, DS_CLONE_NOTE_ENTRY_NONE: str(r.depth_section_notes.DS_CLONE_NOTE_ENTRY_NONE) || null } } : {}),
     ...(typeof r.load_source_default === "string" ? { load_source_default: r.load_source_default } : {}),
     ...(lt ? { load_transfer: lt } : {}),
     enabled: r.enabled === true,
@@ -809,12 +809,13 @@ export const DEPTH_FALLBACK_BADGE = "입구 고정";
 export const W_ONE_SIDE_TAG = "한쪽";
 export const W_ONE_SIDE_TIP = "한쪽 입구만 이동";
 export const W_UNAVAILABLE_LEAD = "W 사용 불가";
-/** 복제 창 안내 1줄(원 값과 다를 때). floor→entry = 빠지는 W1 변수 이름 치환({n}·{names}), 0개면 줄 없음 */
+/** 복제 창 안내 1줄(원 값과 다를 때). floor→entry = 빠지는 W1 변수 이름 치환({n}·{names}), 0개면 DS_CLONE_NOTE_ENTRY_NONE */
 export function cloneDepthNote(notes: DoeSettingsOut["depth_section_notes"] | undefined, from: DoeDepthSection, to: DoeDepthSection, dropped: string[]): string | null {
   if (from === to) return null;
   if (to === "floor_fixed") return notes?.DS_CLONE_NOTE ?? null;
+  if (!dropped.length) return notes?.DS_CLONE_NOTE_ENTRY_NONE ?? null;
   const t = notes?.DS_CLONE_NOTE_ENTRY;
-  if (!t || !dropped.length) return null;
+  if (!t) return null;
   return t.replace("{n}", String(dropped.length)).replace("{names}", dropped.join(", "));
 }
 /** 원 spec 변수 중 한쪽 입구 W(w_side one) — 입구 고정 복제 때 빠지는 것 */
