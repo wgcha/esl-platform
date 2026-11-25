@@ -628,6 +628,46 @@ class BeadDoeRankJigCfg(_M):
         return self
 
 
+from .opt_core import LT_CELL_MAX_MM  # noqa: E402  v0.20.0 LT 셀 크기 상한 — 코어 transfer_plan.CELL_MAX_MM 한 곳(어댑터 경유)
+
+
+class BeadDoeRankJigGridCfg(_M):
+    """v0.24.8 ④·옛 ③ 격자 지그(esl.doe.DEFAULTS["rank"]["jig_grid"] 거울, 계약 esl_jig_grid_map.md §7.1). 해시 안 키 = cell_mm·tie_*·
+    sample_*(esl.mech.grid_map.HASH_EXCLUDE 밖), 해시 밖 = conv_mm·area_ratio_warn·conv_warn·frame_shift_warn·load_resid_warn·noise_floor_min.
+    cell_mm·conv_mm 의 하한 load_transfer.cell_min_mm 는 BeadDoeCfg 가 교차 검사(여기서는 절대 하한 1)."""
+
+    enabled: bool = True
+    cell_mm: float = Field(default=3.0, ge=1, le=LT_CELL_MAX_MM)
+    conv_mm: list[float] = Field(default_factory=lambda: [5.0, 10.0], max_length=3)
+    tie_capture_rel: float = Field(default=0.25, gt=0, le=1)
+    tie_snap_rel: float = Field(default=0.75, ge=0, le=2)
+    tie_normal_deg: float = Field(default=30.0, gt=0, lt=90)
+    tie_miss_frac_max: float = Field(default=0.1, ge=0, le=1)
+    sample_nbr: int = Field(default=1, ge=1, le=3)
+    sample_normal_deg: float = Field(default=45.0, gt=0, le=90)
+    area_ratio_warn: float = Field(default=2.0, gt=1)
+    conv_warn: float = Field(default=0.02, gt=0)
+    frame_shift_warn: float = Field(default=0.5, gt=0)          # × cell_mm
+    load_resid_warn: float = Field(default=1.0e-6, gt=0)
+    noise_floor_min: float = Field(default=0.01, ge=0, le=0.2)  # 격자 순위 불확실 구간 하한(표시 판정 — 정렬 불변)
+
+    @field_validator("conv_mm")
+    @classmethod
+    def _conv(cls, v: list[float]) -> list[float]:
+        for x in v:
+            if not 1 <= x <= LT_CELL_MAX_MM:
+                raise ValueError(f"jig_grid.conv_mm 원소는 1..{LT_CELL_MAX_MM:g} mm: {x:g}")
+        return v
+
+    @model_validator(mode="after")
+    def _rel(self) -> "BeadDoeRankJigGridCfg":
+        if self.tie_snap_rel < self.tie_capture_rel:
+            raise ValueError("jig_grid.tie_snap_rel 은 tie_capture_rel 이상(≤ 2)")
+        if any(x == self.cell_mm for x in self.conv_mm):
+            raise ValueError("jig_grid.conv_mm 는 cell_mm 와 다른 값")
+        return self
+
+
 class BeadDoeCaseJigCfg(_M):
     """v0.24.4 Case ③ ESL 지그 3방식의 워커 tie 준비(esl_jig_case.md §5.1·§11): enabled = 워커가 paicad fixed-scan·deck 표면 캐시를
     Case 폴더에 준비(꺼짐 = hw·fixed-scan 호출 0), timeout_s = fixed-scan 시간 한도(null = bead_doe.paicad.timeout_s.fixed_scan)."""
@@ -656,6 +696,7 @@ class BeadDoeRankCfg(_M):
     eval_free_edge_mm: float = Field(default=10.0, ge=0)
     eval_boxes: list[BeadDoeEvalBox] = Field(default_factory=list)
     jig: BeadDoeRankJigCfg = Field(default_factory=BeadDoeRankJigCfg)
+    jig_grid: BeadDoeRankJigGridCfg = Field(default_factory=BeadDoeRankJigGridCfg)   # v0.24.8 ④·옛 ③ 격자 지그(계약 esl_jig_grid_map.md §7.1)
 
     @model_validator(mode="after")
     def _jig_metric(self):
@@ -1075,7 +1116,6 @@ class BeadDoeCompareQualityCfg(_M):
     tria_pct: QualityLimitCfg = _ql(10.0, 15.0)
 
 
-from .opt_core import LT_CELL_MAX_MM  # noqa: E402  v0.20.0 LT 셀 크기 상한 — 코어 transfer_plan.CELL_MAX_MM 한 곳(어댑터 경유)
 LT_LIST_MAX = 8                             # cell_choices_mm·cell_sweep_mm 길이 상한
 
 
@@ -1538,6 +1578,11 @@ class BeadDoeCfg(_M):
         if rf.max_elems < self.mesh.max_elems:          # C2-D-21: 세분화 상한은 cad 시도 상한 이상
             raise ValueError(f"bead_doe.compare.refine.max_elems {rf.max_elems} 는 bead_doe.mesh.max_elems "
                              f"{self.mesh.max_elems} 이상이어야 합니다")
+        jg, cmin = self.rank.jig_grid, self.load_transfer.cell_min_mm      # v0.24.8 §7.1: cell_mm·conv_mm 하한 = load_transfer.cell_min_mm
+        for name, x in (("cell_mm", jg.cell_mm), *[("conv_mm", v) for v in jg.conv_mm]):
+            if not cmin <= x <= LT_CELL_MAX_MM:
+                raise ValueError(f"bead_doe.rank.jig_grid.{name} {x:g} 는 load_transfer.cell_min_mm..{LT_CELL_MAX_MM:g} "
+                                 f"({cmin:g}..{LT_CELL_MAX_MM:g}) 안이어야 합니다")
         return self
 
 
