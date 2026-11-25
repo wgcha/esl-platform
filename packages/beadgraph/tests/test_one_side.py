@@ -204,8 +204,6 @@ def test_w1_rejects_two_sided_and_edge():
     assert measure(M, [1], min_nodes=3, edge_nodes=every)[1]["reason"] == "EDGE"
 
 
-@pytest.mark.xfail(strict=True, reason="계약 보정 필요 DM-C1-2: H5 network DF +2 — 2 parent-floor band elements invert "
-                   "between two entry lines 20 mm apart (nearest-E band copy jump); measured, not relaxed")
 def test_df_network_and_area_v29():
     """V-0247-DM-29 (package part): DF on the H5 network (ring + T, junction zones) and on the H6 area pocket (d) —
     floor plan 0 at full ramp, no inversion, no leak."""
@@ -218,12 +216,13 @@ def test_df_network_and_area_v29():
         B = bg.basis(g, lab, X, bl, None, fixed=F, elems=C)
         nom = B[0]["nominal"]
         B = bg.basis(g, lab, X, bl, {"n": [nom - 2.0, nom + 2.0]}, fixed=F, elems=C)
-        x = bg.morph(X, B, {"n": nom + 2.0})
-        r = bg.check(g, lab, X, x, B, {"n": nom + 2.0}, elems=C)
-        assert r["inverted"] == 0 and r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["n"] <= 1e-6
-        idx = B[0]["info"]["achieved_idx"]
-        assert np.abs((x - X)[idx] - ((x - X)[idx] @ np.asarray(g["frame"]["n0"]))[:, None]
-                      * np.asarray(g["frame"]["n0"])).max() <= 1e-9
+        for v in (nom + 2.0, nom - 2.0):       # DM-C1-2: DF band = distance-weighted mix -> no flip between entry lines
+            x = bg.morph(X, B, {"n": v})
+            r = bg.check(g, lab, X, x, B, {"n": v}, elems=C)
+            assert r["inverted"] == 0 and r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["n"] <= 1e-6
+            idx = B[0]["info"]["achieved_idx"]
+            assert np.abs((x - X)[idx] - ((x - X)[idx] @ np.asarray(g["frame"]["n0"]))[:, None]
+                          * np.asarray(g["frame"]["n0"])).max() <= 1e-9
         assert basis_leak(B, g, lab, X, C) == []
 
 

@@ -26,6 +26,11 @@ from .classify import CLS
 from .defaults import MORPH_EXTRA
 from .zones import Mesh, bead_zones, movable_nodes
 
+# DF·W1 parent-band mix (part of the DF_RULES / W1_RULES 1 definition, esl contract esl_bead_depth_mode §1.2.1·§1.6.3 —
+# DM-C1-2): nearest sources mixed, weight 1/(d² + (BAND_MIX_EPS_H·h)²)
+BAND_MIX_K = 8
+BAND_MIX_EPS_H = 0.1
+
 
 def _cfg(cfg):
     c = U.merged_cfg(cfg)
@@ -531,7 +536,7 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     ent_idx = np.flatnonzero(E)
     r_max = float(rE[ent_idx].max()) if ent_idx.size else 0.0
     Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext * r_max, 3.0 * h)
-    band, _on_par = _band(M, Z, Rw, ent_idx, Uv, info)
+    band, _on_par = _band(M, Z, Rw, ent_idx, Uv, info, mix_h=h)
     A_el = _allowed_wide(M, Z)
     allowed_n = M.nmask(A_el) | band
     if info.get("band_islands"):
@@ -627,7 +632,7 @@ def _one_w1(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, e
     bl = cfg["blend"]
     Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext, 3.0 * h)
     ent_o = np.flatnonzero(E & openm)
-    band, on_par = _band(M, Z, Rw, ent_o, Uv, info)
+    band, on_par = _band(M, Z, Rw, ent_o, Uv, info, mix_h=h)
     Lf = M.laplacian(ZF)
     dir_zero = (nC | nSC | nI | J | M.nmask(~(ZF | ZW)) & ~E)
     free = nF & ~hm & ~E & ~dir_zero & ~band & ~fx
@@ -674,9 +679,11 @@ def _one_w1(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, e
             "zones": sorted(int(z) for z in (b.get("zones") or ()))}
 
 
-def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info: dict):
+def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info: dict, mix_h: float | None = None):
     """parent-floor blend band (W·DF·W1 — one internal function, contract esl_bead_depth_mode §9): parent-floor nodes
     within R_w of the source entry nodes ``src_idx`` copy the nearest source displacement × (1 − smoothstep(d/R_w)),
+    or — ``mix_h`` given (DF·W1, DM-C1-2) — the distance-weighted mix of the up to ``BAND_MIX_K`` nearest sources
+    within R_w, w_k = 1/(d_k² + (0.1h)²) (continuous between facing entry lines; W keeps the nearest copy),
     clipped near other zones (SELECT_BLEND_CLIPPED); parent-floor islands touched by the band move rigidly with it.
     -> (band node mask, ids of the parent's non-straddling islands). Uv / info updated in place."""
     lab = M.lab
@@ -694,10 +701,18 @@ def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info
     info["blend_mm"] = Rw
     if src_idx.size and pf.any():
         cand = np.flatnonzero(pf)
-        de, je = cKDTree(M.P[src_idx]).query(M.P[cand])
+        tree = cKDTree(M.P[src_idx])
+        de, je = tree.query(M.P[cand])
         sel = de < Rw
         bidx = cand[sel]
         w = 1.0 - U.smoothstep(de[sel] / Rw)
+        if mix_h is not None and bidx.size:
+            kk = min(BAND_MIX_K, int(src_idx.size))
+            dk, jk = tree.query(M.P[bidx], k=kk)
+            dk = dk.reshape(bidx.size, kk)
+            jk = jk.reshape(bidx.size, kk)
+            wk = np.where(dk < Rw, 1.0 / (dk * dk + (BAND_MIX_EPS_H * mix_h) ** 2), 0.0)
+            umix = np.einsum("ik,ikj->ij", wk, Uv[src_idx[np.minimum(jk, src_idx.size - 1)]]) / wk.sum(axis=1)[:, None]
         if n_oth.any():
             do, _ = cKDTree(M.P[n_oth]).query(M.P[bidx])
             clip = do < Rw
@@ -705,7 +720,10 @@ def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info
                 info["warnings"].append({"code": "SELECT_BLEND_CLIPPED", "R_mm": U.f3(Rw),
                                          "d_other_mm": U.f3(float(do.min()))})
             w = w * U.smoothstep(do / Rw)
-        Uv[bidx] = Uv[src_idx[je[sel]]] * w[:, None]
+        if mix_h is not None and bidx.size:
+            Uv[bidx] = umix * w[:, None]
+        else:
+            Uv[bidx] = Uv[src_idx[je[sel]]] * w[:, None]
         band[bidx] = True
         bi = np.unique(isl[M.emask_of_nodes(band) & (isl >= 0)])
         info["band_islands"] = [int(x) for x in bi if int(x) in on_par]
