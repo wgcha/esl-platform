@@ -914,6 +914,17 @@ def graph_section(ix, b, graph: dict | None = None) -> dict | None:
     inb = (s >= smin + 3.0 * h - 1e-9) & (s <= smax - 3.0 * h + 1e-9)
     if Dn > 0 and "D" in (b.vars or []):
         out["dz_dD"][str(int(b.tier))] = [_r(x, 4) for x in np.where(inb, np.clip(z / Dn, 0.0, 1.0), 0.0)]
+        # v0.24.7 DM-12 그림 교정: 평면 성분 ds_dD — DF = 깊이면 0·입구 cotθ 바깥, D(입구 고정) = 깊이면 가장자리 안쪽
+        from esl.morph import section as sec
+        bz = inb & (z > 1e-9)
+        flz = inb & (z >= Dn - 0.25 * h)
+        cot = None
+        if bz.any() and flz.any():
+            cot = max(((float(s[bz].max()) - float(s[bz].min())) - (float(s[flz].max()) - float(s[flz].min())))
+                      / (2.0 * Dn), 0.0)
+        out["ds_dD"] = {str(int(b.tier)): sec.fig_ds_dD(s, np.where(inb, z, 0.0),
+                                                       Dn, cot, sec.SECTION_PLANS["graph"]["fig"],
+                                                       floor_mode=getattr(b, "depth_kind", "D") == "DF")}
     if "W" in (b.vars or []) and Dn > 0:
         fl = inb & (z >= Dn - 0.25 * h)
         if fl.any():

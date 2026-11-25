@@ -1194,6 +1194,14 @@ class BeadDoeShapeMeshRouteCfg(_M):
     rank_quality: BeadDoeShapeRankQualityCfg = BeadDoeShapeRankQualityCfg()
 
 
+class BeadDoeDepthSectionRulesCfg(_M):
+    """v0.24.7 DM(esl_bead_depth_mode.md §5.2) — 깊이 단면 규칙(floor_fixed 스냅샷 depth_section_rules 로 복사). theta 2키 = elems 만."""
+
+    theta_min_deg: float = Field(15.0, ge=0.0, le=89.0)
+    theta_spread_deg: float = Field(5.0, ge=0.0, le=89.0)
+    one_side_min_nodes: int = Field(3, ge=1, le=20)
+
+
 class BeadDoeShapeRulesCfg(_M):
     """v0.21.0 BEAD_SHAPE 형상 규칙(esl_bead_shape_v021.md §6). 새 스터디 스냅샷(doe.shape_rules)에만 쓰임 — 옛 스터디 = 키 없음 =
     v0.20.0 동작. enabled false = 새 스터디도 스냅샷을 쓰지 않음."""
@@ -1513,6 +1521,8 @@ class BeadDoeCfg(_M):
     load_transfer: BeadDoeLoadTransferCfg = BeadDoeLoadTransferCfg()   # v0.20.0 모든 모드 공통(esl_load_transfer.md §13.6)
     redrop: BeadDoeRedropCfg = BeadDoeRedropCfg()                      # v0.22.0 REDROP(esl_redrop_bundle.md §6)
     shape_rules: BeadDoeShapeRulesCfg = BeadDoeShapeRulesCfg()         # v0.21.0 BEAD_SHAPE(esl_bead_shape_v021.md §6)
+    depth_section: Literal["entry_fixed", "floor_fixed"] = "floor_fixed"   # v0.24.7 DM 새 select 스터디 깊이 단면 동작
+    depth_section_rules: BeadDoeDepthSectionRulesCfg = BeadDoeDepthSectionRulesCfg()
     select: BeadDoeSelectCfg = BeadDoeSelectCfg()            # v0.15.0 select(esl_bead_select.md §10)
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
 
@@ -1982,6 +1992,8 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     _fill_missing(d.setdefault("load_transfer", {}), BeadDoeLoadTransferCfg().model_dump())
     _fill_missing(d.setdefault("shape_rules", {}), BeadDoeShapeRulesCfg().model_dump())   # v0.21.0
     _fill_missing(d.setdefault("redrop", {}), BeadDoeRedropCfg().model_dump())             # v0.22.0
+    _fill_missing(d.setdefault("depth_section_rules", {}), BeadDoeDepthSectionRulesCfg().model_dump())   # v0.24.7
+    d.setdefault("depth_section", BeadDoeCfg.model_fields["depth_section"].default)
     _fill_missing(d.setdefault("rank", {}), BeadDoeRankCfg().model_dump())     # v0.20.0 SM 강성 지표 키(코어 병합 전에도)
     _fill_missing(d.setdefault("case_jig", {}), BeadDoeCaseJigCfg().model_dump())   # v0.24.4(코어 DEFAULTS 병합 전에도)
     return d

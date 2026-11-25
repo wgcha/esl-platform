@@ -262,8 +262,8 @@ def w_reason_doc(code: str | None, messages: dict | None) -> dict | None:
     """코드 → {code, text}(문구 = resources/doe_messages.json — 호출 쪽이 읽어 넘김)."""
     if code is None:
         return None
-    m = (messages or {}).get(code) or {}
-    return {"code": code, "text": m.get("text") or m.get("message") or code}
+    m = (messages or {}).get(code)
+    return {"code": code, "text": m if isinstance(m, str) and m else code}
 
 
 # ---------------------------------------------------------------- 복제(§6.1)
