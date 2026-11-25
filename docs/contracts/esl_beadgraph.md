@@ -6,6 +6,7 @@
 - 근거 실험: H5(`results_H5.md` — 고리 + T 접합, 현 esl 이 이웃 비드로 사면을 새어 1.65~2 mm 움직이고도 READY), H6(`results_H6.md` — 이슈 #63 합성 TV 후면 샤시 104 439 요소, 분류기 시제품 99.9 %·15 s·122 MB, 그래프 기반 부분 모핑).
 - ID 규칙: 결정 `BG-D-n`, 시험 `V-BG-n`, 리스크 `R-BG-n`, 열린 항목 `O-BG-n`.
 - **v0.21.0 상호참조**: 새 스냅샷(`doe.shape_rules`)에서 BG-D-17·BG-X-3 의 비드 단위 "W = 모든 세그먼트" 는 `esl_bead_shape_v021.md` §3(W 는 폭 정보 있는 구간 S_W 에만), BG-X-1·BG-X-11 의 W 뒤집힘 줄임은 §4(range guard — D·W, 품질·조합)로 대체. 패키지 판·옛 스냅샷은 불변.
+- **v0.24.7 상호참조**: `esl_bead_depth_mode.md` §1.6·§5.1(DM-13~17) — 패키지 **1.2.0** = 새 기저 kind `W1`(한쪽 입구 평행 이동 — `depth_section` floor_fixed 스냅샷만)·공개 함수 `one_side` 추가, BG-X-3 의 "W 는 양쪽 입구" 는 그 스냅샷에서 W1 로 확장. §2.5 graph.json 머리 `version`·esl 기록 `beadgraph_version` = `OUTPUT_VERSION`(RULES·MORPH_RULES 가 오를 때만 따라 오름 — 지금 "1.1.0"), §8.3 판 표에 `W1_RULES` 추가. 분류 출력·D·W 기저 바이트 불변(RULES 1·MORPH_RULES 2).
 
 ### 사용자 확정 (2026-11-09, 변경 금지)
 1. **D1 깊이 = 부모 바닥 대비 상대값**: 위계 플랜지 → 고리 띠 → 플래토 → 채널·포켓. 자식은 부모를 강체로 따라간다.
