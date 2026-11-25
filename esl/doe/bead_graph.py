@@ -1043,6 +1043,8 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
         from esl.doe import settings as _settings
         section_rules = (_settings(cfg if isinstance(cfg, dict) and "select" in cfg else None)
                          ["depth_section_rules"])
+    elif sec.is_floor(ds):
+        section_rules = _rules_full(section_rules)
     ix = index or bs.mesh_index(mesh)
     if graph is not None and labels is not None:
         g2, l2 = edited_graph(graph, labels, (norm.get("graph") or {}).get("edits"), mesh)
@@ -1806,7 +1808,15 @@ def _pkg_item(D, b, typ: str) -> dict:
           "hold": b.hold_fixed, "bead": b.id}
     if kind == "W1":
         pk.update(ramp="end", min_nodes=int(D.section_rules["one_side_min_nodes"]))
+    if kind == "DF":                                    # DM-30·31 입구 평활·이웃 간격(스냅샷 depth_section_rules)
+        r = _rules_full(D.section_rules)
+        pk.update(entry_smooth_rel=float(r["entry_smooth_rel"]), entry_gap_rel=float(r["entry_gap_rel"]))
     return pk
+
+
+def _rules_full(rules) -> dict:
+    """스냅샷 depth_section_rules + 빠진 키는 지금 설정(DEFAULTS 거울) — 개정 전 키 없는 스냅샷 호환."""
+    return {**_section_rules_now(None), **(rules or {})}
 
 
 def _kj(k) -> str:

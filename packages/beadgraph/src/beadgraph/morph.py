@@ -23,13 +23,15 @@ from scipy.spatial import cKDTree
 from . import _util as U
 from .absorb import interior_mask, polyline_dist
 from .classify import CLS
-from .defaults import MORPH_EXTRA
+from .defaults import DF_ENTRY, MORPH_EXTRA
 from .zones import Mesh, bead_zones, movable_nodes
 
 # DF·W1 parent-band mix (part of the DF_RULES / W1_RULES 1 definition, esl contract esl_bead_depth_mode §1.2.1·§1.6.3 —
 # DM-C1-2): nearest sources mixed, weight 1/(d² + (BAND_MIX_EPS_H·h)²)
 BAND_MIX_K = 8
 BAND_MIX_EPS_H = 0.1
+# DF entry smoothing / neighbour-gap limit (DM-30·31): gaussian support cut at ENTRY_SMOOTH_CUT·ρ
+ENTRY_SMOOTH_CUT = 3.0
 
 
 def _cfg(cfg):
@@ -454,7 +456,9 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     col = walln | E
     cidx = np.flatnonzero(col)
     rE = np.zeros(M.n)
-    straight = np.zeros(M.n, bool)
+    rS = np.zeros(M.n)
+    rRaw = np.zeros(M.n)
+    info["entry_clipped_n"] = 0
     eidx = np.flatnonzero(edge)
     if cidx.size and eidx.size:
         _d, j = cKDTree(M.P[eidx]).query(M.P[cidx])
@@ -483,7 +487,6 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
         pos = -np.ones(M.n, np.int64)
         pos[idx] = np.arange(idx.size)
         no_c = nout[pos[cidx]]
-        straight[idx[ok & (np.linalg.norm(nout - nref, axis=1) < 1e-9)]] = True
         dpl = np.c_[dx @ M.e1, dx @ M.e2]
         r = np.einsum("ij,ij->i", dpl, no_c) / Dcol
         # columns without an own interior skeleton projection (segment ends, corners, junction sides) use the chord to
@@ -495,8 +498,24 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
             cap = float(ri.max()) * np.where(isE, 1.0, np.maximum(1.0 - tt, 0.0))
             r = np.where(okc, r, np.minimum(r, cap))
             info["chord_capped_n"] = int(((~okc) & (r >= cap - 1e-15) & (cap > 0)).sum())
-        Uv[cidx] = (s * tt)[:, None] * M.n0 + _plan3(M, r[:, None] * no_c)
-        rE[cidx[isE]] = r[isE]
+        # DM-30 entry r smoothed along the entry line (same-facing entry nodes only), DM-31 neighbour-gap factor κ_o;
+        # walls follow their column's entry (plan-nearest E): plan = (1 − t)·r_e·n_out
+        eI = cidx[isE]
+        r_raw = r[isE]
+        n_e = no_c[isE]
+        r_s, kap_o, n_clip = _entry_fix(M, Z, eI, r_raw, n_e, h, ext, b)
+        r_e = r_s * kap_o
+        rr = np.zeros(cidx.size)
+        rr[isE] = r_e
+        wl = ~isE
+        if wl.any() and eI.size:
+            _dw, jw = cKDTree(M.P[eI]).query(M.P[cidx[wl]])
+            rr[wl] = np.maximum(1.0 - tt[wl], 0.0) * r_e[jw]
+        Uv[cidx] = (s * tt)[:, None] * M.n0 + _plan3(M, rr[:, None] * no_c)
+        rE[eI] = r_e
+        rS[eI] = r_s
+        rRaw[eI] = r_raw
+        info["entry_clipped_n"] = n_clip
     elif cidx.size:
         Uv[cidx] = 0.0
     # shared child walls on the bead side: height-linear, plan 0 (D rule, overrides — BG_SHARED_CHILD)
@@ -560,7 +579,7 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     info["corner_n"] = 0
     # diagnostics (§2.6): cot of the full-ramp entry columns, floor plan max, entry wave, own walls without entry top
     full = E & (phi >= 1.0) & (psi >= 1.0)
-    cots = rE[full]
+    cots = rS[full]
     info["cot_min"] = U.f3(float(cots.min())) if cots.size else None
     info["cot_med"] = U.f3(float(np.median(cots))) if cots.size else None
     info["cot_max"] = U.f3(float(cots.max())) if cots.size else None
@@ -568,8 +587,8 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     pn = np.linalg.norm(plan, axis=1)
     fl = nF & (phi >= 1.0) & (psi >= 1.0)
     info["floor_plan_max_mm"] = U.f3(float(pn[fl].max()) * ext) if fl.any() else 0.0
-    ws = full & straight
-    info["entry_wave_mm"] = U.f3(float(np.std(pn[ws])) * ext) if ws.sum() > 1 else 0.0
+    dv = (rS - rRaw)[full]
+    info["angle_dev_mm"] = U.f3(float(np.sqrt(np.mean(dv * dv))) * ext) if dv.size else 0.0
     info["wall_no_entry_n"] = int((walln & J).sum())
     info["hold_n_fixed"] = n_hold
     info["hold_pinch_n"] = int((E & (psi < 1.0)).sum())
@@ -578,6 +597,52 @@ def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -
     return {"name": b["name"], "kind": "DF", "nominal": nominal, "idx": nz.astype(np.int64), "vec": Uv[nz],
             "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
             "zones": sorted(int(z) for z in (b.get("zones") or ()))}
+
+
+def _entry_fix(M: Mesh, Z: dict, eI: np.ndarray, r_raw: np.ndarray, n_e: np.ndarray, h: float, ext: float, b: dict):
+    """DF entry (esl contract §1.2.1 — DM-30·31): r_s = gaussian-weighted mean of r_raw over the bead's entry nodes
+    facing the same way (n_out·n_out' > 0), ρ = entry_smooth_rel·h (0 = none); κ_o = min(1, entry_gap_rel·d_o/(r_s·ext))
+    with d_o = plan distance to the other zones (the band's ``others``), smoothed with the same weights, frozen in the
+    basis (linear). -> (r_s, κ_o, number of entry nodes with raw κ_o < 1)."""
+    sm = float(b.get("entry_smooth_rel", DF_ENTRY["entry_smooth_rel"]))
+    gap = float(b.get("entry_gap_rel", DF_ENTRY["entry_gap_rel"]))
+    n = eI.size
+    if n == 0:
+        return r_raw.copy(), np.ones(0), 0
+    rho = sm * h
+    W = None
+    if rho > 0.0 and n > 1:
+        tree = cKDTree(M.P[eI])
+        pairs = tree.sparse_distance_matrix(tree, ENTRY_SMOOTH_CUT * rho, output_type="coo_matrix")
+        i, j, d = pairs.row, pairs.col, pairs.data
+        keep = np.einsum("ij,ij->i", n_e[i], n_e[j]) > 0.0
+        i, j, d = i[keep], j[keep], d[keep]
+        from scipy import sparse as _sp
+        W = _sp.coo_matrix((np.exp(-(d / rho) ** 2), (i, j)), shape=(n, n)).tocsr()
+        W = W + _sp.identity(n, format="csr") - _sp.diags(W.diagonal())      # self weight exp(0) = 1 exactly
+
+    def smooth(v):
+        if W is None:
+            return v.copy()
+        return np.asarray(W @ v).ravel() / np.asarray(W.sum(axis=1)).ravel()
+    r_s = smooth(r_raw)
+    p = Z["parent"]
+    others = ~(Z["parent_floor"] | Z["ZF"] | Z["ZW"] | Z["ZI"])
+    isl = M.lab["island"]
+    on_par = [x["id"] for x in M.graph["islands"] if x["parent"] == p and not x["straddle"]]
+    others &= ~np.isin(isl, on_par)
+    n_oth = M.nmask(others)
+    kap = np.ones(n)
+    if n_oth.any():
+        d_o, _ = cKDTree(M.P[n_oth]).query(M.P[eI])
+        m = np.abs(r_s) * ext
+        lim = gap * d_o
+        raw = np.where(m > lim, lim / np.maximum(m, 1e-300), 1.0)
+        n_clip = int((raw < 1.0).sum())
+        if n_clip:
+            kap = np.minimum(smooth(raw), 1.0)
+        return r_s, kap, n_clip
+    return r_s, kap, 0
 
 
 def _one_w1(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, edge_n: np.ndarray) -> dict:

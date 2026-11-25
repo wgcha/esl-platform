@@ -2712,7 +2712,8 @@ def _ds(c: Ctx) -> tuple[str | None, dict | None]:
     v = d.get("depth_section") if isinstance(d, dict) else None
     if not sec.is_floor(v):
         return v, None
-    r = d.get("depth_section_rules") or getattr(c, "cfg", {}).get("depth_section_rules")
+    now = getattr(c, "cfg", {}).get("depth_section_rules") or {}
+    r = {**now, **(d.get("depth_section_rules") or {})}       # 개정 전 스냅샷의 빠진 키 = 지금 설정(DM-30·31)
     return v, r
 
 
@@ -6926,7 +6927,7 @@ def _sec_diag(v: dict) -> dict:
         d = sec.cot_from_df(i)
         out = {"mode": "floor_fixed", "cot_min_deg": d["cot_min_deg"], "cot_med_deg": d["cot_med_deg"],
                "cot_max_deg": d["cot_max_deg"], "floor_plan_max_mm": i.get("floor_plan_max_mm"),
-               "entry_wave_mm": i.get("entry_wave_mm"),
+               "angle_dev_mm": i.get("angle_dev_mm"), "entry_clipped_n": i.get("entry_clipped_n"),
                "band_clipped": any(w.get("code") == "SELECT_BLEND_CLIPPED" for w in i.get("warnings", [])),
                "wall_no_entry_n": i.get("wall_no_entry_n")}
         if i.get("steep_deg") is not None:

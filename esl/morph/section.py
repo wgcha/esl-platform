@@ -368,6 +368,9 @@ def hash_view(ds, rules: dict | None, has_elems: bool) -> dict | None:
         return None
     r = rules or {}
     out = {"ds": "floor_fixed", "one_side_min_nodes": int(r["one_side_min_nodes"])}
+    for k in ("entry_smooth_rel", "entry_gap_rel"):            # DM-30·31(DF 입구 — 그래프 비드)
+        if k in r:
+            out[k] = float(r[k])
     if has_elems:
         out["theta_min_deg"] = float(r["theta_min_deg"])
         out["theta_spread_deg"] = float(r["theta_spread_deg"])

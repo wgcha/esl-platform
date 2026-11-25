@@ -288,15 +288,55 @@ def test_df_h6_pocket_v3d():
     assert not any(w["code"] == "BG_CORNER_GUARD" for w in info["warnings"]) and fp <= 1e-9
 
 
-@pytest.mark.xfail(strict=True, reason="계약 보정 필요(C1 보고): H6 ch1(channel + flare) DF +2 — 부모 바닥 필렛 sliver(변 0.2 mm) "
-                   "68 요소 뒤집힘(−2: 35, ±1: 0), entry_wave 0.472 mm > 0.05h 0.148 (flare 벽 각 15.6°~55° 섞임 — 물결이 "
-                   "아니라 각 차이를 잼); measured, not relaxed")
-def test_df_h6_unaligned_v3():
-    """V-0247-DM-3: DF on the unaligned H6 channel ch1 (+2): floor plan ≤ 1e-9 at full ramp, entry_wave ≤ 0.05h,
-    no inversion."""
-    g, info, r, fp = _h6_df("b", 2.0)
+def _h6_straight_angles(dD):
+    """H6 ch1 직선 구간(y 260..470 — U 끝·flare 제외) 입구 기둥 각 변화(°): 입구 노드 ~ 평면 최근접 깊이면 가장자리."""
+    from scipy.spatial import cKDTree
+
+    from beadgraph.testing import conformance as cf
+    from beadgraph.zones import bead_zones
+    g, lab, _ = cf.classified("h6")
+    fx = cf.load_fixture("h6")
+    X, C, F = fx["x0"], fx["conn"], fx["fixed"]
+    _n, _k, segs, zones, _dv = cf.h6_recipes(g, lab, fx)["b"][0]
+    bl = [{"name": "v", "kind": "DF", "segs": segs, "zones": zones, "hold": 1}]
+    nom = bg.basis(g, lab, X, bl, None, fixed=F, elems=C)[0]["nominal"]
+    B = bg.basis(g, lab, X, bl, {"v": [nom - abs(dD), nom + abs(dD)]}, fixed=F, elems=C)
+    x = bg.morph(X, B, {"v": nom + dD})
+    M = Mesh(g, lab, X, C)
+    Z = bead_zones(M, segs, zones, "D")
+    E = np.flatnonzero(Z["E"])
+    E = E[(X[E, 1] > 260.0) & (X[E, 1] < 470.0)]
+    edge = np.flatnonzero(Z["nF"] & Z["nW"] & ~Z["E"])
+    _d, j = cKDTree(M.P[edge]).query(M.P[E])
+    f = edge[j]
+    n0 = np.asarray(g["frame"]["n0"], float)
+
+    def ang(P):
+        d = P[E] - P[f]
+        return np.degrees(np.arctan2(np.abs(d @ n0), np.linalg.norm(d - np.outer(d @ n0, n0), axis=1)))
+    return np.abs(ang(x) - ang(X))
+
+
+@pytest.mark.parametrize("dD", [2.0, -2.0])
+def test_df_h6_ch1_v3_parts(dD):
+    """V-0247-DM-3(DM-30·31 기준, 뒤집힘 제외 부분): H6 ch1 DF ±2 — 깊이면 평면 ≤ 1e-9, 허용 구역 밖 ≤ 1e-9, 직선 구간 각 ±1°,
+    angle_dev_mm 기록."""
+    _g, info, r, fp = _h6_df("b", dD)
     assert r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["v"] <= 1e-6 and fp <= 1e-9
-    assert info["entry_wave_mm"] <= 0.05 * float(g["frame"]["h_mm"])
+    da = _h6_straight_angles(dD)
+    assert da.size > 50 and da.max() <= 1.0
+    assert info["angle_dev_mm"] is not None and "entry_wave_mm" not in info
+    print(f"\n[V-0247-DM-3] ch1 ΔD {dD:+} angle_dev_mm {info['angle_dev_mm']} entry_clipped_n {info['entry_clipped_n']} "
+          f"inverted {r['inverted']}")
+
+
+@pytest.mark.xfail(strict=True, reason="DF 보정(DM-30·31) 뒤에도 H6 ch1 뒤집힘 남음(C1 보고): +2 54·−2 36·±1 0 — +2 = 채널 "
+                   "끝(U 끝 y≈198·564~575) 입구 옆 부모 바닥 필렛 sliver(변 0.2 mm, 입구 + 부모 바닥 노드 49 + 띠 섬 옆 5), −2 = "
+                   "채널 끝 쪽 입구·벽 요소(y≈198~217·493~508) 36; measured, not relaxed")
+@pytest.mark.parametrize("dD", [2.0, -2.0])
+def test_df_h6_unaligned_v3(dD):
+    """V-0247-DM-3: H6 ch1 DF ±2 — 뒤집힘 0."""
+    _g, _info, r, _fp = _h6_df("b", dD)
     assert r["inverted"] == 0
 
 
