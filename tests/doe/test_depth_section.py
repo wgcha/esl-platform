@@ -48,6 +48,8 @@ def test_floor_fixed_matrix_outputs(tmp_path):
     dv = [v for v in bj["graph_vars"] if v["name"].endswith("_D")]
     assert dv and all(v["kind"] == "D" and v["section"]["mode"] == "floor_fixed" for v in dv)
     assert all(v["section"]["floor_plan_max_mm"] == 0.0 for v in dv)
+    assert all({"entry_guard_n", "entry_guard_left", "entry_clipped_n", "angle_dev_mm", "cot_min_deg", "cot_med_deg",
+                "cot_max_deg"} <= set(v["section"]) and v["section"]["entry_guard_left"] == 0 for v in dv)   # §2.6
     rows = json.load(open(os.path.join(d, "params.json"), encoding="utf-8"))["params"]
     r = next(x for x in rows if x["name"] == "B1_D")
     assert r["section"]["mode"] == "floor_fixed" and r["section"]["applied"] is True

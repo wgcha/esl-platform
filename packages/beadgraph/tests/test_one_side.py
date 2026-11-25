@@ -382,3 +382,51 @@ def test_cost_df_w1_v17_v27(ONE):
     print(f"\n[V-0247-DM-17/27] W {tw:.3f}s DF {tdf:.3f}s W1 {tw1:.3f}s")
     assert tdf <= 1.2 * tw + 0.05
     assert tw1 <= 1.2 * tw + 0.05
+
+
+def _concave_n(X, x, C):
+    """moved quads whose corner Jacobian is <= 0 at x (own diagonal plane or the rest normal) and > 0 at rest, with a
+    positive Gauss-point Jacobian (concave, not inverted)."""
+    from beadgraph.checks import _quad_jacobian, quad_corner_min
+    C = np.asarray(C, np.int64)
+    q = np.flatnonzero(C[:, 3] >= 0)
+    Cq = C[q]
+    n0 = np.cross(X[Cq[:, 2]] - X[Cq[:, 0]], X[Cq[:, 3]] - X[Cq[:, 1]])
+    ok0 = (quad_corner_min(X, Cq) > 0) & (quad_corner_min(X, Cq, n0) > 0)
+    c1 = np.minimum(quad_corner_min(x, Cq), quad_corner_min(x, Cq, n0))
+    mv = np.linalg.norm(x - X, axis=1) > 1e-9
+    return int(((c1 <= 0) & ok0 & (_quad_jacobian(x, Cq) > 0) & mv[Cq].any(1)).sum())
+
+
+@pytest.mark.parametrize("qual", [None, {"guard_jac_min": 0.3, "guard_tri_angle_min_deg": 10.0}])
+def test_df_h6_ch1_default_range_ends_v3(qual):
+    """V-0247-DM-3 (DM-33·34·35, 현장 위험): H6 ch1 DF 기저를 기본 범위 ±30 %(±2.4)로 만들고 ±2.4 에서 — 뒤집힘 0, 오목 사각형 0,
+    entry_guard_left 0, 부모 바닥 섬 제자리(band_islands 없음 · 섬 노드 변위 0). esl 품질 기준(guard_*)을 넘겨도 같음."""
+    from beadgraph.testing import conformance as cf
+    g, lab, _ = cf.classified("h6")
+    fx = cf.load_fixture("h6")
+    X, C, F = fx["x0"], fx["conn"], fx["fixed"]
+    _n, _k, segs, zones, _dv = cf.h6_recipes(g, lab, fx)["b"][0]
+    bl = [{"name": "v", "kind": "DF", "segs": segs, "zones": zones, "hold": 1, **(qual or {})}]
+    nom = bg.basis(g, lab, X, bl, None, fixed=F, elems=C)[0]["nominal"]
+    ext = 0.3 * nom
+    B = bg.basis(g, lab, X, bl, {"v": [nom - ext, nom + ext]}, fixed=F, elems=C)
+    info = B[0]["info"]
+    assert info["entry_guard_left"] == 0 and info["entry_guard_n"] > 0 and "band_islands" not in info
+    u = np.zeros_like(X)
+    u[B[0]["idx"]] = B[0]["vec"]
+    isl = np.asarray(lab["island"])
+    own = set(info["islands"])
+    others = [i["id"] for i in g["islands"] if i["id"] not in own]
+    pn = np.unique(C[np.isin(isl, others)])
+    pn = pn[pn >= 0]
+    from beadgraph.zones import Mesh, bead_zones
+    M = Mesh(g, lab, X, C)
+    Z = bead_zones(M, segs, zones, "D")
+    pn = pn[~(Z["nF"] | Z["nW"] | Z["E"])[pn]]                 # island nodes off the bead (parent-floor islands)
+    assert pn.size > 0 and np.abs(u[pn]).max() == 0.0
+    for dv in (ext, -ext):
+        x = bg.morph(X, B, {"v": nom + dv})
+        r = bg.check(g, lab, X, x, B, {"v": nom + dv}, elems=C)
+        assert r["inverted"] == 0 and r["outside"]["max_mm"] <= 1e-9 and r["achieved"]["v"] <= 1e-6
+        assert _concave_n(X, x, C) == 0

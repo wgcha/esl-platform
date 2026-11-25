@@ -6891,7 +6891,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                     beadgraph_version=bg.OUTPUT_VERSION,
                     graph_vars=[{"name": v["name"], "kind": {"DF": "D"}.get(v["kind"], v["kind"]),
                                  "nominal": float(v["nominal"]), "ramp_mm": float(v["info"]["ramp_mm"]),
-                                 **({"section": _sec_diag(v)} if v["kind"] in ("DF", "W1") else {})}
+                                 **({"section": _sec_diag(v, getattr(D, "graph_basis", []))}
+                                    if v["kind"] in ("DF", "W1") else {})}
                                 for v in getattr(D, "graph_basis", [])])
     dsv, dsr = _ds(c)
     if dsr is not None:                         # v0.24.7 DM §5: floor_fixed 만(entry_fixed basis.json 바이트 그대로)
@@ -6919,8 +6920,10 @@ def _sec_mod():
     return sec
 
 
-def _sec_diag(v: dict) -> dict:
-    """basis.json graph_vars[].section(§2.6 — floor_fixed 만): DF 진단(각·평면·물결·벽) / W1 한쪽 정보."""
+def _sec_diag(v: dict, gb=()) -> dict:
+    """basis.json graph_vars[].section(§2.6 — floor_fixed 만): DF 진단(각·평면·입구 평활·이웃 간격·입구 가드·벽) / W1 한쪽
+    정보(steep_deg = 같은 비드 DF 의 고정 쪽 공유 자식 벽 [θ_f, θ_f'] | None, center_shift_mm = ½·ext — 기본 범위 끝 ΔW 에서
+    깊이면·입구 중심선이 열린 쪽으로 치우치는 양)."""
     from esl.morph import section as sec
     i = v["info"]
     if v["kind"] == "DF":
@@ -6928,16 +6931,24 @@ def _sec_diag(v: dict) -> dict:
         out = {"mode": "floor_fixed", "cot_min_deg": d["cot_min_deg"], "cot_med_deg": d["cot_med_deg"],
                "cot_max_deg": d["cot_max_deg"], "floor_plan_max_mm": i.get("floor_plan_max_mm"),
                "angle_dev_mm": i.get("angle_dev_mm"), "entry_clipped_n": i.get("entry_clipped_n"),
+               "entry_guard_n": i.get("entry_guard_n"), "entry_guard_left": i.get("entry_guard_left"),
                "band_clipped": any(w.get("code") == "SELECT_BLEND_CLIPPED" for w in i.get("warnings", [])),
                "wall_no_entry_n": i.get("wall_no_entry_n")}
         if i.get("steep_deg") is not None:
             out["steep_deg"] = i["steep_deg"]
         return out
     one = i.get("one_side") or {}
+    base = str(v["name"]).rsplit("_", 1)[0]
+    df = next((u for u in gb if u.get("kind") == "DF" and str(u["name"]).rsplit("_", 1)[0] == base), None)
+    st = (df or {}).get("info", {}).get("steep_deg")
+    ext = i.get("ext")
     return {"mode": "floor_fixed", "one_side": {"segs": sorted(int(k) for k in one),
                                                 "fixed": {k: int(sum(o["fixed"][k] for o in one.values()))
                                                           for k in ("child", "shared", "junction", "edge", "own_wall")},
-                                                "floor_nominal": i.get("floor_nominal")}}
+                                                "floor_nominal": i.get("floor_nominal"),
+                                                "steep_deg": list(st) if st is not None else None,
+                                                "center_shift_mm": (round(0.5 * float(ext), 3)
+                                                                    if ext is not None else None)}}
 
 
 def _bgr():
