@@ -363,6 +363,13 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     name_max_chars: 40                # zip 이름의 엔트리 slug 최대 글자 수(8..120)
     tmp_ttl_s: 3600                   # _redrop/<token> 잔여 폴더 정리 기준(초, 1..86400)
     base_coord_tol_mm: 0.0            # 원본 입력 좌표 ↔ 스터디 기준 메시 허용 차(≥ 0, 0 = 정확히 같아야 함)
+  depth_section: floor_fixed         # v0.24.7 DM(계약 esl_bead_depth_mode.md §5.2) — 새 select 스터디 비드 깊이 단면 동작(floor_fixed = 깊이면 폭 유지·사면 각 고정·입구 넓어짐, entry_fixed = 입구 고정). 스냅샷에 고정, 옛 스터디 = 키 없음 = entry_fixed
+  depth_section_rules:
+    theta_min_deg: 15.0               # 선택(요소) 비드 사면 각 하한(°) — 미만이면 입구 고정 대체(DS_FALLBACK THETA_UNMEASURED)
+    theta_spread_deg: 5.0             # 선택(요소) 비드 사면 각 퍼짐 정보(DS_THETA_SPREAD) 기준(°)
+    one_side_min_nodes: 3             # 한쪽 입구 판정 최소 입구 노드 수(1..20)
+    entry_smooth_rel: 3.0             # DF 입구 평활 반경 = 값 × 비드 높이(0..10, 0 = 평활 없음)
+    entry_gap_rel: 0.5                # DF 이웃 간격 κ_o 계수((0,1])
   shape_rules:                        # v0.21.0 BEAD_SHAPE(계약 esl_bead_shape_v021.md §6) — 새 스터디 스냅샷 doe.shape_rules 원본(옛 스터디 = 키 없음 = v0.20.0 동작). 섹션 없으면 아래 기본
     enabled: true                     # false = 새 스터디도 스냅샷을 쓰지 않음
     w_partial: true                   # 항목 1 — 그래프 비드 W 를 폭 정보 있는 구간(S_W)에만

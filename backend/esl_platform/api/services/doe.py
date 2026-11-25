@@ -455,6 +455,16 @@ def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) ->
                           "fillet_max_r_mm": float(df["fillet_max_r_mm"]), "kinds": list(df["kinds"])}}
 
 
+DEPTH_NOTE_KEYS = ("DS_CLONE_NOTE", "DS_CLONE_NOTE_ENTRY", "DS_CLONE_NOTE_ENTRY_NONE")
+
+
+def _depth_section_notes() -> dict[str, str]:
+    """복제 창 안내 문구 원본 = doe_messages.json(자리 {n}·{names} 는 화면이 채움). 영문 "(Info: …)" 꼬리는 뺀다."""
+    from . import doe_select as sel_svc
+
+    return {k: sel_svc._INFO_TAIL.sub("", up_svc.doe_text(k)) for k in DEPTH_NOTE_KEYS}
+
+
 def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[str, Any]:
     c = cfg(ctx)
     st = status(ctx)
@@ -473,6 +483,8 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "load_transfer": _lt_settings(c),
             "rank": _rank_settings(c),
             "shape_rules": _shape_settings(c),
+            "depth_section": str(c["depth_section"]),        # v0.24.7 DM §5.2 새 select 스터디 기본(복제 창 라디오·새 스터디 라디오 기본)
+            "depth_section_notes": _depth_section_notes(),   # v0.24.7 복제 창 안내 문구(resources/doe_messages.json — 영문 꼬리 없이, 화면에 문구 거울 없음)
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
                        "max_tiers": int(sc["max_tiers"]),
@@ -1129,6 +1141,8 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
         prep["load_transfer"] = p0_lt       # v0.20.0 §13.6 준비 요약 {plan, placement, fast_path}(새 스냅샷만)
     if s["scenario"] == "select":       # v0.16.2 §3.1: bead_source 기본 manual(v0.16.1 이전 select 스터디), select_base 는 있을 때만
         inputs.setdefault("bead_source", "manual")
+        inputs.setdefault("depth_section", None)      # v0.24.7 DM §6: 옛·입구 고정 = null(화면 "입구 고정(이전)") — DB 에는 키를 쓰지 않음
+        inputs.setdefault("spec_prefill", None)       # 복제만 값(원 doe.spec)
     out = {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
            "entry_ids": list(s["entry_ids"]), "inputs": inputs, "phase": phase, "version": int(s["version"]),
            "prep": prep, "doe": _doe_out(ctx, s, c), "job": job_out(conn, job, with_steps=True) if job else None,
@@ -1285,6 +1299,21 @@ def _create_compare(ctx: AppContext, principal: Principal, body, out: dict[str, 
                              warns=out["warnings"])
 
 
+def _depth_section_for_new(c: dict[str, Any], body) -> tuple[str | None, dict[str, Any] | None]:
+    """v0.24.7 DM §1.1·§5: 새 select 스터디의 깊이 단면 동작 = 요청 값 또는 설정. entry_fixed 는 어떤 문서에도 키를 쓰지 않음(→ (None, None)),
+    floor_fixed = (값, depth_section_rules 복사 — 지금 설정). select 밖에 값을 주면 422 INVALID_PARAMS."""
+    req = getattr(body, "depth_section", None)
+    if body.scenario != "select":
+        if req is not None:
+            raise unprocessable("INVALID_PARAMS", "depth_section 은 비드 직접 선택(select) 스터디에서만 지정합니다",
+                                depth_section=req)
+        return None, None
+    ds = req if req is not None else str(c["depth_section"])
+    if ds != "floor_fixed":
+        return None, None
+    return ds, copy.deepcopy(dict(c["depth_section_rules"]))
+
+
 def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     c = cfg(ctx)
     r = check_inputs(ctx, principal, body, _internal=True)
@@ -1296,6 +1325,7 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
         if body.scenario == "compare":
             raise unprocessable("INVALID_PARAMS", "하중 출처는 강성 순위가 있는 시나리오(① ② ③ 선택)에서만 고릅니다 — 형상 직접 "
                                 "비교(④)에는 없음", load_source=body.load_source)
+    ds_val, ds_rules = _depth_section_for_new(c, body)         # v0.24.7 DM: select 밖 값 = 422(어느 시나리오든 먼저)
     if body.scenario == "compare":
         props, _h = _validate_step_extras(body, c, mat)
         return _create_compare(ctx, principal, body, out, mat, props)
@@ -1385,6 +1415,9 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if (shape := shape_snapshot(c)) is not None:                    # v0.21.0 SH-1: 같은 블록을 작업 스냅샷·inputs 에(옛 = 키 없음)
         doe["shape_rules"] = shape
         inputs["shape_rules"] = copy.deepcopy(shape)
+    if ds_val is not None:                                          # v0.24.7 DM: floor_fixed 만 키(스냅샷 = inputs 같은 값 — §5·§6)
+        doe["depth_section"], doe["depth_section_rules"] = ds_val, copy.deepcopy(ds_rules)
+        inputs["depth_section"], inputs["depth_section_rules"] = ds_val, copy.deepcopy(ds_rules)
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
     return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario=body.scenario, title=title,
@@ -1419,16 +1452,21 @@ def _pair(v: Any, fallback: list[float]) -> list[float]:
     return list(fallback)
 
 
+def params_out_core(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> dict[str, Any]:
+    """select 스터디 변수 표(저장 선택 derive 기반 — params_out 의 select 갈래, 복제의 W1 이름 계산이 같이 씀)."""
+    doc = _select().refresh_derived(ctx, s, c, _select().require_selection(ctx, s, c))   # v0.16.1 §7.5 algo 지연 갱신
+    with ctx.engine.connect() as conn:
+        mc = _study_cfg(conn, s, c)     # 행렬 생성·작업 표와 같은 설정(fixed_policy·range — 같은 표)
+    return _select().params_w_reason(ctx, s, c, doc, _select().params_table(doc, mc))   # v0.24.7 DM §4.3 beads[].w_reason
+
+
 def params_out(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
     c = cfg(ctx)
     s, job = _viewable(ctx, principal, sid)
     _no_compare(s)
     _require_prep(s, job)
     if s["scenario"] == "select":       # 변수 = 저장 선택(BS-D-6·7) — prep/params.json 없음
-        doc = _select().refresh_derived(ctx, s, c, _select().require_selection(ctx, s, c))   # v0.16.1 §7.5 algo 지연 갱신
-        with ctx.engine.connect() as conn:
-            mc = _study_cfg(conn, s, c)     # 행렬 생성·작업 표와 같은 설정(fixed_policy·range — 같은 표)
-        return _select().params_table(doc, mc)
+        return params_out_core(ctx, s, c)
     doc = _params_doc(ctx, s, c)
     beads = []
     for b in doc.get("beads") or []:
@@ -1704,14 +1742,35 @@ def _clone_shape_present(x: dict[str, Any]) -> bool:
     return True
 
 
+def _section():
+    """순수 모듈 esl.morph.section(계획 표·clone_depth·w_reason_doc — 코어 소유)."""
+    from ...core import opt_core
+
+    return opt_core.morph_section
+
+
+def _w1_names(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> list[str]:
+    """원 스터디 변수 표(저장 선택의 derive — 변수 표 응답과 같은 길)에서 `w_side = one` 인 W 행 이름(floor → entry 복제의 dropped 근거).
+    선택·준비가 없어 표를 못 만들면 빈 목록."""
+    try:
+        t = params_out_core(ctx, s, c)
+    except Exception:  # noqa: BLE001 - 표를 못 만들면 spec_prefill 을 그대로(알려진 W1 없음)
+        return []
+    return [str(p["name"]) for p in t.get("params") or [] if isinstance(p, dict) and p.get("w_side") == "one"]
+
+
 def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] | None) -> dict[str, Any]:
     """같은 입력(연구 스냅샷 경로·설정은 지금 설정)으로 새 연구 + DOE_PREP. 준비 산출물은 재사용하지 않는다."""
     body = body or {}
-    if set(body) - {"title"}:
-        raise unprocessable("INVALID_PARAMS", f"알 수 없는 키: {sorted(set(body) - {'title'})}")
+    if set(body) - {"title", "depth_section"}:
+        raise unprocessable("INVALID_PARAMS", f"알 수 없는 키: {sorted(set(body) - {'title', 'depth_section'})}")
     title = body.get("title")
     if title is not None and (not isinstance(title, str) or len(title) > 200):
         raise unprocessable("INVALID_PARAMS", "title 은 200자 이하 문자열입니다")
+    req_ds = body.get("depth_section")      # v0.24.7 DM §6.1: select 만, 값 = DEPTH_SECTIONS(없으면 원 값)
+    if req_ds is not None and req_ds not in _section().DEPTH_SECTIONS:
+        raise unprocessable("INVALID_PARAMS", f"depth_section 은 {list(_section().DEPTH_SECTIONS)} 중 하나입니다",
+                            depth_section=req_ds)
     with ctx.engine.connect() as conn:
         s = load_study(conn, sid)
         require_execute(principal, s["project_id"])
@@ -1731,6 +1790,9 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
             if owner != principal.user_id:
                 raise DomainError("UPLOAD_NOT_OWNED", "원 연구의 입력 파일은 올린 사람만 다시 쓸 수 있습니다 — "
                                   "같은 ESL 을 골라 STEP 을 새로 올려 새 강성 평가 스터디를 만드세요", status=403, input=k)
+    if req_ds is not None and s["scenario"] != "select":
+        raise unprocessable("INVALID_PARAMS", "복제의 depth_section 은 비드 직접 선택(select) 스터디에서만 지정합니다",
+                            depth_section=req_ds, scenario=s["scenario"])
     require_config_ok(ctx)
     require_enabled(ctx, s["scenario"])
     s_in = s.get("inputs") or {}
@@ -1786,15 +1848,44 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
                                "message": f"순위 설정을 지금 설정으로 갱신했습니다(원 스터디 순위 지표 {om} → {nm}{add})"})
         d["rank"] = new_rank
         inputs_new["rank_metric"] = new_rank["metric"]
+    clone_warns: list[dict[str, Any]] = []
+    if s["scenario"] == "select":
+        # v0.24.7 DM §6.1: 깊이 동작 키 = section.clone_depth(순수) 결과만. 나머지(선택·shape_rules·load_transfer·ESL·하중 출처)는 위 복사 그대로
+        c0 = cfg(ctx)
+        sec = _section()
+        spec = (s.get("doe") or {}).get("spec") or s_in.get("spec_prefill")       # 원 doe.spec(복제 직후라 없으면 그 spec_prefill 을 물려줌)
+        w1 = _w1_names(ctx, s, c0) if (old.get("depth_section") == "floor_fixed" and req_ds == "entry_fixed") else ()
+        cd = sec.clone_depth({**old, "spec": spec}, req_ds, rules_now=dict(c0["depth_section_rules"]), w1_names=w1)
+        if cd["changed"]:        # 같은 값 = 원 블록 그대로(키 순서까지 손대지 않음 — 지금 복제와 바이트 같음)
+            for k in ("depth_section", "depth_section_rules"):
+                d.pop(k, None)
+                inputs_new.pop(k, None)
+            for k, v in (cd["keys"] or {}).items():
+                d[k] = copy.deepcopy(v)
+                inputs_new[k] = copy.deepcopy(v)
+        inputs_new.pop("spec_prefill", None)
+        if spec:
+            inputs_new["spec_prefill"] = copy.deepcopy(sec.spec_without(spec, cd["dropped"]) if cd["dropped"] else spec)
+        if cd["changed"]:
+            if cd["dropped"]:
+                txt = up_svc.doe_text("DS_CLONE_NOTE_ENTRY", n=len(cd["dropped"]), names=", ".join(cd["dropped"]))
+            elif cd["to"] == "entry_fixed":
+                txt = up_svc.doe_text("DS_CLONE_NOTE_ENTRY_NONE")        # 깊이면→입구, 빠지는 변수 없음
+            else:
+                txt = up_svc.doe_text("DS_CLONE_NOTE")
+            clone_warns.append({"code": "DS_CLONE_NOTE", "from": cd["from"], "to": cd["to"], "dropped": list(cd["dropped"]),
+                                "message": txt})
     new_title = (title or "").strip() or f"{s['title']} (복제)"[:200]
     d.update(id=nid, title=new_title, created_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
              cfg=_snapshot_cfg(ctx), core=copy.deepcopy(ctx.config.core or {}))
     params = {"bead_doe_id": nid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{nid}", "doe": d,
               "warnings": [w for w in prep_job["params"].get("warnings") or []               # 앞 복제의 갱신 경고는 물려주지 않음
-                           if not (isinstance(w, dict) and w.get("code") == "RANK_REFRESHED")] + sel_warns + rank_warns}
+                           if not (isinstance(w, dict) and w.get("code") in ("RANK_REFRESHED", "DS_CLONE_NOTE"))]
+                          + sel_warns + rank_warns + clone_warns}
     return _insert_study_job(ctx, principal, sid=nid, project_id=s["project_id"], scenario=s["scenario"],
                              title=new_title, entry_ids=list(s["entry_ids"]), base_db=s.get("base"),
-                             inputs=inputs_new, params=params, warns=sel_warns + rank_warns, selection=sel_copy)
+                             inputs=inputs_new, params=params, warns=sel_warns + rank_warns + clone_warns,
+                             selection=sel_copy)
 
 
 # 연구 진행 순서(phase) — 오래된 작업 재시도·등록이 연구를 되돌리지 않게(검증 지적)

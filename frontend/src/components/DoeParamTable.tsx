@@ -1,7 +1,7 @@
 // 비드 DOE ② 비드·변수(esl_bead_doe.md §5·§12.2, BD-D-7): 비드별 D·W·U/V 포함 체크·범위(기본 = feasible), 범위 밖 경고 배지(차단 아님),
 // 하한 ≥ 상한·깊이/폭 ≤ 0 은 오류. DOE 방식·안 수(풀 팩토리얼은 수준)·시드 + 실제 안 수(POST /matrix). 방법·출처 ⓘ.
 import { useEffect, useRef, useState } from "react";
-import { METHOD_NAME, TYPE_NAME, doeSourcesOk, guardTag, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
+import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, doeSourcesOk, guardTag, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
 import type { DoeBead, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamsOut, DoeSettingsOut, DoeShapeRules } from "../api/types";
 import { useBlobUrl } from "./DoeThumbGrid";
 import { Field } from "./ui";
@@ -180,6 +180,28 @@ function ShapeTags({ p, rules }: { p: DoeParam; rules: DoeShapeRules | null | un
   );
 }
 
+/** v0.24.7 D 행 DS_FALLBACK 배지 "입구 고정"(툴팁 = 서버 DS_FALLBACK 문구, 없으면 사유 코드) · W1 행 꼬리표 "한쪽" */
+function DepthTags({ p, b, data }: { p: DoeParam; b: DoeBead; data: DoeParamsOut }) {
+  const fb = p.type === "D" && p.section && p.section.applied === false ? p.section : null;
+  const w = fb ? [...(b.warnings ?? []), ...data.warnings].find((x) => x.code === "DS_FALLBACK" && (x.var === p.name || (x.var == null && x.bead === b.id))) : null;
+  const one = p.type === "W" && p.w_side === "one";
+  if (!fb && !one) return null;
+  return (
+    <>
+      {fb && (
+        <span className="badge neutral doe-tag doe-tag-ds" title={w ? warnText(w) : fb.reason ?? undefined} data-testid={`dsfb-${p.name}`} data-reason={fb.reason ?? undefined}>
+          {DEPTH_FALLBACK_BADGE}
+        </span>
+      )}
+      {one && (
+        <span className="badge neutral doe-tag doe-tag-ds" title={W_ONE_SIDE_TIP} data-testid={`w1-${p.name}`}>
+          {W_ONE_SIDE_TAG}
+        </span>
+      )}
+    </>
+  );
+}
+
 export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, select, shapeRules }: {
   /** v0.21.0 스터디 스냅샷 형상 규칙(툴팁의 기준값 출처 — 없으면 값만) */
   shapeRules?: DoeShapeRules | null;
@@ -252,6 +274,7 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
                         {p.type === "D" ? `깊이 D${p.tier ?? ""}` : "폭 W"} <span className="mono small muted">{p.name}</span>
                         {p.group_members.length > 0 && <span className="small muted" title={`같은 값: ${p.group_members.join(", ")}`}> · 묶음 {[p.name, ...p.group_members].map((n) => n.split("_")[1]).join("+")}</span>}
                         <ShapeTags p={p} rules={shapeRules} />
+                        <DepthTags p={p} b={b} data={data} />
                       </td>
                       <td className="num">
                         <input type="number" className="doe-num" aria-label={`${label} 하한`} step="any" value={r.lo} disabled={readOnly || !r.on} onChange={(e) => upd(p.name, { lo: e.target.value })} onFocus={() => select.onActive(p.name)} />
@@ -263,10 +286,28 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
                       <td className="small mono" title="선택에서 추정한 기본 범위 — 미리보기로 확인">
                         {p.feasible[0]}–{p.feasible[1]}
                       </td>
-                      <td>{why ? <span className="small error-text">{why}</span> : outsideFeasible(p, r) ? <span className="badge warn" title="추정 범위 밖 — 미리보기에서 실패 안이 늘 수 있습니다(차단 아님)">⚠ 범위 밖</span> : null}</td>
+                      <td>
+                        {why ? <span className="small error-text">{why}</span> : outsideFeasible(p, r) ? <span className="badge warn" title="추정 범위 밖 — 미리보기에서 실패 안이 늘 수 있습니다(차단 아님)">⚠ 범위 밖</span> : null}
+                        {p.type === "W" && !p.use_default && b.w_reason && (
+                          <span className="small muted" data-testid={`wreason-${p.name}`} data-code={b.w_reason.code}>
+                            {" "}
+                            {b.w_reason.text}
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   );
                 }),
+                ...(b.w_reason && !ps.some((p) => p.type === "W")
+                  ? [
+                      <tr key={`${b.id}-wna`} className="doe-w-na" data-testid={`w-na-${b.id}`} data-code={b.w_reason.code}>
+                        <td />
+                        <td colSpan={6} className="small">
+                          {W_UNAVAILABLE_LEAD} · {b.w_reason.text}
+                        </td>
+                      </tr>,
+                    ]
+                  : []),
               ];
             }
             const mirrored = !ps.length && data.params.some((p) => p.group_members.some((m) => m.endsWith(`_${b.k}`)));

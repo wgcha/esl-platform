@@ -1,5 +1,5 @@
 // v0.15.0 단면 미니 그림(esl_bead_select.md §7.1): 공칭 폭 중앙값 위치의 비드 단면(서버 section), 공칭 실선 + 범위 lo·hi 점선(브라우저 계산).
-// 깊이 D_k: z + (D − D_nom)·dz_dD[k] · 폭 W: s + (W − W_nom)·ds_dW, z + (W − W_nom)·dz_dW. z = 깊이(+ 아래). SVG 240×120.
+// 깊이 D_k: (s + (D − D_nom)·ds_dD[k], z + (D − D_nom)·dz_dD[k]) — ds_dD 없으면 0(입구 고정·옛 응답, v0.24.7 DM-12) · 폭 W: s + (W − W_nom)·ds_dW, z + (W − W_nom)·dz_dW. z = 깊이(+ 아래). SVG 240×120.
 import type { DoeSection } from "../api/types";
 
 export interface SectionVar {
@@ -16,9 +16,10 @@ const H = 120;
 export function sectionLine(sec: DoeSection, v: SectionVar | null, value: number | null): [number, number][] {
   const d = v && value != null ? value - v.nominal : 0;
   const dz = v?.type === "D" ? sec.dz_dD[String(v.tier ?? 1)] ?? [] : [];
+  const ds = v?.type === "D" ? sec.ds_dD?.[String(v.tier ?? 1)] ?? [] : [];
   return sec.s.map((s, i) => {
     if (!v || !d) return [s, sec.z[i]];
-    if (v.type === "D") return [s, sec.z[i] + d * (dz[i] ?? 0)];
+    if (v.type === "D") return [s + d * (ds[i] ?? 0), sec.z[i] + d * (dz[i] ?? 0)];
     return [s + d * (sec.ds_dW[i] ?? 0), sec.z[i] + d * (sec.dz_dW[i] ?? 0)];
   });
 }

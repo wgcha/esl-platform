@@ -1888,8 +1888,18 @@ class DoeCheckIn(_Req):
 
 class DoeStudyIn(DoeCheckIn):
     title: str | None = Field(default=None, max_length=200)
+    # v0.24.7 DM(esl_bead_depth_mode.md §1.1·§6): 깊이 단면 동작 — 없으면 설정 bead_doe.depth_section. select 시나리오만 적용
+    # (그 밖에 값을 주면 422 INVALID_PARAMS — 시나리오 검사는 서비스). 모르는 값 = 422
+    depth_section: Literal["entry_fixed", "floor_fixed"] | None = None
     props: DoeProps | None = None                                                  # ③④ 만(기본 = A Ch/R, Q2 A)
     mesh_size_mm: float | None = Field(default=None, gt=0)                         # ③ 만(bead_doe.mesh.size_*_mm)
+
+
+class DoeCloneIn(_Req):
+    """v0.24.7 DM §6.1 복제 본문 {title?, depth_section?} — 모르는 키·값 422. depth_section 은 select 시나리오만(그 밖 422 INVALID_PARAMS)."""
+
+    title: str | None = Field(default=None, max_length=200)
+    depth_section: Literal["entry_fixed", "floor_fixed"] | None = None
 
 
 class DoeSpecParam(_Req):
@@ -1943,6 +1953,8 @@ class DoeSettingsOut(_Out):
     shape_rules: dict[str, Any] | None = None
     select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
     select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
+    depth_section: Literal["entry_fixed", "floor_fixed"] | None = None   # v0.24.7 DM 새 스터디 기본 깊이 단면 동작(설정 bead_doe.depth_section)
+    depth_section_notes: dict[str, str] | None = None   # v0.24.7 복제 창 안내 문구 {DS_CLONE_NOTE, DS_CLONE_NOTE_ENTRY({n}·{names} 자리), DS_CLONE_NOTE_ENTRY_NONE}
 
 
 class DoeCheckOut(_Out):
@@ -1986,6 +1998,9 @@ class DoeStudyOut(_Out):
     title: str
     entry_ids: list[str]
     inputs: dict[str, Any]                          # v0.16.2 select: + bead_source("auto"|"manual"), select_base?("mesh"|"step")
+    #                                                 v0.24.7 DM select: + depth_section("floor_fixed" | null — DB 는 floor_fixed 만 키,
+    #                                                 옛·입구 고정 = null → 화면 "입구 고정(이전)"), depth_section_rules?(floor_fixed 만),
+    #                                                 spec_prefill(복제만 값 — 원 doe.spec, 없으면 null, §6.1)
     phase: DoePhaseLit
     version: int
     # select: {n_nodes, n_elems, fixed, auto?, select_base?, graph?} + v0.18.0 step 기준(esl_step_graph.md §4.2):
@@ -2005,6 +2020,8 @@ class DoeStudyOut(_Out):
 
 
 class DoeParamsOut(_Out):
+    # v0.24.7 DM: beads[] += w_reason{code, text}|null(그래프 비드 W 사용 불가 사유 — 옛 스터디도 응답 때 계산, §4.3),
+    # params[] D 행 += section{mode, cot_deg, applied, reason?}(floor_fixed 만), W 행 += w_side "one"(W1 만)
     beads: list[dict[str, Any]]
     params: list[dict[str, Any]]
     warnings: list[dict[str, Any]] = Field(default_factory=list)

@@ -7,7 +7,7 @@ import type {
   DoeCellWarning,
   DoeFixedViol,
   DoeBasisMeta, DoeBead, DoeBeadDerived, DoeDeriveOut, DoeDesignStatus, DoeElemSet, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectViewManifest, DoeSelectionDerived, DoeSelectionIn, DoeSelectAutoOut,
-  DoeSettingsOut, DoeWarning, XY,
+  DoeDepthSection, DoeSection, DoeSettingsOut, DoeWarning, XY,
 } from "../api/types";
 import { boundaryNodes, buildTopo, type MeshTopo } from "../view3d/select/adjacency";
 import { enclosedComponents, outerPolygons, type Vec3 } from "../view3d/select/grow";
@@ -598,8 +598,16 @@ export function selParams(sel: DoeSelectionIn, d: DoeSelectionDerived, policy: "
   return { beads, params, warnings: d.warnings ?? [] };
 }
 
+/** v0.24.7 §1.2.2·§6: elems floor_fixed 단면 그림 — 깊이면(frac 1) 평면 0, 입구(frac 0) +cotθ, 사면 (1 − frac)·cotθ 바깥(입구 고정·키 없음 = ds_dD 없음 = 0) */
+function floorFixedSection(sec: DoeSection, ds?: DoeDepthSection | null): DoeSection {
+  if (ds !== "floor_fixed") return sec;
+  const cot = 1 / SLOPE_TAN;
+  const dz = sec.dz_dD["1"] ?? [];
+  return { ...sec, ds_dD: { "1": sec.s.map((sv, i) => +(Math.sign(sv) * cot * (1 - (dz[i] ?? 0))).toFixed(4)) } };
+}
+
 /** 평면도(§7.1 select) */
-export function selPlan(sel: DoeSelectionIn, st: DoeSettingsOut): DoePlanOut {
+export function selPlan(sel: DoeSelectionIn, st: DoeSettingsOut, ds?: DoeDepthSection | null): DoePlanOut {
   const m = selMesh();
   const t = m.topo;
   const { out, beads } = selDerive(sel, st);
@@ -625,7 +633,7 @@ export function selPlan(sel: DoeSelectionIn, st: DoeSettingsOut): DoePlanOut {
         k: tr.k,
         ring_ab: [geo === GEO_CIRC ? ringOf(geo, (a, D) => a - D / SLOPE_TAN).ring : tr.k === 1 ? ringOf(geo, (a, D) => a - D / SLOPE_TAN, 0, 0.635).ring : ringOf(geo, (a, D) => a - D / SLOPE_TAN, 0.675, 1).ring],
       }));
-      return { id: b.id, name: b.name, ring: ring[0], ring_ab: ring, e_ab: x.plan?.e_ab ?? [[]], label_ab: geo === GEO_PATH ? ([180, 352] as XY) : ([c[0], c[1] + 34] as XY), tiers: tierRings, section: x.section ?? null };
+      return { id: b.id, name: b.name, ring: ring[0], ring_ab: ring, e_ab: x.plan?.e_ab ?? [[]], label_ab: geo === GEO_PATH ? ([180, 352] as XY) : ([c[0], c[1] + 34] as XY), tiers: tierRings, section: x.section ? floorFixedSection(x.section, ds) : null };
     }),
     nodes_ab,
     fixed,

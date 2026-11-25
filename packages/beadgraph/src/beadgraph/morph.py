@@ -23,8 +23,15 @@ from scipy.spatial import cKDTree
 from . import _util as U
 from .absorb import interior_mask, polyline_dist
 from .classify import CLS
-from .defaults import MORPH_EXTRA
+from .defaults import DF_ENTRY, MORPH_EXTRA
 from .zones import Mesh, bead_zones, movable_nodes
+
+# DF·W1 parent-band mix (part of the DF_RULES / W1_RULES 1 definition, esl contract esl_bead_depth_mode §1.2.1·§1.6.3 —
+# DM-C1-2): nearest sources mixed, weight 1/(d² + (BAND_MIX_EPS_H·h)²)
+BAND_MIX_K = 8
+BAND_MIX_EPS_H = 0.1
+# DF entry smoothing / neighbour-gap limit (DM-30·31): gaussian support cut at ENTRY_SMOOTH_CUT·ρ
+ENTRY_SMOOTH_CUT = 3.0
 
 
 def _cfg(cfg):
@@ -75,19 +82,27 @@ def _ramp(M: Mesh, J: np.ndarray, nodes: np.ndarray, L: float):
 
 
 def _skeleton_dist(M: Mesh, S: list[int], Q: np.ndarray):
+    best, nout, inner, _side, _sid = _skel_full(M, S, Q)
+    return best, nout, inner
+
+
+def _skel_full(M: Mesh, S: list[int], Q: np.ndarray):
+    """nearest skeleton over the segments S -> (distance, outward unit, interior, side ±1, segment id (−1 none))."""
     best = np.full(len(Q), np.inf)
     nout = np.zeros((len(Q), 2))
     inner = np.zeros(len(Q), bool)
+    side = np.zeros(len(Q))
+    sid = -np.ones(len(Q), np.int64)
     for s in S:
         sk = M.segs[s].get("skeleton")
         if not sk:
             continue
         pts = np.asarray(sk, float)
-        d, _side, cp, n = polyline_dist(Q, pts)
+        d, sd, cp, n = polyline_dist(Q, pts)
         im = interior_mask(cp, pts)
         m = d < best
-        best[m], nout[m], inner[m] = d[m], n[m], im[m]
-    return best, nout, inner
+        best[m], nout[m], inner[m], side[m], sid[m] = d[m], n[m], im[m], sd[m], s
+    return best, nout, inner, side, sid
 
 
 def _smooth_dirs(M: Mesh, el_mask, node_mask, idx, nref, iters: int):
@@ -180,6 +195,110 @@ def _corner_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, ext
     return c
 
 
+def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict) -> np.ndarray:
+    """elements (rows of C) that turn newly bad at ±ext: quad Gauss Jacobian ≥ jac_min at rest and < at ±ext, triangle
+    min angle ≥ tri_angle_min_deg at rest and < at ±ext (esl range guard criteria — values given by the caller)."""
+    from .checks import _quad_jacobian
+    bad = np.zeros(len(C), bool)
+    q = C[:, 3] >= 0
+    jm, tm = qual.get("jac_min"), qual.get("tri_angle_min_deg")
+    if jm is not None and q.any():
+        j0 = _quad_jacobian(M.X, C[q])
+        for sgn in (1.0, -1.0):
+            bad[q] |= (j0 >= jm) & (_quad_jacobian(M.X + sgn * ext * Ud, C[q]) < jm)
+    if tm is not None and (~q).any():
+        T = C[~q][:, :3]
+
+        def mina(P):
+            p = P[T]
+            out = np.full(len(T), 180.0)
+            for i in range(3):
+                v1, v2 = p[:, (i + 1) % 3] - p[:, i], p[:, (i + 2) % 3] - p[:, i]
+                cs_ = np.einsum("ij,ij->i", v1, v2) / np.maximum(np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1),
+                                                                1e-300)
+                out = np.minimum(out, np.degrees(np.arccos(np.clip(cs_, -1.0, 1.0))))
+            return out
+        a0 = mina(M.X)
+        for sgn in (1.0, -1.0):
+            bad[~q] |= (a0 >= tm) & (mina(M.X + sgn * ext * Ud) < tm)
+    return bad
+
+
+def _df_entry_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, wall: np.ndarray, entry: np.ndarray,
+                    ext: float, cg: dict, flip_deg: float, qual: dict | None = None):
+    """DF entry guard (esl contract §1.2.1 — DM-32·34·35). Pass k (up to ``cg["iters"]``): ``_corner_guard`` one pass
+    (its criteria — area ratio of parent-floor elements, normal flip, Gauss-point quad Jacobian) + concave quads (a corner
+    Jacobian <= 0 at ±ext on the element's own plane or about its rest normal, > 0 at rest — ``checks.quad_corner_min``)
+    + ``qual`` {jac_min, tri_angle_min_deg} (the caller's range-guard criteria, None = off): elements newly bad at ±ext
+    (``_qual_new_bad``). Flagged elements: plan part of their moving nodes × ``shrink``; concave ones and quality ones
+    touching an ``entry`` node also the normal part of their ``wall`` nodes (a flat fillet corner on the entry line folds
+    when the wall node below only drops — the element plane turns about the entry line); deeper wall nodes keep the depth.
+    Pass 2.. re-checks only elements with a node whose factor changed (the others are as in pass 1 — exact). If passes run
+    out with elements still flagged by inversion / area / concave (a corner flat to ~1e-5 at rest folds under any
+    motion): their moving nodes are frozen (plan 0; normal 0 only for wall nodes next to the entry — the shrink limit)
+    and re-checked. -> (plan factor c, normal factor cn, (elements still flagged by inversion / area / concave — 0
+    normal, elements still newly bad by ``qual``)). Same plan factors as ``_corner_guard`` where no quad turns concave and
+    ``qual`` is off."""
+    from .checks import quad_corner_min
+    c = np.ones(M.n)
+    cn = np.ones(M.n)
+    el = np.asarray(el, bool)
+    if not el.any() or ext <= 0:
+        return c, cn, (0, 0)
+    un = (U @ M.n0)[:, None] * M.n0[None, :]
+    upl = U - un
+    shrink, iters = float(cg["shrink"]), int(cg["iters"])
+    one = dict(cg, iters=1)
+    ne = M.nmask(M.emask_of_nodes(entry))               # nodes of elements touching the entry
+
+    def flagged(sub):
+        idx = np.flatnonzero(sub)
+        C = M.C[idx]
+        Ud = un * cn[:, None] + upl * c[:, None]
+        cs = _corner_guard(M, sub, Ud, moved, ext, one, flip_deg)
+        bc = np.zeros(idx.size, bool)
+        qi = np.flatnonzero(C[:, 3] >= 0)
+        if qi.size:
+            Cq = C[qi]
+            nq0 = np.cross(M.X[Cq[:, 2]] - M.X[Cq[:, 0]], M.X[Cq[:, 3]] - M.X[Cq[:, 1]])
+            cq0 = (quad_corner_min(M.X, Cq) > 0.0) & (quad_corner_min(M.X, Cq, nq0) > 0.0)
+            for sgn in (1.0, -1.0):
+                X1 = M.X + sgn * ext * Ud
+                bc[qi] |= cq0 & (np.minimum(quad_corner_min(X1, Cq), quad_corner_min(X1, Cq, nq0)) <= 0.0)
+        nd = np.unique(C[bc][C[bc] >= 0])
+        bq = _qual_new_bad(M, C, Ud, ext, qual) if qual else np.zeros(idx.size, bool)
+        ndq = np.unique(C[bq][C[bq] >= 0])
+        bqe = bq & (entry[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)       # entry-fillet elements: wall normal too
+        ndqe = np.unique(C[bqe][C[bqe] >= 0])
+        ndq_w = ndqe[moved[ndqe] & wall[ndqe]]
+        sn = cs < 1.0
+        left = bc | (sn[np.where(C >= 0, C, 0)] & (C >= 0)).any(axis=1)
+        return cs, nd[moved[nd]], ndq[moved[ndq]], ndq_w, (int(left.sum()), int(bq.sum()))
+    sub = el
+    for _ in range(iters):
+        cs, nd, ndq, ndq_w, _left = flagged(sub)
+        if (cs >= 1.0).all() and nd.size == 0 and ndq.size == 0:
+            return c, cn, (0, 0)
+        pl = cs < 1.0
+        pl[nd] = True
+        pl[ndq] = True
+        c[pl] *= shrink
+        cn[nd[wall[nd]]] *= shrink
+        cn[ndq_w] *= shrink
+        sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
+    # shrink^iters did not settle (a corner flat to ~1e-5 at rest folds under any motion): freeze the moving nodes of
+    # the elements still flagged by the inversion / area / concave criteria (the limit of the shrink), re-check
+    for _ in range(iters):
+        cs, nd, _ndq, _w, (left, _ql) = flagged(sub)
+        if left == 0:
+            break
+        c[cs < 1.0] = 0.0
+        c[nd] = 0.0
+        cn[nd[wall[nd] & ne[nd]]] = 0.0                  # depth frozen only next to the entry (fillet slivers)
+        sub = el & M.emask_of_nodes((c < 1.0) | (cn < 1.0))
+    return c, cn, flagged(sub)[4]
+
+
 def _var_ext(rng, nominal):
     lo, hi = (float(v) for v in rng)
     return max(abs(hi - nominal), abs(lo - nominal))
@@ -187,7 +306,9 @@ def _var_ext(rng, nominal):
 
 def basis(graph, labels, nodes, beads, ranges, cfg=None, fixed=None, elems=None) -> list[dict]:
     """-> [{name, kind, nominal, idx (int64), vec (float64 (k,3)), zone (int64 allowed nodes), info{…}}].
-    beads = [{name, kind 'D'|'W', segs [segment id…], zones? [junction-zone id…], hold 0|1}];
+    beads = [{name, kind 'D'|'W'|'DF'|'W1', segs [segment id…], zones? [junction-zone id…], hold 0|1}] (DF = depth with
+    the floor width kept and the flank angle kept — the entry widens; W1 = one-sided entry width — esl contract
+    esl_bead_depth_mode.md §1.2.1·§1.6.3; W1 items may carry ``ramp: "end"`` and ``min_nodes``);
     ranges = {name: [lo, hi]} default ranges (fix the ramp / corner guard — BG-D-24·26). elems is required
     (connectivity; same array given to ``classify``)."""
     if elems is None:
@@ -199,8 +320,20 @@ def basis(graph, labels, nodes, beads, ranges, cfg=None, fixed=None, elems=None)
         fx = np.asarray(fixed, np.int64)
         fixed_mask[fx[(fx >= 0) & (fx < M.n)]] = True
     out = []
+    edge_n = None
     for b in beads:
-        out.append(_one(M, b, ranges, cfg, fixed_mask))
+        k = b["kind"]
+        if k == "DF":
+            out.append(_one_df(M, b, ranges, cfg, fixed_mask))
+        elif k == "W1":
+            if edge_n is None:
+                from .oneside import outer_edge_nodes
+                edge_n = outer_edge_nodes(M)
+            out.append(_one_w1(M, b, ranges, cfg, fixed_mask, edge_n))
+        elif k in ("D", "W"):
+            out.append(_one(M, b, ranges, cfg, fixed_mask))
+        else:
+            raise ValueError(f"bead {b.get('name')}: unknown kind {k!r}")
     return out
 
 
@@ -277,32 +410,7 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
         # parent blend band
         bl = cfg["blend"]
         Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext / 2.0, 3.0 * h)
-        pf = M.nmask(Z["parent_floor"]) & ~E & ~nF & ~nW
-        others = ~(Z["parent_floor"] | ZF | ZW | ZI)
-        isl = lab["island"]
-        on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == p and not i["straddle"]]
-        others &= ~np.isin(isl, on_par)
-        n_oth = M.nmask(others)
-        pf &= ~n_oth
-        info["blend_mm"] = Rw
-        if ent_idx.size and pf.any():
-            cand = np.flatnonzero(pf)
-            de, je = cKDTree(M.P[ent_idx]).query(M.P[cand])
-            sel = de < Rw
-            bidx = cand[sel]
-            w = 1.0 - U.smoothstep(de[sel] / Rw)
-            if n_oth.any():
-                do, _ = cKDTree(M.P[n_oth]).query(M.P[bidx])
-                clip = do < Rw
-                if clip.any():
-                    info["warnings"].append({"code": "SELECT_BLEND_CLIPPED", "R_mm": U.f3(Rw),
-                                             "d_other_mm": U.f3(float(do.min()))})
-                w = w * U.smoothstep(do / Rw)
-            Uv[bidx] = Uv[ent_idx[je[sel]]] * w[:, None]
-            band[bidx] = True
-            # parent-floor islands touched by the band move rigidly with it
-            bi = np.unique(isl[M.emask_of_nodes(band) & (isl >= 0)])
-            info["band_islands"] = [int(x) for x in bi if int(x) in on_par]
+        band, on_par = _band(M, Z, Rw, ent_idx, Uv, info)
     # harmonic extension of the in-plane part over the floor (Dirichlet: edge / wall values, everything not interior)
     Lf = M.laplacian(ZF)
     dir_zero = (nC | nSC | nI | J | M.nmask(~(ZF | ZW)) & ~E)
@@ -365,10 +473,470 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
     Uv[J] = 0.0
     if kind == "D":
         Uv[E] = 0.0
-    # islands rigid (BG-D-29) — straddling ones with the foreign contact band (BG-D-27)
+    _islands(M, Z, b, Uv, info, nF | band, nW, mov, fixed_mask)
+    isl = lab["island"]
+    # exact zero outside A_v (structural — BG-D-32 checks the same node rule, BG-D-47)
+    Uv[~(allowed_n & mov)] = 0.0
+    # achieved nodes (BG-D-33)
+    island_nodes = M.nmask((isl >= 0))
+    if kind == "D":
+        ach = nF & (phi >= 1.0) & (psi >= 1.0) & (c >= 1.0) & ~island_nodes & ~E
+        nf_full = nF & (phi >= 1.0) & ~island_nodes & ~E
+        info["achieved_idx"] = np.flatnonzero(ach)
+        info["achieved_ratio"] = float(ach.sum() / max(int(nf_full.sum()), 1))
+        if not ach.any():
+            info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
+            info["short"] = True
+    else:
+        mid = np.zeros(M.n, bool)
+        idx = np.flatnonzero(E & (phi >= 1.0) & (psi >= 1.0) & straight)
+        if idx.size:
+            _d, _n, inn = _skeleton_dist(M, S, M.P[idx])
+            mid[idx[inn]] = True
+        info["achieved_idx"] = np.flatnonzero(mid)
+        if not mid.any():
+            info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
+            info["short"] = True
+    info["hold_n_fixed"] = n_hold
+    info["band_n"] = int(band.sum())
+    nz = np.flatnonzero(np.any(Uv != 0.0, axis=1))
+    return {"name": b["name"], "kind": kind, "nominal": nominal, "idx": nz.astype(np.int64), "vec": Uv[nz],
+            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
+            "zones": sorted(int(z) for z in (b.get("zones") or ()))}
+
+
+def _common(M: Mesh, b: dict, Z: dict, nominal: float, ranges: dict, cfg: dict, ext_band_k: float):
+    """shared prelude of DF / W1: range ext, ramp length L (ext_eff = ext), info skeleton."""
+    mc = cfg["morph"]
+    h = max(M.h_mm, 1e-6)
+    rng = ranges.get(b["name"]) if ranges else None
+    ext = _var_ext(rng, nominal) if rng else 0.3 * nominal
+    L = max(float(mc["ramp_k"]) * ext, float(mc["ramp_k"]) * h)
+    rel = float(M.floors[Z["floor"]]["rel_height"])
+    info = {"ramp_mm": L, "ext": ext, "sign": 1.0 if rel >= 0 else -1.0, "warnings": [],
+            "shared_children": Z["shared"], "children": Z["exclusive"], "islands": Z["islands"],
+            "straddle": list(Z["straddle"]), "zones_in": Z["zones_in"]}
+    return h, ext, L, info
+
+
+def _allowed_wide(M: Mesh, Z: dict):
+    """A_DF / A_W1 element set = the zone's allowed elements ∪ parent floor ∪ the parent's non-straddling islands."""
+    isl = M.lab["island"]
+    on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == Z["parent"] and not i["straddle"]]
+    return Z["allowed_el"] | Z["parent_floor"] | (np.isin(isl, on_par) & (isl >= 0))
+
+
+def _seg_nodes(M: Mesh, Z: dict) -> dict:
+    """{segment id: node mask of that segment's Z_F ∪ Z_W elements} (junction-zone / island elements = −1, excluded)."""
+    seg = M.lab["segment"]
+    el = Z["ZF"] | Z["ZW"]
+    return {s: M.nmask(el & (seg == s)) for s in Z["S"]}
+
+
+def _one_df(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> dict:
+    """kind DF (esl contract esl_bead_depth_mode.md §1.2.1, DM-21): floor = s·n0 (plan 0 — rigid, no harmonic, no corner
+    guard), walls + entry about the nearest floor-edge node: normal s·(1 − clip(h/D_col)), plan r·n_out with
+    r = (x − x_f)_plan·n_out / D_col (entry: D_col = h -> cotθ_local), so each column keeps its own flank angle and the
+    entry widens by cotθ·ΔD; parent blend band from E, ramp / hold as D, E not zeroed."""
+    Z = bead_zones(M, b["segs"], b.get("zones") or (), "D")
+    lab = M.lab
+    S = Z["S"]
+    lens = np.array([float(M.segs[x]["length"] or 1.0) for x in S])
+    nominal = float(np.sum(lens * np.array([float(M.segs[x]["D"]) for x in S])) / lens.sum())
+    h, ext, L, info = _common(M, b, Z, nominal, ranges, cfg, 1.0)
+    s = info["sign"]
+    mc = cfg["morph"]
+    nF, nW, E, J = Z["nF"], Z["nW"], Z["E"], Z["J"]
+    ZF, ZW, ZC, ZSC = Z["ZF"], Z["ZW"], Z["ZC"], Z["ZSC"]
+    nC = M.nmask(ZC)
+    Uv = np.zeros((M.n, 3))
+    edge = nF & nW & ~E
+    walln = nW & ~E & ~nF
+    hm = edge | walln
+    D = max(nominal, 1e-9)
+    # floor (+ exclusive children rigid): s·n0, plan 0
+    Uv[nF] = s * M.n0
+    Uv[nC & ~hm & ~E] = s * M.n0
+    col = walln | E
+    cidx = np.flatnonzero(col)
+    rE = np.zeros(M.n)
+    rS = np.zeros(M.n)
+    rRaw = np.zeros(M.n)
+    info["entry_clipped_n"] = 0
+    eidx = np.flatnonzero(edge)
+    if cidx.size and eidx.size:
+        _d, j = cKDTree(M.P[eidx]).query(M.P[cidx])
+        xf = M.X[eidx[j]]
+        dx = M.X[cidx] - xf
+        hh = np.abs(dx @ M.n0)
+        isE = E[cidx]
+        Dcol = np.where(isE, np.where(hh > 1e-6, hh, D), D)
+        tt = 1.0 - np.clip(hh / Dcol, 0.0, 1.0)
+        tt[isE] = 0.0
+        # outward direction: own-segment interior skeleton normal, else the chord (x − x_f) in plan
+        mv = E | edge | walln
+        idx = np.flatnonzero(mv)
+        _bd, nsk, inner, _sd, sid = _skel_full(M, S, M.P[idx])
+        own = _seg_nodes(M, Z)
+        ok = inner & (sid >= 0)
+        for sg_, msk in own.items():
+            sel = sid == sg_
+            ok[sel] &= msk[idx[sel]]
+        _de, je = cKDTree(M.P[eidx]).query(M.P[idx])
+        ch = M.P[idx] - M.P[eidx[je]]
+        chn = np.linalg.norm(ch, axis=1)
+        chord = np.where(chn[:, None] > 1e-12, ch / np.maximum(chn, 1e-12)[:, None], 0.0)
+        nref = np.where(ok[:, None], nsk, chord)
+        nout = _smooth_dirs(M, ZW | ZF, mv, idx, nref, int(mc["w_smooth_iters"]))
+        pos = -np.ones(M.n, np.int64)
+        pos[idx] = np.arange(idx.size)
+        no_c = nout[pos[cidx]]
+        dpl = np.c_[dx @ M.e1, dx @ M.e2]
+        r = np.einsum("ij,ij->i", dpl, no_c) / Dcol
+        # columns without an own interior skeleton projection (segment ends, corners, junction sides) use the chord to
+        # the nearest floor-edge node, which overshoots where the floor edge stops short (ring corners): cap their r at
+        # the largest r of the interior entry columns (contract correction — work/findings.md DM-C1-1)
+        okc = ok[pos[cidx]]
+        ri = r[isE & okc]
+        if ri.size and (~okc).any():
+            cap = float(ri.max()) * np.where(isE, 1.0, np.maximum(1.0 - tt, 0.0))
+            r = np.where(okc, r, np.minimum(r, cap))
+            info["chord_capped_n"] = int(((~okc) & (r >= cap - 1e-15) & (cap > 0)).sum())
+        # DM-30 entry r smoothed along the entry line (same-facing entry nodes only), DM-31 neighbour-gap factor κ_o;
+        # walls follow their column's entry (plan-nearest E): plan = (1 − t)·r_e·n_out
+        eI = cidx[isE]
+        r_raw = r[isE]
+        n_e = no_c[isE]
+        r_s, kap_o, n_clip = _entry_fix(M, Z, eI, r_raw, n_e, h, ext, b)
+        r_e = r_s * kap_o
+        rr = np.zeros(cidx.size)
+        rr[isE] = r_e
+        wl = ~isE
+        if wl.any() and eI.size:
+            _dw, jw = cKDTree(M.P[eI]).query(M.P[cidx[wl]])
+            rr[wl] = np.maximum(1.0 - tt[wl], 0.0) * r_e[jw]
+        Uv[cidx] = (s * tt)[:, None] * M.n0 + _plan3(M, rr[:, None] * no_c)
+        rE[eI] = r_e
+        rS[eI] = r_s
+        rRaw[eI] = r_raw
+        info["entry_clipped_n"] = n_clip
+    elif cidx.size:
+        Uv[cidx] = 0.0
+    # shared child walls on the bead side: height-linear, plan 0 (D rule, overrides — BG_SHARED_CHILD)
+    steep = []
+    if Z["shared"]:
+        cls = lab["cls"]
+        lvF = float(np.median(M.hn[nF])) if nF.any() else float(M.floors[Z["floor"]]["level"])
+        for c in Z["shared"]:
+            cf = M.nmask((lab["floor"] == c) & (cls == CLS["floor"]))
+            lvc = float(np.median(M.hn[cf])) if cf.any() else float(M.floors[c]["level"])
+            cn = M.nmask(ZSC) & ~nF & ~cf
+            tt2 = np.clip(np.abs(M.hn - lvF) / max(abs(lvc - lvF), 1e-9), 0.0, 1.0)
+            Uv[cn] = ((1.0 - tt2[cn]) * s)[:, None] * M.n0
+            info["warnings"].append({"code": "BG_SHARED_CHILD", "level": "info", "child": int(c),
+                                     "n_nodes": int(cn.sum())})
+            foot = np.flatnonzero(M.nmask(ZSC) & nF)
+            if foot.size and cf.any():
+                dr, _ = cKDTree(M.P[cf]).query(M.P[foot])
+                rf = float(np.median(dr))
+                hf = abs(lvc - lvF)
+                if rf > 1e-9:
+                    steep.append([U.f3(np.degrees(np.arctan2(hf, rf))), U.f3(np.degrees(np.arctan2(hf + ext, rf)))])
+    info["steep_deg"] = steep[0] if steep else None
+    # straddling islands: fade the plan part of the walls / entry next to the island (residual R-DM-6)
+    st_ids = [i for i in Z["islands"] if M.islands[i]["straddle"]]
+    if st_ids and cidx.size:
+        sn = M.nmask(np.isin(lab["island"], st_ids))
+        dI, _ = cKDTree(M.P[sn]).query(M.P[cidx])
+        kap = U.smoothstep(dI / (2.0 * max(h, ext)))
+        near = kap < 1.0
+        hn_ = cidx[near]
+        un = (Uv[hn_] @ M.n0)[:, None] * M.n0[None, :]
+        Uv[hn_] = un + kap[near, None] * (Uv[hn_] - un)
+        info["straddle_fade_n"] = int(near.sum())
+    # parent blend band from E (normal 0 -> plan only)
+    bl = cfg["blend"]
+    ent_idx = np.flatnonzero(E)
+    r_max = float(rE[ent_idx].max()) if ent_idx.size else 0.0
+    Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext * r_max, 3.0 * h)
+    band, _on_par = _band(M, Z, Rw, ent_idx, Uv, info, mix_h=h, isl_obstacle=True)
+    A_el = _allowed_wide(M, Z)
+    allowed_n = M.nmask(A_el) | band
+    if info.get("band_islands"):
+        allowed_n |= M.nmask(np.isin(lab["island"], info["band_islands"]))
+    mov = movable_nodes(M, A_el)
+    psi, n_hold = (_hold(M, allowed_n, fixed_mask, cfg) if int(b.get("hold", 1)) else (np.ones(M.n), 0))
+    phi = _ramp(M, J, np.flatnonzero(allowed_n), L)
+    Uv *= (phi * psi)[:, None]
+    Uv[J] = 0.0
+    _islands(M, Z, b, Uv, info, nF | band, nW, mov, fixed_mask)
+    Uv[~(allowed_n & mov)] = 0.0
+    # DF entry guard (DM-32 — BG-D-26 device on the entry side): elements DF moves in plan (walls + parent-floor
+    # elements touching the entry or the band, floor excluded) — at ±ext an area ratio < area_ratio_min or an inverted
+    # element shrinks the plan part of its moving nodes (entry ∪ walls ∪ band); factor frozen in the basis (linear)
+    gmov = (E | walln | band) & allowed_n & mov
+    gel = (ZW | M.emask_of_nodes(E | band)) & ~ZF
+    info["entry_guard_n"] = 0
+    info["entry_guard_left"] = 0
+    info["entry_guard_qual_left"] = 0
+    if gmov.any() and gel.any():
+        qual = {"jac_min": b.get("guard_jac_min"), "tri_angle_min_deg": b.get("guard_tri_angle_min_deg")}
+        qual = {k: float(v) for k, v in qual.items() if v is not None} or None
+        cE, cN, (info["entry_guard_left"], info["entry_guard_qual_left"]) = _df_entry_guard(
+            M, gel, Uv, gmov, walln, E, ext, mc["corner"], float(cfg["quality"]["flip_deg"]), qual)
+        if (cE < 1.0).any():
+            un = (Uv @ M.n0)[:, None] * M.n0[None, :]
+            Uv = un * cN[:, None] + (Uv - un) * cE[:, None]
+            info["entry_guard_n"] = int((cE < 1.0).sum())
+            info["entry_guard_wall_n"] = int((cN < 1.0).sum())
+            info["warnings"].append({"code": "DF_ENTRY_GUARD", "level": "info", "n_nodes": info["entry_guard_n"],
+                                     "steep_max_deg": U.f3(_flank_change_deg(M, ZW & M.emask_of_nodes(cE < 1.0),
+                                                                             Uv, ext))})
+    isl = lab["island"]
+    island_nodes = M.nmask((isl >= 0))
+    ach = nF & (phi >= 1.0) & (psi >= 1.0) & ~island_nodes & ~E
+    nf_full = nF & (phi >= 1.0) & ~island_nodes & ~E
+    info["achieved_idx"] = np.flatnonzero(ach)
+    info["achieved_ratio"] = float(ach.sum() / max(int(nf_full.sum()), 1))
+    if not ach.any():
+        info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
+        info["short"] = True
+    info["corner_n"] = 0
+    # diagnostics (§2.6): cot of the full-ramp entry columns, floor plan max, entry wave, own walls without entry top
+    full = E & (phi >= 1.0) & (psi >= 1.0)
+    cots = rS[full]
+    info["cot_min"] = U.f3(float(cots.min())) if cots.size else None
+    info["cot_med"] = U.f3(float(np.median(cots))) if cots.size else None
+    info["cot_max"] = U.f3(float(cots.max())) if cots.size else None
+    plan = Uv - (Uv @ M.n0)[:, None] * M.n0[None, :]
+    pn = np.linalg.norm(plan, axis=1)
+    fl = nF & (phi >= 1.0) & (psi >= 1.0)
+    info["floor_plan_max_mm"] = U.f3(float(pn[fl].max()) * ext) if fl.any() else 0.0
+    dv = (rS - rRaw)[full]
+    info["angle_dev_mm"] = U.f3(float(np.sqrt(np.mean(dv * dv))) * ext) if dv.size else 0.0
+    info["wall_no_entry_n"] = int((walln & J).sum())
+    info["hold_n_fixed"] = n_hold
+    info["hold_pinch_n"] = int((E & (psi < 1.0)).sum())
+    info["band_n"] = int(band.sum())
+    nz = np.flatnonzero(np.any(Uv != 0.0, axis=1))
+    return {"name": b["name"], "kind": "DF", "nominal": nominal, "idx": nz.astype(np.int64), "vec": Uv[nz],
+            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
+            "zones": sorted(int(z) for z in (b.get("zones") or ()))}
+
+
+def _entry_fix(M: Mesh, Z: dict, eI: np.ndarray, r_raw: np.ndarray, n_e: np.ndarray, h: float, ext: float, b: dict):
+    """DF entry (esl contract §1.2.1 — DM-30·31): r_s = gaussian-weighted mean of r_raw over the bead's entry nodes
+    facing the same way (n_out·n_out' > 0), ρ = entry_smooth_rel·h (0 = none); κ_o = min(1, entry_gap_rel·d_o/(r_s·ext))
+    with d_o = plan distance to the other zones (the band's ``others``), smoothed with the same weights, frozen in the
+    basis (linear). -> (r_s, κ_o, number of entry nodes with raw κ_o < 1)."""
+    sm = float(b.get("entry_smooth_rel", DF_ENTRY["entry_smooth_rel"]))
+    gap = float(b.get("entry_gap_rel", DF_ENTRY["entry_gap_rel"]))
+    n = eI.size
+    if n == 0:
+        return r_raw.copy(), np.ones(0), 0
+    rho = sm * h
+    W = None
+    if rho > 0.0 and n > 1:
+        tree = cKDTree(M.P[eI])
+        pairs = tree.sparse_distance_matrix(tree, ENTRY_SMOOTH_CUT * rho, output_type="coo_matrix")
+        i, j, d = pairs.row, pairs.col, pairs.data
+        keep = np.einsum("ij,ij->i", n_e[i], n_e[j]) > 0.0
+        i, j, d = i[keep], j[keep], d[keep]
+        from scipy import sparse as _sp
+        W = _sp.coo_matrix((np.exp(-(d / rho) ** 2), (i, j)), shape=(n, n)).tocsr()
+        W = W + _sp.identity(n, format="csr") - _sp.diags(W.diagonal())      # self weight exp(0) = 1 exactly
+
+    def smooth(v):
+        if W is None:
+            return v.copy()
+        return np.asarray(W @ v).ravel() / np.asarray(W.sum(axis=1)).ravel()
+    r_s = smooth(r_raw)
+    n_oth = M.nmask(_others_el(M, Z, True))           # DM-33: parent-floor islands are obstacles (same set as the band)
+    kap = np.ones(n)
+    if n_oth.any():
+        d_o, _ = cKDTree(M.P[n_oth]).query(M.P[eI])
+        m = np.abs(r_s) * ext
+        lim = gap * d_o
+        raw = np.where(m > lim, lim / np.maximum(m, 1e-300), 1.0)
+        n_clip = int((raw < 1.0).sum())
+        if n_clip:
+            kap = np.minimum(smooth(raw), 1.0)
+        return r_s, kap, n_clip
+    return r_s, kap, 0
+
+
+def _one_w1(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, edge_n: np.ndarray) -> dict:
+    """kind W1 (esl contract §1.6.3, DM-13·22): one-sided entry width. Open side (entry ∪ walls ∪ floor edge on the
+    open side of the skeleton) translates ΔW·n_out, fixed side (walls + floor boundary) = 0, floor interior harmonic,
+    ramp ``end`` (fixed-side interior J nodes are not ramp origins), blend band from the open-side entry only."""
+    from .oneside import measure
+    if b.get("ramp", "end") != "end":
+        raise ValueError(f"bead {b['name']}: W1 ramp must be 'end'")
+    Z = bead_zones(M, b["segs"], b.get("zones") or (), "W")
+    lab = M.lab
+    S = Z["S"]
+    mn = int(b.get("min_nodes", 3))
+    osd = measure(M, S, min_nodes=mn, edge_nodes=edge_n)
+    bad = [x for x in S if not osd[x]["ok"]]
+    if bad:
+        raise ValueError(f"bead {b['name']}: W1 needs a one-sided entry on every segment ({bad}: "
+                         f"{[osd[x]['reason'] for x in bad]})")
+    lens = np.array([float(M.segs[x]["length"] or 1.0) for x in S])
+    nominal = float(np.sum(lens * np.array([float(osd[x]["width"]) for x in S])) / lens.sum())
+    h, ext, L, info = _common(M, b, Z, nominal, ranges, cfg, 1.0)
+    mc = cfg["morph"]
+    nF, nW, E, J = Z["nF"], Z["nW"], Z["E"], Z["J"]
+    ZF, ZW, ZC, ZSC, ZI = Z["ZF"], Z["ZW"], Z["ZC"], Z["ZSC"], Z["ZI"]
+    nC, nSC, nI = M.nmask(ZC), M.nmask(ZSC), M.nmask(ZI)
+    Uv = np.zeros((M.n, 3))
+    edge = nF & nW & ~E
+    walln = nW & ~E & ~nF
+    hm = edge | walln
+    sig = {x: float(osd[x]["side"]) for x in S}
+    info["open_side"] = {int(x): int(sig[x]) for x in S}
+    # sides of the bead's floor / wall nodes
+    bnd = nF & (M.nmask(~ZF) | edge_n)
+    cand = np.flatnonzero(hm | E | bnd)
+    _bd, nsk, inner, sd, sid = _skel_full(M, S, M.P[cand])
+    so = np.array([sig.get(int(x), 0.0) for x in sid])
+    openm = np.zeros(M.n, bool)
+    fixm = np.zeros(M.n, bool)
+    is_open = (sd == so) & (sid >= 0)
+    openm[cand[is_open]] = True
+    fixm[cand[~is_open & (sid >= 0)]] = True
+    mvo = (E | hm) & openm
+    fx = (nW | bnd) & fixm & ~mvo
+    idx = np.flatnonzero(mvo)
+    pos = -np.ones(M.n, np.int64)
+    pos[cand] = np.arange(cand.size)
+    nref = nsk[pos[idx]]
+    nout = _smooth_dirs(M, ZW | ZF, mvo, idx, nref, int(mc["w_smooth_iters"]))
+    Uv[idx] = _plan3(M, nout)
+    straight = np.zeros(M.n, bool)
+    straight[idx[np.linalg.norm(nout - nref, axis=1) < 1e-9]] = True
+    bl = cfg["blend"]
+    Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext, 3.0 * h)
+    ent_o = np.flatnonzero(E & openm)
+    band, on_par = _band(M, Z, Rw, ent_o, Uv, info, mix_h=h, isl_obstacle=True)
+    Lf = M.laplacian(ZF)
+    dir_zero = (nC | nSC | nI | J | M.nmask(~(ZF | ZW)) & ~E)
+    free = nF & ~hm & ~E & ~dir_zero & ~band & ~fx
+    Up = np.c_[Uv @ M.e1, Uv @ M.e2, np.zeros(M.n)]
+    Up[fx] = 0.0
+    Up[free] = 0.0
+    Up = _harmonic(Lf, free, Up, cols=(0, 1))
+    Uv[fx] = 0.0
+    Uv[free] = _plan3(M, Up[free, :2])
+    allowed_n = M.nmask(Z["allowed_el"]) | band
+    if info.get("band_islands"):
+        allowed_n |= M.nmask(np.isin(lab["island"], info["band_islands"]))
+    A_el = Z["allowed_el"] | Z["parent_floor"] | (np.isin(lab["island"], on_par) & (lab["island"] >= 0))
+    mov = movable_nodes(M, A_el)
+    psi, n_hold = (_hold(M, allowed_n, fixed_mask, cfg) if int(b.get("hold", 1)) else (np.ones(M.n), 0))
+    # ramp "end": fixed-side interior J nodes are Dirichlet 0 only, not ramp origins
+    Jr = J.copy()
+    jf = np.flatnonzero(J & fixm)
+    if jf.size:
+        _bj, _nj, inj, _sj, _ij = _skel_full(M, S, M.P[jf])
+        Jr[jf[inj]] = False
+    phi = _ramp(M, Jr, np.flatnonzero(allowed_n), L)
+    Uv *= (phi * psi)[:, None]
+    Uv[J] = 0.0
+    _islands(M, Z, b, Uv, info, nF | band, nW, mov, fixed_mask)
+    Uv[~(allowed_n & mov)] = 0.0
+    mid = np.zeros(M.n, bool)
+    ai = np.flatnonzero(E & openm & (phi >= 1.0) & (psi >= 1.0) & straight)
+    if ai.size:
+        _d, _n, inn = _skeleton_dist(M, S, M.P[ai])
+        mid[ai[inn]] = True
+    info["achieved_idx"] = np.flatnonzero(mid)
+    if not mid.any():
+        info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
+        info["short"] = True
+    info["one_side"] = {int(x): {k: osd[x][k] for k in ("side", "width", "floor", "fixed")} for x in S}
+    info["floor_nominal"] = U.f3(float(np.sum(lens * np.array([float(osd[x]["floor"]) for x in S])) / lens.sum()))
+    info["hold_n_fixed"] = n_hold
+    info["hold_pinch_n"] = int((E & openm & (psi < 1.0)).sum())
+    info["band_n"] = int(band.sum())
+    nz = np.flatnonzero(np.any(Uv != 0.0, axis=1))
+    return {"name": b["name"], "kind": "W1", "nominal": nominal, "idx": nz.astype(np.int64), "vec": Uv[nz],
+            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
+            "zones": sorted(int(z) for z in (b.get("zones") or ()))}
+
+
+def _others_el(M: Mesh, Z: dict, isl_obstacle: bool) -> np.ndarray:
+    """"other shapes" element mask of the parent-floor band / DF entry gap: everything outside the parent floor, the bead
+    floor / walls and the bead's islands. W (``isl_obstacle`` False): the parent's non-straddling islands are not
+    others (they move rigidly with the band). DF·W1 (True — esl contract §1.2.1·§1.6.3, DM-33): every island on the
+    parent floor is an obstacle (stays, the band fades next to it, the entry gap d_o sees it)."""
+    others = ~(Z["parent_floor"] | Z["ZF"] | Z["ZW"] | Z["ZI"])
+    if not isl_obstacle:
+        isl = M.lab["island"]
+        on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == Z["parent"] and not i["straddle"]]
+        others &= ~np.isin(isl, on_par)
+    return others
+
+
+def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info: dict, mix_h: float | None = None,
+          isl_obstacle: bool = False):
+    """parent-floor blend band (W·DF·W1 — one internal function, contract esl_bead_depth_mode §9): parent-floor nodes
+    within R_w of the source entry nodes ``src_idx`` copy the nearest source displacement × (1 − smoothstep(d/R_w)),
+    or — ``mix_h`` given (DF·W1, DM-C1-2) — the distance-weighted mix of the up to ``BAND_MIX_K`` nearest sources
+    within R_w, w_k = 1/(d_k² + (0.1h)²) (continuous between facing entry lines; W keeps the nearest copy),
+    clipped near other zones (SELECT_BLEND_CLIPPED); parent-floor islands touched by the band move rigidly with it (W) or
+    — ``isl_obstacle`` (DF·W1, DM-33) — are other zones (stay, the band fades next to them; no ``band_islands``).
+    -> (band node mask, ids of the parent's non-straddling islands). Uv / info updated in place."""
+    lab = M.lab
+    p = Z["parent"]
+    E, nF, nW = Z["E"], Z["nF"], Z["nW"]
+    band = np.zeros(M.n, bool)
+    pf = M.nmask(Z["parent_floor"]) & ~E & ~nF & ~nW
+    isl = lab["island"]
+    on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == p and not i["straddle"]]
+    n_oth = M.nmask(_others_el(M, Z, isl_obstacle))
+    pf &= ~n_oth
+    info["blend_mm"] = Rw
+    if src_idx.size and pf.any():
+        cand = np.flatnonzero(pf)
+        tree = cKDTree(M.P[src_idx])
+        de, je = tree.query(M.P[cand])
+        sel = de < Rw
+        bidx = cand[sel]
+        w = 1.0 - U.smoothstep(de[sel] / Rw)
+        if mix_h is not None and bidx.size:
+            kk = min(BAND_MIX_K, int(src_idx.size))
+            dk, jk = tree.query(M.P[bidx], k=kk)
+            dk = dk.reshape(bidx.size, kk)
+            jk = jk.reshape(bidx.size, kk)
+            wk = np.where(dk < Rw, 1.0 / (dk * dk + (BAND_MIX_EPS_H * mix_h) ** 2), 0.0)
+            umix = np.einsum("ik,ikj->ij", wk, Uv[src_idx[np.minimum(jk, src_idx.size - 1)]]) / wk.sum(axis=1)[:, None]
+        if n_oth.any():
+            do, _ = cKDTree(M.P[n_oth]).query(M.P[bidx])
+            clip = do < Rw
+            if clip.any():
+                info["warnings"].append({"code": "SELECT_BLEND_CLIPPED", "R_mm": U.f3(Rw),
+                                         "d_other_mm": U.f3(float(do.min()))})
+            w = w * U.smoothstep(do / Rw)
+        if mix_h is not None and bidx.size:
+            Uv[bidx] = umix * w[:, None]
+        else:
+            Uv[bidx] = Uv[src_idx[je[sel]]] * w[:, None]
+        band[bidx] = True
+        if not isl_obstacle:
+            bi = np.unique(isl[M.emask_of_nodes(band) & (isl >= 0)])
+            info["band_islands"] = [int(x) for x in bi if int(x) in on_par]
+    return band, on_par
+
+
+def _islands(M: Mesh, Z: dict, b: dict, Uv: np.ndarray, info: dict, rim_src: np.ndarray, nW: np.ndarray,
+             mov: np.ndarray, fixed_mask: np.ndarray):
+    """islands rigid (BG-D-29) — straddling ones with the foreign contact band (BG-D-27). Uv / info in place."""
+    lab = M.lab
+    cls = lab["cls"]
+    ZF, ZC = Z["ZF"], Z["ZC"]
+    h = max(M.h_mm, 1e-6)
     isl = lab["island"]
     island_ids = list(Z["islands"]) + list(info.get("band_islands", []))
-    rim_src = nF | band
     held = []
     for iid in sorted(set(island_ids)):
         e = isl == iid
@@ -406,34 +974,21 @@ def _one(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray) -> d
             Uv[nd] = t_                                  # fully rigid (rim included — SR-D-5, residual 0)
     for iid in held:
         info["warnings"].append({"code": "BG_ISLAND_HELD", "level": "info", "island": int(iid)})
-    # exact zero outside A_v (structural — BG-D-32 checks the same node rule, BG-D-47)
-    Uv[~(allowed_n & mov)] = 0.0
-    # achieved nodes (BG-D-33)
-    island_nodes = M.nmask((isl >= 0))
-    if kind == "D":
-        ach = nF & (phi >= 1.0) & (psi >= 1.0) & (c >= 1.0) & ~island_nodes & ~E
-        nf_full = nF & (phi >= 1.0) & ~island_nodes & ~E
-        info["achieved_idx"] = np.flatnonzero(ach)
-        info["achieved_ratio"] = float(ach.sum() / max(int(nf_full.sum()), 1))
-        if not ach.any():
-            info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
-            info["short"] = True
-    else:
-        mid = np.zeros(M.n, bool)
-        idx = np.flatnonzero(E & (phi >= 1.0) & (psi >= 1.0) & straight)
-        if idx.size:
-            _d, _n, inn = _skeleton_dist(M, S, M.P[idx])
-            mid[idx[inn]] = True
-        info["achieved_idx"] = np.flatnonzero(mid)
-        if not mid.any():
-            info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
-            info["short"] = True
-    info["hold_n_fixed"] = n_hold
-    info["band_n"] = int(band.sum())
-    nz = np.flatnonzero(np.any(Uv != 0.0, axis=1))
-    return {"name": b["name"], "kind": kind, "nominal": nominal, "idx": nz.astype(np.int64), "vec": Uv[nz],
-            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
-            "zones": sorted(int(z) for z in (b.get("zones") or ()))}
+
+
+def _flank_change_deg(M: Mesh, el, Uv, ext) -> float:
+    """max change of the wall angle (deg from the plane) at +ext over the elements ``el`` (DF_ENTRY_GUARD report)."""
+    idx = np.flatnonzero(el)
+    if idx.size == 0:
+        return 0.0
+    C = M.C[idx]
+
+    def ang(X1):
+        a, b2, d = X1[C[:, 0]], X1[C[:, 1]], X1[C[:, 2]]
+        n = np.cross(b2 - a, d - a)
+        n /= np.maximum(np.linalg.norm(n, axis=1), 1e-12)[:, None]
+        return np.degrees(np.arccos(np.clip(np.abs(n @ M.n0), 0, 1)))
+    return float(np.abs(ang(M.X + ext * Uv) - ang(M.X)).max())
 
 
 def _flank_max_deg(M: Mesh, ZW, Uv, ext):

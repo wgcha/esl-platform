@@ -37,6 +37,8 @@ _MODULES = {
     "doe_bead_graph": "esl.doe.bead_graph",
     # v0.21.0 BEAD_SHAPE: 형상 규칙 해석(resolve_shape — 스냅샷 doe.shape_rules 생성, esl_bead_shape_v021.md §2.1)
     "doe_transfer_plan": "esl.doe.transfer_plan",
+    # v0.24.7 DM(esl_bead_depth_mode.md §6.1): 복제 키 결정 clone_depth·w_reason_doc — 순수(esl.morph.section, 계획 표는 코어 소유)
+    "morph_section": "esl.morph.section",
     # v0.22.0 REDROP(esl_redrop_bundle.md §5.3): rd_prepare(동기 호출 전용 — 워커 STAGES 에는 없음)·공용 계산
     "verify_stages": "esl.verify.stages", "verify_redrop": "esl.verify.redrop",
     # 이슈 #53: 원자적 교체 공통 함수(atomic_replace·FileLocked·configure) — esl_platform.core.atomic 이 재노출

@@ -3160,6 +3160,41 @@
         "title": "DoeCheckOut",
         "type": "object"
       },
+      "DoeCloneIn": {
+        "additionalProperties": false,
+        "description": "v0.24.7 DM §6.1 복제 본문 {title?, depth_section?} — 모르는 키·값 422. depth_section 은 select 시나리오만(그 밖 422 INVALID_PARAMS).",
+        "properties": {
+          "depth_section": {
+            "anyOf": [
+              {
+                "enum": [
+                  "entry_fixed",
+                  "floor_fixed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth Section"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "DoeCloneIn",
+        "type": "object"
+      },
       "DoeFileOut": {
         "properties": {
           "downloadable": {
@@ -5624,6 +5659,35 @@
             ],
             "title": "Compare Reason"
           },
+          "depth_section": {
+            "anyOf": [
+              {
+                "enum": [
+                  "entry_fixed",
+                  "floor_fixed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth Section"
+          },
+          "depth_section_notes": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth Section Notes"
+          },
           "doe": {
             "additionalProperties": true,
             "title": "Doe",
@@ -5896,6 +5960,21 @@
               }
             ],
             "title": "Cell Size Mm"
+          },
+          "depth_section": {
+            "anyOf": [
+              {
+                "enum": [
+                  "entry_fixed",
+                  "floor_fixed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth Section"
           },
           "entry_ids": {
             "items": {
@@ -17756,7 +17835,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.24.6"
+    "version": "0.24.7"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -19466,7 +19545,7 @@
     },
     "/esl/api/doe/studies/{sid}/clone": {
       "post": {
-        "description": "같은 입력으로 새 연구 + DOE_PREP(본문 {title?}).",
+        "description": "같은 입력으로 새 연구 + DOE_PREP(본문 {title?, depth_section?} — 모르는 키·값 422, depth_section 은 select 만, v0.24.7 §6.1).",
         "operationId": "doe_clone_esl_api_doe_studies__sid__clone_post",
         "parameters": [
           {
@@ -19485,8 +19564,7 @@
               "schema": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/DoeCloneIn"
                   },
                   {
                     "type": "null"

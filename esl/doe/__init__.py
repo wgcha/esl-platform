@@ -245,6 +245,11 @@ DEFAULTS: dict = {
                                                "max_vars": 120}},
                     "mesh_route": {"relaxed_direct": {"enabled": True, "min_faces": 1500, "min_step_mb": None},
                                    "rank_quality": {"fail_ratio": 0.10, "tria_pct": None}}},
+    # v0.24.7 DM(esl_bead_depth_mode.md §5.2) — 새 select 스터디의 비드 깊이 단면 동작(스냅샷 params.doe.depth_section 에 고정,
+    # 키 없는 옛 스냅샷 = esl.morph.section.LEGACY_DEPTH_SECTION). 최상위 새 키(해시 대상 절 불변) — pydantic·두 yaml 거울
+    "depth_section": "floor_fixed",
+    "depth_section_rules": {"theta_min_deg": 15.0, "theta_spread_deg": 5.0, "one_side_min_nodes": 3,
+                            "entry_smooth_rel": 3.0, "entry_gap_rel": 0.5},   # v0.24.7 DM-30·31 DF 입구 평활·이웃 간격
     # v0.22.0 REDROP(esl_redrop_bundle.md §6) — 재낙하 입력 묶음 받기(pydantic BeadDoeRedropCfg·두 yaml 거울 — 같은 이름)
     "redrop": {"enabled": True, "name_max_chars": 40, "tmp_ttl_s": 3600, "base_coord_tol_mm": 0.0},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —

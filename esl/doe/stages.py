@@ -342,8 +342,16 @@ def _features(c: Ctx) -> dict:
 
 def _params_out(c: Ctx, doc: dict, frame: dict) -> dict:
     opts = c.cfg["paicad"].get("options") or {}
-    return {"beads": pio.beads_table(doc, frame), "params": pio.params_table(doc, opts),
-            "warnings": pio.extract_warnings(doc)}
+    out = {"beads": pio.beads_table(doc, frame), "params": pio.params_table(doc, opts),
+           "warnings": pio.extract_warnings(doc)}
+    dsv, dsr = _ds(c)
+    if dsr is not None:                          # v0.24.7 DM §1.4·§4.3: floor_fixed 스냅샷만(entry_fixed 바이트 불변)
+        out["warnings"] += pio.section_info(dsv)
+        wr = pio.w_reasons(doc, opts)
+        for b in out["beads"]:
+            if wr.get(b["id"]):
+                b["w_reason"] = {"code": wr[b["id"]]}
+    return out
 
 
 def bd_loads(spec: dict, echo=print) -> dict:
@@ -2694,6 +2702,19 @@ def _shape(c: Ctx) -> dict | None:
         d = getattr(c, "D", None)                    # D 없는 최소 Ctx(단위 시험 스텁) = 키 없음 = legacy
         c._shape_rules = tp.resolve_shape(d.get("shape_rules") if isinstance(d, dict) else None, getattr(c, "cfg", None))
     return c._shape_rules
+
+
+def _ds(c: Ctx) -> tuple[str | None, dict | None]:
+    """v0.24.7 DM(§1.1): 스냅샷 ``doe.depth_section``(None = 키 없음 = entry_fixed 옛 동작) + rules(floor_fixed 일 때만 — 스냅샷
+    ``depth_section_rules``, 없으면 지금 설정). 모르는 값 = CONFIG_INVALID."""
+    from esl.morph import section as sec
+    d = getattr(c, "D", None)
+    v = d.get("depth_section") if isinstance(d, dict) else None
+    if not sec.is_floor(v):
+        return v, None
+    now = getattr(c, "cfg", {}).get("depth_section_rules") or {}
+    r = {**now, **(d.get("depth_section_rules") or {})}       # 개정 전 스냅샷의 빠진 키 = 지금 설정(DM-30·31)
+    return v, r
 
 
 def _bs(c: Ctx, col: str) -> str:
@@ -6628,7 +6649,9 @@ def _sel_w_clamp(c: Ctx, mesh: dict, fids, sd: str, echo) -> str | None:
     from esl.doe import bead_graph as bgr
     try:
         graph, labels = bgr.load_graph(c.p("prep"))
-        doc = bgr.w_clamp_table(mesh, graph, labels, fids, c.cfg, shape_rules=_shape(c))   # v0.21.0: w_partial 이면 S_W 후보
+        dsv, dsr = _ds(c)                                  # v0.24.7 DM: floor_fixed 만 키 전달(entry_fixed 호출 불변)
+        doc = bgr.w_clamp_table(mesh, graph, labels, fids, c.cfg, shape_rules=_shape(c),   # v0.21.0: w_partial 이면 S_W 후보
+                                **({"depth_section": dsv, "section_rules": dsr} if dsr is not None else {}))
     except EslError as exc:
         echo(f"[bd_loads] W 기본 범위 점검 건너뜀({exc.code})")
         return None
@@ -6659,7 +6682,9 @@ def _sel_range_guard(c: Ctx, mesh: dict, fids, sd: str, echo, warns: list, info:
     t0 = time.monotonic()
     try:
         graph, labels = bgr.load_graph(c.p("prep"))
-        doc = bgr.range_guard_table(mesh, graph, labels, fids, c.cfg, _shape(c), seed=seed, exclude_segs=exclude_segs)
+        dsv, dsr = _ds(c)                                  # v0.24.7 DM §2.2: floor_fixed 만 키 전달(entry_fixed 표 바이트 불변)
+        doc = bgr.range_guard_table(mesh, graph, labels, fids, c.cfg, _shape(c), seed=seed, exclude_segs=exclude_segs,
+                                    **({"depth_section": dsv, "section_rules": dsr} if dsr is not None else {}))
     except Exception as exc:                      # noqa: BLE001 - 계산 실패가 준비를 막지 않음(SH-17)
         code = str(exc.code) if isinstance(exc, EslError) else type(exc).__name__
         echo(f"[bd_loads] 변수 범위 품질 점검 실패({code}: {str(exc)[:200]}) — 범위 축소 없이 진행")
@@ -6788,7 +6813,10 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                 bj.get("algo", 1) == bsel.ALGO and \
                 (not v2 or (bj.get("graph_algo") == _bgr().GRAPH_ALGO and           # v0.17.0 BG-D-39 재사용 조건
                             bj.get("morph_rules") == _bgr()._bg().MORPH_RULES)) and \
-                (_shape(c) is None or bj.get("range_guard_sha256") == _prep_rg_sha(c)):   # v0.21.0: 준비 점검표가 바뀌면 다시
+                (_shape(c) is None or bj.get("range_guard_sha256") == _prep_rg_sha(c)) and \
+                bj.get("depth_section", "entry_fixed") == _sec_mod().resolve(_ds(c)[0]) and \
+                ("df_rules" not in bj or bj["df_rules"] == _bgr()._bg().DF_RULES) and \
+                ("w1_rules" not in bj or bj["w1_rules"] == _bgr()._bg().W1_RULES):   # v0.24.7 DM §5 재사용 조건
             echo(f"[bd_matrix] select 기저 재사용 {sha[:12]}…")
             return {"params": U.read_json(pp)["params"], "warnings": [],
                     "rev_doc": _sel_rev(c, sha, bj["basis_sha256"])}
@@ -6799,20 +6827,26 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     if v2:                                      # v0.17.0 schema 2: 그래프 비드(+ elems 비드는 schema 1 derive, 섬 60)
         graph, labels = _graph_or_none(c)
         sr = _shape(c)
+        dskw = {}
+        dsv, dsr = _ds(c)
+        if dsr is not None:                     # v0.24.7 DM: floor_fixed 만 키 전달(entry_fixed·키 없음 = 호출 불변)
+            dskw = {"depth_section": dsv, "section_rules": dsr}
         if sr is None:                          # v0.20.0 그대로(옛 스냅샷 — 호출·바이트 불변)
             D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids,
                                      mesh_sha256=bmeta["mesh_sha256"],
-                                     w_clamp=_bgr().load_w_clamp(c.p("prep")) if graph is not None else None)
+                                     w_clamp=_bgr().load_w_clamp(c.p("prep")) if graph is not None else None, **dskw)
         else:                                   # v0.21.0 SH-13: 새 스냅샷 = range_guard 표(w_clamp.json 안 씀)
             D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids,
                                      mesh_sha256=bmeta["mesh_sha256"], shape_rules=sr,
                                      range_guard=(_bgr().load_range_guard(c.p("prep"))
                                                   if graph is not None and _bs(c, "bs_guard") == "basis" else None),
                                      w_clamp=(_bgr().load_w_clamp(c.p("prep"))
-                                              if graph is not None and not sr.get("range_guard") else None))
+                                              if graph is not None and not sr.get("range_guard") else None), **dskw)
     else:
+        dsv, dsr = _ds(c)
         D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
-                            with_section=False)
+                            with_section=False,
+                            **({"depth_section": dsv, "section_rules": dsr} if dsr is not None else {}))
     B = bsel.basis(t.mesh, D, c.cfg)
     sr_g = _shape(c) if v2 else None
     rgd = None                                  # v0.21.0 select/<sha12>/range_guard.json 문서(새 스냅샷·guard 켬일 때만)
@@ -6841,7 +6875,10 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                                                          "n_tiers": len(b.tiers), "W_nom": b.W_nom,
                                                          "W_min": getattr(b, "W_min", None),
                                                          "W_max": getattr(b, "W_max", None), "blend_mm": b.blend_mm,
-                                                         "warnings": b.warnings} for b in D.beads],
+                                                         "warnings": b.warnings,
+                                                         **({"w_reason": {"code": b.w_reason}}
+                                                            if getattr(b, "w_reason", None) else {})}
+                                                        for b in D.beads],
                                               "params": tab, "warnings": D.warnings})
     meta = bsel.basis_meta(B, bsha)
     import hashlib
@@ -6851,9 +6888,21 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
     if v2:                                      # v0.17.0 BG-D-39: 그래프 경로 판·패키지 판 + 램프(BG_RAMP_SHORT 판단)
         bg = _bgr()._bg()
         meta.update(graph_algo=_bgr().GRAPH_ALGO, morph_rules=bg.MORPH_RULES, rules_graph=bg.RULES,
-                    beadgraph_version=bg.__version__,
-                    graph_vars=[{"name": v["name"], "kind": v["kind"], "nominal": float(v["nominal"]),
-                                 "ramp_mm": float(v["info"]["ramp_mm"])} for v in getattr(D, "graph_basis", [])])
+                    beadgraph_version=bg.OUTPUT_VERSION,
+                    graph_vars=[{"name": v["name"], "kind": {"DF": "D"}.get(v["kind"], v["kind"]),
+                                 "nominal": float(v["nominal"]), "ramp_mm": float(v["info"]["ramp_mm"]),
+                                 **({"section": _sec_diag(v, getattr(D, "graph_basis", []))}
+                                    if v["kind"] in ("DF", "W1") else {})}
+                                for v in getattr(D, "graph_basis", [])])
+    dsv, dsr = _ds(c)
+    if dsr is not None:                         # v0.24.7 DM §5: floor_fixed 만(entry_fixed basis.json 바이트 그대로)
+        bg = _bgr()._bg()
+        gk = {v["kind"] for v in getattr(D, "graph_basis", [])}
+        meta.update(depth_section="floor_fixed", section_rules=dict(dsr), beadgraph_package=bg.__version__)
+        if "DF" in gk:
+            meta["df_rules"] = bg.DF_RULES
+        if "W1" in gk:
+            meta["w1_rules"] = bg.W1_RULES
     c.write_json(os.path.relpath(pj, c.out), meta)
     warns = [f"{w['code']}: {b.id}" for b in D.beads for w in b.warnings]
     echo(f"[bd_matrix] select {sha[:12]}… 비드 {len(D.beads)} · 변수 {len(B.vars)} · 기저 sha {bsha[:12]}…")
@@ -6864,6 +6913,42 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
         if rgd.get("info"):
             out["info"] = list(rgd["info"])
     return out
+
+
+def _sec_mod():
+    from esl.morph import section as sec
+    return sec
+
+
+def _sec_diag(v: dict, gb=()) -> dict:
+    """basis.json graph_vars[].section(§2.6 — floor_fixed 만): DF 진단(각·평면·입구 평활·이웃 간격·입구 가드·벽) / W1 한쪽
+    정보(steep_deg = 같은 비드 DF 의 고정 쪽 공유 자식 벽 [θ_f, θ_f'] | None, center_shift_mm = ½·ext — 기본 범위 끝 ΔW 에서
+    깊이면·입구 중심선이 열린 쪽으로 치우치는 양)."""
+    from esl.morph import section as sec
+    i = v["info"]
+    if v["kind"] == "DF":
+        d = sec.cot_from_df(i)
+        out = {"mode": "floor_fixed", "cot_min_deg": d["cot_min_deg"], "cot_med_deg": d["cot_med_deg"],
+               "cot_max_deg": d["cot_max_deg"], "floor_plan_max_mm": i.get("floor_plan_max_mm"),
+               "angle_dev_mm": i.get("angle_dev_mm"), "entry_clipped_n": i.get("entry_clipped_n"),
+               "entry_guard_n": i.get("entry_guard_n"), "entry_guard_left": i.get("entry_guard_left"),
+               "band_clipped": any(w.get("code") == "SELECT_BLEND_CLIPPED" for w in i.get("warnings", [])),
+               "wall_no_entry_n": i.get("wall_no_entry_n")}
+        if i.get("steep_deg") is not None:
+            out["steep_deg"] = i["steep_deg"]
+        return out
+    one = i.get("one_side") or {}
+    base = str(v["name"]).rsplit("_", 1)[0]
+    df = next((u for u in gb if u.get("kind") == "DF" and str(u["name"]).rsplit("_", 1)[0] == base), None)
+    st = (df or {}).get("info", {}).get("steep_deg")
+    ext = i.get("ext")
+    return {"mode": "floor_fixed", "one_side": {"segs": sorted(int(k) for k in one),
+                                                "fixed": {k: int(sum(o["fixed"][k] for o in one.values()))
+                                                          for k in ("child", "shared", "junction", "edge", "own_wall")},
+                                                "floor_nominal": i.get("floor_nominal"),
+                                                "steep_deg": list(st) if st is not None else None,
+                                                "center_shift_mm": (round(0.5 * float(ext), 3)
+                                                                    if ext is not None else None)}}
 
 
 def _bgr():
@@ -6915,6 +7000,12 @@ def _graph_or_none(c: Ctx):
         return None, None
 
 
+def _has_elems(c: Ctx) -> bool:
+    """선택에 elems 비드(schema 1 비드 = src 없음 포함)가 있나 — section.hash_view 의 theta 키 조건(§5)."""
+    sel = ((getattr(c, "D", None) or {}).get("selection") or {}).get("input") or {}
+    return any((b.get("src") or "elems") == "elems" for b in (sel.get("beads") or []) if isinstance(b, dict))
+
+
 def _sel_cfg_sha(c: Ctx) -> str:
     import hashlib
     import json
@@ -6925,6 +7016,11 @@ def _sel_cfg_sha(c: Ctx) -> str:
     sr = _shape(c)
     if sr is not None:                           # v0.21.0 SH-26: 새 스냅샷만(budget 제외) — 옛 스터디 해시 불변
         h["shape"] = tp.shape_hash_view(sr)
+    from esl.morph import section as sec
+    dsv, dsr = _ds(c)
+    hv = sec.hash_view(dsv, dsr, has_elems=_has_elems(c))
+    if hv is not None:                           # v0.24.7 DM §5: floor_fixed 만(entry_fixed·키 없음 = 해시 불변)
+        h["section"] = hv
     s = json.dumps(h, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 

@@ -319,6 +319,34 @@ def body_map_doc(extract0: dict, part_id: int) -> dict:
     return {"schema_version": 1, "map": {bodies[0]: f"PART:{int(part_id)}"}}
 
 
+def section_info(depth_section) -> list[dict]:
+    """v0.24.7 DM §1.4·§1.5: paicad 경로의 깊이 단면 — 계획 표 paicad 행 ``na`` 열 코드(floor_fixed 스냅샷만) 정보 1개.
+    entry_fixed·키 없음 = [](바이트 불변). 계산 영향 없음(compose = none)."""
+    from esl.morph import section as sec
+    if not sec.is_floor(depth_section):
+        return []
+    na = sec.plan("paicad")["na"]
+    if na == "none":
+        return []
+    from esl.doe import message
+    return [{"code": na, "bead": None, "message": message(na)}]
+
+
+def w_reasons(doc: dict, options: dict | None = None) -> dict:
+    """§4.1 paicad 비드 W 사유: {bead id: code|None} — BEAD_WIDTH 변수 없음 = W_PAICAD_NONE, 있으나 use_default false =
+    W_PAICAD_DEFAULT_OFF(기본 끔 사유 — W 행 있음). 순수(옛 스터디도 응답 때 같은 함수)."""
+    from esl.morph import section as sec
+    rows = params_table(doc, options)
+    out = {}
+    for b in doc.get("beads") or []:
+        w = [r for r in rows if r["bead"] == b["id"] and r["type"] == "W"]
+        code = sec.w_reason({"src": "paicad", "paicad_none": not w})
+        if code is None and w and not all(r["use_default"] for r in w):
+            code = "W_PAICAD_DEFAULT_OFF"
+        out[b["id"]] = code
+    return out
+
+
 def extract_warnings(doc: dict) -> list[dict]:
     return [{"code": w.get("code"), "bead": w.get("bead"), "message": w.get("message")}
             for w in doc.get("warnings") or [] if isinstance(w, dict)]

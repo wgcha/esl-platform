@@ -226,6 +226,17 @@ def shape_rules_of(s: dict[str, Any]) -> dict[str, Any] | None:
     return v if isinstance(v, dict) else None
 
 
+def depth_of(s: dict[str, Any]) -> dict[str, Any]:
+    """v0.24.7 DM §5·§6: 스터디 inputs.depth_section(+depth_section_rules) — floor_fixed 스냅샷만 키(없음 = None = entry_fixed 옛·명시 동작).
+    코어 derive_v2 가 받는 키 이름(depth_section·section_rules)으로."""
+    i = s.get("inputs") or {}
+    ds = i.get("depth_section")
+    if ds not in ("entry_fixed", "floor_fixed"):
+        return {"depth_section": None, "section_rules": None}
+    r = i.get("depth_section_rules")
+    return {"depth_section": ds, "section_rules": r if isinstance(r, dict) else None}
+
+
 def shape_sha(sr: dict[str, Any] | None) -> str | None:
     """derive 캐시 키용 shape_rules 해시(None = None)."""
     if sr is None:
@@ -274,7 +285,7 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
         hit = _GRAPH_CACHE.get(key)
         if hit is not None and (hit["labels"] is not None or not labels or lst is None):
             _GRAPH_CACHE.move_to_end(key)
-            return {**hit, "shape_rules": sr}
+            return {**hit, "shape_rules": sr, **depth_of(s)}
     if st.st_size > _svc()._max_mb(c) * 1024 * 1024:
         return None
     try:
@@ -318,7 +329,7 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
         _GRAPH_CACHE[key] = out
         while len(_GRAPH_CACHE) > _LOAD_N:
             _GRAPH_CACHE.popitem(last=False)
-    return {**out, "shape_rules": sr}
+    return {**out, "shape_rules": sr, **depth_of(s)}
 
 
 def check_schema(s: dict[str, Any], sel: dict[str, Any]) -> None:
@@ -437,7 +448,9 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
     n = int(sc["derive_cache_n"])
     key = (sha, inputs.get("mesh_sha256"), bead, (inputs.get("graph") or {}).get("sha256"),
            (inputs.get("graph") or {}).get("w_clamp_sha256"), (inputs.get("graph") or {}).get("range_guard_sha256"),
-           shape_sha((inputs.get("graph") or {}).get("shape_rules")))     # v0.21.0: 표·규칙이 다르면 다른 derive
+           shape_sha((inputs.get("graph") or {}).get("shape_rules")),     # v0.21.0: 표·규칙이 다르면 다른 derive
+           (inputs.get("graph") or {}).get("depth_section"),             # v0.24.7 DM: 깊이 단면 동작·규칙이 다르면 다른 derive
+           shape_sha((inputs.get("graph") or {}).get("section_rules")))
     if n > 0:
         with _DERIVE_LOCK:
             hit = _DERIVE_CACHE.get(key)
@@ -448,7 +461,8 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
         g = inputs.get("graph") or {}
         fut = _POOL.submit(_graph_call, "derive_v2", inputs["mesh"], norm, c, g.get("graph"), g.get("labels"),
                            frame=inputs["frame"], fixed_scan=inputs["fixed_scan"], bead=bead, w_clamp=g.get("w_clamp"),
-                           range_guard=g.get("range_guard"), shape_rules=g.get("shape_rules"))   # 새 키 = 코어가 받을 때만(_graph_call)
+                           range_guard=g.get("range_guard"), shape_rules=g.get("shape_rules"),
+                           depth_section=g.get("depth_section"), section_rules=g.get("section_rules"))   # 새 키 = 코어가 받을 때만(_graph_call)
     else:
         bs = _bs()
         fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],
@@ -470,6 +484,57 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
             _DERIVE_CACHE[key] = copy.deepcopy(out)
             while len(_DERIVE_CACHE) > n:
                 _DERIVE_CACHE.popitem(last=False)
+    return out
+
+
+def w_reason_doc(v: Any) -> dict[str, str] | None:
+    """코어의 W 사유(코드 문자열 또는 {code[, text]}) → 응답 {code, text}(문구 = doe_messages.json, 순수 section.w_reason_doc). 없으면 None."""
+    code = v.get("code") if isinstance(v, dict) else v
+    if not isinstance(code, str) or not code:
+        return None
+    from . import uploads as up_svc
+
+    return {"code": code, "text": up_svc.doe_text(code)}
+
+
+_INFO_TAIL = re.compile(r"\s*\(Info[^)]*\)\s*$")
+DS_TEXT_CODES = ("DS_FALLBACK", "DS_THETA_SPREAD", "DS_ONE_SIDE", "DS_HOLD_PINCH", "DS_ENGINE_NATIVE")
+
+
+def ds_text(key: str, **kw: Any) -> str:
+    """doe_messages.json 문구 + 자리 채움, 영문 "(Info: …)" 꼬리 없이(화면 툴팁·안내용 — 문구 원본은 서버 한 곳)."""
+    from . import uploads as up_svc
+
+    return _INFO_TAIL.sub("", up_svc.doe_text(key, **kw))
+
+
+def with_ds_text(warns: Any) -> Any:
+    """경고 목록의 DS_* 항목(message 없는 것)에 message(bead·var 등 자리 채움)를 붙인 새 목록(응답 때만 — DB·파일에는 쓰지 않음)."""
+    if not isinstance(warns, list):
+        return warns
+    out = []
+    for w in warns:
+        if isinstance(w, dict) and w.get("code") in DS_TEXT_CODES and not w.get("message"):
+            w = {**w, "message": ds_text(str(w["code"]), **{k: v for k, v in w.items() if k not in ("code", "message") and isinstance(v, (str, int, float))})}
+        out.append(w)
+    return out
+
+
+def with_w_reason(beads: list[Any], fresh: dict[str, Any] | None = None) -> list[Any]:
+    """그래프 비드(src graph) 행에 w_reason{code, text}|null 을 붙인 새 목록(응답 때만 — DB 요약·파일에는 쓰지 않음, §4.3).
+    비드에 값이 없으면 fresh(같은 선택의 지금 derive 비드 id → 값)에서 — 옛 스터디도 응답 때 계산."""
+    out = []
+    for b in beads or []:
+        if not isinstance(b, dict) or b.get("src") != "graph" or "id" not in b:
+            out.append(b)
+            continue
+        v = b.get("w_reason")
+        if v is None and fresh:
+            v = fresh.get(str(b["id"]))
+        nb = {**b, "w_reason": w_reason_doc(v)}
+        if "warnings" in nb:
+            nb["warnings"] = with_ds_text(nb["warnings"])        # DS_* message(bead·var 포함 — D 배지 툴팁)
+        out.append(nb)
     return out
 
 
@@ -797,6 +862,22 @@ def _params_v2(doc: dict[str, Any], c: dict[str, Any] | None) -> dict[str, Any]:
                              "warnings": [w for w in d.get("warnings") or [] if isinstance(w, dict)]})
 
 
+def params_w_reason(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dict[str, Any],
+                    table: dict[str, Any]) -> dict[str, Any]:
+    """변수 표 응답의 그래프 비드에 w_reason{code, text}|null(§4.3). 저장 요약에 사유가 없으면(옛 스터디) 지금 derive(캐시)의 값으로 —
+    응답 때만 계산, 저장 안 함. derive 가 실패하면 있는 값만."""
+    if sel_schema(doc.get("input")) != 2 or not isinstance(table.get("beads"), list):
+        return table
+    fresh = None
+    if any(isinstance(b, dict) and b.get("src") == "graph" and b.get("w_reason") is None for b in table["beads"]):
+        try:
+            full = full_derived(ctx, s, c, doc)
+            fresh = {str(b["id"]): b.get("w_reason") for b in full.get("beads") or [] if isinstance(b, dict) and "id" in b}
+        except DomainError:
+            fresh = None
+    return {**table, "beads": with_w_reason(table["beads"], fresh), **({"warnings": with_ds_text(table["warnings"])} if "warnings" in table else {})}
+
+
 def job_selection(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[str, Any]:
     """작업 params.doe.selection(워커 S3: 기저·모핑·이어하기 sha). params = 행렬 생성과 같은 표(같은 c)."""
     return {"rev": int(doc.get("rev") or 0), "sha256": doc["sha256"], "mesh_sha256": doc.get("mesh_sha256"),
@@ -856,6 +937,9 @@ def derive_out(ctx: AppContext, principal: Principal, sid: str, body) -> dict[st
     d = derive(c, inputs, norm, sha, bead=body.bead)
     d["rev"] = None
     d.setdefault("slope_suggested", {})
+    if sel_schema(norm) == 2:
+        d["beads"] = with_w_reason(d.get("beads"))       # v0.24.7 DM §4.3: W 사유 {code, text}(응답 때만)
+        d["warnings"] = with_ds_text(d.get("warnings"))
     return d
 
 
@@ -877,6 +961,8 @@ def selection_get(ctx: AppContext, principal: Principal, sid: str) -> dict[str, 
     stale = graph_stale(ctx, s, c, doc)
     if stale is not None:               # v0.17.0 BG-D-38: 화면 띠 "분류 결과가 바뀌었습니다" + 앵커 재해석(화면 몫)
         derived["graph_stale"] = stale
+    if sel_schema(doc.get("input")) == 2 and isinstance(derived.get("beads"), list):
+        derived["beads"] = with_w_reason(derived["beads"])           # v0.24.7 DM §4.3(응답 때만)
     return {"rev": int(doc["rev"]), "sha256": doc["sha256"], "input": doc["input"], "derived": derived,
             "updated_by_name": doc.get("updated_by_name") or "", "updated_at": str(doc.get("updated_at") or "")}
 

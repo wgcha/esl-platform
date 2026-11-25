@@ -15,9 +15,10 @@ def main(argv=None) -> int:
     st.add_argument("--quick", action="store_true", help="skip the H6 invariance and some H6 morph recipes")
     sub.add_parser("version")
     a = ap.parse_args(argv)
-    from . import MORPH_RULES, RULES, SCHEMA, __version__
+    from . import DF_RULES, MORPH_RULES, OUTPUT_VERSION, RULES, SCHEMA, W1_RULES, __version__
     if a.cmd == "version":
-        print(json.dumps({"version": __version__, "schema": SCHEMA, "rules": RULES, "morph_rules": MORPH_RULES}))
+        print(json.dumps({"version": __version__, "output_version": OUTPUT_VERSION, "schema": SCHEMA, "rules": RULES,
+                          "morph_rules": MORPH_RULES, "df_rules": DF_RULES, "w1_rules": W1_RULES}))
         return 0
     from .testing.conformance import selftest
     rep = selftest(full=not a.quick)

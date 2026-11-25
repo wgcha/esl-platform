@@ -24,3 +24,7 @@ MORPH_EXTRA = {
     "blend": {"min_mm": 15.0, "k": 8.0},
     "quality": {"flip_deg": 60.0},
 }
+
+# kind DF entry rules (esl contract esl_bead_depth_mode §1.2.1 — DM-30·31) = esl ``bead_doe.depth_section_rules``
+# entry_smooth_rel·entry_gap_rel (esl passes them as DF item keys; these are the same defaults, not in select.graph)
+DF_ENTRY = {"entry_smooth_rel": 3.0, "entry_gap_rel": 0.5}

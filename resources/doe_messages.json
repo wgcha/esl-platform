@@ -1,5 +1,5 @@
 {
- "version": "2026-11-20.1",
+ "version": "2026-11-25.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -234,6 +234,7 @@
   "BG_RAMP_SHORT": "{var}: 사용자 범위가 기본 범위보다 넓어 접합 램프 {L_mm} mm 가 필요 길이 {need_mm} mm 보다 짧습니다(실행은 계속). (Ramp {L_mm} mm shorter than {need_mm} mm needed.)",
   "BG_SHARED_CHILD": "(정보) 비드 {bead}: 공유 자식 바닥 {child} 은 제자리이고 그 벽 {n_nodes} 노드가 높이 차를 흡수합니다. (Info: shared child {child} stays; its wall absorbs the change.)",
   "BG_CORNER_GUARD": "(정보) 비드 {bead}: 바닥 코너 {n_nodes} 노드에서 사면을 가파르게 해 뒤집힘을 막았습니다(최대 {flank_max_deg}°). (Info: corner guard on {n_nodes} nodes.)",
+  "DF_ENTRY_GUARD": "(정보) 비드 {bead}: 입구 쪽 {n_nodes} 노드에서 입구 확장을 줄여 뒤집힘을 막았습니다(사면 각 변화 최대 {steep_max_deg}°). (Info: entry guard on {n_nodes} nodes.)",
   "BG_ISLAND_HELD": "(정보) 섬 {island} 에 고정 노드가 있어 강체 대신 고정 블렌딩을 적용했습니다. (Info: island {island} held by fixed nodes.)",
   "BG_RANGE_CLAMPED": "(정보) {var} 기본 범위 {from} mm 끝에서 요소가 뒤집혀 뒤집힘 없는 범위 {to} mm 로 줄였습니다(기저·한계 범위는 그대로). (Info: default range of {var} clamped from {from} to {to} mm — its ends inverted elements.)",
   "BG_BASIS_LEAK": "기저 오류: {var} 가 허용 구역 밖 {n} 노드를 움직입니다(최대 {max_mm} mm) — 구현 결함. (Basis error: {var} moves {n} nodes outside its zone.)",
@@ -296,6 +297,31 @@
   "RG_FAILED": "변수 범위 품질 점검 계산에 실패했습니다({code}) — 기본 범위를 줄이지 않고 진행합니다. (Range guard failed — ranges unchanged.)",
   "RG_OUTSIDE_GUARD": "이 안은 요소 품질 점검으로 정한 안전 범위 밖의 값을 씁니다: {vars}. (This design uses values outside the quality-checked safe range.)",
   "MESH_ROUTE_RELAXED": "큰 모델(STEP 면 {n_faces} ≥ {min_faces})이라 cad 를 건너뛰고 완화 메싱(cad_relaxed)으로 바로 시작했습니다 — {id} {name}. (Info: large model — started with relaxed meshing, cad skipped.)",
-  "MESH_QUALITY_RANK": "메시 품질 미달(Fail {fail_ratio}, tria {tria_pct} %) — 순위 신뢰도가 낮습니다(순위는 그대로, 품질 통과 최상위를 함께 보세요). (Mesh quality below threshold — ranking less reliable.)"
+  "MESH_QUALITY_RANK": "메시 품질 미달(Fail {fail_ratio}, tria {tria_pct} %) — 순위 신뢰도가 낮습니다(순위는 그대로, 품질 통과 최상위를 함께 보세요). (Mesh quality below threshold — ranking less reliable.)",
+  "DS_FALLBACK": "비드 {bead} {var}: 깊이면 폭 유지를 적용하지 못해 입구 고정으로 계산합니다(사유 {reason}). (Info: depth section falls back to entry-fixed.)",
+  "DS_THETA_SPREAD": "비드 {bead}: 사면 각이 구간마다 다릅니다({min_deg}°~{max_deg}°) — 대표 각으로 입구 확장을 계산했습니다. (Info: flank angle spread.)",
+  "DS_ONE_SIDE": "비드 {bead}: 입구가 한쪽만 있는 구간이 있어 그쪽 입구만 넓어집니다(중심선 치우침). (Info: one-sided entry — the bead centre line shifts.)",
+  "DS_HOLD_PINCH": "비드 {bead}: 체결부 가까운 입구 노드 {n}개는 덜 움직입니다. (Info: entry nodes held near fasteners.)",
+  "DS_ENGINE_NATIVE": "형상 엔진(paicad) 경로는 깊이 단면을 엔진 규칙대로 바꿉니다 — '깊이면 폭 유지' 선택은 적용되지 않습니다. (Info: depth section not applied on the engine path.)",
+  "DS_CLONE_NOTE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(한쪽 입구 W 행은 꺼진 채 추가). (Info: only the depth section changes.)",
+  "DS_CLONE_NOTE_ENTRY": "입구 고정에는 한쪽 입구 W 가 없어 변수 {n}개({names})가 빠집니다. (Info: one-sided W variables are dropped.)",
+  "DS_CLONE_NOTE_ENTRY_NONE": "깊이 동작만 바뀝니다 — 변수·범위·선택은 원 스터디 그대로(빠지는 변수 없음). (Info: only the depth section changes; no variables dropped.)",
+  "W_USER_OFF": "사용자가 W 를 뺌",
+  "W_NETWORK": "네트워크 묶기는 깊이만",
+  "W_AREA": "면형 바닥 — 입구 선 없음",
+  "W_EDIT_MERGED": "합친 구간은 폭을 잴 수 없음",
+  "W_TIE_MIXED": "대칭 묶음의 폭 종류가 달라 깊이만 묶음",
+  "W_ONE_SIDE_EDGE": "반대쪽이 판 가장자리 — 한쪽 이동 불가",
+  "W_ENTRY_NONE": "입구 선을 찾지 못함",
+  "W_ENTRY_ONE_SIDE": "입구 선이 한쪽만 있음 — '깊이면 폭 유지' 스터디에서 한쪽 W 가능",
+  "W_PARTIAL_OLD": "일부 구간만 폭(옛 규칙) — 새 스터디에서 가능",
+  "W_OPEN_BOUNDARY": "경계가 판 가장자리에 닿음",
+  "W_WIDTH_UNDEFINED": "폭을 잴 수 없음",
+  "W_PAICAD_NONE": "형상 엔진이 폭 변수를 내지 않음",
+  "W_ONE_SIDE": "한쪽 입구만 이동 — 열린 쪽 입구·벽·깊이면 가장자리가 ΔW 이동, 반대쪽 고정(중심선 ΔW/2 치우침)",
+  "W_SHORT": "구간이 짧아 폭을 바꿀 수 없음",
+  "W_GUARD_BLOCKED": "요소 품질 점검에서 막힘",
+  "W_FIXED_SKIP": "고정 노드 정책(skip)으로 기본 끔",
+  "W_PAICAD_DEFAULT_OFF": "형상 엔진 기본값이 끔"
  }
 }

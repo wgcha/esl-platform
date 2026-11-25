@@ -4420,3 +4420,57 @@ details.card.fold > .fold-body {
 .v3d-legend-ov-max {
   white-space: nowrap;
 }
+
+/* v0.24.7 DM 깊이 단면 동작(esl_bead_depth_mode.md §7) — 라디오 줄·복제 창(≤ 3줄, 가로 스크롤 없음) */
+.doe-ds {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 0.6rem;
+  min-width: 0;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+.doe-sub.doe-ds {
+  padding-block: 0;
+}
+.doe-ds .check-field {
+  height: 1.45rem;
+  line-height: 1.2;
+}
+.doe-ds-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.doe-clone-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.3rem);
+  z-index: 30;
+  display: grid;
+  gap: 0.35rem;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(52rem, calc(100vw - 2rem));
+  padding: 0.5rem 0.7rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(20, 30, 50, 0.16);
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+}
+.doe-clone-pop:focus {
+  outline: none;
+}
+.doe-clone-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.doe-tag-ds {
+  white-space: nowrap;
+}
+.doe-w-na td {
+  color: var(--muted, #6b7280);
+}

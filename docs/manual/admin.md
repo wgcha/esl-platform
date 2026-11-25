@@ -632,6 +632,21 @@ $env:PGPASSWORD = $null
 - **비용**: 방식마다 지그 고정 3D 와 같은 분해 횟수(안 `view3d.top_k` + 기준 엔트리 수)라 두 방식 모두 켜져 있으면 BD_POST 가 방식 수만큼 길어진다(합성 9,801 노드 방식당 13~16 s). 메모리 피크는 분해 1개분으로 그대로. 실제 시간은 작업 로그 `[bd_post jig3d] jd|js … s` 와 `jig_view.json` 의 `view3d_src_seconds` 에 남는다.
 - **3D 뷰어**: 층·범례 구간은 브라우저 localStorage 키 `esl.v3d.viewer.v1` 1개에 저장한다(서버 설정 없음). 응답 새 키는 `GET /doe/studies/{id}/results` 의 `view3d_jd*`·`view3d_js*`·`jig.methods`·`jig.tie_dofs`(옛 결과 null).
 
+### 4.7 v0.24.7 업데이트 안내(깊이 동작 depth_section·beadgraph 1.2.0)
+
+**DB migration 없음.** 설정 키가 늘었지만 없으면 기본값이라 현장 `esl_platform.yaml` 은 고치지 않아도 된다. 현장 확인표: `docs/manual/field_check_v0247.md`. 계약 `docs/contracts/esl_bead_depth_mode.md`.
+
+- **설정**(`bead_doe`, 새 스터디 스냅샷에만 쓰임 — 진행 중·옛 스터디 불변):
+  - `depth_section`: `floor_fixed`(기본, 깊이면 폭 유지) | `entry_fixed`(입구 고정 = 이전 방식. 이 값이면 새 스터디도 옛 스터디와 같은 파일·바이트이고 어떤 문서에도 키를 쓰지 않는다).
+  - `depth_section_rules` 5키: `theta_min_deg`(15, 선택(요소) 비드 사면 각 하한 — 미만이면 입구 고정으로 대체)·`theta_spread_deg`(5, 사면 각 퍼짐 정보 기준)·`one_side_min_nodes`(3, 한쪽 입구 판정 최소 노드, 1..20)·`entry_smooth_rel`(3.0, 입구 평활 반경 = 값 × 비드 높이, 0..10)·`entry_gap_rel`(0.5, 이웃 형상까지 거리 대비 입구 이동 상한 계수, (0,1]). 바꾸면 그 뒤에 만든 새 스터디부터 적용된다.
+  - 같은 이름이 `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml` 에 있다. 이 기본값은 코어 DEFAULTS·pydantic 과 시험으로 같음을 확인한다.
+- **beadgraph 휠 1.2.0 배포**(`deploy\requirements.lock` 의 `beadgraph==1.2.0`, PyPI·사내 인덱스에 없는 저장소 안 패키지 `packages\beadgraph`):
+  - git 폴더 설치(§3.0): `update-repo.ps1` ③이 저장소 `packages\beadgraph` 를 venv 에 설치하고 판을 대조한다(자동). 판이 lock 과 다르면 중단한다.
+  - 오프라인 묶음(§2.2·§3.1): `collect-offline.ps1`(`.sh`)이 `beadgraph-1.2.0-py3-none-any.whl` 을 저장소에서 빌드해 묶음 `wheels\` 에 넣고 lock 판과 대조한다(다르면 묶음을 만들지 않고 중단). **새 휠이 들어간 새 묶음을 만들어 써야 한다** — 옛 묶음의 휠은 1.1.0 이라 새 코드(DF·W1)와 맞지 않는다. `update.ps1` 이 묶음 `wheels\` 에서 설치하고 판을 대조한다.
+  - 확인: `<venv>\Scripts\python.exe -c "import beadgraph; print(beadgraph.__version__)"` → `1.2.0`.
+- **작업 재시작**: `ESL-Backend`·`ESL-Worker`.
+- 응답 새 키: `GET /doe/settings` `depth_section`·`depth_section_notes`, 변수 표 `section`·`w_side`·`w_reason`(저장하지 않고 응답 때 계산 — 옛 스터디도 같음).
+
 ---
 
 ## 10. 환경 점검
