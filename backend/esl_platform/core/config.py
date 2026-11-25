@@ -1200,6 +1200,8 @@ class BeadDoeDepthSectionRulesCfg(_M):
     theta_min_deg: float = Field(15.0, ge=0.0, le=89.0)
     theta_spread_deg: float = Field(5.0, ge=0.0, le=89.0)
     one_side_min_nodes: int = Field(3, ge=1, le=20)
+    entry_smooth_rel: float = Field(3.0, ge=0.0, le=10.0)      # DM-30 DF 입구 평활 반경 = 값 × 비드 높이(0 = 평활 없음)
+    entry_gap_rel: float = Field(0.5, gt=0.0, le=1.0)          # DM-31 이웃 간격 κ_o 계수
 
 
 class BeadDoeShapeRulesCfg(_M):
