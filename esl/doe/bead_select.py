@@ -539,22 +539,27 @@ def _dist_from(G: sparse.csr_matrix, sub: np.ndarray, src: np.ndarray) -> np.nda
 
 def derive(mesh: dict, selection: dict, cfg: dict | None = None, *, frame: dict | None = None, fixed_scan=(),
            bead: str | None = None, index: MeshIndex | None = None, graph: dict | None = None,
-           labels: dict | None = None, w_clamp: dict | None = None) -> dict:
+           labels: dict | None = None, w_clamp: dict | None = None, depth_section: str | None = None,
+           section_rules: dict | None = None) -> dict:
     """(백엔드 API) 정규화 선택 → {beads: [BeadDerived §4.2 — section·plan 포함], fixed{scan_n, user_n, source},
     warnings, slope_suggested{bead: ElemSet}, fixed_ab[{a, b}]}. rev·sha256·mesh_sha256 은 호출자가 붙인다.
     bead 를 주면 그 비드만 계산(다른 비드 층은 침범 금지로만 씀). 결정적.
     v0.17.0: 정규화된 schema 2 선택 = ``bead_graph.derive_v2``(graph·labels = ``bead_graph.load_graph``) → SelectionDerived
-    + graph 블록(§6.1)·graph_algo."""
+    + graph 블록(§6.1)·graph_algo.
+    v0.24.7 DM: depth_section·section_rules(스냅샷 값, None = 키 없음) 통과 + beads[].w_reason{code, text}."""
+    dskw = {"depth_section": depth_section, "section_rules": section_rules} if depth_section is not None else {}
     if isinstance(selection, dict) and selection.get("schema_version") == 2:
         from esl.doe import bead_graph as bgr
         if graph is None or labels is None:
             raise EslError("GRAPH_NOT_AVAILABLE", "schema 2 선택은 분류 그래프가 필요")
         return bgr.derive_v2(mesh, selection, cfg, graph, labels, frame=frame, fixed_scan=fixed_scan, bead=bead,
-                             index=index, w_clamp=w_clamp)
+                             index=index, w_clamp=w_clamp, **dskw)
     if isinstance(selection, dict) and "schema_version" not in selection:
         selection = normalize_input(selection, cfg)
-    D = derive_obj(mesh, selection, cfg, fixed_node_ids=fixed_scan, index=index, only=bead)
+    D = derive_obj(mesh, selection, cfg, fixed_node_ids=fixed_scan, index=index, only=bead, **dskw)
     doc = D.summary(frame)
+    from esl.doe import bead_graph as bgr
+    bgr.w_reason_rows(D, doc["beads"])
     for k in ("rev", "sha256", "mesh_sha256"):
         doc.pop(k, None)
     doc["slope_suggested"] = D.slope_suggested()
@@ -572,9 +577,12 @@ def _fixed_ab(D: "Derived", frame: dict) -> list:
 
 
 def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_ids=(), index: MeshIndex | None = None,
-               with_section: bool = True, mesh_sha256: str | None = None, only: str | None = None) -> Derived:
+               with_section: bool = True, mesh_sha256: str | None = None, only: str | None = None,
+               depth_section: str | None = None, section_rules: dict | None = None) -> Derived:
     """선택(정규화) → Derived 객체(배열 포함, 결정적 — 워커 기저·시험용). cfg = bead_doe 설정(``settings``) — select 절.
-    v0.17.0: schema 2 는 ``derive_v2``(그래프 필요) — 이 함수는 schema 1 전용(코드 불변)."""
+    v0.17.0: schema 2 는 ``derive_v2``(그래프 필요) — 이 함수는 schema 1 전용(코드 불변).
+    v0.24.7 DM(§1.2.2·§1.3): depth_section(스냅샷 값 — 호출 쪽은 floor_fixed 일 때만 넘김)·section_rules → 계획 표 elems 행 열로
+    1단·닫힌 경계·폭 있음·θ 측정 비드의 D 기저 = B_D + 2cotθ·B_W(f=0)(``basis``), 아니면 입구 고정 + DS_FALLBACK."""
     sc = _cfg(cfg)
     ix = index or mesh_index(mesh)
     theta = float(norm["feature_angle_deg"])
@@ -635,6 +643,16 @@ def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_id
     D = Derived(norm, selection_sha256(norm), beads, {"scan_n": int(fixed_scan.sum()), "user_n": int(fixed_user.sum()),
                                                        "source": src}, warns, ix, mesh_sha256)
     D.fixed_mask = fixed
+    if depth_section is not None:                    # v0.24.7 DM — 키 없음 = 지금 경로(바이트 불변)
+        from esl.morph import section as sec
+        spl = sec.row_plan(depth_section, "elems")
+        if spl["compose"] != "none":
+            if section_rules is None:
+                from esl.doe import settings as _settings
+                section_rules = _settings(cfg if isinstance(cfg, dict) and "select" in cfg else None)[
+                    "depth_section_rules"]
+            for bd in beads:
+                _floor_fixed_elems(bd, spl, sec, section_rules, sc)
     if with_section:
         for bd in beads:
             bd.section = _section(ix, D, bd, sc)
@@ -642,6 +660,45 @@ def derive_obj(mesh: dict, norm: dict, cfg: dict | None = None, *, fixed_node_id
         for bd in beads:
             bd.section = None
     return D
+
+
+def _floor_fixed_elems(bd: "BeadDerived", spl: dict, sec, rules: dict, sc: dict) -> None:
+    """v0.24.7 DM §1.2.2·§1.3·§1.4·§2.1 elems 비드 1개: 적용 조건(닫힌 경계·폭 있음·1단·θ) → depth_kind DF(조합) | 대체 D +
+    DS_FALLBACK, DS_THETA_SPREAD, D feasible 입구 확장 상한(m = 2), D 행 section, W 사유(src elems)."""
+    rg = sc["range"]
+    reason, cot = None, None
+    if bd.open:
+        reason = "W_OPEN_BOUNDARY"
+    elif not bd.w_enabled or bd.W_nom is None:
+        reason = "W_WIDTH_UNDEFINED"
+    elif len(bd.tiers) >= 2:
+        reason = "SELECT_MULTI_TIER"
+    elif spl["theta"] == "run_med":
+        cot, reason = sec.cot_from_run(getattr(bd, "run_med", 0.0), bd.tiers[0]["D_nom"], rules)
+    applied = reason is None and spl["compose"] == "select_w_f0"
+    bd.depth_kind = "DF" if applied else "D"
+    bd.ds_cot = cot if applied else None
+    k1 = str(min(t["k"] for t in bd.tiers)) if bd.tiers else None
+    bd.ds_section = {"mode": "floor_fixed", "cot_deg": sec._deg_of_cot(cot) if applied else None, "applied": applied}
+    if not applied:
+        bd.ds_section["reason"] = reason
+        for g in _groups(bd):
+            bd.warnings.append({"code": "DS_FALLBACK", "bead": bd.id, "var": var_name(bd.id, "D", min(g)),
+                                "reason": reason})
+    else:
+        sp = sec.theta_spread(getattr(bd, "run_p5", bd.run_med), getattr(bd, "run_p95", bd.run_med),
+                              bd.tiers[0]["D_nom"], rules)
+        if sp is not None:
+            bd.warnings.append({"code": "DS_THETA_SPREAD", "level": "info", "bead": bd.id, **sp})
+        if spl["feasible"] == "open_cap" and k1 is not None:
+            D1 = float(bd.tiers[0]["D_nom"])
+            hi = sec.feasible_open_cap(D1, [(bd.W_nom, 2.0)], cot, float(rg["depth_max_rel"]),
+                                       float(rg["width_max_rel"]))
+            fe = bd.range_feasible["D"][k1]
+            bd.range_feasible["D"][k1] = [fe[0], _r(max(hi, float(bd.range_default["D"][k1][1])))]
+    bd.w_reason = None if bd.w_enabled else sec.w_reason(
+        {"src": "elems", "floor_fixed": True, "open_boundary": bool(bd.open),
+         "width_undefined": not bd.open})
 
 
 def _w_limits(ix: MeshIndex, beads: list) -> None:
@@ -1222,6 +1279,7 @@ def _width(ix: MeshIndex, bd: BeadDerived, sc: dict, mesh: dict) -> None:
         t2 = cKDTree(uv)
         dd, _ = t2.query(np.column_stack([pe @ bd.e1, pe @ bd.e2]), k=1)        # 평면 거리
         bd.run_med = float(np.median(dd))
+        bd.run_p5, bd.run_p95 = float(np.percentile(dd, 5)), float(np.percentile(dd, 95))   # v0.24.7 DS_THETA_SPREAD
     else:
         bd.run_med = 0.0
 
@@ -1402,6 +1460,8 @@ def params_table(derived: Derived, cfg: dict | None = None) -> list[dict]:
                         "nominal": _r(t["D_nom"]), "feasible": fea, "feasible_source": "estimate",
                         "default_range": list(rng), "use_default": bool(use),
                         "group_members": [var_name(bd.id, "D", kk) for kk in g]})
+            if getattr(bd, "ds_section", None) is not None:          # v0.24.7 DM(floor_fixed 스냅샷만)
+                out[-1]["section"] = dict(bd.ds_section)
         if bd.w_enabled:
             rng = bd.range_default["W"]
             fea = list(bd.range_feasible["W"])
@@ -1430,9 +1490,11 @@ def _depth_basis(ix: MeshIndex, bd: BeadDerived, k: int) -> dict:
     return {"idx": np.concatenate(out_idx), "vec": np.vstack(out_vec)}
 
 
-def _width_basis(ix: MeshIndex, bd: BeadDerived, sc: dict, node_n: np.ndarray) -> dict:
+def _width_basis(ix: MeshIndex, bd: BeadDerived, sc: dict, node_n: np.ndarray, f: float | None = None) -> dict:
+    """B_W(경계 ½ê, 사면 (1 − s'(1 − f))·w, f = 1 이면 바닥 조화, 블렌딩 Wendland). f = None → 비드 floor_follow
+    (v0.24.7 DM elems 조합은 f = 0 을 넘김)."""
     X = ix.X
-    f = float(bd.floor_follow)
+    f = float(bd.floor_follow) if f is None else float(f)
     n_b = bd.n_hat
     parts_i, parts_v = [], []
     # 경계 노드 = ½ ê_j
@@ -1521,6 +1583,12 @@ def basis(mesh: dict, derived: Derived, cfg: dict | None = None, *, index: MeshI
         for g in _groups(bd):
             parts = [_depth_basis(ix, bd, k) for k in g]
             v = _compact(np.concatenate([p["idx"] for p in parts]), np.vstack([p["vec"] for p in parts]), ix.n_nodes)
+            if getattr(bd, "depth_kind", "D") == "DF":   # v0.24.7 DM §1.2.2: B'_D = B_D + 2cotθ·B_W(f=0)
+                from esl.morph import section as sec
+                pw = _width_basis(ix, bd, sc, geo.n, f=0.0)
+                wv = _compact(pw["idx"], pw["vec"], ix.n_nodes)
+                ci, cv = sec.compose(v["idx"], v["vec"], [(wv["idx"], wv["vec"], 2.0 * float(bd.ds_cot))])
+                v = {"idx": ci.astype(np.int32), "vec": cv}
             name = var_name(bd.id, "D", min(g))
             v = _post_basis(ix, bd, v, tab[name], sc, name)
             vars_.append({"name": name, "type": "D", "bead": bd.id, "tier": min(g), "members": list(g),
@@ -1934,6 +2002,8 @@ def _section(ix: MeshIndex, D: Derived, bd: BeadDerived, sc: dict) -> dict | Non
         g = full[E[:, 0]] * (1 - L[:, None]) + full[E[:, 1]] * L[:, None]
         if v["type"] == "D":
             out["dz_dD"][str(v["tier"])] = [_r(x, 4) for x in g @ bd.n_hat]
+            if getattr(bd, "depth_kind", "D") == "DF":    # v0.24.7 DM 그림(fig stretch): 조합 기저의 평면 성분
+                out.setdefault("ds_dD", {})[str(v["tier"])] = [_r(x, 4) for x in g @ (-e)]
         else:
             out["ds_dW"] = [_r(x, 4) for x in g @ (-e)]
             out["dz_dW"] = [_r(x, 4) for x in g @ bd.n_hat]

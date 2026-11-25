@@ -216,6 +216,63 @@ def fig_ds_dW1(s, z, D_nom, side) -> list[float]:
     return [1.0 if (b and np.sign(x - sc) == float(side)) else 0.0 for x, b in zip(s, inb)]
 
 
+# ---------------------------------------------------------------- 한쪽 입구 방향·대칭 거울(§1.6.3·§4.4 — DM-C1-5)
+W1_TIE_MIRROR_DEG = 30.0                    # §4.4 계약 규칙 값(열린 쪽 거울 내적 ≥ cos 30°) — 설정 아님
+
+
+def open_side_geo(polys) -> tuple[list[float] | None, list[float] | None]:
+    """골격 꺾은선들(판 평면 좌표) + 열린 쪽 σ(+1 = 진행 방향 왼쪽) → (길이 가중 도심 c, 열린 쪽 평균 바깥 방향 단위 벡터 v|None).
+    polys = [(pts (n, 2), side ±1)…]. 선분마다 왼쪽 법선 (−t_y, t_x)·σ 를 길이 가중 합(고리처럼 합이 0 이면 v = None)."""
+    num_c, num_v, tot = np.zeros(2), np.zeros(2), 0.0
+    for pts, side in polys:
+        P = np.asarray(pts, float).reshape(-1, 2)
+        if P.shape[0] < 2 or not side:
+            continue
+        t = np.diff(P, axis=0)
+        L = np.linalg.norm(t, axis=1)
+        mid = 0.5 * (P[:-1] + P[1:])
+        num_c += (L[:, None] * mid).sum(axis=0)
+        num_v += float(side) * np.c_[-t[:, 1], t[:, 0]].sum(axis=0)     # Σ L·(왼쪽 단위 법선) = Σ (−t_y, t_x)
+        tot += float(L.sum())
+    if tot <= 0.0:
+        return None, None
+    c = num_c / tot
+    nv = float(np.linalg.norm(num_v))
+    v = (num_v / nv) if nv > 1e-9 * tot else None
+    return [round(float(x), 6) for x in c], (None if v is None else [round(float(x), 6) for x in v])
+
+
+def open_side_deg(v) -> float | None:
+    """열린 쪽 방향 → 판 평면 방위(°, e1 기준 반시계, −180..180]."""
+    if v is None:
+        return None
+    return round(math.degrees(math.atan2(float(v[1]), float(v[0]))), 3)
+
+
+def tie_mirror_ok(members, h: float, deg: float = W1_TIE_MIRROR_DEG) -> bool:
+    """§4.4 W1 대칭 묶기 거울 검사: members = [(c, v)…](첫째 = 대표). 쌍마다 m = (c_m − c_대표)/‖·‖, 거울(v) = v − 2(v·m)m,
+    거울(v_대표)·v_m ≥ cos(deg) 이면 통과. 도심 거리 < h·방향 없음 = 판정 불가 → False(W_TIE_MIXED)."""
+    if not members:
+        return False
+    c0, v0 = members[0]
+    if c0 is None or v0 is None:
+        return False
+    c0, v0 = np.asarray(c0, float), np.asarray(v0, float)
+    cmin = math.cos(math.radians(float(deg)))
+    for c, v in members[1:]:
+        if c is None or v is None:
+            return False
+        d = np.asarray(c, float) - c0
+        nd = float(np.linalg.norm(d))
+        if nd < float(h):
+            return False
+        m = d / nd
+        mv = v0 - 2.0 * float(v0 @ m) * m
+        if float(mv @ np.asarray(v, float)) < cmin:
+            return False
+    return True
+
+
 # ---------------------------------------------------------------- W 사유(§4.1)
 def w_reason(f: dict) -> str | None:
     """사실(dict) → 첫 일치 W 사용 불가 코드(없으면 None — W 행 있음). 키(없으면 거짓):

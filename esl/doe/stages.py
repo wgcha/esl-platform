@@ -342,8 +342,16 @@ def _features(c: Ctx) -> dict:
 
 def _params_out(c: Ctx, doc: dict, frame: dict) -> dict:
     opts = c.cfg["paicad"].get("options") or {}
-    return {"beads": pio.beads_table(doc, frame), "params": pio.params_table(doc, opts),
-            "warnings": pio.extract_warnings(doc)}
+    out = {"beads": pio.beads_table(doc, frame), "params": pio.params_table(doc, opts),
+           "warnings": pio.extract_warnings(doc)}
+    dsv, dsr = _ds(c)
+    if dsr is not None:                          # v0.24.7 DM §1.4·§4.3: floor_fixed 스냅샷만(entry_fixed 바이트 불변)
+        out["warnings"] += pio.section_info(dsv)
+        wr = pio.w_reasons(doc, opts)
+        for b in out["beads"]:
+            if wr.get(b["id"]):
+                b["w_reason"] = {"code": wr[b["id"]]}
+    return out
 
 
 def bd_loads(spec: dict, echo=print) -> dict:
@@ -6640,7 +6648,9 @@ def _sel_w_clamp(c: Ctx, mesh: dict, fids, sd: str, echo) -> str | None:
     from esl.doe import bead_graph as bgr
     try:
         graph, labels = bgr.load_graph(c.p("prep"))
-        doc = bgr.w_clamp_table(mesh, graph, labels, fids, c.cfg, shape_rules=_shape(c))   # v0.21.0: w_partial 이면 S_W 후보
+        dsv, dsr = _ds(c)                                  # v0.24.7 DM: floor_fixed 만 키 전달(entry_fixed 호출 불변)
+        doc = bgr.w_clamp_table(mesh, graph, labels, fids, c.cfg, shape_rules=_shape(c),   # v0.21.0: w_partial 이면 S_W 후보
+                                **({"depth_section": dsv, "section_rules": dsr} if dsr is not None else {}))
     except EslError as exc:
         echo(f"[bd_loads] W 기본 범위 점검 건너뜀({exc.code})")
         return None
@@ -6671,7 +6681,9 @@ def _sel_range_guard(c: Ctx, mesh: dict, fids, sd: str, echo, warns: list, info:
     t0 = time.monotonic()
     try:
         graph, labels = bgr.load_graph(c.p("prep"))
-        doc = bgr.range_guard_table(mesh, graph, labels, fids, c.cfg, _shape(c), seed=seed, exclude_segs=exclude_segs)
+        dsv, dsr = _ds(c)                                  # v0.24.7 DM §2.2: floor_fixed 만 키 전달(entry_fixed 표 바이트 불변)
+        doc = bgr.range_guard_table(mesh, graph, labels, fids, c.cfg, _shape(c), seed=seed, exclude_segs=exclude_segs,
+                                    **({"depth_section": dsv, "section_rules": dsr} if dsr is not None else {}))
     except Exception as exc:                      # noqa: BLE001 - 계산 실패가 준비를 막지 않음(SH-17)
         code = str(exc.code) if isinstance(exc, EslError) else type(exc).__name__
         echo(f"[bd_loads] 변수 범위 품질 점검 실패({code}: {str(exc)[:200]}) — 범위 축소 없이 진행")
@@ -6830,8 +6842,10 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                                      w_clamp=(_bgr().load_w_clamp(c.p("prep"))
                                               if graph is not None and not sr.get("range_guard") else None), **dskw)
     else:
+        dsv, dsr = _ds(c)
         D = bsel.derive_obj(t.mesh, norm, c.cfg, fixed_node_ids=fids, mesh_sha256=bmeta["mesh_sha256"],
-                            with_section=False)
+                            with_section=False,
+                            **({"depth_section": dsv, "section_rules": dsr} if dsr is not None else {}))
     B = bsel.basis(t.mesh, D, c.cfg)
     sr_g = _shape(c) if v2 else None
     rgd = None                                  # v0.21.0 select/<sha12>/range_guard.json 문서(새 스냅샷·guard 켬일 때만)

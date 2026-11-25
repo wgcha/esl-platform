@@ -234,10 +234,18 @@ def load_w_clamp(prep_dir: str) -> dict | None:
     return doc if isinstance(doc, dict) and doc.get("schema") == W_CLAMP_SCHEMA else None
 
 
-def _cfg_key(cfg) -> str:
+def _ds_view(depth_section, section_rules) -> dict | None:
+    """v0.24.7 DM §2.2·§5: 표 머리(range_guard·w_clamp) cfg_sha256 에 더할 값 — floor_fixed 만(entry_fixed·키 없음 = None, 해시 불변)."""
+    from esl.morph import section as sec
+    if not sec.is_floor(depth_section):
+        return None
+    return sec.hash_view(depth_section, section_rules, has_elems=False)
+
+
+def _cfg_key(cfg, ds_view: dict | None = None) -> str:
     """sha of the select settings the W basis and the inversion judgement read (range · quality · graph · hold · blend),
     numbers as floats (API and worker settings dicts may spell 1 / 1.0 differently): a table made under another setting
-    is not applied."""
+    is not applied. v0.24.7: ds_view(floor_fixed 만) 가 있으면 보기에 ``ds`` 키."""
     sc = select_cfg(cfg)
 
     def canon(v):
@@ -251,6 +259,8 @@ def _cfg_key(cfg) -> str:
             return float(v)
         return str(v)
     view = canon({k: sc.get(k) for k in ("range", "quality", "graph", "hold", "blend")})
+    if ds_view is not None:
+        view["ds"] = canon(ds_view)
     return hashlib.sha256(json.dumps(view, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -265,17 +275,23 @@ def _inward(v: float, nom: float) -> float:
 
 
 def w_clamp_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dict | None,
-                  shape_rules: dict | None = None) -> dict:
+                  shape_rules: dict | None = None, depth_section: str | None = None,
+                  section_rules: dict | None = None) -> dict:
     """Verifier fix v0.17.0 (§12 BG-X-1): before any matrix exists, find for every W-capable graph bead candidate — each
     segment with an entry width + each auto-seed W group (channel + flare) — the non-inverting part of its default W
     range, exactly as BD_MATRIX ``range_check`` would (same basis: package ``basis`` through ``basis_v2``, ramp frozen
     at the original default range; same inversion rule ``design_state``; ``range.check_steps`` bisections). Only
     candidates whose default range inverts get an entry. Deterministic.
-    v0.21.0 §2.1: shape_rules 의 w_partial(range_guard 꺼짐)이면 자동 seed 후보 = S_W 가 있는 묶음(W 는 S_W 에만)."""
+    v0.21.0 §2.1: shape_rules 의 w_partial(range_guard 꺼짐)이면 자동 seed 후보 = S_W 가 있는 묶음(W 는 S_W 에만).
+    v0.24.7 DM §2.2: depth_section floor_fixed(키 전달 = floor_fixed 만) → 한쪽 입구 세그먼트(S_1) 후보 W1 추가, 머리 cfg += ds."""
     from esl.doe import bead_select as bs
     sc = select_cfg(cfg)
     wp = _w_partial(shape_rules)
-    doc = {"schema": W_CLAMP_SCHEMA, "graph_sha256": graph_sha_of(graph), "cfg_sha256": _cfg_key(cfg),
+    dsv = _ds_view(depth_section, section_rules)
+    if dsv is not None and section_rules is None:
+        section_rules = _section_rules_now(cfg)
+    dskw = {"depth_section": depth_section, "section_rules": section_rules} if dsv is not None else {}
+    doc = {"schema": W_CLAMP_SCHEMA, "graph_sha256": graph_sha_of(graph), "cfg_sha256": _cfg_key(cfg, dsv),
            "hold": 1, "entries": []}
     steps = int(sc["range"]["check_steps"] or 0)
     if steps <= 0:
@@ -284,6 +300,9 @@ def w_clamp_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dict | 
     for s in graph["segments"]:
         if s["type"] != "base" and s.get("entry_width") is not None:
             cands.append([s["id"]])
+    if dsv is not None:                                 # v0.24.7 DM: S_1 단일 세그먼트(W1)
+        osd = _one_side_all(mesh, graph, labels, section_rules)
+        cands += [[sid] for sid in sorted(osd) if graph["segments"][sid]["entry_width"] is None and osd[sid]["ok"]]
     sel, _sym, _aw = auto_seed(graph, labels, cfg)
     for b in sel["beads"]:
         ids, _z, net = _resolve_segs(graph, labels, b["segs"], b["id"])
@@ -305,7 +324,7 @@ def w_clamp_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dict | 
             "fixed_user": bs._norm_set(None, "fixed_user", 10_000_000), "exclude": bs._norm_set(None, "exclude", 10_000_000),
             "graph": {"sha256": doc["graph_sha256"], "rules": int(graph["rules"]), "edits": {}}}
     D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_ids,
-                      shape_rules=_no_guard(shape_rules) if wp else None)
+                      shape_rules=_no_guard(shape_rules) if wp else None, **dskw)
     B = bs.basis(mesh, D, cfg)
     x0 = np.asarray(mesh["x0"], dtype=np.float64)
 
@@ -340,6 +359,28 @@ def w_clamp_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dict | 
     return doc
 
 
+def _section_rules_now(cfg) -> dict:
+    from esl.doe import settings as _settings
+    return _settings(cfg if isinstance(cfg, dict) and "select" in cfg else None)["depth_section_rules"]
+
+
+def _one_side_all(mesh: dict, graph: dict, labels: dict, section_rules: dict) -> dict:
+    """v0.24.7 DM: 그래프 비 base 세그먼트 전부의 ``beadgraph.one_side``(W1 후보 판정 — range_guard·w_clamp 후보)."""
+    sids = [int(s["id"]) for s in graph["segments"] if s["type"] != "base" and int(s["anchor"]) >= 0]
+    if not sids:
+        return {}
+    return _bg().one_side(graph, labels, np.asarray(mesh["x0"], np.float64), _conn(mesh), sids,
+                          min_nodes=int(section_rules["one_side_min_nodes"]))
+
+
+def _w1_possible(graph: dict, ids, osd: dict, wp: bool, net: bool) -> bool:
+    """§1.6.1: S_2 = ∅ ∧ S_1 ≠ ∅ ∧ (w_partial ∨ S_1 = S) ∧ 네트워크 아님 — ``_floor_fixed_bead`` 의 W1 조건(측정 osd 공용)."""
+    if net or w_segs(graph, ids):
+        return False
+    s1 = [x for x in ids if graph["segments"][x]["entry_width"] is None and (osd.get(x) or {}).get("ok")]
+    return bool(s1) and (wp or len(s1) == len(ids))
+
+
 def write_w_clamp(path: str, doc: dict, guard=None) -> str:
     g = guard or (lambda p: p)
     blob = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
@@ -348,7 +389,7 @@ def write_w_clamp(path: str, doc: dict, guard=None) -> str:
     return hashlib.sha256(blob).hexdigest()
 
 
-def _apply_w_clamp(D, norm: dict, w_clamp: dict | None, cfg, user_free: bool) -> None:
+def _apply_w_clamp(D, norm: dict, w_clamp: dict | None, cfg, user_free: bool, ds_view: dict | None = None) -> None:
     """derive: graph beads whose W default range was found to invert in BD_LOADS (``w_clamp_table``) get the usable
     range as default and the inverting side of ``feasible`` clamped, + info BG_RANGE_CLAMPED (§12 BG-X-1) — so the
     first matrix never carries an inverting W design. Applied only when the table matches (same graph sha, same select
@@ -358,7 +399,7 @@ def _apply_w_clamp(D, norm: dict, w_clamp: dict | None, cfg, user_free: bool) ->
         return
     ng = norm.get("graph") or {}
     if (ng.get("edits") or {}).get("toggle") or w_clamp.get("graph_sha256") != ng.get("sha256") or \
-            w_clamp.get("cfg_sha256") != _cfg_key(cfg):
+            w_clamp.get("cfg_sha256") != _cfg_key(cfg, ds_view):
         return
     table = {json.dumps(e["segs"]): e for e in w_clamp["entries"]}
     hit = {}
@@ -753,14 +794,17 @@ def sym_pairs(graph, tol):
 
 def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *, frame=None,
               fixed_scan=(), bead: str | None = None, index=None, w_clamp: dict | None = None,
-              range_guard: dict | None = None, shape_rules: dict | None = None) -> dict:
+              range_guard: dict | None = None, shape_rules: dict | None = None, depth_section: str | None = None,
+              section_rules: dict | None = None) -> dict:
     """(Backend API) normalized schema 2 selection -> SelectionDerived dict: beads, fixed, warnings, graph block
     (§6.1), graph_algo, slope_suggested, islands_suggested, fixed_ab, params (DoeParamsOut rows) + param_beads.
     ``bead`` is accepted for signature parity (the whole selection is derived — graph beads are cheap).
-    v0.21.0: shape_rules(스냅샷 해석값)·range_guard(prep/select/range_guard.json) → ``derive_obj_v2``."""
+    v0.21.0: shape_rules(스냅샷 해석값)·range_guard(prep/select/range_guard.json) → ``derive_obj_v2``.
+    v0.24.7 DM: depth_section·section_rules(스냅샷 값) → ``derive_obj_v2``, beads[].w_reason{code, text}(옛 스터디도 계산)."""
     from esl.doe import bead_select as bs
+    dskw = {"depth_section": depth_section, "section_rules": section_rules} if depth_section is not None else {}
     D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_scan, index=index, w_clamp=w_clamp,
-                      range_guard=range_guard, shape_rules=shape_rules)
+                      range_guard=range_guard, shape_rules=shape_rules, **dskw)
     doc = D.summary(frame)
     for k in ("rev", "sha256", "mesh_sha256"):
         doc.pop(k, None)
@@ -770,7 +814,23 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     doc["params"] = params_rows_v2(D, cfg)
     doc["param_beads"] = param_beads(D)
     _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-46 그래프 비드 평면도·단면 자료
+    w_reason_rows(D, doc["beads"])
     return doc
+
+
+def w_reason_rows(D, rows: list[dict]) -> None:
+    """§4.3: derive 응답 비드 행에 w_reason{code, text}(사유 있을 때만 — 문구 = resources/doe_messages.json)."""
+    from esl.doe import load_messages
+    from esl.morph import section as sec
+    msgs = load_messages()["messages"]
+    by = {b.id: b for b in D.beads}
+    for r in rows:
+        b = by.get(r.get("id"))
+        if b is None:
+            continue
+        doc = sec.w_reason_doc(w_reason_of(D, b), msgs)
+        if doc is not None:
+            r["w_reason"] = doc
 
 
 # ====================================================================== v0.18.2 평면도·단면 자료(BG-D-46)
@@ -922,10 +982,18 @@ def graph_section(ix, b, graph: dict | None = None) -> dict | None:
         if bz.any() and flz.any():
             cot = max(((float(s[bz].max()) - float(s[bz].min())) - (float(s[flz].max()) - float(s[flz].min())))
                       / (2.0 * Dn), 0.0)
+        fside = _fig_side(graph, b, rep, n)
         out["ds_dD"] = {str(int(b.tier)): sec.fig_ds_dD(s, np.where(inb, z, 0.0),
                                                        Dn, cot, sec.SECTION_PLANS["graph"]["fig"],
+                                                       side=fside if getattr(b, "depth_kind", "D") == "DF" else None,
                                                        floor_mode=getattr(b, "depth_kind", "D") == "DF")}
-    if "W" in (b.vars or []) and Dn > 0:
+    if "W" in (b.vars or []) and Dn > 0 and getattr(b, "w_side", None) == "one":   # v0.24.7 W1: 열린 쪽 +1·고정 쪽 0
+        from esl.morph import section as sec
+        fside = _fig_side(graph, b, rep, n)
+        if fside is not None:
+            out["ds_dW"] = sec.fig_ds_dW1(s, np.where(inb, z, 0.0), Dn, fside)
+            out["dz_dW"] = [0.0] * int(s.size)
+    elif "W" in (b.vars or []) and Dn > 0:
         fl = inb & (z >= Dn - 0.25 * h)
         if fl.any():
             a0, a1 = float(s[fl].min()), float(s[fl].max())
@@ -933,6 +1001,17 @@ def graph_section(ix, b, graph: dict | None = None) -> dict | None:
             out["ds_dW"] = [_r(x, 4) for x in np.where(inb, 0.5 * np.clip((s - sc) / hw, -1.0, 1.0), 0.0)]
             out["dz_dW"] = [0.0] * int(s.size)
     return out
+
+
+def _fig_side(graph: dict, b, rep: dict, n) -> int | None:
+    """단면 그림 s 축(ê_W = n̂ × ê_L, ê_L = 대표 세그먼트 골격 진행 방향)에서 열린 쪽 부호: 골격 σ(+1 = 진행 방향 왼쪽) ×
+    (판 평면 e1 × e2 와 n̂ 같은 방향이면 +1). 대표 세그먼트가 한쪽 입구가 아니면 None(양쪽)."""
+    sd = (getattr(b, "seg_side", None) or {}).get(int(rep["id"]))
+    if not sd:
+        return None
+    fr = graph["frame"]
+    hand = float(np.cross(np.asarray(fr["e1"], float), np.asarray(fr["e2"], float)) @ np.asarray(n, float))
+    return int(sd) * (1 if hand >= 0 else -1)
 
 
 def param_beads(D) -> list[dict]:
@@ -978,7 +1057,8 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
               "beads": [{k: v for k, v in b.items() if k != "src"} for b in elem],
               "fixed_user": norm["fixed_user"], "exclude": norm["exclude"]}
         d1 = bs.derive_obj(mesh, n1, cfg1, fixed_node_ids=fixed_node_ids, index=ix, mesh_sha256=mesh_sha256,
-                           with_section=False)
+                           with_section=False,
+                           **({"depth_section": ds, "section_rules": section_rules} if sec.is_floor(ds) else {}))
         fixed_mask = d1.fixed_mask
         fixed = d1.fixed
         warns = list(d1.warnings)
@@ -1055,7 +1135,8 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
         beads.append(gb)
     D = GraphDerived(norm, bs.selection_sha256(norm), beads, fixed, warns, ix, mesh_sha256, g2, l2, d1)
     fu_nodes = ix.elem_nodes(bs.elems_of(ix, norm["fixed_user"], where="fixed_user"))
-    _apply_w_clamp(D, norm, w_clamp, cfg, user_free=not excl.any() and np.asarray(fu_nodes).size == 0)
+    _apply_w_clamp(D, norm, w_clamp, cfg, user_free=not excl.any() and np.asarray(fu_nodes).size == 0,
+                   ds_view=_ds_view(depth_section, section_rules))
     D.fixed_mask = fixed_mask
     D.exclude_mask = excl
     D.norm_cfg_tol = float(sc["graph"]["sym_tol_mm"])
@@ -1103,7 +1184,7 @@ def _floor_fixed_bead(gb, b, g2, l2, mesh, spl, sec, rules, sc, wp, net, wfl, D,
     s1_edge = [s_ for s_ in ids if osd[s_]["reason"] == "EDGE"]
     user_vars = b.get("vars")
     one = False
-    if spl["one_side"] == "pkg_w1" and not net and not s2 and s1 and "W" not in gb.vars and \
+    if spl["one_side"] == "pkg_w1" and not net and not s2 and s1 and gb.W_nom is None and \
             (user_vars is None or "W" in user_vars) and (wp or len(s1) == len(ids)):
         one = True
         lw = np.array([ln[s_] for s_ in s1])
@@ -1118,6 +1199,8 @@ def _floor_fixed_bead(gb, b, g2, l2, mesh, spl, sec, rules, sc, wp, net, wfl, D,
         gb.range_default["W"] = [_r(W1 * (1.0 - Wr)), _r(W1 * (1.0 + Wr))]
         f_lo, f_hi = sec.w1_feasible(W1, F1, wfl, float(rg["width_max_rel"]))
         gb.range_feasible["W"] = [_r(min(f_lo, W1 * (1.0 - Wr))), _r(max(f_hi, W1 * (1.0 + Wr)))]
+    if not one and gb.W_nom is None and "W" in gb.vars:     # 사용자 W 지정이지만 W·W1 모두 불가(후보 표 시험 포함)
+        gb.vars = [v for v in gb.vars if v != "W"]
     # feasible D (입구 확장 상한)
     if gb.W_nom is not None and gb.w_side is None:
         parts = [(gb.W_nom, 2.0)]
@@ -1130,11 +1213,15 @@ def _floor_fixed_bead(gb, b, g2, l2, mesh, spl, sec, rules, sc, wp, net, wfl, D,
     fd_hi = sec.feasible_open_cap(D, parts, cot, float(rg["depth_max_rel"]), float(rg["width_max_rel"]))
     gb.range_feasible["D"] = [gb.range_feasible["D"][0], _r(max(fd_hi, hi))]
     one_segs = [s_ for s_ in ids if osd[s_]["ok"]]
+    gb.seg_side = {int(s_): int(osd[s_]["side"]) for s_ in one_segs}           # 그림 fig side·W1 ds_dW
+    geo_segs = sorted(s1) if one else one_segs
+    gb.open_c, gb.open_v = sec.open_side_geo([(g2["segments"][s_].get("skeleton") or [], osd[s_]["side"])
+                                              for s_ in geo_segs])             # §4.4 거울·DS_ONE_SIDE 방위
     if one or (applied and one_segs):
         fx = {k: int(sum(osd[s_]["fixed"][k] for s_ in one_segs)) for k in ("child", "shared", "junction", "own_wall")}
         gb.warnings.append({"code": "DS_ONE_SIDE", "level": "info", "bead": b["id"],
-                            "segs": sorted(int(g2["segments"][s_]["anchor"]) for s_ in one_segs), "fixed": fx,
-                            "steep_deg": None})
+                            "segs": sorted(int(g2["segments"][s_]["anchor"]) for s_ in one_segs),
+                            "open_side_deg": sec.open_side_deg(gb.open_v), "fixed": fx, "steep_deg": None})
     facts = {"src": "graph", "floor_fixed": True, "user_off": user_vars is not None and "W" not in user_vars,
              "network": net, "area": all(g2["segments"][s_]["type"] in ("area", "plateau") for s_ in ids),
              "merged": any(g2["segments"][s_].get("merged") for s_ in ids), "s2": len(s2), "s1": len(s1),
@@ -1144,9 +1231,12 @@ def _floor_fixed_bead(gb, b, g2, l2, mesh, spl, sec, rules, sc, wp, net, wfl, D,
 
 
 def _tie_mixed(D, sc) -> None:
-    """§4.4(DM-15) floor_fixed 대칭 묶음: 구성원 W 종류(양쪽·한쪽·없음)가 다르거나 W1 공칭 차 > 2·sym_tol → 그 묶음 W 없음 +
-    W_TIE_MIXED(422 아님, D 묶음 유지). W1 열린 쪽 거울 검사는 공칭 차로 대신(구현 메모)."""
+    """§4.4(DM-15·DM-C1-5) floor_fixed 대칭 묶음: 구성원 W 종류(양쪽·한쪽·없음)가 다르거나, 모두 W1 인데 열린 쪽이 대칭 거울이
+    아니거나(``section.tie_mirror_ok`` — 대표·구성원 골격 도심 차 m 에 대한 거울 내적 ≥ cos 30°, 도심 거리 < h = 판정 불가) W1 공칭
+    차 > 2·sym_tol → 그 묶음 W 없음 + W_TIE_MIXED(422 아님, D 묶음 유지)."""
+    from esl.morph import section as sec
     tol = float(sc["graph"]["sym_tol_mm"])
+    h = float(D.graph["frame"]["h_mm"])
     by = {b.id: b for b in D.beads}
     for grp in D.norm.get("ties") or []:
         bs_ = [by[x] for x in grp if x in by]
@@ -1154,7 +1244,8 @@ def _tie_mixed(D, sc) -> None:
         mixed = len(kinds) > 1
         if not mixed and all(getattr(b, "w_side", None) == "one" for b in bs_):
             ws = [b.W_nom for b in bs_]
-            mixed = max(ws) - min(ws) > 2.0 * tol
+            mixed = max(ws) - min(ws) > 2.0 * tol or \
+                not sec.tie_mirror_ok([(getattr(b, "open_c", None), getattr(b, "open_v", None)) for b in bs_], h)
         if mixed and any(getattr(b, "w_side", None) == "one" for b in bs_):
             for b in bs_:
                 b.vars = [v for v in b.vars if v != "W"]
@@ -1164,11 +1255,14 @@ def _tie_mixed(D, sc) -> None:
 
 def w_reason_of(derived, bead) -> str | None:
     """API·params.json 용 W 사유(§4.3): floor_fixed 비드는 derive 값, 그 밖(entry_fixed·옛 스터디)은 지금 조건으로 계산."""
-    if getattr(bead, "src", "graph") != "graph":
-        return None
+    from esl.morph import section as sec
+    if getattr(bead, "src", "graph") != "graph" or not hasattr(bead, "seg_ids"):   # elems(schema 1 포함 — §4.1)
+        if getattr(bead, "w_reason", None) is not None or getattr(bead, "w_enabled", False):
+            return getattr(bead, "w_reason", None)
+        return sec.w_reason({"src": "elems", "open_boundary": bool(getattr(bead, "open", False)),
+                             "width_undefined": not bool(getattr(bead, "open", False))})
     if getattr(bead, "w_reason", None) is not None or "W" in (bead.vars or []):
         return getattr(bead, "w_reason", None)
-    from esl.morph import section as sec
     g = derived.graph
     ids = bead.seg_ids
     s2 = w_segs(g, ids)
@@ -1278,15 +1372,8 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         if b.src != "graph":
             continue
         for typ in b.vars:
-            kind = typ
-            if typ == "D" and getattr(b, "depth_kind", "D") == "DF":          # v0.24.7 DM: floor_fixed 깊이 기저
-                kind = "DF"
-            elif typ == "W" and getattr(b, "w_side", None) == "one":         # v0.24.7 DM: 한쪽 입구 W1
-                kind = "W1"
-            pk = {"name": var_name(b.id, typ), "kind": kind, "segs": _var_segs(b, typ), "zones": b.zone_ids,
-                  "hold": b.hold_fixed, "bead": b.id, "typ": typ}
-            if kind == "W1":
-                pk.update(ramp="end", min_nodes=int(derived.section_rules["one_side_min_nodes"]))
+            pk = _pkg_item(derived, b, typ)                                   # v0.24.7 DM: DF·W1(floor_fixed)
+            pk["typ"] = typ
             pk_list.append(pk)
     ranges = {}
     for p in pk_list:
@@ -1317,6 +1404,16 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
             ww["bead"] = b0.id
             if ww not in b0.warnings:
                 b0.warnings.append(ww)
+        if v["kind"] in ("DF", "W1"):                   # v0.24.7 DM §1.6.3·§2.4: steep_deg(DF 뒤)·DS_HOLD_PINCH
+            if v["kind"] == "DF" and v["info"].get("steep_deg") is not None:
+                for ww in b0.warnings:
+                    if ww.get("code") == "DS_ONE_SIDE":
+                        ww["steep_deg"] = list(v["info"]["steep_deg"])
+            pn = int(v["info"].get("hold_pinch_n") or 0)
+            if pn > 0:
+                hp = {"code": "DS_HOLD_PINCH", "level": "info", "bead": b0.id, "var": v["name"], "n": pn}
+                if hp not in b0.warnings:
+                    b0.warnings.append(hp)
         if v["info"].get("short"):
             b0.warnings.append({"code": "BG_SEGMENT_SHORT", "bead": b0.id, "var": v["name"],
                                 "length_mm": _r(sum(float(g["segments"][s]["length"] or 0.0)
@@ -1669,12 +1766,15 @@ def _canon(v):
     return str(v)
 
 
-def _guard_cfg_key(cfg, rules) -> str:
-    """표 머리 cfg_sha256(§4.3): select 설정 키(``_cfg_key``) + 형상 규칙(w_partial·기준·steps·min_keep_frac·combo — 예산 제외)."""
+def _guard_cfg_key(cfg, rules, ds_view: dict | None = None) -> str:
+    """표 머리 cfg_sha256(§4.3): select 설정 키(``_cfg_key``) + 형상 규칙(w_partial·기준·steps·min_keep_frac·combo — 예산 제외).
+    v0.24.7 DM §2.2: floor_fixed 면 ``ds``(section.hash_view) 키 추가(entry_fixed = 보기·sha 불변)."""
     rg = _guard_rules(rules) or {}
     view = {"select": _cfg_key(cfg), "w_partial": _w_partial(rules),
             "range_guard": _canon({"crit": _crit(rg, cfg) if rg else None, "steps": rg.get("steps"),
                                    "min_keep_frac": rg.get("min_keep_frac"), "combo": rg.get("combo")})}
+    if ds_view is not None:
+        view["ds"] = _canon(ds_view)
     return hashlib.sha256(json.dumps(view, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -1684,11 +1784,29 @@ def _mask_sha(mask) -> str:
 
 
 def _var_key(g: dict, b, typ: str) -> dict:
-    """표 항목 key{kind, segs[[앵커, 요소 수]…], w_segs(W 만), hold}."""
-    k = {"kind": typ, "segs": _seg_keys(g, b.seg_ids), "hold": int(b.hold_fixed)}
+    """표 항목 key{kind, segs[[앵커, 요소 수]…], w_segs(W 만), hold}. v0.24.7 DM: floor_fixed 비드(section 있음) = + ds,
+    한쪽 입구 W = kind W1."""
+    kind = "W1" if typ == "W" and getattr(b, "w_side", None) == "one" else typ
+    k = {"kind": kind, "segs": _seg_keys(g, b.seg_ids), "hold": int(b.hold_fixed)}
     if typ == "W":
         k["w_segs"] = _seg_keys(g, _var_segs(b, "W"))
+    if getattr(b, "section", None) is not None:
+        k["ds"] = "floor_fixed"
     return k
+
+
+def _pkg_item(D, b, typ: str) -> dict:
+    """패키지 basis() 항목(basis_v2·후보 기저 공용): kind = D|W, floor_fixed 면 DF(깊이면 폭 유지)·W1(한쪽 입구)."""
+    kind = typ
+    if typ == "D" and getattr(b, "depth_kind", "D") == "DF":
+        kind = "DF"
+    elif typ == "W" and getattr(b, "w_side", None) == "one":
+        kind = "W1"
+    pk = {"name": var_name(b.id, typ), "kind": kind, "segs": _var_segs(b, typ), "zones": b.zone_ids,
+          "hold": b.hold_fixed, "bead": b.id}
+    if kind == "W1":
+        pk.update(ramp="end", min_nodes=int(D.section_rules["one_side_min_nodes"]))
+    return pk
 
 
 def _kj(k) -> str:
@@ -1790,8 +1908,7 @@ def _candidate_bases(mesh: dict, D, cfg) -> dict:
             continue
         for typ in b.vars:
             name = var_name(b.id, typ)
-            pk_list.append({"name": name, "kind": typ, "segs": _var_segs(b, typ), "zones": b.zone_ids,
-                            "hold": b.hold_fixed, "bead": b.id})
+            pk_list.append(_pkg_item(D, b, typ))
             nom = b.D_nom if typ == "D" else b.W_nom
             lo, hi = (float(v) for v in b.range_basis[typ])
             ext = max(abs(hi - float(_r(nom))), abs(lo - float(_r(nom))))
@@ -1825,7 +1942,7 @@ def _candidate_bases(mesh: dict, D, cfg) -> dict:
         for end in ranges[v["name"]]:
             x = bg.morph(X, [v], {v["name"]: end})
             err = achieved(g, lx, X, x, [v], {v["name"]: end}).get(v["name"])
-            if err is not None and err > (tol if v["kind"] == "D" else 1e-3):
+            if err is not None and err > (tol if v["kind"] in ("D", "DF") else 1e-3):
                 bad = f"BG_ACHIEVED_MISMATCH err={err:.3g}"
                 break
         out[v["name"]] = {"error": "basis_error", "detail": bad} if bad else {"v": v}
@@ -1833,11 +1950,13 @@ def _candidate_bases(mesh: dict, D, cfg) -> dict:
 
 
 def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dict | None, rules: dict, *,
-                      seed: dict | None = None, exclude_segs=None, clock=None) -> dict:
+                      seed: dict | None = None, exclude_segs=None, clock=None, depth_section: str | None = None,
+                      section_rules: dict | None = None) -> dict:
     """BD_LOADS(§4.3 SH-13, scope prep): 후보 변수 = ① seed 선택(None = ``auto_seed``)의 그래프 비드 변수 → ② 그 밖의 단일
     세그먼트 D·W((tier, 앵커) 순, exclude_segs 제외). 후보 기저(램프 = 원래 기본 범위) → 단일 점검(``range_guard.single``) →
     seed 의 상호작용 묶음 조합 점검(``range_guard.combo``). 예산 = budget.max_evals·prep_timeout_s(기저 계산 포함)·max_vars.
-    반환 = ``esl/range_guard/1`` 문서(멈추지 않으면 같은 입력에서 바이트 같음). rules = 해석된 shape_rules(range_guard 있음)."""
+    반환 = ``esl/range_guard/1`` 문서(멈추지 않으면 같은 입력에서 바이트 같음). rules = 해석된 shape_rules(range_guard 있음).
+    v0.24.7 DM §2.2(depth_section 키 = floor_fixed 만): 깊이 후보 = DF, 한쪽 입구 후보(S_1) = W1, 머리 cfg·항목 key += ds."""
     from esl.doe import bead_select as bs
     from esl.morph import range_guard as rgm
     rg = _guard_rules(rules)
@@ -1852,6 +1971,17 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
         seed = auto_seed(graph, labels, cfg, exclude_segs=exclude_segs)[0]
     ex = {int(x) for x in exclude_segs or ()}
     wp = _w_partial(rules)
+    dsv = _ds_view(depth_section, section_rules)
+    if dsv is not None and section_rules is None:
+        section_rules = _section_rules_now(cfg)
+    dskw = {"depth_section": depth_section, "section_rules": section_rules} if dsv is not None else {}
+    osd = _one_side_all(mesh, graph, labels, section_rules) if dsv is not None else {}
+
+    def _pv(ids, net):                                  # 후보 변수: 지금 규칙 + floor_fixed 한쪽 입구 W1
+        vs = ["D"] if net else _possible_vars(graph, ids, wp)
+        if dsv is not None and "W" not in vs and _w1_possible(graph, ids, osd, wp, net):
+            vs = vs + ["W"]
+        return vs
     beads, order = [], []                               # order = [(bead id, typ, src)]
     covered: dict[int, set] = {}
     for b in seed.get("beads") or []:
@@ -1863,7 +1993,7 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
         if int(b.get("hold_fixed", 1)) == 0:
             nb["hold_fixed"] = 0
         ids, _z, net = _resolve_segs(graph, labels, b["segs"], b["id"])
-        vs = nb.get("vars") or (["D"] if net else _possible_vars(graph, ids, wp))
+        vs = nb.get("vars") or _pv(ids, net)
         beads.append(nb)
         order += [(b["id"], t, "seed") for t in vs]
         if len(ids) == 1 and not net and int(b.get("hold_fixed", 1)) == 1:
@@ -1872,7 +2002,7 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
                       and int(s["anchor"]) >= 0),
                      key=lambda s: (int(s["tier"]), int(s["anchor"])))
     for s in singles:
-        vs = [t for t in _possible_vars(graph, [s["id"]], wp) if t not in covered.get(int(s["id"]), set())]
+        vs = [t for t in _pv([s["id"]], False) if t not in covered.get(int(s["id"]), set())]
         if not vs:
             continue
         bid = f"s{int(s['id'])}"
@@ -1898,22 +2028,26 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
             "ties": [], "fixed_user": seed.get("fixed_user") or bs._norm_set(None, "fixed_user", 10_000_000),
             "exclude": seed.get("exclude") or bs._norm_set(None, "exclude", 10_000_000),
             "graph": {"sha256": graph_sha_of(graph), "rules": int(graph["rules"]), "edits": {}}}
-    D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_ids, shape_rules=_no_guard(rules))
+    D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_ids, shape_rules=_no_guard(rules), **dskw)
     by = {b.id: b for b in D.beads}
     skipped = []
     for bid, typ, _src in trimmed:
         if bid.startswith("s"):
-            sid = int(bid[1:])
-            k = {"kind": typ, "segs": _seg_keys(graph, [sid]), "hold": 1}
-            if typ == "W":
-                k["w_segs"] = _seg_keys(graph, [sid])
+            ids = [int(bid[1:])]
+            hold = 1
         else:
             src = next(b for b in beads if b["id"] == bid)
             ids, _z, _n = _resolve_segs(graph, labels, src["segs"], bid)
-            k = {"kind": typ, "segs": _seg_keys(graph, ids), "hold": int(src.get("hold_fixed", 1))}
-            if typ == "W":
-                k["w_segs"] = _seg_keys(graph, w_segs(graph, ids) if wp else ids)
+            hold = int(src.get("hold_fixed", 1))
+        one = typ == "W" and dsv is not None and not w_segs(graph, ids)
+        k = {"kind": "W1" if one else typ, "segs": _seg_keys(graph, ids), "hold": hold}
+        if typ == "W":
+            k["w_segs"] = _seg_keys(graph, sorted(x for x in ids if (osd.get(x) or {}).get("ok")) if one else
+                                    (w_segs(graph, ids) if wp else ids))
+        if dsv is not None:
+            k["ds"] = "floor_fixed"
         skipped.append({"key": k, "reason": "budget", "detail": "max_vars"})
+    order = [o for o in order if o[1] in by[o[0]].vars]   # floor_fixed: W1 이 생기지 않은 후보 W 는 빠짐
     bases = _candidate_bases(mesh, D, cfg) if order else {}
     P = _Prober(mesh, crit, _qcfg_for(rg, cfg))
     entries, by_name, supports = [], {}, {}
@@ -1946,7 +2080,7 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
         for grp in rgm.interacting(supports):
             _combo_one(P, rgm, grp, {n: by_name[n] for n in grp}, cc, steps, bud, combos, skipped,
                        lambda n: by_name[n][0]["key"])
-    meta = {"graph_sha256": norm["graph"]["sha256"], "cfg_sha256": _guard_cfg_key(cfg, rules),
+    meta = {"graph_sha256": norm["graph"]["sha256"], "cfg_sha256": _guard_cfg_key(cfg, rules, dsv),
             "fixed_sha256": _mask_sha(D.fixed_mask), "exclude_sha256": _mask_sha(D.exclude_mask),
             "selection_sha256": None, "steps": steps, "min_keep_frac": mkf, "max_vars": bc.get("max_vars")}
     return rgm.doc("prep", entries, combos, skipped, bud, crit, meta)
@@ -2032,7 +2166,8 @@ def apply_range_guard(D, table: dict | None, cfg) -> None:
     ng = D.norm.get("graph") or {}
     ok_hdr = (isinstance(table, dict) and table.get("schema") == RANGE_GUARD_SCHEMA and
               table.get("graph_sha256") == ng.get("sha256") and not (ng.get("edits") or {}).get("toggle") and
-              table.get("cfg_sha256") == _guard_cfg_key(cfg, rules) and
+              table.get("cfg_sha256") == _guard_cfg_key(cfg, rules, _ds_view(getattr(D, "depth_section", None),
+                                                                              getattr(D, "section_rules", None))) and
               table.get("fixed_sha256") == _mask_sha(D.fixed_mask) and
               table.get("exclude_sha256") == _mask_sha(D.exclude_mask))
     ents = {_kj(e["key"]): e for e in (table.get("entries") or [])} if ok_hdr else {}
@@ -2162,7 +2297,9 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
     if bud.stopped is not None:
         D.warnings.append({"code": "RG_BUDGET", "level": "info", "done": done, "total": total, "evals": bud.evals,
                            "stopped": bud.stopped})
-    meta = {"graph_sha256": (D.norm.get("graph") or {}).get("sha256"), "cfg_sha256": _guard_cfg_key(cfg, rules),
+    meta = {"graph_sha256": (D.norm.get("graph") or {}).get("sha256"),
+            "cfg_sha256": _guard_cfg_key(cfg, rules, _ds_view(getattr(D, "depth_section", None),
+                                                             getattr(D, "section_rules", None))),
             "fixed_sha256": _mask_sha(D.fixed_mask), "exclude_sha256": _mask_sha(D.exclude_mask),
             "selection_sha256": D.sha256, "steps": steps, "min_keep_frac": mkf, "max_vars": bc.get("max_vars")}
     return rgm.doc("selection", entries, combos, skipped, bud, crit, meta)
