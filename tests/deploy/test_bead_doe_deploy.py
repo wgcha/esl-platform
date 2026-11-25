@@ -485,6 +485,23 @@ def test_beadgraph_lock_pin_matches_package_and_is_local():
     assert "beadgraph" in (ROOT / "requirements-platform.txt").read_text(encoding="utf-8")
 
 
+def test_beadgraph_v0247_edition_table():
+    """v0.24.7 DM §5.1 판 대조: 휠 1.2.0(MINOR — kind DF·W1·one_side), 출력 판 OUTPUT_VERSION 1.1.0·RULES 1·MORPH_RULES 2 그대로,
+    새 판 DF_RULES·W1_RULES 1 — lock·루트 pyproject·패키지 소스가 같은 값."""
+    import ast
+
+    src = (ROOT / "packages" / "beadgraph" / "src" / "beadgraph" / "__init__.py").read_text(encoding="utf-8")
+    vals = {}
+    for n in ast.parse(src).body:
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant):
+            for t in n.targets:
+                vals[getattr(t, "id", None)] = n.value.value
+    assert vals["__version__"] == "1.2.0" and vals["OUTPUT_VERSION"] == "1.1.0"
+    assert (vals["RULES"], vals["MORPH_RULES"], vals["DF_RULES"], vals["W1_RULES"]) == (1, 2, 1, 1)
+    assert _lock_split(_text(REQ))["Local"] == ["beadgraph==1.2.0"]
+    assert '"beadgraph==1.2.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+
 def test_install_beadgraph_function():
     f = _fn(_text(DEPLOY / "install-common.ps1"), "Install-EslBeadgraph")
     for k in (".Local", "\"beadgraph-$ver-py3-none-any.whl\"", "'--no-index', '--no-deps', '--force-reinstall', $whl",
