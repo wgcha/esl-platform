@@ -261,7 +261,7 @@ def group_from_arrays(z, frame_A: dict, cell_mm: float) -> dict:
             "tri": np.asarray(z["tie_tri"], dtype=np.int64).reshape(-1, 3), "q": q,
             "n_q": int(q.max()) + 1 if q.size else 0, "area": np.asarray(z["tie_area"], dtype=np.float64),
             "dir": np.asarray(z["tie_dir"], dtype=np.float64), "rank": np.asarray(z["tie_rank"], dtype=np.int64),
-            "u": tu, "h_T": float(np.asarray(z["h_T"]))}
+            "u": tu, "h_T": float(np.asarray(z["h_T"]).reshape(-1)[0])}
     sp = {k[len("tie_kappa_"):]: (np.asarray(z[k], dtype=np.float64), np.asarray(z["tie_kq_" + k[len("tie_kappa_"):]],
                                                                                    dtype=np.float64))
           for k in keys if k.startswith("tie_kappa_")}

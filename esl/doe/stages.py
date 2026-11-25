@@ -21,6 +21,7 @@ mesh/, design.npz, result.json, done.json} · post/ · best/<did>/ · report.htm
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -388,6 +389,8 @@ def bd_loads(spec: dict, echo=print) -> dict:
     if getattr(c, "_lt_inp_rec", None):          # v0.20.0 LT-19 계획 id·배치·fast_path
         inp["load_transfer"] = c._lt_inp_rec
     c.write_json(os.path.join("prep", "input.json"), inp)
+    if _jg_kind(c) == "grid":                    # v0.24.8 JG §2.3: 옛 ③ — Case 지그 → 공통 격자(배치 = prep/input.json)
+        warns += _jg_prep_safe(c, t, echo)
     echo(f"[bd_loads] ESL {len(loads)}개 하중({linfo['method']}), 비드 {len(params['beads'])} · 변수 {len(params['params'])}"
          + (f", 경계 경고 {res['n_warn']} · 정보 {res['n_info']}" if res else ""))
     c.progress(100)
@@ -521,6 +524,8 @@ def _cfg_hash(c: Ctx) -> str:
     if c.scn != "compare" and _jig(c) is not None:   # v0.23.0 JIG-11: 스냅샷에 rank.jig 가 있을 때만(legacy 해시 불변, 임계값 3개 제외)
         from esl.doe import jig as jg
         keep["jig"] = ev.config_hash(jg.hash_view(_jig(c)))
+    if _jg_kind(c) == "grid":                    # v0.24.8 JG §7.2: 격자 지그 스냅샷만(compare 포함 — _cmp_sha 의 cfg; 옛·base = 키 없음)
+        keep["jig_grid"] = _jg_cfg_hash(c)
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
         from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
         keep.update(select=bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
@@ -665,6 +670,8 @@ def bd_eval(spec: dict, echo=print) -> dict:
             r["warnings"] = list(r["warnings"]) + sm_w
             if _jig(c) is not None:              # v0.23.0 지그 순위(esl_jig_rank.md §2): metric 과 무관하게 항상(Q-JIG-1)
                 r["warnings"] = list(r["warnings"]) + _jig_apply(c, t, did, mesh, loads, reg_e, r)
+            elif _jg_kind(c) == "grid":          # v0.24.8 JG §2.3: 다른 메시 계획 — 형상마다 격자 지그(지그 종류 값만 읽음)
+                r["warnings"] = list(r["warnings"]) + _jg_apply(c, t, did, mesh, sup, loads, reg_e, r)
         for ns in NODAL_SOURCES:                  # v0.24.0 노드 힘 출처(경계력·내력) 사이드카(result.json 무영향 — esl_fint.md §5)
             if _ns_on(c, ns):                     # 계산 여부 = 설정 enabled ∧ 계획 열(_bf_on(c) 과 같은 규칙 — 출처 행마다)
                 _ns_apply(c, ns, t, bmeta, did, mesh, sup, rkw.get("region"))
@@ -821,7 +828,7 @@ def _jig_csv_arg(c: Ctx, jblk: dict | None) -> dict | None:
         td, ms = _jig_plan(c)
     except EslError:
         return {"block": jblk}
-    if _jig_single_legacy(td, ms) or _lt_plan(c)["sm_jig"] != "base":
+    if _jig_single_legacy(td, ms) or _jg_kind(c) == "none":    # v0.24.8: 지그 종류 값(base·grid = 방식 끝 열, none = 블록만)
         return {"block": jblk}
     pes = [_jig_pe(jig_bc.METHODS[m]["src"]) for m in ms]
     return {"block": jblk, "pes": [pe for pe in pes if f"C_{pe}" not in JIG_CSV_COLS]}
@@ -1014,7 +1021,10 @@ def bd_post(spec: dict, echo=print) -> dict:
             noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
     S_ = _sm_post(c)
     res_rank, ls_w = _ls_rank_input(c, S_, results)          # v0.24.4 P3 load_source(없음 = results 그대로)
-    R = rk.rank(res_rank, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]),
+    noise_r = noise
+    if S_ is not None and S_.get("grid_rank"):               # v0.24.8 JG §3: 격자 순위 noise_floor = max(ΔΠ_5, 하한, 메시 잡음 바닥)
+        noise_r = c._jg_nf = _jg_nf(c, noise)
+    R = rk.rank(res_rank, noise_floor=noise_r, tol=float(c.cfg["rank"]["ratio_tol"]),
                 **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
                     "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
@@ -1091,7 +1101,7 @@ def bd_post(spec: dict, echo=print) -> dict:
            "sensitivity": None if sens.get("null") else sens, "sensitivity_reason": sens.get("reason"),
            "boundary_warnings_n": 0 if boundary is None else int(boundary.get("n_warn") or 0),
            "view3d": v3, "best": None if not best_ids else {"id": best_ids[0], "files": best_files[best_ids[0]]},
-           "best_all": [{"id": i, "files": best_files[i]} for i in best_ids], "noise_floor": noise,
+           "best_all": [{"id": i, "files": best_files[i]} for i in best_ids], "noise_floor": noise_r,
            "matrix_sha256": m["matrix_sha256"], "warnings": warns}
     evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만 — 옛 결과 키 없음)
     if evs is not None:
@@ -3098,6 +3108,8 @@ def _cmp_loads_lt(c: Ctx, echo, L: dict) -> dict:
     inp.update(loads={"sha256": loads_sha, **linfo}, n_beads=0, n_params=0,
                load_transfer={**tp.public(L), "plan": plan["id"], "placement": pl, "fast_path": d0_info["fast_path"]})
     c.write_json(os.path.join("prep", "input.json"), inp)
+    if _jg_kind(c) == "grid":                    # v0.24.8 JG §2.3: Case 지그 → 공통 격자(1회, 실패 = 방식 fallback)
+        warns += _jg_prep_safe(c, t, echo)
     ready = [r["id"] for r in doc["shapes"] if r["status"] == "READY"]
     echo(f"[bd_loads] ④ 기준 frame 고정 · ESL {len(d0_loads)}개 하중 전달 {d0_info['variant']}"
          + (" (기준 = ESL 메시 — ① 과 같은 하중)" if d0_info["fast_path"] else "")
@@ -3422,6 +3434,18 @@ def _sm_post(c: Ctx) -> dict | None:
     if S_ is None:
         return None
     plan = _lt_plan(c)
+    if _jg_kind(c) == "grid":                    # v0.24.8 JG §3: 격자 지그 순위 = ok 인 첫 방식(없음 = solve)
+        jsrc = _jg_rank_src(c) if S_["metric"] == "jig" else None
+        eff = tp.metric_effective(plan, S_["metric"], jsrc is not None, kind="grid")
+        if eff == "jig":
+            eff = _jig_src_row(jsrc)["metric"]
+        out = {**S_, "metric_effective": eff, "cross_mesh": tp.cross_mesh(plan), "grid_rank": eff != "solve" and jsrc is not None,
+               "grid_src": jsrc, "grid_cell_mm": float(_jg_cfg(c)["cell_mm"])}
+        ls = c.D.get("load_source")
+        if ls is not None:
+            out["load_source"] = str(ls)
+            out["metric_default"] = out["metric_effective"]
+        return out
     jig_ok = False
     jsrc = _jig_rank_src(c) if S_["metric"] == "jig" and _jig(c) is not None else None
     if jsrc is not None:                                      # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
@@ -3486,6 +3510,11 @@ def _ns_merge(c: Ctx, ns: dict, results: list) -> list:
 
 def _sm_post_warn(S_: dict | None) -> list:
     """다른 메시 비교 경고 SM_CROSS_MESH(결과 1개) — 같은 메시 계획·옛 스냅샷 = 없음."""
+    if S_ and S_.get("grid_rank"):               # v0.24.8 JG §3: 격자 지그 순위 = 정보 JIG_GRID_RANK(SM_CROSS_MESH 대신 — 배타)
+        from esl.mech import jig_bc
+        m = next((m for m, r_ in jig_bc.METHODS.items() if r_["src"] == S_.get("grid_src")), None)
+        return [_cmp_text("JIG_GRID_RANK", cell_mm=f"{float(S_.get('grid_cell_mm') or 0):g}",
+                          method=jig_bc.METHODS[m]["name"] if m else "")]
     return [_cmp_text("SM_CROSS_MESH")] if S_ and S_["cross_mesh"] else []
 
 
@@ -4995,6 +5024,10 @@ def _src_need(c: Ctx, src: dict) -> str:
     if not src["need_rank"]:
         return str(src["need"])
     try:
+        if _jg_kind(c) == "grid":                # v0.24.8 JG §3: 격자 = ok 인 첫 방식(없으면 스냅샷 첫 방식 — 보기 없음)
+            js_ = _jg_rank_src(c)
+            if js_ is not None:
+                return str(_jig_src_row(js_)["need"])
         return str(_jig_src_row(_jig_rank_src(c))["need"])
     except EslError:
         return str(src["need"])
@@ -5015,11 +5048,15 @@ def _rank_view_one(c: Ctx, m: dict, results: list, noise, S_: dict | None, label
     metric = src["metric"] if src["metric"] != "effective" else ("solve" if me in side_m else me)   # 같은 사이드카 출처 지표
     # (jig·jd·js — v0.24.5 기본 순위 jd 포함)면 전 노드 보기 = solve(옛: jig → solve 와 같음)
     kw = {"lin_form": S_["lin_form"], "lin_valid": float(S_["lin_valid"])} if S_ else {}
+    if src["v3d_store"] == "sidecar" and getattr(c, "_jg_nf", None) is not None:
+        noise = c._jg_nf                                       # v0.24.8 JG §3: 격자 출처 보기(jd·js)도 같은 noise_floor
     R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric, **kw)
+    if c.scn == "compare":                                     # v0.24.8 ④ 격자 지그 보기: 형상 이름(rk.attach_shapes)
+        rk.attach_shapes(R, {x["id"]: x for x in _cmp_doc(c)["shapes"]})
     best_clean = _annotate(c, R, results, labels)
     _view_rows(R, results, src)
     sc = {BASELINE: 1.0, **{x["id"]: x["score"] for x in R["ranking"]}}
-    sens = _sens(c, m, results, sc)
+    sens = _sens(c, m, results, sc) if m is not None else {"null": True, "reason": "COMPARE_NO_PARAMS"}
     inline = len(R["ranking"]) * len(R["esl_order"]) <= int(c.cfg["rank"]["per_esl_inline_max"])
     view = {"metric": metric, "C_ref": R["C_ref"], "baseline": R["baseline"], "n_ok": R["n_ok"],
             "n_skipped": R["n_skipped"], "n_failed": R["n_failed"],
@@ -5037,8 +5074,8 @@ def _jig_extras(c: Ctx, t, m: dict, results: list, noise, S_: dict | None, *, sh
     다시 만들기가 옛 사이드카에서 옮겨 적을 키(_jig_src_carry — 있는 행은 덮지 않음), 없는 행은 준비됐으면 새로 만듦(_jig_v3d_sidecar).
     만들 것이 없으면 새 키 없음(옛 스터디 사이드카 바이트 동일)."""
     ready = _jig_ready(c)
-    if not c.cfg["view3d"].get("jig_diag") or (ready is None and not _jig_any_ready(c)):
-        return None                                           # v0.24.4 P2c: 고정 실패여도 다른 방식이 준비되면 보기(격리)
+    if not c.cfg["view3d"].get("jig_diag") or (ready is None and not _jig_any_ready(c) and not _jg_any_ready(c)):
+        return None                                           # v0.24.8: 격자 지그 방식이 준비돼도 보기(_jg_any_ready — grid 만 참)                                           # v0.24.4 P2c: 고정 실패여도 다른 방식이 준비되면 보기(격리)
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
     doc: dict = {"schema": JIG_VIEW_SCHEMA, "source": source}
     warns: list = []
@@ -5082,7 +5119,7 @@ def _jig_v3d_sidecar(c: Ctx, t, results: list, shown: list, keep: dict, warns: l
             continue
         t0 = time.monotonic()
         try:
-            v3, w = _jig_view3d_src(c, t, results, shown, row)
+            v3, w = (_jg_view3d_src if _jg_kind(c) == "grid" else _jig_view3d_src)(c, t, results, shown, row)
         except Exception as exc:                                # noqa: BLE001 — 3D 때문에 보기·BD_POST 실패 금지
             v3, w = {}, [f"VIEW3D_FAILED: {tag} {getattr(exc, 'code', type(exc).__name__)}"]
         warns.extend(w)
@@ -5150,13 +5187,27 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
         raise EslError("RESULT_NOT_READY", "post/result.json 이 없습니다 — 실행이 끝난 스터디만 3D 를 다시 만들 수 있습니다")
     res0 = U.read_json(rp)
     t, _bmeta = sc.load_base(c.p("prep"))
-    m = _matrix(c)
-    results, _pv = _collect(c, m)
+    if c.scn == "compare":                                    # v0.24.8 ④(격자 지그) — 행렬 없음(m = None), 형상 결과 읽기만
+        m = None
+        results = [U.read_json(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON)) for r_ in _cmp_doc(c)["shapes"]
+                   if r_["status"] == "READY" and os.path.isfile(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON))]
+    else:
+        m = _matrix(c)
+        results, _pv = _collect(c, m)
     for r in results:                                         # 순위 score 는 bd_post 가 안 result.json 에 써 둔 값(읽기만)
         if r["id"] == BASELINE:
             r["score"] = 1.0
     noise = res0.get("noise_floor")
     S_ = _sm_post(c)
+    if S_ is not None and S_.get("grid_rank"):                # v0.24.8 JG §3: 격자 출처 보기 = 순위와 같은 nf, 그 밖 보기 = 원래 잡음 바닥
+        c._jg_nf = noise
+        noise = None
+        npth = os.path.join(design_dir(c, NOISE), ev.RESULT_JSON)
+        if c.scn == "step" and os.path.isfile(npth):
+            nr = U.read_json(npth)
+            b = next((r for r in results if r["id"] == BASELINE), None)
+            if nr.get("status") == "OK" and b is not None and b.get("status") == "OK":
+                noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
     shown = [str(d) for d in res0.get("view3d") or [] if d]
     v3, vjw = ({}, []) if isinstance(res0.get("view3d_jig"), dict) else _jig_view3d(c, t, results, shown)
     c.progress(40)
@@ -5701,7 +5752,10 @@ def _jig_apply(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: dict) ->
 
 
 def _jig_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict | None, list]:
-    """BD_POST 지그 블록(_jig_post_fixed) + v0.24.4 P2c 새 스냅샷(세 방식) = 블록 methods{src: 방식 요약}(옛 스냅샷 = 그대로)."""
+    """BD_POST 지그 블록(_jig_post_fixed) + v0.24.4 P2c 새 스냅샷(세 방식) = 블록 methods{src: 방식 요약}(옛 스냅샷 = 그대로).
+    v0.24.8: 지그 종류 grid = 격자 지그 블록(_jg_post — transfer "grid")."""
+    if _jig_snap(c) is not None and _jg_kind(c) == "grid":
+        return _jg_post(c, S_, labels)
     blk, warns = _jig_post_fixed(c, S_, labels)
     if blk is None:
         return blk, warns
@@ -5816,6 +5870,813 @@ def _jig_csv(rank: dict, rid: str, x: dict | None, blk: dict | None) -> list:
     return ["" if v is None else v for v in vals]
 
 
+# ---------------------------------------------------------------- v0.24.8 격자 지그(esl_jig_grid_map.md — 순수 모듈 esl.mech.grid_map,
+# 계획 열 jig_fix grid·jig_ctx shape). 다른 메시 계획(④·옛 ③)에서 Case 지그(04_esl 맞춤 하중·tie·g·스프링 k)를 cell_mm 공통 격자로 형상마다
+# 사상해 지그 변위·스프링 방식으로 푼다. 호출부는 지그 종류 값(_jg_kind = tp.jig_kind)만 읽는다 — 시나리오 이름 분기 없음.
+JG_JSON = "jig_grid.json"                          # prep/·run/designs/<did>/
+JG_DIR = "jig_grid"                                # prep/jig_grid/g<k>.npz
+JG_LOAD_KEYS = ("dF_rel_before", "dM_rel_before", "dF_rel", "dM_rel", "corr_rel", "small_frac", "n_cells_loaded")
+JG_RANGES = {"tie_capture_rel": (0.0, 1.0, True, False), "tie_normal_deg": (0.0, 90.0, True, True),
+             "tie_miss_frac_max": (0.0, 1.0, False, False), "sample_normal_deg": (0.0, 90.0, True, False),
+             "noise_floor_min": (0.0, 0.2, False, False)}
+
+
+def _jg_raw(c: Ctx) -> dict | None:
+    """스냅샷 doe.rank.jig_grid 원본(설정 병합 전) — 없으면 None(옛 스냅샷)."""
+    d = getattr(c, "D", None)
+    r = d.get("rank") if isinstance(d, dict) else None
+    g = r.get("jig_grid") if isinstance(r, dict) else None
+    return g if isinstance(g, dict) else None
+
+
+def _jg_kind(c: Ctx) -> str:
+    """지그 종류(tp.jig_kind 한 곳): grid_snap = 스냅샷 rank.jig enabled ∧ rank.jig_grid enabled(∧ 하중 전달 스냅샷 — 격자 지그 하중은
+    공용 실행기 셀 전달)."""
+    S_ = _sm(c)
+    raw = _jg_raw(c)
+    snap = bool(S_ is not None and S_.get("jig") is not None and S_["jig"].get("enabled") and raw is not None
+                and raw.get("enabled", True) and _lt(c) is not None)
+    return tp.jig_kind(_lt_plan(c), snap)
+
+
+def _jg_cfg(c: Ctx) -> dict:
+    """계산용 격자 설정 = DEFAULTS rank.jig_grid 위에 스냅샷 원본(해시는 원본 — _cfg_hash). 범위 밖 = CONFIG_INVALID(§7.1)."""
+    g = {**settings()["rank"]["jig_grid"], **(_jg_raw(c) or {})}
+
+    def num(k):
+        v = g.get(k)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(float(v)):
+            raise EslError("CONFIG_INVALID", f"rank.jig_grid.{k} = {v!r}")
+        return float(v)
+    lo = float(c.cfg["load_transfer"]["cell_min_mm"])
+    cm = num("cell_mm")
+    if not lo <= cm <= tp.CELL_MAX_MM:
+        raise EslError("CONFIG_INVALID", f"rank.jig_grid.cell_mm {cm:g} ∉ [{lo:g}, {tp.CELL_MAX_MM:g}]")
+    cv = g.get("conv_mm") or []
+    if not isinstance(cv, list) or len(cv) > 3 or any(isinstance(x, bool) or not isinstance(x, (int, float))
+                                                      or not lo <= float(x) <= tp.CELL_MAX_MM or float(x) == cm for x in cv):
+        raise EslError("CONFIG_INVALID", f"rank.jig_grid.conv_mm {cv!r}(≤ 3개, 각 {lo:g}..{tp.CELL_MAX_MM:g}, cell_mm 와 다름)")
+    for k, (a, b, lo_open, hi_open) in JG_RANGES.items():
+        v = num(k)
+        if (v <= a if lo_open else v < a) or (v >= b if hi_open else v > b):
+            raise EslError("CONFIG_INVALID", f"rank.jig_grid.{k} = {v:g}")
+    if not num("tie_capture_rel") <= num("tie_snap_rel") <= 2.0:
+        raise EslError("CONFIG_INVALID", "rank.jig_grid.tie_snap_rel ∉ [tie_capture_rel, 2]")
+    nb = g.get("sample_nbr")
+    if isinstance(nb, bool) or not isinstance(nb, int) or not 1 <= nb <= 3:
+        raise EslError("CONFIG_INVALID", f"rank.jig_grid.sample_nbr {nb!r} ∉ 1..3")
+    for k in ("area_ratio_warn",):
+        if num(k) <= 1.0:
+            raise EslError("CONFIG_INVALID", f"rank.jig_grid.{k} ≤ 1")
+    for k in ("conv_warn", "frame_shift_warn", "load_resid_warn"):
+        if num(k) <= 0.0:
+            raise EslError("CONFIG_INVALID", f"rank.jig_grid.{k} ≤ 0")
+    g["conv_mm"] = [float(x) for x in cv]
+    return g
+
+
+def _jg_methods(c: Ctx) -> list:
+    return list(_jig_plan(c)[1])
+
+
+def _jg_doc(c: Ctx) -> dict | None:
+    p = c.p("prep", JG_JSON)
+    return U.read_json(p) if os.path.isfile(p) else None
+
+
+def _jg_run_doc(c: Ctx, did: str) -> dict | None:
+    p = os.path.join(design_dir(c, did), JG_JSON)
+    return U.read_json(p) if os.path.isfile(p) else None
+
+
+def _jg_U(raw: dict, P, frames) -> dict:
+    """엔트리 1개의 프레임 열 변위(METHODS.frame): part = u_rel(파트 Kabsch — Case 목표), jig_kabsch = jig.target_disp."""
+    from esl.mech import jig as mj
+    u = np.asarray(raw["u_rel"], dtype=np.float64)[:, :3]
+    out = {}
+    for fr in frames:
+        if fr == "part":
+            out[fr] = u
+        else:
+            out[fr] = np.asarray(mj.target_disp(raw["x0"], u, np.asarray(P, dtype=np.int64),
+                                                np.ones(u.shape[0], bool))["u_tgt"], dtype=np.float64)
+    return out
+
+
+def _jg_mesh_of_raw(raw: dict) -> dict:
+    return {k: raw[k] for k in ("node_id", "x0", "conn", "elem_type", "thickness", "E", "nu")}
+
+
+def _jg_sup_x(raw: dict) -> np.ndarray | None:
+    """엔트리 3-2-1(dof 길이 3·2·1 순) A 좌표 — 진단 sup_shift_mm."""
+    ids = np.asarray(raw.get("support_node_id", []), dtype=np.int64)
+    dofs = [str(d) for d in np.asarray(raw.get("support_dof", [])).tolist()]
+    if ids.size != 3:
+        return None
+    nid = np.asarray(raw["node_id"], dtype=np.int64)
+    o = sorted(range(3), key=lambda i: -len(dofs[i]))
+    return np.asarray(raw["x0"], dtype=np.float64)[np.searchsorted(nid, ids[o])]
+
+
+def _jg_text(code: str, **kw) -> str:
+    return _cmp_text(code, **kw)
+
+
+def _jg_prep(c: Ctx, t, echo=None) -> list:
+    """BD_LOADS(④ _cmp_loads_lt 끝·옛 ③ bd_loads 끝) — 엔트리·방식마다 Case 지그 find → 원천 묶음 → 격자 값(grid_map.build_group) →
+    prep/jig_grid/g<k>.npz + prep/jig_grid.json. 예외·없음 = 그 방식 fallback(JIG_GRID_SOURCE_MISSING) — BD_LOADS 실패로 만들지 않음.
+    반환 = 경고 문자열."""
+    from esl.library import normalize as nz
+    from esl.library import source_load as srcl
+    from esl.mech import grid_map as gm
+    from esl.mech import jig_bc
+    t0 = time.monotonic()
+    cfg = _jg_cfg(c)
+    s = float(cfg["cell_mm"])
+    ms = _jg_methods(c)
+    plan = _lt_plan(c)
+    ents = _lt_ents(c)
+    labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
+    td_snap = _jig_plan(c)[0]
+    warns: list = []
+    info: list = []
+    mdoc: dict = {}
+    found: dict = {}
+    miss: list = []
+    for m in ms:
+        row = jig_bc.METHODS[m]
+        src = str(row["src"])
+        rows, missing, first = [], [], None
+        for e in ents:
+            eid = str(e.meta.get("entry_id"))
+            try:
+                d, jd, f, bc, why = srcl.find(src, e.meta, e.raw)
+            except EslError as exc:
+                d = jd = f = bc = None
+                why = f"{exc.code}: {exc.message}"
+            if f is None or bc is None or jd is None:
+                missing.append((eid, why))
+                rows.append({"entry_id": eid, "source": None, "status": "missing", "reason": why})
+                continue
+            nid = np.asarray(e.raw["node_id"], dtype=np.int64)
+            bci = dict(bc)
+            for k in ("bc_node", "sp_node"):
+                ids = np.asarray(bc[k], dtype=np.int64)
+                pos = np.searchsorted(nid, ids)
+                if ids.size and (np.any(pos >= nid.size) or np.any(nid[pos.clip(0, nid.size - 1)] != ids)):
+                    raise EslError("MODEL_MISMATCH", f"Case {src} 구속 노드가 엔트리 메시 밖")
+                bci[k] = pos.astype(np.int64)
+            found[(eid, src)] = {"jd": jd, "f": np.asarray(f, dtype=np.float64), "bc": bci}
+            first = first or jd
+            en_ = jd.get("energy") or {}
+            kk = np.asarray(bc.get("sp_k", []), dtype=np.float64)
+            rows.append({"entry_id": eid, "source": d, "status": "ok",
+                         "npz_sha256": U.sha256_file(os.path.join(d, f"{src}.npz")),
+                         "fit_mac": (jd.get("fit") or {}).get("mac"), "fit_umax_err": (jd.get("fit") or {}).get("umax_err"),
+                         "recon_mac": (jd.get("recon") or {}).get("mac"), "C_mix": en_.get("C_mix"), "E": en_.get("E"),
+                         "k_sum": float(kk.sum()) if row["tie_stiff"] != "hard" and kk.size else None})
+        mdoc[src] = {"status": "ok" if not missing else "fallback",
+                     "code": None if not missing else "JIG_GRID_SOURCE_MISSING",
+                     "reason": None if not missing else missing[0][1], "method": m,
+                     "tie_dofs": (first or {}).get("tie_dofs"), "spring": (first or {}).get("spring"), "entries": rows}
+        miss += [(eid, m, why) for eid, why in missing]
+    ok_m = [m for m in ms if mdoc[jig_bc.METHODS[m]["src"]]["status"] == "ok"]
+    # 원천 묶음(§1.2): (메시 sha, tie 집합 sha, tie_dofs, 스프링 파라미터)
+    groups: list = []
+    gkey: dict = {}
+    for e in ents:
+        eid = str(e.meta.get("entry_id"))
+        srcs_e = [jig_bc.METHODS[m]["src"] for m in ok_m if (eid, jig_bc.METHODS[m]["src"]) in found]
+        if not srcs_e:
+            continue
+        sp_src = [s_ for s_ in srcs_e if jig_bc.METHODS[next(m for m in ok_m if jig_bc.METHODS[m]["src"] == s_)]
+                  ["tie_stiff"] != "hard"]
+        tsrc = sp_src[0] if sp_src else srcs_e[0]
+        P, td_, tr_ = gm.case_tie(found[(eid, tsrc)]["bc"])
+        jd0 = found[(eid, tsrc)]["jd"]
+        spj = found[(eid, sp_src[0])]["jd"].get("spring") if sp_src else None
+        spk = None if spj is None else {k: spj.get(k) for k in ("k_mode", "alpha", "k_value")}
+        key = (ltm.mesh_sha(_jg_mesh_of_raw(e.raw)), hashlib.sha256(np.ascontiguousarray(P).tobytes()).hexdigest(),
+               str(jd0.get("tie_dofs")), json.dumps(spk, sort_keys=True))
+        if key not in gkey:
+            gkey[key] = len(groups)
+            groups.append({"key": key, "eids": [], "ents": [], "P": P, "td": td_, "tr": tr_, "tie_dofs": str(jd0.get("tie_dofs")),
+                           "spring": spk})
+        groups[gkey[key]]["eids"].append(eid)
+        groups[gkey[key]]["ents"].append(e)
+    gdocs = []
+    frames = sorted({str(jig_bc.METHODS[m]["frame"]) for m in ok_m})
+    c.writer.makedirs(c.p("prep", JG_DIR))
+    for gi, g in enumerate(groups):
+        raw0 = g["ents"][0].raw
+        mesh_A = _jg_mesh_of_raw(raw0)
+        fr_A = g["ents"][0].meta["frame"]
+        spring_rows = {}
+        for m in ok_m:
+            row = jig_bc.METHODS[m]
+            src = str(row["src"])
+            if row["tie_stiff"] == "hard":
+                continue
+            rep = next((eid for eid in g["eids"] if (eid, src) in found), None)
+            if rep is None:
+                continue
+            b0 = found[(rep, src)]["bc"]
+            spring_rows[src] = (np.asarray(b0["sp_node"], dtype=np.int64), np.asarray(b0["sp_k"], dtype=np.float64))
+            for eid in g["eids"]:
+                if eid == rep or (eid, src) not in found:
+                    continue
+                b1 = found[(eid, src)]["bc"]
+                same = (np.array_equal(np.asarray(b1["sp_node"]), np.asarray(b0["sp_node"]))
+                        and np.allclose(np.asarray(b1["sp_dir"]), np.asarray(b0["sp_dir"]), rtol=0, atol=1e-12))
+                k0, k1 = np.asarray(b0["sp_k"], dtype=np.float64), np.asarray(b1["sp_k"], dtype=np.float64)
+                dmax = float(np.max(np.abs(k1 - k0) / np.maximum(np.abs(k0), 1e-300))) if same else float("inf")
+                if dmax > 1e-9:                                  # 같은 묶음 sp_k 불일치 = 그 엔트리만 그 방식 fallback(§1.2)
+                    found.pop((eid, src))
+                    why = f"같은 묶음인데 Case 스프링 k 가 다름(최대 상대차 {dmax:.2e})"
+                    for r_ in mdoc[src]["entries"]:
+                        if r_["entry_id"] == eid:
+                            r_.update(status="fallback", reason=why)
+                    miss.append((eid, m, why))
+        K = len(g["eids"])
+        Ufr = {fr: np.stack([_jg_U(e.raw, g["P"], [fr])[fr] for e in g["ents"]], axis=0) for fr in frames}
+        G = gm.build_group(mesh_A, fr_A, s, g["P"], g["td"], g["tr"], Ufr, spring_rows, sup_x=_jg_sup_x(raw0))
+        arr = gm.group_arrays(G)
+        XA = np.asarray(raw0["x0"], dtype=np.float64)
+        nxy = (G["GF"]["nx"], G["GF"]["ny"])
+        for m in ok_m:
+            src = str(jig_bc.METHODS[m]["src"])
+            F = np.zeros((K, XA.shape[0], 3))
+            cF = np.zeros((K, nxy[0], nxy[1], 3))
+            cM = np.zeros((K, nxy[0], nxy[1], 3))
+            for k, eid in enumerate(g["eids"]):
+                if (eid, src) in found:
+                    F[k] = found[(eid, src)]["f"]
+                    gs = nz.grid_summary(XA, F[k], nxy[0], nxy[1], fr=fr_A, top_n=0)
+                    cF[k] = np.asarray(gs["cell_F_loc"]).reshape(nxy[0], nxy[1], 3)
+                    cM[k] = np.asarray(gs["cell_M_loc"]).reshape(nxy[0], nxy[1], 3)
+            arr[f"f_{src}"], arr[f"cellF_{src}"], arr[f"cellM_{src}"] = F, cF, cM
+            arr[f"ok_{src}"] = np.asarray([(eid, src) in found for eid in g["eids"]], dtype=bool)
+        rel = f"prep/{JG_DIR}/g{gi}.npz"
+        mg.save_npz_det(c.writer.guard(c.p(*rel.split("/"))), {k: np.asarray(v) for k, v in arr.items()})
+        gdocs.append({"g": gi, "mesh_sha": g["key"][0], "tie_sha": g["key"][1], "tie_dofs": g["tie_dofs"],
+                      "spring": g["spring"], "entry_ids": list(g["eids"]), "n_tie": int(g["P"].size),
+                      "n_clusters": int(G["skel"]["n_q"]), "h_T": float(G["skel"]["h_T"]),
+                      "n_vox": int(G["field"]["key"].shape[0]), "npz": rel, "sha256": U.sha256_file(c.p(*rel.split("/")))})
+        if g["tie_dofs"] != td_snap:
+            info.append(f"tie 구속 성분 = Case 값 {g['tie_dofs']}(스냅샷 rank.jig.tie_dofs {td_snap} 와 다름)")
+    ok_any = any(mdoc[jig_bc.METHODS[m]["src"]]["status"] == "ok" for m in ms) and bool(gdocs)
+    nxt = next((jig_bc.METHODS[m]["name"] for m in ok_m), None)
+    note = f"순위는 지그 {nxt} 로 매깁니다" if nxt else "지금은 재풀이(solve) 순위입니다"
+    for eid, m, why in miss:
+        warns.append(_jg_text("JIG_GRID_SOURCE_MISSING", entry=labels.get(eid, eid), method=jig_bc.METHODS[m]["name"],
+                              rank_note=note, reason=why))
+    doc = {"schema": gm.SCHEMA, "status": "ok" if ok_any else "fallback",
+           "code": None if ok_any else "JIG_GRID_SOURCE_MISSING", "cell_mm": s,
+           "placement": {"kind": _lt_placement(c, plan).get("kind")},
+           "frame_sha": ev.config_hash(ents[0].meta.get("frame")) if ents else None, "methods": mdoc, "groups": gdocs,
+           "warnings": warns, "info": info, "seconds": round(time.monotonic() - t0, 3)}
+    c.write_json(os.path.join("prep", JG_JSON), U.jsonable(doc))
+    if echo is not None:
+        echo(f"[bd_loads] 격자 지그 {s:g} mm · 묶음 {len(gdocs)} · 방식 "
+             + ", ".join(f"{jig_bc.METHODS[m]['name']} {mdoc[jig_bc.METHODS[m]['src']]['status']}" for m in ms)
+             + f" · {doc['seconds']:.2f}s")
+    return warns
+
+
+def _jg_prep_safe(c: Ctx, t, echo=None) -> list:
+    """_jg_prep 실패 격리: 예외 = prep/jig_grid.json fallback(모든 방식) + 경고 — BD_LOADS 계속."""
+    try:
+        return _jg_prep(c, t, echo)
+    except Exception as exc:                                    # noqa: BLE001 — 격자 지그 때문에 BD_LOADS 실패 금지
+        from esl.mech import grid_map as gm
+        from esl.mech import jig_bc
+        err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
+        ms = _jg_methods(c)
+        w = [_jg_text("JIG_GRID_SOURCE_MISSING", entry="*", method=jig_bc.METHODS[m]["name"],
+                      rank_note="지금은 재풀이(solve) 순위입니다", reason=err) for m in ms]
+        c.writer.makedirs(c.p("prep"))
+        c.write_json(os.path.join("prep", JG_JSON), {"schema": gm.SCHEMA, "status": "fallback", "code": "JIG_GRID_SOURCE_MISSING",
+                                                     "cell_mm": None, "placement": None, "frame_sha": None,
+                                                     "methods": {jig_bc.METHODS[m]["src"]: {
+                                                         "status": "fallback", "code": "JIG_GRID_SOURCE_MISSING", "reason": err,
+                                                         "method": m, "tie_dofs": None, "spring": None, "entries": []}
+                                                         for m in ms},
+                                                     "groups": [], "warnings": w, "info": [], "seconds": 0.0})
+        return w
+
+
+def _jg_merge_map(maps: list) -> dict:
+    """묶음별 map → 형상 map(합·최악)."""
+    if len(maps) == 1:
+        return maps[0]
+    tie = [m_["tie"] for m_ in maps]
+    smp = [m_["sample"] for m_ in maps]
+
+    def mn(xs):
+        xs = [x for x in xs if x is not None]
+        return min(xs) if xs else None
+
+    def mx_(xs):
+        xs = [x for x in xs if x is not None]
+        return max(xs) if xs else None
+    t_ = {k: sum(int(x.get(k) or 0) for x in tie) for k in ("n_clusters", "n_miss", "n_snap", "n_reject_normal", "n_captured")}
+    t_.update(r_cap_mm=mx_([x.get("r_cap_mm") for x in tie]), h_S=mx_([x.get("h_S") for x in tie]),
+              area_ratio_min=mn([x.get("area_ratio_min") for x in tie]), area_ratio_max=mx_([x.get("area_ratio_max") for x in tie]),
+              k_scale_min=mn([x.get("k_scale_min") for x in tie]), k_scale_max=mx_([x.get("k_scale_max") for x in tie]))
+    s_ = {k: sum(int(x.get(k) or 0) for x in smp) for k in ("n_pts", "n_const", "n_expand", "n_outside", "n_normal_relax")}
+    s_["max_dist"] = mx_([x.get("max_dist") for x in smp]) or 0.0
+    return {"tie": t_, "sample": s_, "frame_shift_mm": mx_([m_.get("frame_shift_mm") for m_ in maps]),
+            "sup_shift_mm": mx_([m_.get("sup_shift_mm") for m_ in maps])}
+
+
+def _jg_shape(c: Ctx, t, did: str, mesh: dict, sup: list, region, *, keep_u: bool = False, conv: bool = False,
+              only: list | None = None) -> dict:
+    """공용 실행기 어댑터(평가·d000 수렴·3D·다시 만들기 공용 — §2.3): 배치·R_pl·ŷ, 방식·엔트리 하중(_plan_loads cell(s) srcs=Case
+    맞춤 하중), grid_map.run_shape(묶음마다). 형상 메시·지지·영역은 호출자가 그 모드 실행 함수로 준 값. 반환 {methods{src: {status, code,
+    err, rows{eid}, pattern_sha, shared}}, map, factor, load{src: {eid: 행}}, u?, loads?, bc{src: {eid: BC}}, recon?, values?}."""
+    from esl.mech import grid_map as gm
+    from esl.mech import jig as mj
+    from esl.mech import jig_bc
+    doc = _jg_doc(c)
+    if doc is None or doc.get("status") != "ok":
+        raise EslError("JIG_GRID_SOURCE_MISSING", "prep/jig_grid.json 없음·fallback")
+    cfg = _jg_cfg(c)
+    s = float(doc.get("cell_mm") or cfg["cell_mm"])
+    J = _sm(c)["jig"]
+    plan = _lt_plan(c)
+    ms = [m for m in _jg_methods(c) if (doc["methods"].get(jig_bc.METHODS[m]["src"]) or {}).get("status") == "ok"
+          and (only is None or jig_bc.METHODS[m]["src"] in only)]
+    ents = {str(e.meta.get("entry_id")): e for e in _lt_ents(c)}
+    pl = _lt_placement(c, plan)
+    last = getattr(c, "_lt_last", None) or {}
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    if last.get("did") == did and last.get("dst") is not None and \
+            np.array_equal(np.asarray(last["dst"]["mesh"]["node_id"], dtype=np.int64), nid):
+        dst, cache = last["dst"], last.get("cache") if last.get("cache") is not None else {}
+    else:
+        bmeta = U.read_json(c.p("prep", "base.json"))
+        dst = ltm.dst_mesh(mesh, t.frame, region if plan["mask"] != "none" else None, _lt_h(c, bmeta, mesh))
+        cache = {}
+    o_ = np.argsort(nid)
+    sup_idx = [(int(o_[np.searchsorted(nid, int(n), sorter=o_)]), str(d)) for n, d in sup]
+    omega = ltm.active_nodes(mesh, region) if plan["sm_omega"] != "all" and region is not None else None
+    evm = _ev_mask(c, mesh)
+    out: dict = {"methods": {}, "maps": [], "factor": {"n": 0, "seconds": 0.0}, "load": {}, "bc": {}, "u": {}, "loads": {},
+                 "recon": {}, "values": {}}
+    srcs = [str(jig_bc.METHODS[m]["src"]) for m in ms]
+    for src in srcs:
+        out["methods"][src] = {"status": "ok", "code": None, "err": None, "rows": {}, "pattern_sha": None, "shared": False}
+    frames = sorted({str(jig_bc.METHODS[m]["frame"]) for m in ms})
+    for g in doc["groups"]:
+        z = U.load_npz(c.p(*g["npz"].split("/")))
+        eids = [str(e) for e in g["entry_ids"]]
+        e0 = ents[eids[0]]
+        fr_A = e0.meta["frame"]
+        G = gm.group_from_arrays(z, fr_A, s)
+        plc = pl if pl.get("kind") != "frame" else {**pl, "src_frame": fr_A, "dst_frame": dst["frame"]}
+        Xs_A = ltm.unplace_points(np.asarray(mesh["x0"], dtype=np.float64), plc)
+        R = ltm.placement_rotation(plc)
+        R = np.eye(3) if R is None else np.asarray(R, dtype=np.float64)
+        loads: dict = {}
+        for src in srcs:
+            okv = np.asarray(z[f"ok_{src}"], bool) if f"ok_{src}" in z else np.ones(len(eids), bool)
+            sl = [ltm.src_load(eid, ents[eid].raw, np.asarray(z[f"f_{src}"][k], dtype=np.float64), fr_A)
+                  for k, eid in enumerate(eids) if okv[k]]
+            if not sl:
+                continue
+            L, info = _plan_loads(c, plan, did, dst, ("cell", s), cache, srcs=sl)
+            loads[src] = L
+            for p in info["per_esl"]:
+                out["load"].setdefault(src, {})[str(p["entry_id"])] = {k: p.get(k) for k in JG_LOAD_KEYS}
+            if keep_u:
+                out["loads"].setdefault(src, {}).update({str(k_): F for k_, F in L})
+        values = None
+        if conv and cfg["conv_mm"]:
+            values = []
+            XA = np.asarray(e0.raw["x0"], dtype=np.float64)
+            wA = mj.node_weights(_jg_mesh_of_raw(e0.raw))
+            P = G["skel"]["idx"]
+            Ufr = {fr: np.stack([_jg_U(ents[eid].raw, P, [fr])[fr] for eid in eids], axis=0) for fr in frames}
+            for s2 in cfg["conv_mm"]:
+                GF2 = gm.grid_frame(fr_A, s2)
+                f2 = gm.build_field(GF2, XA, wA, Ufr)
+                l2 = {}
+                for src in srcs:
+                    okv = np.asarray(z[f"ok_{src}"], bool) if f"ok_{src}" in z else np.ones(len(eids), bool)
+                    sl = [ltm.src_load(eid, ents[eid].raw, np.asarray(z[f"f_{src}"][k], dtype=np.float64), fr_A)
+                          for k, eid in enumerate(eids) if okv[k]]
+                    if sl:
+                        l2[src], _ = _plan_loads(c, plan, did, dst, ("cell", float(s2)), cache, srcs=sl)
+                values.append({"key": float(s2), "loads": l2, "field": f2, "GF": GF2})
+        params = {"tie_dofs": g["tie_dofs"], "kink_deg": float(J["normal_kink_deg"]), "dup_deg": float(J["aux321_dup_deg"]),
+                  "frame_A": fr_A, "frame_dst": dst["frame"], "sup_x": G.get("sup_x")}
+        res = gm.run_shape(mesh, sup_idx, loads, G["skel"], G["field"], G["GF"], R, Xs_A, methods=ms, entries=eids,
+                           params=params, cfg=cfg, solver_cfg=c.solver_cfg(), spring=G["spring"], omega=omega, ev_mask=evm,
+                           keep_u=keep_u or conv, values=values)
+        out["maps"].append(res["map"])
+        out["factor"]["n"] += res["factor"]["n"]
+        out["factor"]["seconds"] += res["factor"]["seconds"]
+        for src in srcs:
+            rm = res["methods"][src]
+            om = out["methods"][src]
+            if rm["status"] != "ok" and om["status"] == "ok":
+                om.update(status="failed", code=rm["code"], err=rm["err"])
+            om["rows"].update(rm["rows"])
+            om["pattern_sha"] = om["pattern_sha"] or rm.get("pattern_sha")
+            om["shared"] = bool(om["shared"] or rm.get("shared"))
+            if src in res["bc"]:
+                out["bc"].setdefault(src, {}).update({eid: res["bc"][src] for eid in eids})
+            for eid, u in ((res.get("u") or {}).get(src) or {}).items():
+                out["u"].setdefault(src, {})[eid] = u                 # keep_u(3D) ∨ conv(d000 재현·수렴 MAC)
+                if conv:                                          # d000 재현: u_S(파트 Kabsch 제거) vs ũ_rel(형상 노드 복셀 표본)
+                    k = eids.index(eid)
+                    sf = gm.sample_field(G["field"], G["GF"], Xs_A, np.asarray(mj.node_weights(mesh)["normal"]) @ R, "part", k,
+                                         nbr=int(cfg["sample_nbr"]), normal_deg=float(cfg["sample_normal_deg"]))
+                    out["recon"].setdefault(src, {})[eid] = gm.recon(mesh["x0"], u, sf["u"] @ R.T, omega)
+            for key, vv in (res.get("values") or {}).items():
+                for eid, rv in (vv.get(src) or {}).items():
+                    out["values"].setdefault(key, {}).setdefault(src, {})[eid] = rv
+    out["map"] = _jg_merge_map(out["maps"]) if out["maps"] else None
+    out["factor"]["seconds"] = round(out["factor"]["seconds"], 3)
+    return out
+
+
+def _jg_conv(cfg: dict, res: dict) -> dict:
+    """d000 격자 크기 수렴(§4.2): 크기마다 방식별 최악 ΔΠ_s = |C_mix(s) − C_mix(cell)|/E_0, Δumax, MAC(u_s, u_cell)."""
+    from esl.mech import grid_map as gm
+    out: dict = {}
+    for src, m_ in res["methods"].items():
+        rows = []
+        for s2 in cfg["conv_mm"]:
+            vv = (res["values"].get(float(s2)) or {}).get(src) or {}
+            dp, du, mc = [], [], []
+            for eid, r0 in m_["rows"].items():
+                rv = vv.get(eid)
+                if rv is None or not r0["E"] > 0:
+                    continue
+                dp.append(abs(rv["C_mix"] - r0["C_mix"]) / r0["E"])
+                du.append(abs(rv["umax"] - r0["umax"]) / r0["umax"] if r0["umax"] > 0 else 0.0)
+                u0 = (res["u"].get(src) or {}).get(eid)
+                if u0 is not None:
+                    mv = gm.mac(rv["u"], u0)
+                    if mv is not None:
+                        mc.append(float(mv))
+            rows.append({"cell_mm": float(s2), "dpi_max": max(dp) if dp else None, "dumax_max": max(du) if du else None,
+                         "mac_min": min(mc) if mc else None})
+        out[src] = rows
+    return out
+
+
+def _jg_apply(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list, region, r: dict) -> list:
+    """bd_eval 훅(grid): 방식마다 per_esl C_<pe>·umax_<pe>·WF_<pe>·Wg_<pe>(·umax_<pe>_ev) — C_<pe> = E_0 + (C_mix,d − C_mix,0)(기준 d000),
+    run/designs/<did>/jig_grid.json, d000 이면 c._jig_status(result.json sm.jig). 예외 = 그 형상 키 null + JIG_DESIGN_FAILED(d000 = 경고 +
+    방식 fallback — BASELINE_FAILED 금지). 반환 = 경고 문자열."""
+    from esl.mech import grid_map as gm
+    from esl.mech import jig_bc
+    t0 = time.monotonic()
+    warns: list = []
+    infos: list = []
+    ms = _jg_methods(c)
+    srcs = [str(jig_bc.METHODS[m]["src"]) for m in ms]
+    cfg = _jg_cfg(c)
+    doc = _jg_doc(c)
+    res = None
+    err = None
+    if doc is None or doc.get("status") != "ok":
+        err = "JIG_GRID_SOURCE_MISSING"
+    else:
+        try:
+            res = _jg_shape(c, t, did, mesh, sup, region, conv=did == BASELINE)
+        except Exception as exc:                                # noqa: BLE001 — 격자 지그 때문에 형상 평가 실패 금지
+            err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
+            warns.append(_jg_text("JIG_DESIGN_FAILED", did=did, stage="grid", err=err))
+    ref: dict = {}
+    if res is not None:
+        if did == BASELINE:
+            ref = {s_: res["methods"][s_]["rows"] for s_ in res["methods"] if res["methods"][s_]["status"] == "ok"}
+        else:
+            d0 = _jg_run_doc(c, BASELINE) or {}
+            for s_, md in (d0.get("methods") or {}).items():
+                if md.get("status") == "ok":
+                    ref[s_] = {e["entry_id"]: e for e in md.get("entries") or []}
+    ev_on = _ev_cfg(c) is not None
+    mdoc: dict = {}
+    for m, src in zip(ms, srcs):
+        pe = _jig_pe(src)
+        rm = (res or {}).get("methods", {}).get(src)
+        pst = ((doc or {}).get("methods") or {}).get(src) or {}
+        if rm is None:
+            st = {"status": "fallback" if pst.get("status") != "ok" else "failed",
+                  "code": pst.get("code") or ("JIG_DESIGN_FAILED" if err else "JIG_GRID_SOURCE_MISSING"), "rows": {}}
+        else:
+            st = rm
+            if rm["status"] != "ok" and rm["code"] != "JIG_GRID_TIE_MISS":     # tie 놓침은 아래 map 경고 1건
+                code = rm["code"] or "JIG_DESIGN_FAILED"
+                warns.append(_jg_text(code, did=did, stage=f"grid {m}", err=rm.get("err") or "", rigid_free="", comp=""))
+        rows = st.get("rows") or {}
+        if did != BASELINE and st.get("status") == "ok" and src not in ref and pst.get("status") == "ok":
+            warns.append(_jg_text("JIG_GRID_NO_REF", method=jig_bc.METHODS[m]["name"], err="d000 격자 지그 없음"))
+        if did == BASELINE and st.get("status") != "ok" and pst.get("status") == "ok":
+            warns.append(_jg_text("JIG_GRID_NO_REF", method=jig_bc.METHODS[m]["name"], err=st.get("code")))
+        for p in r["per_esl"]:
+            eid = p["entry_id"]
+            row = rows.get(eid)
+            rf = (ref.get(src) or {}).get(eid)
+            ok = row is not None and rf is not None and float(rf["E"]) > 0
+            p[f"C_{pe}"] = float(jig_bc.per_esl_C(row["C_mix"], rf["C_mix"], rf["E"])) if ok else None
+            p[f"umax_{pe}"] = float(row["umax"]) if ok else None
+            p[f"WF_{pe}"] = float(row["W_F"]) if ok else None
+            p[f"Wg_{pe}"] = float(row["W_g"]) if ok else None
+            if ev_on:
+                p[f"umax_{pe}_ev"] = float(row["umax_ev"]) if ok and row.get("umax_ev") is not None else None
+        ld = (res or {}).get("load", {}).get(src) or {}
+        mdoc[src] = {"status": st.get("status"), "code": st.get("code"), "pattern_sha": st.get("pattern_sha"),
+                     "shared_factor": bool(st.get("shared")),
+                     "entries": [{"entry_id": eid, **rows[eid], "load": ld.get(eid)} for eid in rows]}
+        for eid, lr in ld.items():
+            dF, dM = float(lr.get("dF_rel") or 0.0), float(lr.get("dM_rel") or 0.0)
+            if max(dF, dM) > float(cfg["load_resid_warn"]):
+                warns.append(_jg_text("JIG_GRID_LOAD_RESID", did=did, dF=f"{dF:.2e}", dM=f"{dM:.2e}",
+                                      tol=f"{float(cfg['load_resid_warn']):g}"))
+    mp = (res or {}).get("map")
+    if mp:
+        tt, smp = mp["tie"], mp["sample"]
+        if tt.get("n_miss"):
+            fail = tt["n_clusters"] and tt["n_miss"] / tt["n_clusters"] > float(cfg["tie_miss_frac_max"])
+            warns.append(_jg_text("JIG_GRID_TIE_MISS", did=did, n_miss=tt["n_miss"], n_clusters=tt["n_clusters"],
+                                  fail=" — 이 형상은 격자 지그 순위에서 빠집니다" if fail else ""))
+        rw = float(cfg["area_ratio_warn"])
+        if (tt.get("area_ratio_min") is not None and tt["area_ratio_min"] < 1.0 / rw) or \
+                (tt.get("area_ratio_max") is not None and tt["area_ratio_max"] > rw):
+            infos.append(_jg_text("JIG_GRID_AREA_RATIO", did=did, lo=f"{tt['area_ratio_min']:.3g}", hi=f"{tt['area_ratio_max']:.3g}",
+                                  rmin=f"{1.0 / rw:.3g}", rmax=f"{rw:g}", kmin=tt.get("k_scale_min"), kmax=tt.get("k_scale_max")))
+        if smp.get("n_outside"):
+            infos.append(_jg_text("JIG_GRID_OUTSIDE", did=did, n=smp["n_outside"]))
+        tol = float(cfg["frame_shift_warn"]) * float(cfg["cell_mm"])
+        if mp.get("frame_shift_mm") is not None and mp["frame_shift_mm"] > tol:
+            infos.append(_jg_text("JIG_GRID_FRAME_SHIFT", did=did, mm=f"{mp['frame_shift_mm']:.3g}", tol=f"{tol:.3g}"))
+    out = {"did": did, "schema": gm.RUN_SCHEMA, "status": "ok" if res is not None and any(
+        v.get("status") == "ok" for v in mdoc.values()) else "failed", "code": err, "methods": mdoc,
+        "map": None if not mp else {"tie": mp["tie"], "sample": mp["sample"], "frame_shift_mm": mp.get("frame_shift_mm"),
+                                    "sup_shift_mm": mp.get("sup_shift_mm")},
+        "factor": (res or {}).get("factor") or {"n": 0, "seconds": 0.0}, "warnings": warns, "info": infos}
+    if did == BASELINE and res is not None:
+        rec = {}
+        for src, rr in res["recon"].items():
+            macs = [x["mac"] for x in rr.values() if x.get("mac") is not None]
+            errs = [abs(x["umax_err"]) for x in rr.values() if x.get("umax_err") is not None]
+            rec[src] = {"mac_min": min(macs) if macs else None, "umax_err_max": max(errs) if errs else None}
+        out["recon"] = rec
+        out["conv"] = _jg_conv(cfg, res)
+        st = {src: ({"status": "ok", "code": None} if mdoc[src]["status"] == "ok"
+                    else {"status": "fallback", "code": mdoc[src]["code"] or "JIG_GRID_NO_REF"}) for src in srcs}
+        head = next((v for v in st.values() if v["status"] == "ok"), next(iter(st.values()), {"status": "fallback",
+                                                                                             "code": err}))
+        c._jig_status = {**head, "methods": st}
+    elif did == BASELINE:
+        c._jig_status = {"status": "fallback", "code": err or "JIG_GRID_SOURCE_MISSING",
+                         "methods": {src: {"status": "fallback", "code": err or "JIG_GRID_SOURCE_MISSING"} for src in srcs}}
+    out["seconds"] = round(time.monotonic() - t0, 3)
+    c.writer.makedirs(design_dir(c, did))
+    U.write_json(c.writer.guard(os.path.join(design_dir(c, did), JG_JSON)), U.jsonable(out))
+    return warns
+
+
+def _jg_ready(c: Ctx, src: str) -> bool:
+    """준비 판정: prep 방식 ok ∧ d000 jig_grid.json 그 방식 ok ∧ prep 의 모든 엔트리 행이 d000 에 있음."""
+    if _jg_kind(c) != "grid":
+        return False
+    doc = _jg_doc(c)
+    pm = ((doc or {}).get("methods") or {}).get(src) or {}
+    if (doc or {}).get("status") != "ok" or pm.get("status") != "ok":
+        return False
+    d0 = ((_jg_run_doc(c, BASELINE) or {}).get("methods") or {}).get(src) or {}
+    if d0.get("status") != "ok":
+        return False
+    have = {e["entry_id"] for e in d0.get("entries") or []}
+    need = {str(e["id"]) for e in c.D["entries"]}
+    return need <= have
+
+
+def _jg_rank_src(c: Ctx) -> str | None:
+    """격자 순위 출처 = 스냅샷 방식 순서에서 _jg_ready 가 참인 첫 방식(D-0.24.8-JG-15), 없으면 None(solve)."""
+    from esl.mech import jig_bc
+    for m in _jg_methods(c):
+        src = str(jig_bc.METHODS[m]["src"])
+        if _jg_ready(c, src):
+            return src
+    return None
+
+
+def _jg_any_ready(c: Ctx) -> bool:
+    try:
+        return _jg_rank_src(c) is not None
+    except EslError:
+        return False
+
+
+def _jg_nf(c: Ctx, mesh_noise) -> float:
+    """격자 순위 noise_floor(§3) = max(방식·엔트리 최악 ΔΠ_5(conv_mm 중 가장 작은 크기 — 없으면 뺌), noise_floor_min, 옛 ③ 메시 잡음 바닥)."""
+    cfg = _jg_cfg(c)
+    vals = [float(cfg["noise_floor_min"])]
+    if mesh_noise is not None:
+        vals.append(float(mesh_noise))
+    conv = (_jg_run_doc(c, BASELINE) or {}).get("conv") or {}
+    if cfg["conv_mm"]:
+        s5 = min(cfg["conv_mm"])
+        dp = [r_["dpi_max"] for rows in conv.values() for r_ in rows
+              if r_.get("cell_mm") == s5 and r_.get("dpi_max") is not None]
+        if dp:
+            vals.append(max(dp))
+    return float(max(vals))
+
+
+def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
+    """BD_POST 격자 지그 블록(result.json jig — §6): 기존 DoeJigOut 필드 + transfer "grid" + grid 요약 + methods{src: {…, grid}}."""
+    from esl.mech import jig_bc
+    J = _jig_snap(c) or {}
+    cfg = _jg_cfg(c)
+    th = {k: float(J[k]) for k in ("mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min", "tie_spread_min")
+          if k in J}
+    doc = _jg_doc(c) or {}
+    ms = _jg_methods(c)
+    warns: list = list(doc.get("warnings") or [])
+    runs = {}
+    dd = c.p("run", "designs")
+    for did in sorted(os.listdir(dd)) if os.path.isdir(dd) else []:
+        rd = _jg_run_doc(c, did)
+        if rd is not None:
+            runs[did] = rd
+    d0 = runs.get(BASELINE) or {}
+    meth: dict = {}
+    macs, errs, n_jig = [], [], 0
+    for g in doc.get("groups") or []:
+        n_jig = max(n_jig, int(g.get("n_tie") or 0))
+    for m in ms:
+        src = str(jig_bc.METHODS[m]["src"])
+        pm = (doc.get("methods") or {}).get(src) or {}
+        ents = [e for e in pm.get("entries") or [] if e.get("status") == "ok"]
+        fm = [float(e["fit_mac"]) for e in ents if e.get("fit_mac") is not None]
+        fe = [float(e["fit_umax_err"]) for e in ents if e.get("fit_umax_err") is not None]
+        rm = [float(e["recon_mac"]) for e in ents if e.get("recon_mac") is not None]
+        macs += fm
+        errs += fe
+        n_ok = sum(1 for rd in runs.values() if ((rd.get("methods") or {}).get(src) or {}).get("status") == "ok")
+        n_fail = sum(1 for rd in runs.values() if ((rd.get("methods") or {}).get(src) or {}).get("status") not in ("ok", None))
+        rc = (d0.get("recon") or {}).get(src) or {}
+        sp = pm.get("spring") or None
+        ready = _jg_ready(c, src)
+        meth[src] = {"method": m, "method_name": jig_bc.METHODS[m]["name"], "tie_dofs": pm.get("tie_dofs"),
+                     "status": "ok" if ready else ("fallback" if pm.get("status") != "ok" else "fallback"),
+                     "code": None if ready else (pm.get("code") or "JIG_GRID_NO_REF"), "detail": pm.get("reason"),
+                     "fit_mac_min": min(fm) if fm else None, "fit_umax_err_max": max(fe) if fe else None,
+                     "warnings": [], "limits": list(jig_bc.METHODS[m]["limits"]), "n_jig": n_jig, "bc": None,
+                     "spring": sp,
+                     "grid": {"n_ok": n_ok, "n_failed": n_fail, "case_recon_mac_min": min(rm) if rm else None,
+                              "recon_mac_d000": rc.get("mac_min"), "recon_umax_err_d000": rc.get("umax_err_max"),
+                              "alpha": None if sp is None else sp.get("alpha"),
+                              "conv": [{"cell_mm": x["cell_mm"], "dpi_max": x["dpi_max"], "dumax_max": x["dumax_max"],
+                                        "mac_min": x["mac_min"]} for x in (d0.get("conv") or {}).get(src) or []]}}
+        if pm.get("status") == "ok" and not ready and ((d0.get("methods") or {}).get(src) or {}).get("status") != "ok":
+            warns.append(_jg_text("JIG_GRID_NO_REF", method=jig_bc.METHODS[m]["name"],
+                                  err=((d0.get("methods") or {}).get(src) or {}).get("code") or "d000 없음"))
+    vals = lambda f: [v for rd in runs.values() for v in f(rd) if v is not None]      # noqa: E731
+    tie = lambda rd: [((rd.get("map") or {}).get("tie") or {})]                        # noqa: E731
+    ld = lambda rd: [e.get("load") or {} for md in (rd.get("methods") or {}).values() for e in md.get("entries") or []]  # noqa: E731
+    miss = vals(lambda rd: [(t_.get("n_miss") or 0) / t_["n_clusters"] if t_.get("n_clusters") else None for t_ in tie(rd)])
+    conv_rows = [x for rows in (d0.get("conv") or {}).values() for x in rows]
+    if cfg["conv_mm"]:
+        s5 = min(cfg["conv_mm"])
+        dp5 = [x["dpi_max"] for x in conv_rows if x["cell_mm"] == s5 and x.get("dpi_max") is not None]
+        if dp5 and max(dp5) > float(cfg["conv_warn"]):
+            warns.append(_jg_text("JIG_GRID_CONV", cell_mm=f"{float(cfg['cell_mm']):g}", mm=f"{s5:g}", dpi=f"{max(dp5):.3g}",
+                                  tol=f"{float(cfg['conv_warn']):g}"))
+    mn = lambda xs: min(xs) if xs else None      # noqa: E731
+    mx_ = lambda xs: max(xs) if xs else None     # noqa: E731
+    grid = {"cell_mm": doc.get("cell_mm"), "n_groups": len(doc.get("groups") or []), "n_shapes": len(runs),
+            "n_shapes_failed": sum(1 for rd in runs.values() if rd.get("status") != "ok"),
+            "tie_miss_max": mx_(miss), "tie_area_ratio_min": mn(vals(lambda rd: [t_.get("area_ratio_min") for t_ in tie(rd)])),
+            "tie_area_ratio_max": mx_(vals(lambda rd: [t_.get("area_ratio_max") for t_ in tie(rd)])),
+            "k_scale_min": mn(vals(lambda rd: [t_.get("k_scale_min") for t_ in tie(rd)])),
+            "k_scale_max": mx_(vals(lambda rd: [t_.get("k_scale_max") for t_ in tie(rd)])),
+            "noise_floor": getattr(c, "_jg_nf", None),
+            "load_dF_max": mx_(vals(lambda rd: [x.get("dF_rel") for x in ld(rd)])),
+            "load_dM_max": mx_(vals(lambda rd: [x.get("dM_rel") for x in ld(rd)])),
+            "corr_rel_max": mx_(vals(lambda rd: [x.get("corr_rel") for x in ld(rd)])),
+            "small_frac_max": mx_(vals(lambda rd: [x.get("small_frac") for x in ld(rd)])),
+            "frame_shift_max_mm": mx_(vals(lambda rd: [(rd.get("map") or {}).get("frame_shift_mm")])),
+            "sample_outside_max": mx_(vals(lambda rd: [((rd.get("map") or {}).get("sample") or {}).get("n_outside")])),
+            "warnings": list(doc.get("info") or [])}
+    any_ok = any(v["status"] == "ok" for v in meth.values())
+    poor = any_ok and ((macs and min(macs) < th.get("mac_min", 0.0)) or (errs and max(errs) > th.get("umax_err_max", 1e9)))
+    if poor:
+        warns.append(_cmp_text("JIG_FIT_POOR", detail=f"Case 지그 맞춤 MAC {min(macs):.3f}·umax 오차 {max(errs) * 100:.1f} %"))
+    blk = {"status": ("poor" if poor else "ok") if any_ok else "fallback",
+           "code": None if any_ok else (doc.get("code") or "JIG_GRID_NO_REF"),
+           "region_source": None, "n_jig": n_jig, "n_regions": 0, "n_contact": 0, "n_patch": 0,
+           "fit_mac_min": min(macs) if macs else None, "fit_umax_err_max": max(errs) if errs else None,
+           "fit_mac_min_nomodes": None, "fit_umax_err_max_nomodes": None, "cancel_rel_max": None, "fit_work_eff_min": None,
+           "tie_rel_max": None, "tie_spread": None, "n_modes": 0, "hz_jig": [], "hz_321": None, "hz_ratio": None, "th": th,
+           "entries": [], "transfer": "grid", "grid": grid, "tie_dofs": next((v["tie_dofs"] for v in meth.values()
+                                                                           if v.get("tie_dofs")), None),
+           "methods": meth}
+    return blk, warns
+
+
+def _jg_mesh_of(c: Ctx, t, did: str) -> tuple[dict, list, object]:
+    """3D·다시 만들기의 형상 메시·지지·영역 = 그 모드 실행 함수(_view3d 선례): ④ _cmp_design_mesh(+ LT-8 영역), 옛 ③ 저장 안 메시."""
+    if c.scn == "compare":
+        mesh, sup, _l, _i = _cmp_design_mesh(c, t, did)
+        reg = (getattr(c, "_lt_last", None) or {}).get("region") if _lt_plan(c)["mask"] == "compare_region" else None
+        return mesh, sup, reg
+    if did == BASELINE:
+        return dict(t.mesh), list(t.supports), None
+    dz = ev.load_design(design_dir(c, did))
+    pr = U.read_json(c.p("prep", "base.json"))["props"]
+    ne = dz["conn"].shape[0]
+    mesh = {"node_id": dz["node_id"], "x0": dz["x"], "conn": dz["conn"], "elem_type": dz["type"], "elem_pid": dz["pid"],
+            "elem_id": np.arange(1, ne + 1, dtype=np.int64), "thickness": np.full(ne, float(pr["t"])),
+            "E": np.full(ne, float(pr["E"])), "nu": np.full(ne, float(pr["nu"]))}
+    dt = sc.design_target(mesh, t.frame)
+    return dt.mesh, list(dt.supports), None
+
+
+def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[dict, list]:
+    """격자 지그 방식 3D(§5 — 출처 표 행 row 의 키·폴더 그대로): 비교 안 = shown 중 per_esl 이 모두 row.need 를 가진 형상, worst =
+    rank._agg(…, need), 응답 = _jg_shape(keep_u) 재실행(결정적 — 평가와 같은 값), 메시·지지·영역 = 그 모드 실행 함수, 표식 =
+    jig_bc.support_marks(형상 인덱스). 실패 = 그 형상만 VIEW3D_FAILED."""
+    from esl.mech import jig_bc
+    from esl.view3d import build_view
+    if not c.cfg["view3d"].get("jig") or not _jg_ready(c, row["key"]):
+        return {}, []
+    need, tag = str(row["need"]), str(row["v3d_tag"])
+    kd, ke, kr = row["v3d"]
+    order = [str(e["id"]) for e in c.D["entries"]]
+    by = {r["id"]: r for r in results}
+    pick: dict = {}
+    for did in shown:
+        if did == BASELINE:
+            continue
+        per = (by.get(did) or {}).get("per_esl") or []
+        if not per or any(p.get(need) is None for p in per):
+            continue
+        pick[did] = str(rk._agg({"id": did, "per_esl": per}, need)["worst"])
+    if not pick:
+        return {}, []
+    smax = int(c.cfg["view3d"]["jig_support_max"])
+    src = str(row["key"])
+    out = {kd: {}, ke: {}, kr: {}}
+    warns: list = []
+
+    def _write(name: str, did: str, ents_: list) -> dict:
+        mesh, sup, reg = _jg_mesh_of(c, t, did)
+        res = _jg_shape(c, t, did, mesh, sup, reg, keep_u=True, only=[src])
+        if res["methods"][src]["status"] != "ok":
+            raise EslError(res["methods"][src]["code"] or "JIG_DESIGN_FAILED", res["methods"][src].get("err") or "")
+        nid = np.asarray(mesh["node_id"], dtype=np.int64)
+        names = {}
+        for e in ents_:
+            BC = res["bc"][src][e]
+            marks = jig_bc.support_marks(BC["bc_node"], BC["bc_kind"], BC["sp_node"], mesh["x0"], smax)
+            nm = name or f"{BASELINE}_{tag}_e{order.index(e):02d}"
+            od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
+            build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=res["loads"][src][e],
+                       u_rel=res["u"][src][e], supports=[{"node_id": int(nid[i]), "dof": d} for i, d in marks],
+                       key=f"doe/{nm}", esl_run_id=str(e))
+            names[e] = nm
+        return names
+
+    for did in [d for d in shown if d in pick]:
+        try:
+            _write(f"{did}_{tag}", did, [pick[did]])
+            out[kd][did] = f"{did}_{tag}"
+            out[ke][did] = pick[did]
+        except Exception as exc:                                # noqa: BLE001 — 3D 때문에 BD_POST 실패 금지
+            warns.append(f"VIEW3D_FAILED: {did}_{tag} {getattr(exc, 'code', type(exc).__name__)}")
+    need_e = sorted({e for e in out[ke].values()}, key=order.index)
+    if need_e:
+        try:
+            out[kr] = _write("", BASELINE, need_e)
+        except Exception as exc:                                # noqa: BLE001
+            warns.append(f"VIEW3D_FAILED: {BASELINE}_{tag} {getattr(exc, 'code', type(exc).__name__)}")
+            return {}, warns
+    if not out[kd]:
+        return {}, warns
+    return out, warns
+
+
+def _jg_cfg_hash(c: Ctx) -> str:
+    """_cfg_hash keep["jig_grid"](grid 일 때만 — §7.2): 스냅샷 원본 hash_view·방식·kink·dup·prep/jig_grid.json(시간 키 제외) sha."""
+    from esl.mech import grid_map as gm
+    J = _sm(c)["jig"]
+    doc = _jg_doc(c)
+    prep = None
+    if doc is not None:
+        prep = ev.config_hash({k: v for k, v in doc.items() if k not in ("seconds",)})
+    return ev.config_hash({"grid": gm.hash_view(_jg_raw(c)), "methods": _jg_methods(c),
+                           "kink": float(J["normal_kink_deg"]), "dup": float(J["aux321_dup_deg"]), "prep": prep})
+
+
 MQ_CSV_COLS = ["mq_fail_ratio", "mq_tria_pct"]       # v0.21.0 SH-23 끝 열(새 스냅샷만)
 
 
@@ -5874,8 +6735,10 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
         (["score", "improvement", "worst", "umax", "epsmax"] + [f"C_{e}" for e in entry_ids])
     w.writerow(["id", "rank", "status", "name", "file_name"] + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
                + MESH_CSV_COLS + (LT_CSV_COLS if lt_cols is not None else []) + (MQ_CSV_COLS if mq_cols else [])
-               + (JIG_CSV_COLS if jig is not None else []))
+               + (JIG_CSV_COLS if jig is not None else [])
+               + [f"{k}_{pe}" for pe in (jig or {}).get("pes") or () for k in ("C", "umax")])   # v0.24.8 격자 지그만(pes)
     rr = {x["id"]: x for x in rank["ranking"]}
+    b0 = next((r for r in results if r["id"] == BASELINE), None)
     for r in sorted(results, key=lambda x: x["id"]):
         x = rr.get(r["id"])
         sh = shapes.get(r["id"]) or {}
@@ -5898,7 +6761,9 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
         w.writerow(row + extra + _mesh_csv(sh)
                    + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else [])
                    + (([mqv["fail_ratio"], mqv["tria_pct"]] if mqv else ["", ""]) if mq_cols else [])
-                   + (_jig_csv(rank, r["id"], x, jig["block"]) if jig is not None else []))
+                   + (_jig_csv(rank, r["id"], x, jig["block"]) if jig is not None else [])
+                   + [v for pe in (jig or {}).get("pes") or () for v in _jig_pe_csv(r, b0, pe, x is not None or
+                                                                                      r["id"] == BASELINE)])
     return buf.getvalue()
 
 
@@ -6073,7 +6938,9 @@ def _cmp_post(c: Ctx, echo) -> dict:
         else:
             results.append(ev.result_doc(r["id"], r["status"], {}, code=r.get("code"), message=r.get("message")))
     S_ = _sm_post(c)
-    R = rk.rank(results, noise_floor=None, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"},
+    nf = _jg_nf(c, None) if S_ is not None and S_.get("grid_rank") else None     # v0.24.8 JG §3: 격자 순위만(그 밖 None 그대로)
+    c._jg_nf = nf
+    R = rk.rank(results, noise_floor=nf, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"},
                 **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
                     "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     rk.attach_shapes(R, shapes)
@@ -6114,7 +6981,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_cmp_ranking_csv(R, results, shapes, eids, lt_cols,
                                   smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None,
-                                  mq_cols=mq_res is not None, jig={"block": jblk} if _jig_snap(c) is not None else None))
+                                  mq_cols=mq_res is not None, jig=_jig_csv_arg(c, jblk)))
 
     def shp(did):
         s = shapes.get(did) or {}
@@ -6144,6 +7011,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     if L is not None:                            # LT-9 3D 비교 같은 ESL(result.view3d 목록 불변)
         v3_ref, v3_esl, vw = _lt_view3d_ref(c, t, results, top)
         warns += vw
+    if _jg_kind(c) == "grid":                    # v0.24.8 JG §2.3·§5: 격자 지그 사이드카(보기·jd·js 3D) — grid 만(옛 ④ 바이트 불변)
+        _jig_extras(c, t, None, results, None, S_, shown=[BASELINE] + top, v3_jig=None, source="bd_post", echo=echo)
     c.progress(60)
     props = bmeta["props"]
     best_files: dict[str, list[str]] = {}
@@ -6163,7 +7032,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
            "per_esl_inline": inline, "ratio_tol": R["ratio_tol"], "esl": esl, "sensitivity": None,
            "sensitivity_reason": "COMPARE_NO_PARAMS", "boundary_warnings_n": 0, "view3d": v3,
            "best": None if best_id is None else {"id": best_id, "files": best_files.get(best_id, [])},
-           "best_all": [{"id": i, "files": f} for i, f in sorted(best_files.items())], "noise_floor": None,
+           "best_all": [{"id": i, "files": f} for i, f in sorted(best_files.items())], "noise_floor": nf,
            "matrix_sha256": None, "profile": doc.get("profile"), "warnings": warns}
     if mq_res is not None:                       # v0.21.0 SH-23: 결과 warnings 에 구조화 MESH_QUALITY_RANK, summary.best_clean_mq
         if mq_res["warning"] is not None:
