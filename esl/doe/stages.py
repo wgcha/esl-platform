@@ -5205,7 +5205,7 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
         c._jg_nf = noise
         noise = None
         npth = os.path.join(design_dir(c, NOISE), ev.RESULT_JSON)
-        if c.scn == "step" and os.path.isfile(npth):
+        if _lt_plan(c)["dst"] == "design" and os.path.isfile(npth):     # 안마다 다시 메시(계획 dst design = 옛 ③)만 메시 잡음 바닥
             nr = U.read_json(npth)
             b = next((r for r in results if r["id"] == BASELINE), None)
             if nr.get("status") == "OK" and b is not None and b.get("status") == "OK":

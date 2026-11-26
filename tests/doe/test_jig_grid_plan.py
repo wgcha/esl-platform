@@ -71,6 +71,76 @@ def test_callers_read_columns_not_scenario_names():
             assert not re.search(rf"==\s*[\"']{n}[\"']", src), (nm, n)
 
 
+# v0.24.8 fix(D-0.24.8-JG-22): 정적 범위를 _jg_* 함수에서 "v0.24.8 이 더하거나 고친 줄 전체"로 넓힘 — 시나리오·계획 이름 비교 줄 모음이
+# v0.24.7 머지 헤드(6030b213) stages.py 와 같아야 한다(새 이름 분기 0). 검증에서 _post_view3d 의 새 `c.scn == "step"` 분기를 놓친 일의 재발 방지.
+_SCN_CMP = re.compile(r"""(?:\bscn\b|scenario["'\]\)]*)\s*(?:==|!=|in|not in)\s*[\(\[\{]?\s*["'](?:same|mesh|step|compare|select|case_once|"""
+                      r"""bmesh_once|step_once|step_per_design|compare_per_shape)["']""")
+_SCN_CMP_V0247 = {
+    '"FAILED_MESH": "mesh" if c.scn == "select" else None}.get(r["state"])': 1,
+    'dz = ev.load_design(dd) if not (c.scn == "compare" and _lt(c) is not None) else None': 1,
+    'elif c.scn == "mesh":': 1,
+    'elif c.scn in ("step", "compare"):': 1,
+    'ents = c.entries(raw=c.scn == "same")': 1,
+    'if c.scn != "compare" and _jig(c) is not None:   # v0.23.0 JIG-11: 스냅샷에 rank.jig 가 있을 때만(legacy 해시 불변, 임계값 3개 제외)': 1,
+    'if c.scn != "compare" and _lt(c) is not None:   # v0.20.0 하중 전달 스냅샷만(legacy 해시 불변 — ①②③ select 포함)': 1,
+    'if c.scn != "compare" and _sm(c) is not None:   # v0.20.0 SM-6 강성 지표 스키마(스냅샷에 키 있을 때만, metric 은 해시 밖)': 1,
+    'if c.scn != "step":': 1,
+    'if c.scn == "compare":': 6,
+    'if c.scn == "same":': 1,
+    'if c.scn == "select" and did != BASELINE:    # v0.16.1 SR-D-13d: 재사용 전에 판정을 다시(규칙이 바뀌었을 수 있음)': 1,
+    'if c.scn == "select":': 8,
+    'if c.scn == "select":                        # v0.16.1 SR-D-11: 경고 안도 순위 그대로 + 행 warn, 경고 없는 최상위': 1,
+    'if c.scn == "select":                       # BS-D-13: paicad 자리 = 선택 sha + 기저 sha': 1,
+    'if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)': 1,
+    'if c.scn == "step" and os.path.isfile(npth):': 1,
+    'if c.scn in ("mesh", "step"):': 1,
+    'if c.scn in ("same", "mesh"):': 2,
+    'if c.scn not in ("same", "mesh", "step", "compare", "select"):': 1,
+    'if did == BASELINE and c.scn != "compare":': 1,
+    'if did == NOISE or c.scn == "compare":       # ④ 변수 없음': 1,
+    'if not isinstance(r, dict) or c.scn not in ("same", "mesh", "step", "compare", "select"):': 1,
+    'keep_mesh = (c.scn == "step" and did != BASELINE) or c.scn == "compare"': 1,
+    'return c.scn == "mesh" or (c.scn == "select" and select_base(c) == "mesh")': 1,
+    'return c.scn == "select" and select_base(c) == "step"': 1,
+    'return tp.plan_for(c.scn, select_base(c) if c.scn == "select" else None)': 1,
+    'sel_doc = _sel_prepare(c, t, echo) if c.scn == "select" else None': 1,
+    'tag = f"[{did} {_cmp_name(c, did)}]" if c.scn == "compare" else f"[{did}]"      # 이름은 로그 표시만': 1,
+}
+
+
+def _scn_lines(src: str) -> dict:
+    out: dict = {}
+    for ln in src.splitlines():
+        if _SCN_CMP.search(ln):
+            out[ln.strip()] = out.get(ln.strip(), 0) + 1
+    return out
+
+
+def test_no_new_scenario_name_branches_since_v0247():
+    """stages.py 전체: 시나리오 이름 비교 줄(내용·개수) = v0.24.7 머지 헤드 그대로. transfer_plan.py 의 계획 행 정의 밖 비교도 늘지 않음."""
+    got = _scn_lines(inspect.getsource(stg))
+    assert got == _SCN_CMP_V0247, {k: v for k, v in got.items() if _SCN_CMP_V0247.get(k) != v}
+
+
+def test_v0248_added_lines_have_no_scenario_branch():
+    """git 이 있으면: v0.24.7 머지 헤드 → 지금 사이에 stages.py·transfer_plan.py·grid_map.py 에 더해진 줄 전부에 시나리오 이름 비교 0."""
+    import os
+    import shutil
+    import subprocess
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if shutil.which("git") is None:
+        pytest.skip("git 없음")
+    files = ["esl/doe/stages.py", "esl/doe/transfer_plan.py", "esl/mech/grid_map.py"]
+    r = subprocess.run(["git", "-C", root, "diff", "-U0", "6030b213", "--", *files], capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip("기준 커밋 6030b213 없음(얕은 복제·배포본)")
+    added = [ln[1:] for ln in r.stdout.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
+    assert len(added) > 100                                   # v0.24.8 변경이 실제로 보임
+    bad = [ln.strip() for ln in added if _SCN_CMP.search(ln)]
+    assert bad == [], bad
+
+
 # ---------------------------------------------------------------- V-0248-JG-15 설정 범위(코어 CONFIG_INVALID — 백엔드 422 는 B1)
 def _ctx(grid=None, scn="compare", **doe):
     d = {"id": "P", "scenario": scn, "cfg": copy.deepcopy(G.CFG_FULL), "entries": [], "rank": G.rank_snap(grid=grid),
