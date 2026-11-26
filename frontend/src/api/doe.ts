@@ -500,7 +500,9 @@ export const JIG_CODE_TEXT: Record<string, string> = {
 /** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */
 export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE"]);
 /** v0.24.9 위치 U 정보 등급 코드(계약 §2.3·§1.1 — 서버가 level 을 안 줘도 ⓘ, 경고 개수 제외) */
-export const POS_U_INFO_CODES: ReadonlySet<string> = new Set(["LOAD_FOLLOW_SPATIAL", "PU_PARTIAL", "PU_LIN_SKIPPED"]);
+export const POS_U_INFO_CODES: ReadonlySet<string> = new Set(["LOAD_FOLLOW_SPATIAL", "PU_PARTIAL", "PU_LIN_SKIPPED", "U_SATURATED", "U_SHORT_SEG"]);
+/** v0.24.9 INT-7·8: U 행 회색 꼬리표 코드(비드 경고의 var = 변수 이름) — 툴팁 = 서버 문구(resources/doe_messages.json, message) */
+export const POS_U_TAG_CODES = ["U_SATURATED", "U_SHORT_SEG"] as const;
 /** v0.24.9 위치 U 화면 문구 표(서버 text·message 가 없을 때의 대체 + 순위 정의 꼬리 — 한 곳) */
 export const POS_U_TEXT = {
   label: "위치(U)",
@@ -508,7 +510,16 @@ export const POS_U_TEXT = {
   rankDef: (cellMm: number) => `하중 공간 고정(${cellMm} mm)`,
   rangeRule: "위치 범위는 0 을 포함해야 합니다",
   usable: (lo: number, hi: number) => `부호별 사용 가능 범위: (−) ${Math.abs(lo)} mm · (+) ${hi} mm`,
+  /** v0.24.9 INT-7·8 U 행 회색 꼬리표 라벨(뜻 = 툴팁의 서버 문구) */
+  tag: { U_SATURATED: (ratio: unknown) => `포화${typeof ratio === "number" ? ` ×${Number(ratio.toFixed(2))}` : ""}`, U_SHORT_SEG: () => "짧은 구간" } as Record<(typeof POS_U_TAG_CODES)[number], (ratio: unknown) => string>,
 };
+/** U 행 회색 꼬리표(INT-7·8): 비드·전체 경고 중 이 변수(var)의 U_SATURATED·U_SHORT_SEG — 코드 순서, 같은 코드 1개 */
+export function posUTags(name: string, warnings: readonly DoeWarning[]): { code: string; label: string; tip: string }[] {
+  return POS_U_TAG_CODES.flatMap((c) => {
+    const w = warnings.find((x) => x.code === c && x.var === name);
+    return w ? [{ code: c, label: POS_U_TEXT.tag[c](w.ratio), tip: warnText(w) }] : [];
+  });
+}
 /** 순위 정의 문구 꼬리(계약 §2.3·§4): " · 하중 공간 고정({cell_mm} mm)" — spatial 결과만, 아니면 "" */
 export const loadFollowTail = (r: { load_follow?: { mode?: string | null; cell_mm?: number | null } | null } | null | undefined): string =>
   r?.load_follow?.mode === "spatial" && r.load_follow.cell_mm != null ? ` · ${POS_U_TEXT.rankDef(r.load_follow.cell_mm)}` : "";
@@ -881,6 +892,8 @@ const gr = (v: XY) => `${Number(v[0].toFixed(2))}~${Number(v[1].toFixed(2))}`;
 export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules | null, type?: string): { label: string; kind: "info" | "warn" | "neutral"; tip: string } | null {
   if (!g || (g.state === "ok" && !(g.combo_scale != null && g.combo_scale < 1))) return null;
   if (g.state === "unchecked") return { label: "미점검", kind: "neutral", tip: "품질 점검 전 — 준비 표에 없는 변수라 미리보기 준비에서 점검합니다" };
+  // v0.24.9 INT-7: U 포화만으로 limited(기본 범위는 그대로) — "축소" 대신 U 회색 꼬리표(posUTags)가 알림
+  if (g.reason === "U_SATURATED" && !(g.combo_scale != null && g.combo_scale < 1)) return null;
   const why = g.reason ? `${guardReasonText(g.reason, g.value)}${guardLimit(g.reason, rules)}` : "";
   // v0.24.9 U: 부호별 비대칭 usable 을 같은 꼬리표 툴팁에 풀어 보임(새 요소 없음)
   const range = g.usable ? `${gr(g.from)} → ${gr(g.usable)} mm${type === "U" ? `\n${POS_U_TEXT.usable(g.usable[0], g.usable[1])}` : ""}` : "";

@@ -357,6 +357,8 @@
   "U_RANGE_INVALID": "위치 범위는 0 을 포함해야 합니다",
   "PU_PARTIAL": "위치(U)는 양쪽 입구 구간만 옮김(나머지 구간과 사이 접합은 램프)",
   "PU_GUARD": "위치(U) 품질 가드가 일부 노드의 평면 이동을 줄임",
+  "U_SATURATED": "{var}: 실제 이동이 요청의 ×{ratio} 에 그침(이웃 간격·접합 램프·품질 가드로 포화) — 포화 전 범위 {lo_mm}~{hi_mm} mm. 기본 범위·결과는 그대로이고 이 변수의 민감도는 작게 나옴",
+  "U_SHORT_SEG": "{var}: 세그먼트 길이 {length_mm} mm < 접합 램프 2×{ramp_mm} mm — 이동이 요청의 ×{ratio} 에 그쳐 U 민감도가 작게 나옴",
   "PU_LIN_SKIPPED": "하중 공간 고정 스터디 — 선형 보조 열(C_lin·C_ritz·rho·imbalance) 생략, 순위는 재풀이로 대체",
   "LOAD_FOLLOW_SPATIAL": "위치 변수가 있어 하중을 공간에 고정했습니다({cell_mm} mm 셀) — 기준 포함 모든 안이 같은 경로",
   "LOAD_FOLLOW_TAIL": "하중 공간 고정({cell_mm} mm)",

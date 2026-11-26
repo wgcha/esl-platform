@@ -1575,11 +1575,16 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
                 if hp not in b0.warnings:
                     b0.warnings.append(hp)
         if v["info"].get("short"):
-            b0.warnings.append({"code": "BG_SEGMENT_SHORT", "bead": b0.id, "var": v["name"],
-                                "length_mm": _r(sum(float(g["segments"][s]["length"] or 0.0)
-                                                    for s in _var_segs(b0, {"W1": "W", "DF": "D"}.get(v["kind"],
-                                                                                                    v["kind"])))),
-                                "ramp_mm": _r(v["info"]["ramp_mm"])})
+            ws_ = {"code": "BG_SEGMENT_SHORT", "bead": b0.id, "var": v["name"],
+                   "length_mm": _r(sum(float(g["segments"][s]["length"] or 0.0)
+                                       for s in _var_segs(b0, {"W1": "W", "DF": "D"}.get(v["kind"], v["kind"])))),
+                   "ramp_mm": _r(v["info"]["ramp_mm"])}
+            b0.warnings.append(ws_)
+            from esl.morph import section as _sec
+            if v["kind"] == "U" and _sec.u_short_seg(True, ws_["length_mm"], ws_["ramp_mm"]):   # v0.24.9 INT-8: U 행에도
+                b0.warnings.append({"code": "U_SHORT_SEG", "level": "info", "bead": b0.id, "var": v["name"],
+                                    "length_mm": ws_["length_mm"], "ramp_mm": ws_["ramp_mm"],
+                                    "ratio": _r(_sec.u_motion_ratio(v["vec"]))})
             continue
         lo, hi = ranges[v["name"]]
         for end in (lo, hi):
@@ -2322,6 +2327,13 @@ def _apply_single(b, typ: str, e: dict, nom: float) -> None:
          "value": bad[0]["value"] if bad else None, "combo_scale": None}
     b.guard[typ] = g
     b.warnings[:] = [w for w in b.warnings if not (w.get("code") == "RG_UNCHECKED" and w.get("var") == name)]
+    us = e.get("u_sat")
+    if us is not None:                                  # v0.24.9 INT-7: 정보 U_SATURATED(변수 표 회색 꼬리표 — 문구 doe_messages)
+        b.warnings[:] = [w for w in b.warnings if not (w.get("code") == U_SAT_CODE and w.get("var") == name)]
+        b.warnings.append({"code": U_SAT_CODE, "level": "info", "bead": b.id, "var": name, "ratio": us["ratio"],
+                           "from": frm, "usable": list(us["usable"]), "lo_mm": us["usable"][0], "hi_mm": us["usable"][1]})
+        if all(x.get("reason") == U_SAT_CODE for x in bad):
+            return                                      # 포화만 = 기저가 기본 범위로 고정(선형) — 기본 범위를 줄이면 이동이 더 줄어 그대로
     if e["state"] == "ok":
         return
     sides = [x["side"] for x in bad]
@@ -2421,6 +2433,33 @@ def _apply_combo(targets, c: dict) -> None:
                         "bad_n": c["bad_n"], "scale": c["scale"], "reason": c["reason"]})
 
 
+U_SAT_CODE = "U_SATURATED"      # v0.24.9 INT-7 정보 코드(range guard U 포화 — 끝 reason 과 같은 값)
+
+
+def _u_sat_min(cfg) -> float:
+    """포화 판정 비율 = 설정 pos_u.sat_ratio_min(해시 밖 — 빠지면 DEFAULTS 거울)."""
+    from esl.doe import DEFAULTS
+    return float({**DEFAULTS["pos_u"], **(((cfg or {}).get("pos_u")) or {})}["sat_ratio_min"])
+
+
+def _u_sat_entry(e: dict, v: dict, lo: float, hi: float, ratio_min: float) -> None:
+    """range guard U 항목 e 에 포화(실제/요청 이동 비 < ratio_min — ``section.u_saturation``)를 반영(제자리): u_sat{ratio, usable},
+    품질 점검이 ok 였으면 state limited·usable = 포화 전 범위(lo·ratio, hi·ratio — 0 을 포함할 때만)·끝 reason U_SATURATED·value ratio.
+    품질 점검이 이미 줄였으면 그 결과 그대로(정보만 더함). 기저·결과 불변."""
+    from esl.morph import section as sec
+    sat = sec.u_saturation(v["vec"], lo, hi, ratio_min)
+    if sat is None:
+        return
+    r = _r(sat["ratio"])
+    u = [_r(sat["usable"][0]), _r(sat["usable"][1])]
+    nom = float(e["nominal"])
+    e["u_sat"] = {"ratio": r, "usable": u}
+    if e["state"] != "ok" or not (u[0] < nom < u[1]):
+        return
+    e["state"], e["usable"] = "limited", u
+    e["ends"] = [{**x, "ok": False, "reason": U_SAT_CODE, "value": r} for x in e["ends"]]
+
+
 def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None) -> dict | None:
     """BD_MATRIX(SH-14, scope selection): 선택의 그래프 변수 중 unchecked(또는 only 이름)만 단일 점검(선택 기저 B — 타이 =
     구성원 합) → §4.4 적용 + 선택 전체 상호작용 묶음 조합 점검(현재 기본 범위 기준) → 문서. D 의 범위·guard·경고를 제자리 수정
@@ -2474,6 +2513,8 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
         done += 1
         e = {"key": key, "var": name, "src": "selection", "nominal": res["nominal"], "from": res["from"],
              "usable": res["usable"], "state": res["state"], "ends": res["ends"]}
+        if typ == "U":                                  # v0.24.9 INT-7: 실제/요청 이동 비 → 포화면 limited(보고만)
+            _u_sat_entry(e, v, lo, hi, _u_sat_min(cfg))
         entries.append(e)
         _apply_single(b, typ, e, nom)
     combos = []

@@ -262,7 +262,8 @@ DEFAULTS: dict = {
     # v0.24.9 PU(esl_bead_pos_u.md §3 — pydantic·두 yaml 거울, 같은 이름): 위치 변수 U(그래프 비드, 공칭 0 mm — 새 select 그래프
     # 스터디 스냅샷 doe.pos_u 에만 복사, 키 없는 옛 스냅샷 = U 행 없음) · 하중 공간 고정(U 변수가 있는 스터디만 spatial — 스냅샷
     # doe.load_follow{schema, cell_mm}; noise_floor_min 은 해시 밖·설정값으로 읽음)
-    "pos_u": {"enabled": True, "range_rel": 0.25, "max_rel": 0.5, "gap_rel": 0.5, "hold_frac_max": 0.2},
+    "pos_u": {"enabled": True, "range_rel": 0.25, "max_rel": 0.5, "gap_rel": 0.5, "hold_frac_max": 0.2,
+              "sat_ratio_min": 0.9},     # v0.24.9 INT-7: range guard U 포화 판정(실제/요청 이동 비) — 해시 밖(보고만)
     "load_follow": {"cell_mm": 3.0, "noise_floor_min": 0.01},
     # v0.22.0 REDROP(esl_redrop_bundle.md §6) — 재낙하 입력 묶음 받기(pydantic BeadDoeRedropCfg·두 yaml 거울 — 같은 이름)
     "redrop": {"enabled": True, "name_max_chars": 40, "tmp_ttl_s": 3600, "base_coord_tol_mm": 0.0},
