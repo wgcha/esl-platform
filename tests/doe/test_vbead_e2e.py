@@ -18,7 +18,7 @@ from esl.morph import virtual_bead as vbm  # noqa: E402
 pytestmark = pytest.mark.slow
 
 BLK = {"schema": 1, **{k: DEFAULTS["virtual_bead"][k] for k in vbm.HASH_KEYS}}
-VB = {"id": "a1", "p0": [60.0, 140.0, 0.0], "p1": [180.0, 140.0, 0.0], "w_top": 10.0, "d_max": 6.0, "r": 10.0}
+VB = {"id": "a1", "p0": [60.0, 140.0, 0.0], "p1": [180.0, 140.0, 0.0], "w_top": 10.0, "d_max": 6.0}   # r 생략 = h
 
 
 def _rd(p):
@@ -71,7 +71,8 @@ def test_e2e_graph_plus_virtual_v13(tmp_path):
     assert rows["A1_A"]["type"] == "A" and rows["A1_A"]["form"] == "hinge"
     assert [b["kind"] for b in pj["beads"]][-1] == "virtual"
     bj = _rd(os.path.join(sd, "basis.json"))
-    assert bj["vb_rules"] == vbm.VB_RULES and bj["virtual_beads"][0]["id"] == "a1"
+    assert bj["vb_rules"] == vbm.VB_RULES == 3 and bj["virtual_beads"][0]["id"] == "a1"
+    assert bj["virtual_beads"][0]["host"] == "base" and bj["virtual_beads"][0]["r"] > 0
     assert next(v for v in bj["vars"] if v["name"] == "A1_A")["form"] == "hinge"
     B = bs.load_basis(os.path.join(sd, "basis.npz"))
     x0 = np.asarray(mesh["x0"])
@@ -118,3 +119,17 @@ def test_old_study_without_block_scope_v19(tmp_path):
     assert not any(r["name"] == "A1_A" for r in pj["params"])
     vb = [b for b in pj["beads"] if b["kind"] == "virtual"][0]
     assert vb["vb_reason"]["code"] == "VB_SCOPE"
+
+
+def test_vb_rules_old_basis_rebuilt_v31(tmp_path):
+    """V-0250-VB-31: vb_rules 2 인 basis.json = 재사용 안 함(다시 만들어 vb_rules 3)."""
+    doe, out, run, mesh = study(tmp_path, [VB])
+    spec = {"method": "lhs", "n": 2, "seed": 2, "params": [{"name": "A1_A", "lo": 0.0, "hi": 2.0}]}
+    run("bd_matrix", rev=1, spec=spec)
+    pj = os.path.join(_sel_dir(out), "basis.json")
+    bj = _rd(pj)
+    bj["vb_rules"] = 2
+    with open(pj, "w", encoding="utf-8") as fh:
+        json.dump(bj, fh)
+    run("bd_matrix", rev=2, spec=spec)
+    assert _rd(pj)["vb_rules"] == 3

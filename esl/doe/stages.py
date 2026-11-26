@@ -8006,6 +8006,7 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                                     "n_top": None if vb.n_top is None else round(float(vb.n_top), 2),
                                     "stretch_max": (vb.diag or {}).get("stretch_max"),
                                     "side": None if vb.side is None else ("+" if vb.side > 0 else "-"),
+                                    "r": None if vb.r is None else round(float(vb.r), 4), "host": vb.host,
                                     "reasons": list(vb.reasons)} for vb in D.vbeads])
     dsv, dsr = _ds(c)
     if dsr is not None:                         # v0.24.7 DM §5: floor_fixed 만(entry_fixed basis.json 바이트 그대로)

@@ -373,7 +373,7 @@
   "VB_OVER_BEAD": "기존 비드와 겹침",
   "VB_OVER_ISLAND": "보스·섬과 겹침",
   "VB_OVER_HOLE": "구멍과 겹침",
-  "VB_PLATE_EDGE": "판 가장자리에 닿음",
+  "VB_PLATE_EDGE": "판·평탄부 가장자리에 닿음",
   "VB_FIXED": "체결부와 겹침",
   "VB_OVER_VBEAD": "다른 추가 비드와 겹침",
   "VB_EXCLUDED": "제외 영역과 겹침",
@@ -385,6 +385,9 @@
   "VB_PREVIEW_SKIPPED": "노드가 많아 미리보기를 생략함",
   "VB_VERIFY_HINT": "추가 비드 안은 모핑 근사입니다 — 유리한 안은 실제 형상(④ 또는 재낙하)으로 확인하세요",
   "VB_LIST_TIP": "추가 비드는 모핑으로 만든 근사 형상 — 유리한 후보는 실제 형상으로 ④ 비교나 재낙하로 확인",
-  "A_RANGE_INVALID": "추가 비드 깊이 하한은 0 이상"
+  "A_RANGE_INVALID": "추가 비드 깊이 하한은 0 이상",
+  "VB_WARP_INFO": "깊이 {d} mm 에서 뒤틀린 사각 요소 {n} 개(최대 {max}°) — 꺾인 모서리가 요소를 비스듬히 지나서 생김. 범위는 줄이지 않음",
+  "VB_R_CLAMPED": "모서리 둥글기를 {r} mm 로 줄임(요소 크기 {r_h} mm 는 이 단면에 들어가지 않음)",
+  "VB_THETA_FLIP": "추가 비드 사면 각 상한({theta_hi}°)이 뒤집힘 기준 select.quality.flip_deg({flip}°)보다 큼"
  }
 }

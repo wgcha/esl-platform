@@ -294,3 +294,67 @@ def graph_world(h: float = 5.0, channel: bool = True, hole: bool = True, fixed: 
 def frame_of(n=(0.0, 0.0, 1.0)) -> dict:
     return {"origin": [0.0, 0.0, 0.0], "e_xi": [1.0, 0.0, 0.0], "e_eta": [0.0, 1.0 if n[2] > 0 else -1.0, 0.0],
             "n": list(n), "L_xi": GW_SIZE[0], "L_eta": GW_SIZE[1]}
+
+
+# ---------------------------------------------------------------- 평탄부 세계(§19.3 — V-0250-VB-22·32)
+PW_SIZE = (300.0, 220.0)
+PW_RECT = (50.0, 250.0, 40.0, 180.0)              # 평탄부 윗면 사각(x0, x1, y0, y1)
+PW_CHILD = ((80.0, 70.0), (220.0, 70.0))          # 평탄부 위 자식 채널(W_top 10·D 3·θ 45)
+PW_HOLE = (200.0, 140.0, 6.0)
+
+
+def plateau_mesh(h: float = 4.0, level: float = 4.0, child: bool = True, hole: bool = True) -> dict:
+    """부모 바닥(z 0) + 평탄부(z = level, 45° 벽 — level < 0 이면 들어간 평탄부) + 평탄부 위 자식 채널 + 평탄부 위 구멍.
+    모서리 선(벽 위·아래, 자식 채널 깊이면·입구)에 노드 행이 놓인 정렬 격자."""
+    x0, x1, y0, y1 = PW_RECT
+    run = abs(level)
+    (cx0, cy), (cx1, _c) = PW_CHILD
+    cw, cd = 10.0, 3.0
+    bx = sorted({0.0, PW_SIZE[0], x0 - run, x0, x1, x1 + run, cx0 - cw / 2 - cd, cx0 - cw / 2, cx1 + cw / 2,
+                 cx1 + cw / 2 + cd})
+    by = sorted({0.0, PW_SIZE[1], y0 - run, y0, y1, y1 + run, cy - cw / 2 - cd, cy - cw / 2, cy + cw / 2, cy + cw / 2 + cd})
+    m = _grid(_axis(bx, h, 0.5 * PW_SIZE[0]), _axis(by, h, cy))
+    X = m["x0"]
+    inside = np.minimum.reduce([X[:, 0] - x0, x1 - X[:, 0], X[:, 1] - y0, y1 - X[:, 1]])
+    z = np.sign(level) * np.clip(run + inside, 0.0, run)
+    if child:
+        z = z - np.sign(level) * depth_z(X[:, 0], X[:, 1], cd, 45.0, cw, PW_CHILD)
+    X[:, 2] = z
+    if hole:
+        hx, hy, r = PW_HOLE
+        C = m["conn"]
+        cen = X[C].mean(axis=1)
+        keep = ~((np.abs(cen[:, 0] - hx) < r) & (np.abs(cen[:, 1] - hy) < r))
+        C = C[keep]
+        used = np.unique(C.ravel())
+        remap = np.full(X.shape[0], -1)
+        remap[used] = np.arange(used.size)
+        n, e = used.size, int(keep.sum())
+        m = {"node_id": np.arange(1, n + 1, dtype=np.int64), "x0": X[used], "elem_id": np.arange(1, e + 1, dtype=np.int64),
+             "elem_type": np.full(e, 4, np.int8), "conn": remap[C], "elem_pid": np.ones(e, np.int64),
+             "elem_mid": np.ones(e, np.int64), "thickness": np.full(e, T), "E": np.full(e, E), "nu": np.full(e, NU)}
+    return m
+
+
+def plateau_world(h: float = 4.0, level: float = 4.0, child: bool = True, hole: bool = True):
+    """(mesh, graph, labels, fixed ids(구멍 둘레), prep dir)."""
+    import tempfile
+
+    from esl.doe import bead_graph as bgr
+    from esl.doe import settings
+    cfg = settings({"bead_doe": {"enabled": True}})
+    m = plateau_mesh(h, level, child, hole)
+    fx = ()
+    if hole:
+        hx, hy, r = PW_HOLE
+        X, C = m["x0"], m["conn"]
+        E = np.sort(np.concatenate([C[:, [0, 1]], C[:, [1, 2]], C[:, [2, 3]], C[:, [3, 0]]]), axis=1)
+        u, cnt = np.unique(E, axis=0, return_counts=True)
+        free = np.unique(u[cnt == 1].ravel())
+        near = (np.abs(X[free, 0] - hx) <= 2 * r) & (np.abs(X[free, 1] - hy) <= 2 * r)
+        fx = tuple(int(i) for i in m["node_id"][free[near]])
+    d = tempfile.mkdtemp(prefix="vb_pw_")
+    st = bgr.prep_graph(m, list(fx), cfg, d)
+    assert st["ok"], st
+    g, lab = bgr.load_graph(d)
+    return m, g, lab, fx, d

@@ -51,7 +51,7 @@ def test_field_exact_r0_v1(theta, end):
         prev = u[:, 2]
     # 발자국 밖 노드는 기저에 없음 = 0, 경계(d_move) 노드 값 0
     assert np.all(fp["d"][fd["idx"]] < fp["d_move"])
-    assert fp["d_move"] == pytest.approx(10.0 + 6.0 / tn)
+    assert fp["d_move"] == pytest.approx(10.0 + 6.0 / tn)                            # r 0 = c 0 → 보상 없음(개정 1 식)
 
 
 def test_field_rounded_c1_v1():
@@ -195,3 +195,101 @@ def test_hash_view_keys():
     hv = vbm.hash_view({"schema": 1, **DEFAULTS["virtual_bead"]})
     assert set(hv) == set(vbm.HASH_KEYS) | {"vb_rules"} and hv["vb_rules"] == vbm.VB_RULES
     assert vbm.hash_view(None) is None
+
+
+# ---------------------------------------------------------------- 개정 3 (§19.9.1) — V-0250-VB-29·30
+@pytest.mark.parametrize("c", [0.0, 0.106, 1.243, 3.0])
+def test_depth_eff_v29(c):
+    """e(0) = 0 정확, 깊이면 노드 F_c(e(D)) − F_c(0) = D ± 1e-12, 3c/4 에서 값·기울기 연속, 단조, c 0 → e = D(비트 같음)."""
+    assert vbm.depth_eff(0.0, c) == 0.0
+    for D in ([0.1 * c, 0.5 * c, 0.75 * c, c, 6.0] if c else [0.3, 6.0]):
+        top = float(vbm.ramp(vbm.depth_eff(D, c), c) - vbm.ramp(0.0, c))
+        assert abs(top - D) <= 1e-12, (c, D, top)
+        assert float(vbm.hinge(np.zeros(1), c, D)[0]) == pytest.approx(D, abs=1e-12)
+    if c:
+        k, e = 0.75 * c, 1e-7
+        assert abs(vbm.depth_eff(k - 1e-12, c) - vbm.depth_eff(k + 1e-12, c)) <= 1e-9
+        left = (vbm.depth_eff(k, c) - vbm.depth_eff(k - e, c)) / e
+        right = (vbm.depth_eff(k + e, c) - vbm.depth_eff(k, c)) / e
+        assert abs(left - right) <= 1e-6
+        vs = np.linspace(0, 3 * c, 301)
+        ev = [vbm.depth_eff(v, c) for v in vs]
+        assert all(b > a for a, b in zip(ev, ev[1:]))
+    else:
+        for D in (0.1, 2.5, 6.0):
+            assert vbm.depth_eff(D, 0.0) == D
+
+
+@pytest.mark.parametrize("theta", [45.0, 60.0])
+def test_field_compensated_plate_v29(theta):
+    """합성 평판 h 3·r = h: 깊이면 노드 법선 변위 = D ± 1e-12, 최대 변위 = 깊이면, 직선 사면 기울기 = tanθ, 면내 0."""
+    m = sv.uniform(3.0, (300.0, 200.0))
+    X = m["x0"]
+    p0, p1 = np.array([90.0, 100.0, 0.0]), np.array([210.0, 100.0, 0.0])
+    line = vbm.resolve_line(p0, p1, None, None, None, (p0, NH))
+    r = 3.0
+    fp = vbm.footprint(X, (*line, NH), 20.0, theta, 6.0, "round", r, 3.0)
+    idx = np.flatnonzero(fp["move_mask"])
+    fd = vbm.field(fp["d"][idx], np.tile(NH, (idx.size, 1)), 1, 20.0, theta, r, idx=idx)
+    d = fp["d"][idx]
+    tn = math.tan(math.radians(theta))
+    for D in (0.2, 3.0, 6.0):
+        u = vbm.displacement(fd, D)
+        assert np.abs(u[:, :2]).max() == 0.0
+        top = fd["g"] == 0.0
+        assert top.any() and np.allclose(u[top, 2], D, atol=1e-12, rtol=0)
+        assert u[:, 2].max() <= D + 1e-12
+    u = vbm.displacement(fd, 6.0)[:, 2]
+    a, c = vbm.edge_a(r, theta), vbm.edge_c(r, theta)
+    sl = (d > 10.0 + a + 1e-6) & (u > c + 1e-6) & (u < 6.0 - 1e-6)                 # 직선 사면(둥글림 밖)
+    if sl.sum() >= 2:
+        k = np.argsort(d[sl])
+        dd, uu = d[sl][k], u[sl][k]
+        slope = -(uu[-1] - uu[0]) / (dd[-1] - dd[0])
+        assert slope == pytest.approx(tn, rel=1e-9)
+
+
+def test_footprint_r_cap_v30():
+    """d_move = W/2 + (e(d_max) + c)·cotθ ± 1e-9, D = d_max 에서 d ≥ d_move 변위 0·바로 안쪽 > 0, r₂ 계수 0.75."""
+    for theta, r in ((45.0, 3.0), (60.0, 1.5)):
+        m = sv.uniform(0.25, (60.0, 40.0))
+        X = m["x0"]
+        p0, p1 = np.array([20.0, 20.0, 0.0]), np.array([40.0, 20.0, 0.0])
+        line = vbm.resolve_line(p0, p1, None, None, None, (p0, NH))
+        c = vbm.edge_c(r, theta)
+        want = 5.0 + (vbm.depth_eff(4.0, c) + c) / math.tan(math.radians(theta))
+        fp = vbm.footprint(X, (*line, NH), 10.0, theta, 4.0, "round", r, 0.0)
+        assert fp["d_move"] == pytest.approx(want, abs=1e-9)
+        idx = np.arange(X.shape[0])
+        fd = vbm.field(fp["d"], np.tile(NH, (idx.size, 1)), 1, 10.0, theta, r, idx=idx)
+        u = vbm.displacement(fd, 4.0)[:, 2]
+        assert np.all(u[fp["d"] >= fp["d_move"]] == 0.0)
+        inner = (fp["d"] < fp["d_move"]) & (fp["d"] > fp["d_move"] - 0.3)
+        assert inner.any() and np.all(u[inner] > 0.0)
+    th = math.radians(45.0)
+    r2 = 4.0 / math.tan(th) / (math.sin(th) / 2 + 0.75 * math.tan(th / 2))
+    assert vbm.r_cap(100.0, 45.0, 4.0) == pytest.approx(r2) and vbm.r_cap(3.0, 45.0, 30.0) == pytest.approx(3.0 / math.sin(th))
+
+
+def test_theta_field_and_consts():
+    assert vbm.theta_field(60.0, 60.0) == pytest.approx(59.99) and vbm.theta_field(45.0, 60.0) == 45.0
+    assert vbm.VB_RULES == 3 and vbm.VB_HOST_SEG_TYPES == ("base", "area", "plateau") and vbm.VB_FLIP_EPS_DEG == 0.01
+
+
+def test_host_check_edge_skip_v22():
+    """§19.3-2: 평탄부 테두리 transition 에 닿으면 VB_PLATE_EDGE 만(그 너머 부모 floor 는 다른 사유로 안 셈)."""
+    m, base = _grid_masks()
+    X = m["x0"]
+    p0, p1 = np.array([60.0, 50.0, 0.0]), np.array([140.0, 50.0, 0.0])
+    line = vbm.resolve_line(p0, p1, None, None, None, (p0, NH))
+    fp = vbm.footprint(X, (*line, NH), 10.0, 45.0, 4.0, "round", 0.0, 3.0)
+    chk = vbm.chk_elems(m["conn"], m["elem_type"], fp["chk_mask"])
+    e = np.flatnonzero(chk)
+    mk = {k: v.copy() for k, v in base.items()}
+    edge = np.zeros_like(mk["host"])
+    skip = np.zeros_like(mk["host"])
+    edge[e[0]], skip[e[1]] = True, True
+    mk["host"][e[:2]] = False
+    mk["bead"][e[:2]] = True                                                          # 테두리 벽·부모 floor 가 비드 라벨이어도
+    assert vbm.host_check(m["conn"], chk, {**mk, "edge": edge, "skip": skip}) == ["VB_PLATE_EDGE"]
+    assert "VB_OVER_BEAD" in vbm.host_check(m["conn"], chk, {**mk, "edge": np.zeros_like(edge), "skip": skip})

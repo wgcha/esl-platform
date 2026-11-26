@@ -12,7 +12,8 @@ c = r·tan(θ/2)·tanθ. r = 0 이면 u = s·n·max(0, D − g), g = max(0, d �
 STABLE INTERFACE (B1·F1·통합이 맞출 것)
   VB_RULES = 1;  REASONS(순서 고정);  WARNS;  INFOS;  HASH_KEYS;  hash_view(blk) -> dict | None
   ramp(t, c) -> ndarray;  q_round(t, a) -> ndarray;  edge_a(r, theta_deg) -> a;  edge_c(r, theta_deg) -> c
-  hinge(g, c, v, v0) -> ndarray (노드별 스칼라 F_c(v − g) − F_c(v0 − g))
+  depth_eff(v, c) -> e;  hinge(g, c, v, v0) -> ndarray (F_c(e(v) − g) − F_c(e(v0) − g));  r_cap(w_top, θ, d_max)
+  theta_field(θ, flip_deg);  VB_HOST_SEG_TYPES;  VB_FLIP_EPS_DEG
   resolve_line(p0, p1, length, angle_deg, frame_axes, plane) -> (p0', p1', t̂, L)
   plane_dist(p, plane) -> float
   footprint(Xp, line, w_top, theta_deg, d_max, end, r, margin) -> {d, move_mask, chk_mask, d_move, d_chk}
@@ -28,18 +29,24 @@ import math
 
 import numpy as np
 
-VB_RULES = 1                      # 수치 규칙 판(basis.json vb_rules — 바뀌면 +1, 재사용 조건)
+VB_RULES = 3                      # 수치 규칙 판(basis.json vb_rules — 바뀌면 +1, 재사용 조건). 개정 2(r 기본·평탄부)·3(깊이 보상) = 3
+VB_HOST_SEG_TYPES = ("base", "area", "plateau")   # §19.3 host 세그먼트 종류(상수 한 곳 — 호출 쪽 문자열 비교 금지)
+VB_FLIP_EPS_DEG = 0.01            # §19.4-4 장 계산 각 θ_f = min(θ, flip_deg − 이 값)
+LEVEL_EPS = 1e-6                  # §19.9.2-4 평탄부 level 차 0 판정(mm)
+R2_COEF = 0.75                    # §19.9.1-4 r_cap r₂ 의 tan(θ/2) 계수(보상 e(d_max) = d_max + c/4)
+D_MOVE_COEF = 1.25                # d_move = W_top/2 + d_max·cotθ + 1.25·r·tan(θ/2)
 # §3.2 거부 사유(순서 고정 — 그 가상 비드는 변수 없음). 422 = VB_INPUT_INVALID·VB_MAX_COUNT(형식 오류만)
 REASONS = ("VB_SCOPE", "VB_INPUT_INVALID", "VB_MAX_COUNT", "VB_NOT_ON_PLATE", "VB_OVER_BEAD", "VB_OVER_ISLAND",
            "VB_OVER_HOLE", "VB_PLATE_EDGE", "VB_FIXED", "VB_OVER_VBEAD", "VB_EXCLUDED", "VB_MESH_COARSE")
 HOST_REASONS = ("VB_NOT_ON_PLATE", "VB_OVER_BEAD", "VB_OVER_ISLAND", "VB_OVER_HOLE", "VB_PLATE_EDGE", "VB_FIXED",
                 "VB_OVER_VBEAD", "VB_EXCLUDED")       # host_check 가 내는 것(이 순서)
 WARNS = ("VB_WALL_COARSE", "VB_TOP_NARROW")           # §3.3 경고(행은 만듦)
-INFOS = ("VB_EDGE_SMEAR", "VB_BAND_OVERLAP", "VB_PREVIEW_SKIPPED", "VB_VERIFY_HINT")
+INFOS = ("VB_EDGE_SMEAR", "VB_BAND_OVERLAP", "VB_PREVIEW_SKIPPED", "VB_VERIFY_HINT", "VB_WARP_INFO", "VB_R_CLAMPED")
 ENDS = ("round", "square")
 SIDES = ("+", "-")
 _LEN_EPS = 1e-6
-HASH_KEYS = ("min_wall_elems", "margin_mm", "theta_default_deg", "theta_range_deg", "warp_max_deg")   # §7.1 해시 안
+HASH_KEYS = ("min_wall_elems", "margin_mm", "theta_default_deg", "theta_range_deg", "warp_max_deg",
+             "r_default_h_mult")   # §7.1·§19.1 해시 안
 
 
 def hash_view(blk: dict | None) -> dict | None:
@@ -79,10 +86,37 @@ def edge_c(r: float, theta_deg: float) -> float:
     return float(r) * math.tan(th / 2.0) * math.tan(th) if float(r) > 0.0 else 0.0
 
 
+def depth_eff(v, c) -> float:
+    """§19.9.1 깊이 보상(개정 3): 변수 값 D(= 실제 최대 깊이) → 힌지에 넣는 값 e(D).
+    e = D + c/4 (D ≥ 3c/4) · c·(√(1 + 4D/c) − 1) (0 < D < 3c/4) · D (D ≤ 0 ∨ c = 0). 깊이면 노드(g = 0) 변위 F_c(e) − F_c(0) = D
+    가 되는 역함수(C¹·단조). 브라우저 ``basis.ts`` ``depthEff`` 같은 식."""
+    v, c = float(v), float(c)
+    if c <= 0.0 or v <= 0.0:
+        return v
+    if v >= 0.75 * c:
+        return v + 0.25 * c
+    return c * (math.sqrt(1.0 + 4.0 * v / c) - 1.0)
+
+
 def hinge(g, c, v, v0=0.0) -> np.ndarray:
-    """노드별 스칼라 크기 F_c(v − g) − F_c(v0 − g) — ``core.basis_term`` hinge 항의 원본(브라우저 ``basis.ts`` 같은 식)."""
+    """노드별 스칼라 크기 F_c(e(v) − g) − F_c(e(v0) − g) — ``core.basis_term`` hinge 항의 원본(브라우저 ``basis.ts`` 같은 식).
+    e = ``depth_eff``(개정 3 — c = 0 이면 e = v 라 개정 1 식과 비트 같음)."""
     g = np.asarray(g, dtype=np.float64)
-    return ramp(float(v) - g, c) - ramp(float(v0) - g, c)
+    return ramp(depth_eff(v, c) - g, c) - ramp(depth_eff(v0, c) - g, c)
+
+
+def theta_field(theta_deg: float, flip_deg: float | None) -> float:
+    """§19.4-4: 장 계산 각 θ_f = min(θ, flip_deg − VB_FLIP_EPS_DEG)(flip_deg 없음 = θ)."""
+    th = float(theta_deg)
+    return th if flip_deg is None else min(th, float(flip_deg) - VB_FLIP_EPS_DEG)
+
+
+def r_cap(w_top: float, theta_deg: float, d_max: float) -> float:
+    """§19.1-4·§19.9.1-4 기하 유효 r 상한 min(r₁, r₂): r₁ = W_top/sinθ, r₂ = d_max·cotθ/(sinθ/2 + 0.75·tan(θ/2))."""
+    th = math.radians(float(theta_deg))
+    r1 = float(w_top) / math.sin(th)
+    r2 = float(d_max) / math.tan(th) / (math.sin(th) / 2.0 + R2_COEF * math.tan(th / 2.0))
+    return min(r1, r2)
 
 
 # ---------------------------------------------------------------- 기하
@@ -158,10 +192,11 @@ def line_dist(Xp, line, end: str = "round") -> np.ndarray:
 
 
 def footprint(Xp, line, w_top, theta_deg, d_max, end="round", r=0.0, margin=0.0) -> dict:
-    """§3.1: d(노드), 이동 띠 d_move = W_top/2 + d_max·cotθ + a_r(a_r = r·tan(θ/2) — 입구 둥글림 몫), 검사 띠 d_chk = d_move + margin.
-    line = (p0', p1', t̂, L[, n_h]). 반환 {d, move_mask(d < d_move), chk_mask(d < d_chk), d_move, d_chk}."""
+    """§3.1·§19.9.1-4: d(노드), 이동 띠 d_move = W_top/2 + (e(d_max) + c)·cotθ = W_top/2 + d_max·cotθ + 1.25·r·tan(θ/2)(입구
+    둥글림·깊이 보상 몫), 검사 띠 d_chk = d_move + margin. line = (p0', p1', t̂, L[, n_h]).
+    반환 {d, move_mask(d < d_move), chk_mask(d < d_chk), d_move, d_chk}."""
     th = math.radians(float(theta_deg))
-    a_r = float(r) * math.tan(th / 2.0) if float(r) > 0.0 else 0.0
+    a_r = D_MOVE_COEF * float(r) * math.tan(th / 2.0) if float(r) > 0.0 else 0.0
     d_move = float(w_top) / 2.0 + float(d_max) / math.tan(th) + a_r
     d_chk = d_move + float(margin)
     d = line_dist(Xp, line, end)
@@ -180,8 +215,9 @@ def chk_elems(conn, et, node_mask) -> np.ndarray:
 
 def host_check(elem_nodes, chk_elems_mask, masks: dict) -> list[str]:
     """§3.2 놓을 곳 검사 → 사유 코드(HOST_REASONS 순서, 전부). elem_nodes = (m, 4) 노드(삼각형 4번째 = 3번째 또는 −1),
-    chk_elems_mask = E_chk(요소 bool). masks{host, bead, island, exclude, other_vb (요소 bool), hole_nodes, edge_nodes,
-    fixed_nodes (노드 bool)}. VB_NOT_ON_PLATE = H 아닌 요소 중 더 구체적인 사유(비드·섬·제외)로 설명되지 않는 것(벽·다른 바닥)."""
+    chk_elems_mask = E_chk(요소 bool). masks{host, bead, island, exclude, other_vb, edge(평탄부 바깥 테두리 transition),
+    skip(그 너머 부모 floor) (요소 bool), hole_nodes, edge_nodes, fixed_nodes (노드 bool)}. edge 에 닿으면 VB_PLATE_EDGE(그때 skip
+    요소는 다른 사유로 세지 않음 — §19.3-2). VB_NOT_ON_PLATE = H 아닌 요소 중 더 구체적인 사유(비드·섬·제외)로 설명되지 않는 것(벽·다른 바닥)."""
     E = np.asarray(chk_elems_mask, bool)
     C = np.asarray(elem_nodes, dtype=np.int64)
     m = E.size
@@ -190,6 +226,12 @@ def host_check(elem_nodes, chk_elems_mask, masks: dict) -> list[str]:
         v = masks.get(k)
         return np.zeros(m, bool) if v is None else np.asarray(v, bool)
     host, bead, isl, exc, ovb = em("host"), em("bead"), em("island"), em("exclude"), em("other_vb")
+    edge, skip = em("edge"), em("skip")             # §19.3-2 평탄부 바깥 테두리 transition·그 너머 부모 floor(같은 원인)
+    if (E & edge).any():
+        bead = bead & ~skip
+        skip = skip | edge
+    else:
+        skip = np.zeros(m, bool)
     nodes = C[E]
     nodes = np.unique(nodes[nodes >= 0]) if nodes.size else np.zeros(0, np.int64)
 
@@ -197,15 +239,15 @@ def host_check(elem_nodes, chk_elems_mask, masks: dict) -> list[str]:
         v = masks.get(k)
         return bool(v is not None and nodes.size and np.asarray(v, bool)[nodes].any())
     out = []
-    if (E & ~host & ~bead & ~isl & ~exc).any():
+    if (E & ~host & ~bead & ~isl & ~exc & ~skip & ~edge).any():
         out.append("VB_NOT_ON_PLATE")
-    if (E & bead).any():
+    if (E & bead & ~edge).any():
         out.append("VB_OVER_BEAD")
     if (E & isl).any():
         out.append("VB_OVER_ISLAND")
     if nm("hole_nodes"):
         out.append("VB_OVER_HOLE")
-    if nm("edge_nodes"):
+    if nm("edge_nodes") or (E & edge).any():
         out.append("VB_PLATE_EDGE")
     if nm("fixed_nodes"):
         out.append("VB_FIXED")

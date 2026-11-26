@@ -76,7 +76,8 @@ def test_selection_key_absent_or_empty_same_sha_v5():
     ({"p1": None}, "VB_INPUT_INVALID"),                                             # p1·length 둘 다 없음
     ({"p1": [60.0, 140.0, 0.0]}, "VB_INPUT_INVALID"),                               # 길이 0
     ({"w_top": 0}, "VB_INPUT_INVALID"), ({"d_max": 31.0}, "VB_INPUT_INVALID"), ({"theta_deg": 80.0}, "VB_INPUT_INVALID"),
-    ({"side": "up"}, "VB_INPUT_INVALID"), ({"end": "flat"}, "VB_INPUT_INVALID"), ({"r": -1}, "VB_INPUT_INVALID"),
+    ({"side": "+"}, "VB_INPUT_INVALID"), ({"end": "flat"}, "VB_INPUT_INVALID"), ({"r": -1}, "VB_INPUT_INVALID"),
+    ({"flip": 1}, "VB_INPUT_INVALID"), ({"r": 9.5}, "VB_INPUT_INVALID"), ({"theta_deg": 61.0}, "VB_INPUT_INVALID"),
     ({"id": "v1"}, "VB_INPUT_INVALID"), ({"id": "a5"}, "VB_INPUT_INVALID"), ({"foo": 1}, "VB_INPUT_INVALID"),
     ({"name": "x\ny"}, "VB_INPUT_INVALID"), ({"p0": [0, 0, float("nan")]}, "VB_INPUT_INVALID"),
     ({"w_top": True}, "VB_INPUT_INVALID")])
@@ -100,16 +101,16 @@ def test_selection_max_count_and_dups_v5():
 
 def test_selection_forms_and_defaults_v5():
     b = {"id": "a2", "p0": [60.0, 100.00004, 0.0], "length": 120.0, "angle_deg": 0.0, "w_top": 10.0, "d_max": 4.0,
-         "theta_deg": 45.0, "end": "round", "r": 0.0, "name": "추가 비드 2"}
+         "theta_deg": 45.0, "end": "round", "name": "추가 비드 2", "flip": False}
     n, _ = norm(sel([b, VB_OK]))
     vb = n["virtual_beads"]
     assert [x["id"] for x in vb] == ["a1", "a2"]                                    # id 정렬
     assert vb[1] == {"id": "a2", "p0": [60.0, 100.0, 0.0], "length": 120.0, "angle_deg": 0.0, "w_top": 10.0,
                      "d_max": 4.0}                                                   # (b) 그대로·기본값 키 생략·1e-4
     assert vb[0]["p1"] == [180.0, 140.0, 0.0] and "length" not in vb[0]              # (a) 그대로
-    n2, _ = norm(sel([{**b, "side": "+", "end": "square", "r": 1.0, "theta_deg": 60.0}]))
-    assert {k: n2["virtual_beads"][0][k] for k in ("side", "end", "r", "theta_deg")} == \
-        {"side": "+", "end": "square", "r": 1.0, "theta_deg": 60.0}
+    n2, _ = norm(sel([{**b, "flip": True, "end": "square", "r": 0.0, "theta_deg": 60.0}]))
+    assert {k: n2["virtual_beads"][0][k] for k in ("flip", "end", "r", "theta_deg")} == \
+        {"flip": True, "end": "square", "r": 0.0, "theta_deg": 60.0}                # r 0 키 유지(§19.1-5)
 
 
 def test_selection_virtual_only_and_empty_v5():
@@ -218,12 +219,20 @@ def test_reasons_fixed_exclude_overlap_scope_v3():
     assert [v.reasons for v in D.vbeads] == [["VB_SCOPE"]] and bgr.params_rows_v2(D, CFG) == []
 
 
-def test_side_default_v19():
-    """§2.3: 그래프 비드 없음 = frame n 반대(n +z → −z 로 밂, n −z → +z), side 지정이 우선(n_h 기준)."""
+def test_direction_auto_flip_v32():
+    """§19.9.2: base host 자동 = 그래프 비드 다수결(채널 −z) / 그래프 비드 없음 = frame n 반대, flip = 반대(사유·idx·g 같음, vec 반대)."""
+    a, b = derive().vbeads[0], derive([{**VB_OK, "flip": True}]).vbeads[0]
+    assert push_z(a) < 0 and push_z(b) > 0 and a.side == -b.side
+    assert np.array_equal(a.field["idx"], b.field["idx"]) and np.array_equal(a.field["g"], b.field["g"])
+    assert np.array_equal(a.field["vec"], -b.field["vec"]) and a.reasons == b.reasons
+    assert [w["code"] for w in a.warnings] == [w["code"] for w in b.warnings]
     assert push_z(derive(beads=False).vbeads[0]) < 0
     assert push_z(derive(beads=False, frame=sv.frame_of((0.0, 0.0, -1.0))).vbeads[0]) > 0
-    v = derive([{**VB_OK, "side": "+"}]).vbeads[0]
-    assert v.side == 1 and push_z(v) == pytest.approx(float(v.plane[1][2]))
+    assert push_z(derive([{**VB_OK, "flip": True}], beads=False, frame=sv.frame_of((0.0, 0.0, -1.0))).vbeads[0]) < 0
+    na, sa = norm(sel([{**VB_OK, "flip": False}]))
+    nb, sb = norm(sel([VB_OK]))
+    nc, sc = norm(sel([{**VB_OK, "flip": True}]))
+    assert sa == sb and "flip" not in na["virtual_beads"][0] and sc != sb
 
 
 def test_derive_doc_v8():
@@ -231,6 +240,7 @@ def test_derive_doc_v8():
     n, _ = norm(sel([VB_OK]))
     doc = bgr.derive_v2(m, n, CFG, g, lab, frame=FR, fixed_scan=fx, virtual_bead=BLK)
     v = doc["virtual_beads"][0]
+    assert v["r_source"] == "default" and v["r_resolved"] > 0 and v["host"] == "base" and "depth_max_mm" not in v
     assert v["ok"] and v["side_resolved"] in ("+", "-") and v["len_mm"] == pytest.approx(120.0) and v["angle_deg"] == 0.0
     assert v["p1_resolved"] == [180.0, 140.0, 0.0] and v["outline_ab"][0] == v["outline_ab"][-1]
     assert set(doc["vb_frame"]) == {"origin", "e_xi", "e_eta", "n_h"}
@@ -280,9 +290,10 @@ def _ts_morph(x0, parsed, values):
         val = np.float32(values[v["name"]])
         if g is None:
             x[idx] += (val - np.float32(v["nominal"])) * vec
-        else:
+        else:                                           # basis.ts: termAt hinge = vec·[ramp(depthEff(x) − g) − ramp(depthEff(x₀) − g)]
             c = np.float32(v["c"])
-            f = vbm.ramp(val - g.astype(np.float64), float(c)) - vbm.ramp(float(v["nominal"]) - g.astype(np.float64), float(c))
+            e, e0 = np.float32(vbm.depth_eff(float(val), float(c))), np.float32(vbm.depth_eff(float(v["nominal"]), float(c)))
+            f = vbm.ramp((e - g).astype(np.float64), float(c)) - vbm.ramp((e0 - g).astype(np.float64), float(c))
             x[idx] += vec * f.astype(np.float32)[:, None]
     return x
 
@@ -312,7 +323,9 @@ def test_basis_format_roundtrip_v7_v8(tmp_path):
         _parse_bin(blob[:-4], meta)                                                  # 꼬리 빠짐
     with pytest.raises(ValueError):
         _parse_bin(blob + b"\0\0\0\0", meta)                                         # 남음
-    for vv in ({"A1_A": 3.0}, {"A1_A": 4.0, "B1_D": 5.0}, {"A1_A": 0.7}):
+    a0 = next(v for v in B.vars if v["name"] == "A1_A")
+    assert a0["c"] > 0                                                               # r 기본 = h → 보상 두 가지 모두
+    for vv in ({"A1_A": 3.0}, {"A1_A": 4.0, "B1_D": 5.0}, {"A1_A": 0.7}, {"A1_A": 0.25 * a0["c"]}):
         d = np.abs(_ts_morph(x0, parsed, vv).astype(np.float64) - bs.morph(x0, B, vv)).max()
         assert d <= 1e-4, d
     # 모핑 = §4.1(평판·r 0): 깊이면 노드 = −D(z)
@@ -358,44 +371,41 @@ def _guard(vbs, beads=True):
     return D, doc
 
 
-def test_guard_selection_a_v9():
-    """d_max 끝 위반 → limited(usable_hi < d_max, blocked 아님 — SH-28 보정) · warp crit = A 항목만 · W 띠 겹침 = 조합·정보.
-    측정(VB-C1-5): r 0 모서리는 꺾임이 요소 안에 들어가 warpage > 15° 가 작은 D 에서 생김(h 5: usable 0.75 — blocked),
-    θ 75° 는 사면 회전 > flip_deg 60° = 뒤집힘(blocked). limited 사례는 r 10(둥글린 모서리)."""
-    rounded = {**VB_OK, "r": 10.0}
+def test_guard_selection_a_v9_v21():
+    """r 생략(= h) 세계(VB-C1-5: h 5 W 10 θ 45 d_max 6): warp 로 막히지 않음 — A 항목 crit 없음·warp{…} 있음, 뒤집힘·jac·tri 기준만으로
+    state(측정 = ok, usable = d_max). W 띠 겹침 = 조합·VB_BAND_OVERLAP."""
     near = {"id": "a2", "p0": [70.0, 95.0, 0.0], "p1": [200.0, 95.0, 0.0], "w_top": 6.0, "d_max": 3.0, "theta_deg": 15.0}
-    D, doc = _guard([rounded, near])
+    D, doc = _guard([VB_OK, near])
     assert [v.reasons for v in D.vbeads] == [[], []]
     ea = {e["var"]: e for e in doc["entries"]}
     a1 = ea["A1_A"]
-    assert a1["state"] == "limited" and 0.0 < a1["usable"][1] < 6.0 and a1["usable"][0] == 0.0
-    assert [x["reason"] for x in a1["ends"] if not x["ok"]] == ["warp"]
-    assert a1["crit"] == {"warp_max_deg": BLK["warp_max_deg"]}
-    assert all("crit" not in e for k, e in ea.items() if not k.startswith("A"))
+    assert "crit" not in a1 and set(a1["warp"]) == {"limit_deg", "n", "max_deg", "at"}
+    assert a1["warp"]["limit_deg"] == BLK["warp_max_deg"] and a1["warp"]["at"] == a1["usable"][1]
+    assert a1["state"] == "ok" and a1["usable"] == [0.0, 6.0]                       # 측정값(warp 정보만)
+    assert all("crit" not in e and "warp" not in e for k, e in ea.items() if not k.startswith("A"))
     rows = {r["name"]: r for r in bgr.params_rows_v2(D, CFG)}
-    assert rows["A1_A"]["guard"]["state"] == "limited" and rows["A1_A"]["default_range"] == [0.0, a1["usable"][1]]
-    assert rows["A1_A"]["use_default"] is True
-    assert any(w["code"] == "RG_RANGE_LIMITED" for w in D.vbeads[0].warnings)
+    assert rows["A1_A"]["guard"]["warp"] == a1["warp"] and rows["A1_A"]["use_default"] is True
     crit = bgr._crit(RU["range_guard"], CFG)
     assert doc["crit"] == {k: (None if crit.get(k) is None else float(crit[k])) for k in rgm.CRIT_KEYS}   # 문서 crit 불변
     ov = [w for w in D.vbeads[1].warnings if w["code"] == "VB_BAND_OVERLAP"]
     assert ov and any(v.startswith("B1_") for v in ov[0]["vars"])
-    assert any("A2_A" in c["vars"] for c in doc["combos"]) or any("A2_A" in (s.get("detail") or {}).get("vars", [])
-                                                                   for s in doc["skipped"]) or \
-        not [c for c in doc["combos"]]                                               # 조합 위반 없으면 combos 없음
 
 
-def test_guard_blocked_measured_v9():
-    """측정 고정(VB-C1-5): r 0·θ 45(h 5) = warp 로 blocked(usable < min_keep), θ 75 = 뒤집힘 blocked → use_default false·
-    RG_VAR_BLOCKED. θ 15 = ok."""
-    for v, reason in ((VB_OK, "warp"), ({**VB_OK, "w_top": 5.0, "theta_deg": 75.0, "d_max": 20.0}, "inverted")):
-        D, doc = _guard([v], beads=False)
-        e = doc["entries"][0]
-        assert e["state"] == "blocked" and [x["reason"] for x in e["ends"] if not x["ok"]] == [reason]
-        r = next(r for r in bgr.params_rows_v2(D, CFG) if r["name"] == "A1_A")
-        assert r["use_default"] is False and D.vbeads[0].warnings[-1]["code"] == "RG_VAR_BLOCKED"
-    D, doc = _guard([{**VB_OK, "theta_deg": 15.0}], beads=False)
-    assert doc["entries"][0]["state"] == "ok"
+def test_warp_info_r0_and_inverted_blocks_v21():
+    """준 r 0: warp n > 0 이어도 state 가 warp 로 줄지 않음 + VB_WARP_INFO 정보. 뒤집힘은 계속 막음(flip_deg 20 스냅샷 규칙)."""
+    D, doc = _guard([{**VB_OK, "r": 0.0}], beads=False)
+    e = doc["entries"][0]
+    assert e["warp"]["n"] > 0 and e["state"] == "ok" and e["usable"] == [0.0, 6.0]
+    wi = [w for w in D.vbeads[0].warnings if w["code"] == "VB_WARP_INFO"]
+    assert wi and wi[0]["n"] == e["warp"]["n"] and wi[0]["d"] == 6.0
+    m, g, lab, fx, _d = W()
+    n, _ = norm(sel([VB_OK], beads=False))
+    D = bgr.derive_obj_v2(m, n, CFG, g, lab, fixed_node_ids=fx, shape_rules=RU, virtual_bead=BLK, frame=FR)
+    B = bs.basis(m, D, CFG)
+    D.shape_rules = sg.rules({"range_guard": {"flip_deg": 20.0}})                    # 장은 θ 45 그대로 — 판정만 20°
+    doc = bgr.guard_selection(m, D, B, CFG, only=["A1_A"])
+    e = doc["entries"][0]
+    assert e["state"] in ("limited", "blocked") and [x["reason"] for x in e["ends"] if not x["ok"]] == ["inverted"]
 
 
 # ---------------------------------------------------------------- V-0250-VB-10·15·16 범위 규칙·기본 켬·하중·설정
@@ -425,8 +435,9 @@ def test_load_follow_not_position_v15():
 def test_settings_defaults_v16():
     vc = DEFAULTS["virtual_bead"]
     assert set(vc) == {"enabled", "max_count", "min_wall_elems", "margin_mm", "theta_default_deg", "theta_range_deg",
-                       "d_max_limit_mm", "default_on", "warp_max_deg", "preview_max_nodes"}
-    assert vc["max_count"] == 4 and vc["theta_range_deg"] == [15.0, 75.0] and vc["warp_max_deg"] == 15.0
+                       "d_max_limit_mm", "default_on", "warp_max_deg", "preview_max_nodes", "r_default_h_mult"}   # 11키
+    assert vc["max_count"] == 4 and vc["theta_range_deg"] == [15.0, 60.0] and vc["warp_max_deg"] == 15.0
+    assert vc["r_default_h_mult"] == 1.0 and "r_default_h_mult" in vbm.HASH_KEYS
     assert "A" in __import__("esl.doe", fromlist=["PARAM_TYPES"]).PARAM_TYPES
 
 
