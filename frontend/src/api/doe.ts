@@ -3,7 +3,7 @@ import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
   DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSelectGraphOut,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
-  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeVirtualBeadCfg, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeJigRegionsFile, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
   DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
   DoeCloneIn, DoeDepthSection, DoeGuard, DoeParam as DoeParamRow, DoeRankMq, DoeShapeRoute, DoeShapeRules, XY,
@@ -84,6 +84,23 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     compare: normalizeCompareCfg(r.compare, r),
     select: normalizeSelectCfg(r.select, r),
     select_reason: typeof r.select_reason === "string" ? r.select_reason : null,
+    ...(normalizeVbCfg(r.virtual_bead) ? { virtual_bead: normalizeVbCfg(r.virtual_bead) } : {}),
+  };
+}
+
+/** v0.25.0 GET /doe/settings virtual_bead(§8·§19.7) — 칸이 없거나 enabled 가 아니면 없음(절 숨김). 칸 범위가 틀리면 계약 기본값 */
+export function normalizeVbCfg(raw: unknown): DoeVirtualBeadCfg | null {
+  if (!isObj(raw) || raw.enabled !== true) return null;
+  const tr = Array.isArray(raw.theta_range_deg) && raw.theta_range_deg.length === 2 && raw.theta_range_deg.every((x) => typeof x === "number" && Number.isFinite(x)) && (raw.theta_range_deg[0] as number) < (raw.theta_range_deg[1] as number) ? ([raw.theta_range_deg[0], raw.theta_range_deg[1]] as [number, number]) : ([15, 60] as [number, number]);
+  const pos = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
+  return {
+    enabled: true,
+    max_count: Math.min(9, Math.max(1, Math.round(pos(raw.max_count, 4)))),
+    theta_default_deg: typeof raw.theta_default_deg === "number" && raw.theta_default_deg >= tr[0] && raw.theta_default_deg <= tr[1] ? raw.theta_default_deg : Math.min(tr[1], Math.max(tr[0], 45)),
+    theta_range_deg: tr,
+    d_max_limit_mm: pos(raw.d_max_limit_mm, 30),
+    min_wall_elems: pos(raw.min_wall_elems, 2),
+    ...(typeof raw.r_default_h_mult === "number" ? { r_default_h_mult: raw.r_default_h_mult } : {}),
   };
 }
 

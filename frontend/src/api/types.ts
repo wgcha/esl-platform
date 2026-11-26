@@ -4411,7 +4411,7 @@ export interface DoeVbFrame {
 /** derive 경고·정보 1건(text = 서버가 자리표시 채움) */
 export interface DoeVbWarning {
   code: string;
-  level?: "info" | "warn" | null;
+  level?: "info" | null;
   vbead?: string;
   text?: string | null;
   [k: string]: unknown;
