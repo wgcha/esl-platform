@@ -5051,7 +5051,7 @@ def _rank_view_one(c: Ctx, m: dict, results: list, noise, S_: dict | None, label
     if src["v3d_store"] == "sidecar" and getattr(c, "_jg_nf", None) is not None:
         noise = c._jg_nf                                       # v0.24.8 JG §3: 격자 출처 보기(jd·js)도 같은 noise_floor
     R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric, **kw)
-    if c.scn == "compare":                                     # v0.24.8 ④ 격자 지그 보기: 형상 이름(rk.attach_shapes)
+    if m is None and _lt_plan(c)["dst"] == "shape":            # v0.24.8 ④ 격자 지그 보기(행렬 없음): 형상 이름(rk.attach_shapes)
         rk.attach_shapes(R, {x["id"]: x for x in _cmp_doc(c)["shapes"]})
     best_clean = _annotate(c, R, results, labels)
     _view_rows(R, results, src)
@@ -5187,7 +5187,7 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
         raise EslError("RESULT_NOT_READY", "post/result.json 이 없습니다 — 실행이 끝난 스터디만 3D 를 다시 만들 수 있습니다")
     res0 = U.read_json(rp)
     t, _bmeta = sc.load_base(c.p("prep"))
-    if c.scn == "compare":                                    # v0.24.8 ④(격자 지그) — 행렬 없음(m = None), 형상 결과 읽기만
+    if _lt_plan(c)["dst"] == "shape":                         # v0.24.8 ④(계획 dst shape — 격자 지그) — 행렬 없음(m = None), 형상 결과만
         m = None
         results = [U.read_json(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON)) for r_ in _cmp_doc(c)["shapes"]
                    if r_["status"] == "READY" and os.path.isfile(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON))]
@@ -6584,8 +6584,9 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
 
 
 def _jg_mesh_of(c: Ctx, t, did: str) -> tuple[dict, list, object]:
-    """3D·다시 만들기의 형상 메시·지지·영역 = 그 모드 실행 함수(_view3d 선례): ④ _cmp_design_mesh(+ LT-8 영역), 옛 ③ 저장 안 메시."""
-    if c.scn == "compare":
+    """3D·다시 만들기의 형상 메시·지지·영역 = 그 모드 실행 함수(_view3d 선례 — 계획 열 dst): shape(④) = _cmp_design_mesh(+ LT-8 영역),
+    design(옛 ③) = 저장 안 메시(d000 = 기준 메시)."""
+    if _lt_plan(c)["dst"] == "shape":
         mesh, sup, _l, _i = _cmp_design_mesh(c, t, did)
         reg = (getattr(c, "_lt_last", None) or {}).get("region") if _lt_plan(c)["mask"] == "compare_region" else None
         return mesh, sup, reg

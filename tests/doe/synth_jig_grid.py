@@ -20,7 +20,7 @@ from esl.library import _util as U
 PROPS = {"t": 2.0, "E": 205000.0, "nu": 0.3}
 LX, LZ = 200.0, 150.0
 BOLTS = ((30.0, 25.0), (100.0, 20.0), (170.0, 25.0), (30.0, 125.0), (100.0, 130.0), (170.0, 125.0))
-R_WASHER = 7.0
+R_WASHER = 9.0
 SOLVER = {"backend": "superlu", "drill_factor": 1e-4}
 CFG_FULL = {"bead_doe": {"enabled": True, "mesh": {"occ_sew_faces": 1}, "compare": {"mesh": {"size_mm": 5.0}}},
             "opt_run": {"solver": {"backend": "superlu"}}}
@@ -296,3 +296,60 @@ def run_step(doe: dict, out: str, A: dict, *, post: bool = True) -> dict | None:
         U.write_json(os.path.join(dd, "sample.brep"), design_spec(d["values"]))
         run_stage(out, doe, "bd_eval", rev=1, design=d["id"], paicad={"ok": True})
     return run_stage(out, doe, "bd_post", rev=1) if post else None
+
+
+# ---------------------------------------------------------------- 순수 모듈 시험용(grid_map 입력 — stages._jg_prep·_jg_shape 와 같은 조립)
+GRID_CFG = {"tie_capture_rel": 0.25, "tie_snap_rel": 0.75, "tie_normal_deg": 30.0, "tie_miss_frac_max": 0.1, "sample_nbr": 1,
+            "sample_normal_deg": 45.0}
+
+
+def fold_plate(h: float = 5.0, *, xf: float = 150.0, deg: float = 60.0, **kw) -> dict:
+    """x > xf 부분을 꺾임선(x = xf) 둘레로 deg 만큼 돌린 판(요소 크기 유지 — 꺾임선 노드 = 법선 랭크 2, 90° = 수직 플랜지)."""
+    m = plate(h, **kw)
+    X = np.asarray(m["x0"], dtype=np.float64).copy()
+    d = np.maximum(0.0, X[:, 0] - xf)
+    th = np.radians(deg)
+    X[:, 0] = np.where(X[:, 0] > xf, xf + d * np.cos(th), X[:, 0])
+    X[:, 1] = X[:, 1] + d * np.sin(th)
+    m["x0"] = X
+    return m
+
+
+def frame_of(mesh: dict) -> dict:
+    from esl.library import normalize as nz
+    return nz.frame(np.asarray(mesh["x0"], dtype=np.float64), None, mesh["conn"], mesh["elem_type"])
+
+
+def grid_group(A: dict, us: list, cjs: list, methods, cell: float = 3.0, sup=None) -> dict:
+    """엔트리들(u_rel, Case 지그) → grid_map 묶음(stages._jg_prep 과 같은 조립: tie = 스프링 출처 우선)."""
+    from esl.mech import grid_map as gm
+    from esl.mech import jig
+    from esl.mech import jig_bc
+    srcs = [jig_bc.METHODS[m]["src"] for m in methods]
+    sp_src = [jig_bc.METHODS[m]["src"] for m in methods if jig_bc.METHODS[m]["tie_stiff"] != "hard"]
+    rep = cjs[0][sp_src[0] if sp_src else srcs[0]][0]
+    P, td, tr = gm.case_tie({k: rep[k] for k in jig_bc.BC_KEYS})
+    frames = sorted({jig_bc.METHODS[m]["frame"] for m in methods})
+    U = {}
+    for fr in frames:
+        if fr == "part":
+            U[fr] = np.stack([np.asarray(u, dtype=np.float64) for u in us])
+        else:
+            U[fr] = np.stack([jig.target_disp(A["x0"], u, P, np.ones(len(u), bool))["u_tgt"] for u in us])
+    spr = {s: (cjs[0][s][0]["sp_node"], cjs[0][s][0]["sp_k"]) for s in sp_src}
+    sup = sup321(A) if sup is None else sup
+    return gm.build_group(A, frame_of(A), cell, P, td, tr, U, spr, sup_x=np.asarray(A["x0"])[[n for n, _ in sup]])
+
+
+def shape_loads(A: dict, mesh_S: dict, Fs: list, cell: float = 3.0, h: float = 3.0) -> list:
+    """Case 맞춤 하중 → 형상 셀 전달(공용 실행기 run_transfer_plan — stages._plan_loads 와 같은 함수)."""
+    from esl.doe import DEFAULTS
+    from esl.doe import load_transfer as ltm
+    fr_A, fr_S = frame_of(A), frame_of(mesh_S)
+    dst = ltm.dst_mesh(mesh_S, fr_S, None, h)
+    srcs = [ltm.src_load(f"E{k}", {k_: A[k_] for k_ in ("node_id", "x0", "conn", "elem_type")}, F, fr_A)
+            for k, F in enumerate(Fs)]
+    m = {"name": "cell", "cell_size_mm": cell, "work": DEFAULTS["load_transfer"]["work"], "mapping_opts": None,
+         "cell_min_mm": DEFAULTS["load_transfer"]["cell_min_mm"]}
+    L, info = ltm.run_transfer_plan({"identity": {"key": "none"}, "placement": {"kind": "global"}}, srcs, dst, m, {})
+    return L, info
