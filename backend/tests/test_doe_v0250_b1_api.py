@@ -17,6 +17,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 from doe_support import api
@@ -46,17 +47,17 @@ from test_doe_select_graph_api import (  # noqa: F401
     sel2,
 )
 
-NORM_KW: list[dict] = []      # 대역 normalize_v2 가 받은 cfg 의 virtual_bead 절
+NORM_KW: list[dict] = []      # 대역 normalize_v2 가 받은 cfg 의 virtual_bead 절 · 스냅샷 블록 인수(INT-2)
 KW: list[dict] = []           # 대역 derive_v2 가 받은 가상 비드 인수
 
 VB = {"id": "a1", "p0": [60.0, 140.0, 0.0], "p1": [180.0, 140.0, 0.0], "w_top": 10.0, "d_max": 6.0}
 WARP = {"limit_deg": 15.0, "n": 3, "max_deg": 22.5, "at": 6.0}
 
 
-def _fake_normalize(sel, graph, cfg, *, mesh=None):
+def _fake_normalize(sel, graph, cfg, *, mesh=None, virtual_bead=None):
     """대역 normalize + virtual_beads(id 정렬 · flip false 키 없음) · side 키 422 · 개수 상한 = cfg max_count — 계약 §2.1·§19.9.2 형식 합성."""
     vbs = sel.get("virtual_beads") or []
-    NORM_KW.append({"vb": copy.deepcopy(cfg.get("virtual_bead")), "n": len(vbs)})
+    NORM_KW.append({"vb": copy.deepcopy(cfg.get("virtual_bead")), "n": len(vbs), "block": copy.deepcopy(virtual_bead)})
     mx = int(cfg["virtual_bead"]["max_count"])
     if len(vbs) > mx:
         raise _err("VB_MAX_COUNT", f"추가 비드는 {mx}개까지", n=len(vbs), max=mx)
@@ -398,10 +399,35 @@ def test_tie_ids_come_from_core_function(client, world, engine, esl_root, monkey
         seen.update(doe=doe, n=len(mesh["node_id"]))
         return [7, 3]
 
-    monkeypatch.setattr(opt_core, "doe_pos_u_tie_ids", fake, raising=False)
+    monkeypatch.setattr(opt_core, "doe_jig_tie_ids", fake, raising=False)
     doe_select.reset_caches()
     assert derive(client, s, sel2(sha, gbead("b1", 11), virtual_beads=[VB])).status_code == 200
     assert KW[-1]["tie"] == [7, 3] and seen["doe"]["virtual_bead"] == BLOCK
+
+
+@pytest.mark.parametrize("pos_u", ["absent", "off", "on"])
+def test_tie_ids_same_as_worker_regardless_of_pos_u(client, world, engine, esl_root, monkeypatch, pos_u):  # noqa: F811
+    """INT-1: 가상 비드 있는 선택의 derive tie_node_ids = 코어 ``jig_tie_ids_at``(워커 ``_pos_u_tie_ids`` 와 같은 함수) — 스터디 pos_u 블록
+    없음·enabled false·켬 세 경우 모두 같은 집합(옛 동작: pos_u 없으면 빈 배열 → VB_FIXED 가 워커와 달랐음)."""
+    from esl.doe import stages
+    from esl_platform.api.services import doe_select
+
+    monkeypatch.setattr(stages, "_jig", lambda c: {"fix_kinds": ["bolt"]})
+    monkeypatch.setattr(stages, "_lt_plan", lambda c: {"jig_fix": "fixed", "vbead": "plate"})
+    monkeypatch.setattr(stages, "_jig_nodes", lambda c, plan, mesh, J, infos: {"node_id": np.array([7, 3, 11])})
+    s, sha = ready2(client, world, engine, esl_root)
+    blk = {"absent": None, "off": {"schema": 1, "enabled": False}, "on": {"schema": 1, "range_rel": 0.25}}[pos_u]
+    with engine.begin() as cn:
+        if blk is None:
+            cn.execute(text("UPDATE bead_does SET inputs = inputs - 'pos_u' WHERE id=:i"), {"i": s["id"]})
+        else:
+            cn.execute(text("UPDATE bead_does SET inputs = jsonb_set(inputs, '{pos_u}', CAST(:p AS JSONB)) WHERE id=:i"),
+                       {"p": json.dumps(blk), "i": s["id"]})
+    doe_select.reset_caches()
+    s = api(client, "GET", f"/doe/studies/{s['id']}").json()
+    assert derive(client, s, sel2(sha, gbead("b1", 11), virtual_beads=[VB])).status_code == 200
+    worker = stages._pos_u_tie_ids(stages._ReadCtx({"scenario": "select"}, str(esl_root)), {"node_id": np.arange(3)})
+    assert KW[-1]["tie"] == worker.tolist() == [7, 3, 11]
 
 
 def test_derive_response_keys_and_cache_key(client, world, engine, esl_root):  # noqa: F811
@@ -430,8 +456,9 @@ def test_derive_response_keys_and_cache_key(client, world, engine, esl_root):  #
     assert derive(client, s2, sel).status_code == 200 and len(KW) == n + 2 and KW[-1]["virtual_bead"] == odd
 
 
-def test_snapshot_theta_overlay_into_core_cfg(client, world, engine, esl_root):  # noqa: F811
-    """§19.4-3: 가상 비드 θ 기본·범위는 스냅샷 블록 값으로 코어 normalize 에 — 설정이 바뀌어도 선택 sha 같게. 가상 비드 없는 선택은 설정 그대로."""
+def test_snapshot_block_passed_to_core_normalize(client, world, engine, esl_root):  # noqa: F811
+    """§19.4-3·INT-2: 가상 비드 θ 기본·범위는 스냅샷 블록 값 — 백엔드는 블록을 코어 normalize_v2(virtual_bead=)에 그대로 넘기고 cfg 는 덮어쓰지
+    않음(설정이 바뀌어도 선택 sha 같게 — 해석은 코어 vb_block 한 곳)."""
     s, sha = ready2(client, world, engine, esl_root)
     odd = {**BLOCK, "theta_default_deg": 30.0, "theta_range_deg": [20.0, 45.0]}
     with engine.begin() as cn:
@@ -439,10 +466,11 @@ def test_snapshot_theta_overlay_into_core_cfg(client, world, engine, esl_root): 
                    {"p": json.dumps(odd), "i": s["id"]})
     s = api(client, "GET", f"/doe/studies/{s['id']}").json()
     assert derive(client, s, sel2(sha, gbead("b1", 11), virtual_beads=[VB])).status_code == 200
-    assert NORM_KW[-1]["vb"]["theta_default_deg"] == 30.0 and NORM_KW[-1]["vb"]["theta_range_deg"] == [20.0, 45.0]
-    assert NORM_KW[-1]["vb"]["max_count"] == 4                                                        # 해시 밖 키는 지금 설정
-    assert derive(client, s, sel2(sha, gbead("b1", 12))).status_code == 200
-    assert NORM_KW[-1]["vb"]["theta_default_deg"] == 45.0 and NORM_KW[-1]["vb"]["theta_range_deg"] == [15.0, 60.0]
+    assert NORM_KW[-1]["block"] == odd                                                                # 블록 그대로
+    assert NORM_KW[-1]["vb"]["theta_default_deg"] == 45.0 and NORM_KW[-1]["vb"]["theta_range_deg"] == [15.0, 60.0]   # cfg 덮어쓰기 없음
+    assert NORM_KW[-1]["vb"]["max_count"] == 4
+    src = (REPO / "backend" / "esl_platform" / "api" / "services" / "doe_select.py").read_text(encoding="utf-8")
+    assert "_vb_norm_cfg" not in src                                                                  # 우회 제거(정적)
 
 
 def test_vbead_only_selection_allowed(client, world, engine, esl_root):  # noqa: F811

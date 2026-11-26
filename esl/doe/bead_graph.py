@@ -25,7 +25,7 @@ Worker / stage entry point (BD_LOADS, select_schema 2 only):
 Backend API helpers:
   load_graph(prep_dir) -> (graph, labels)               EslError GRAPH_NOT_AVAILABLE (404) when missing
   graph_sha256(prep_dir) -> str | None                  sha256 of graph.json bytes (selection graph.sha256)
-  normalize_v2(sel, graph, cfg, *, labels, mesh=None, current_sha=None) -> (norm, sha256)   422 / 409 codes below
+  normalize_v2(sel, graph, cfg, *, labels, mesh=None, current_sha=None, shape_rules=None, virtual_bead=None) -> (norm, sha256)   422 / 409 codes below
       graph None (GRAPH_FAILED) = elems beads only, normalized selection then has no "graph" block
   derive_v2(mesh, norm, cfg, graph, labels, *, frame=None, fixed_scan=(), bead=None) -> SelectionDerived dict
       (+ graph block, graph_algo, params = DoeParamsOut rows, param_beads = params.json beads rows)
@@ -562,10 +562,12 @@ def _resolve_segs(graph, labels, segs, bid) -> tuple[list[int], list[int], bool]
 
 def normalize_v2(sel, graph: dict | None, cfg: dict | None = None, *, labels: dict | None = None,
                  mesh: dict | None = None, current_sha: str | None = None,
-                 shape_rules: dict | None = None) -> tuple[dict, str]:
+                 shape_rules: dict | None = None, virtual_bead: dict | None = None) -> tuple[dict, str]:
     """SelectionIn schema 2 -> (normalized, sha256). Graph beads are validated against the edited graph.
     graph None (GRAPH_FAILED) = elems beads only (a graph bead -> BG_SEG_UNKNOWN); labels are required with a graph.
-    shape_rules (v0.21.0 스냅샷 ``doe.shape_rules`` 해석값, None = v0.20.0): ``w_partial`` 이면 W 가능 = |S_W| ≥ 1(SH-4)."""
+    shape_rules (v0.21.0 스냅샷 ``doe.shape_rules`` 해석값, None = v0.20.0): ``w_partial`` 이면 W 가능 = |S_W| ≥ 1(SH-4).
+    virtual_bead (v0.25.0 INT-2 — 스냅샷 ``doe.virtual_bead`` 블록, None = 설정값): 가상 비드 θ 기본·범위 등 해시 안 키 = 블록 값
+    (``vb_block`` — derive 와 같은 해석, 설정이 스터디 생성 뒤 바뀌어도 선택 sha 같음)."""
     from esl.doe import bead_select as bs
     sc = select_cfg(cfg)
     wp = _w_partial(shape_rules)
@@ -583,7 +585,7 @@ def normalize_v2(sel, graph: dict | None, cfg: dict | None = None, *, labels: di
     g2, l2 = edited_graph(graph, labels, edits, mesh) if graph is not None else (None, None)
     beads = sel.get("beads")
     vbs = normalize_vbeads(sel.get("virtual_beads"), cfg, vb_flip_deg(cfg, shape_rules) if sel.get("virtual_beads")
-                           else None)              # v0.25.0 VB §2.1·§19(없음·빈 목록 = [] — 키 안 씀)
+                           else None, block=virtual_bead)   # v0.25.0 VB §2.1·§19(없음·빈 목록 = [] — 키 안 씀), INT-2 블록 값
     if not isinstance(beads, list) or not (1 if not vbs else 0) <= len(beads) <= int(sc["max_beads"]):
         _bad("SELECT_EMPTY_TIER", f"beads 는 1..{sc['max_beads']} 개")   # VB-15: beads + virtual_beads ≥ 1
     elem_beads = [b for b in beads if isinstance(b, dict) and b.get("src") == "elems"]
@@ -2730,15 +2732,15 @@ def _vb_bad(vid, msg: str, **kw):
     _bad("VB_INPUT_INVALID", f"추가 비드 {vid}: {msg}", vbead=vid, **kw)
 
 
-def normalize_vbeads(vbs, cfg, flip_deg: float | None = None) -> list[dict]:
+def normalize_vbeads(vbs, cfg, flip_deg: float | None = None, block: dict | None = None) -> list[dict]:
     """§2.1·§19 선택 키 virtual_beads 정규화(형식 오류 = 422 VB_INPUT_INVALID, 개수 초과 = VB_MAX_COUNT). 입력 형식 그대로((a) p0·p1 |
     (b) p0·length·angle_deg), 숫자 1e-4 반올림, id 정렬, 기본값 키 생략(name·theta_deg = theta_default_deg·end round·flip false).
     r 은 준 값이면 0 도 키 유지(§19.1-5), r > r_cap + 1e-4 = 422(key r, r_max). θ 상한 = min(theta_range_deg[1], flip_deg)(§19.4-3).
-    side 키 = 422(개정 3 삭제). 없음·빈 목록 = [] (호출자가 키를 쓰지 않음)."""
+    side 키 = 422(개정 3 삭제). 없음·빈 목록 = [] (호출자가 키를 쓰지 않음). block = 스냅샷 블록(INT-2 — 있으면 ``vb_block`` 해석값, 없음 = 설정)."""
     from esl.morph import virtual_bead as vbm
     if vbs is None:
         return []
-    vc = vb_cfg(cfg)
+    vc = vb_block(block, cfg) if isinstance(block, dict) else vb_cfg(cfg)
     if not isinstance(vbs, list):
         _bad("VB_INPUT_INVALID", "virtual_beads 는 목록")
     mx = int(vc["max_count"])

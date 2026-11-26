@@ -281,7 +281,7 @@ def test_derive_passes_core_tie_node_ids(client, world, engine, esl_root, monkey
         seen.update(doe=doe, out=out_dir, n=int(len(mesh["node_id"])))
         return [5, 9, 2]
 
-    monkeypatch.setattr(opt_core, "doe_pos_u_tie_ids", fake, raising=False)
+    monkeypatch.setattr(opt_core, "doe_jig_tie_ids", fake, raising=False)
     doe_select.reset_caches()
     sel = sel2(sha, gbead("b1", 11))
     assert derive(client, s, sel).status_code == 200

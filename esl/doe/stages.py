@@ -7349,7 +7349,8 @@ def _sel_norm(c: Ctx, mesh: dict | None = None) -> tuple[dict, str]:
         if select_schema(c) != 2:
             raise EslError("SELECT_SCHEMA_MISMATCH", "schema 1 스터디에 schema 2 선택")
         graph, labels = _graph_or_none(c)                # GRAPH_FAILED: elems beads only
-        norm, sha = bgr.normalize_v2(s["input"], graph, c.cfg, labels=labels, mesh=mesh, shape_rules=_shape(c))
+        norm, sha = bgr.normalize_v2(s["input"], graph, c.cfg, labels=labels, mesh=mesh, shape_rules=_shape(c),
+                                     virtual_bead=_vb(c))      # v0.25.0 INT-2: 백엔드와 같은 블록 해석
         if mesh is not None:
             bsel.check_elems(mesh, {"fixed_user": norm["fixed_user"], "exclude": norm["exclude"],
                                     "beads": [b for b in norm["beads"] if b["src"] == "elems"]})
@@ -8263,14 +8264,15 @@ class _ReadCtx:
         return os.path.join(self.out, *parts)
 
 
-def pos_u_tie_ids_at(doe: dict, out_dir: str, mesh: dict) -> np.ndarray:
-    """(Backend API — 통합 v0.24.9) PU-14 지그 tie 노드 ID — 워커 select 기저(``_pos_u_tie_ids``)와 같은 함수를 스터디 스냅샷 doe·스터디
-    폴더(out_dir — prep/ 의 부모)로 읽기만 해서 부른다(백엔드 derive_v2 의 tie_node_ids — U_HELD·hold 비율이 워커와 같게).
-    pos_u 블록 없음 = 빈 배열."""
-    c = _ReadCtx(doe, out_dir)
-    if _pos_u(c) is None:
-        return np.zeros(0, np.int64)
-    return _pos_u_tie_ids(c, mesh)
+def jig_tie_ids_at(doe: dict, out_dir: str, mesh: dict) -> np.ndarray:
+    """(Backend API — v0.24.9 PU-14 · v0.25.0 INT-1) 지그 tie 노드 ID — 워커 select 기저(``_pos_u_tie_ids`` — pos_u U hold·가상 비드
+    VB_FIXED 가 함께 쓰는 tie 집합)와 같은 함수를 스터디 스냅샷 doe·스터디 폴더(out_dir — prep/ 의 부모)로 읽기만 해서 부른다(백엔드
+    derive_v2 의 tie_node_ids). pos_u 블록 유무·enabled 와 무관(워커와 같은 출처 — 계획 jig_fix·지그 없음 = 빈 배열). 쓰는 쪽(pos_u·
+    가상 비드)의 켜짐 판정은 derive 가 한다."""
+    return _pos_u_tie_ids(_ReadCtx(doe, out_dir), mesh)
+
+
+pos_u_tie_ids_at = jig_tie_ids_at       # v0.24.9 계약 이름(esl_bead_pos_u.md INT-2) — 같은 함수
 
 
 def _u_reason_key(b) -> dict:

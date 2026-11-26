@@ -393,13 +393,13 @@ _TIE_LOCK = threading.Lock()
 
 
 def pos_u_tie_ids(ctx: AppContext, s: dict[str, Any], inputs: dict[str, Any]) -> Any:
-    """v0.24.9 PU-14(통합): pos_u 블록이 있는 스터디의 지그 tie 노드 ID = 코어 ``stages.pos_u_tie_ids_at``(워커 select 기저와 같은 함수 —
-    준비 스냅샷 doe·스터디 폴더 읽기만). 블록 없음 = None(derive 호출 불변). 준비 작업·prep 지그 출처 파일 시각으로 캐시."""
+    """v0.24.9 PU-14(통합)·v0.25.0 INT-1: pos_u 또는 virtual_bead 블록이 있는 스터디의 지그 tie 노드 ID = 코어 ``stages.jig_tie_ids_at``
+    (워커 select 기저와 같은 함수 — pos_u 유무·enabled 무관, 준비 스냅샷 doe·스터디 폴더 읽기만). 두 블록 모두 없음 = None(derive 호출 불변). 준비 작업·prep 지그 출처 파일 시각으로 캐시."""
     import numpy as np
 
     from ...core.opt_core import EslError
     from ...core.opt_core import doe_paicad_io as pio
-    from ...core.opt_core import doe_pos_u_tie_ids
+    from ...core.opt_core import doe_jig_tie_ids
 
     if pos_u_of(s)["pos_u"] is None and vbead_of(s)["virtual_bead"] is None:     # v0.25.0 VB: 추가 비드 fixed 집합도 같은 tie 집합(§2.1 VB_FIXED)
         return None
@@ -423,7 +423,7 @@ def pos_u_tie_ids(ctx: AppContext, s: dict[str, Any], inputs: dict[str, Any]) ->
             _TIE_CACHE.move_to_end(key)
             return hit
     try:
-        ids = np.asarray(doe_pos_u_tie_ids(pp["doe"], _svc().study_dir(ctx, s), inputs["mesh"]), dtype=np.int64)
+        ids = np.asarray(doe_jig_tie_ids(pp["doe"], _svc().study_dir(ctx, s), inputs["mesh"]), dtype=np.int64)
     except (EslError, OSError, KeyError, ValueError):
         ids = np.zeros(0, dtype=np.int64)                  # 지그 노드 못 읽음 = 추가 없음(워커도 JIG_NO_TIE 면 빈 집합)
     with _TIE_LOCK:
@@ -497,17 +497,6 @@ def selection_in(sel) -> dict[str, Any]:
     return d
 
 
-def _vb_norm_cfg(c: dict[str, Any], selection: dict[str, Any], graph: dict[str, Any] | None) -> dict[str, Any]:
-    """v0.25.0 VB §19.4-3: 가상 비드 θ 기본·상한은 **그 스터디 스냅샷 블록**(doe.virtual_bead 의 theta_default_deg·theta_range_deg) 기준 — 설정이
-    스터디 생성 뒤 바뀌어도 선택 sha 가 같게. 코어 normalize_v2 는 cfg 의 같은 키를 읽으므로 블록 값을 그 자리에 덮어 넘긴다(가상 비드가 있는
-    선택만 — 없으면 c 그대로, 옛 경로 불변). flip_deg 는 코어가 스냅샷 shape_rules 에서 읽음."""
-    blk = (graph or {}).get("virtual_bead")
-    if not selection.get("virtual_beads") or not isinstance(blk, dict):
-        return c
-    ov = {k: copy.deepcopy(blk[k]) for k in ("theta_default_deg", "theta_range_deg") if k in blk}
-    return {**c, "virtual_bead": {**(c.get("virtual_bead") or {}), **ov}} if ov else c
-
-
 def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None,
               graph: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
     """코어 normalize + 크기 상한(정규화 JSON > select.max_selection_kb → 413 SELECT_TOO_LARGE, BS-D-4).
@@ -520,8 +509,9 @@ def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None,
                           limit_kb=float(scfg(c)["max_selection_kb"]))
     try:
         if sel_schema(selection) == 2:
-            norm, sha = _graph_call("normalize_v2", selection, (graph or {}).get("graph"), _vb_norm_cfg(c, selection, graph), mesh=mesh,
-                                    labels=(graph or {}).get("labels"), shape_rules=(graph or {}).get("shape_rules"))
+            norm, sha = _graph_call("normalize_v2", selection, (graph or {}).get("graph"), c, mesh=mesh,
+                                    labels=(graph or {}).get("labels"), shape_rules=(graph or {}).get("shape_rules"),
+                                    virtual_bead=(graph or {}).get("virtual_bead"))   # v0.25.0 INT-2: 스냅샷 블록 직접(θ 기본·범위 = 블록)
         else:
             norm, sha = _bs().normalize(selection, c, mesh=mesh)
     except EslError as exc:
