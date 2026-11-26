@@ -28,13 +28,17 @@ PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_249_bt -o tmp_p
 - beadgraph 1.3.0(U_RULES 1) — 루트 pyproject·deploy/requirements.lock 은 C1 이 1.3.0 으로 올림(B1 은 확인만).
 
 ## 끝난 일
-- 골든 tests/doe/golden_v0249_c1(golden_pu.py·golden.json) + tests/doe/test_pos_u_golden.py (커밋 26410604)
-- 계약면 커밋(이 파일과 함께)
+- 골든 tests/doe/golden_v0249_c1(golden_pu.py·golden.json) + tests/doe/test_pos_u_golden.py (26410604)
+- 계약면 45e4f3a9, 패키지 kind U 114bdd82(packages/beadgraph/tests/test_pos_u.py 12 통과, selftest PASS)
+- esl 통합 964ba911: bead_graph(U 행·_pos_u_beads·_tie_u·u_row·basis_v2 U·_nom·_types), matrix 422·썸네일, core CROSS_TYPES,
+  transfer_plan load_follow 열·load_follow_effective·metric_effective(spatial), stages(_pos_u·_lf_*·_lf_baseline·bd_eval/bd_post 연결)
+- 합성 세계 tests/doe/synth_pos_u.py(직선 채널 case_once + 지그) — e2e spatial 동작 확인(스크래치)
 
 ## 남은 일
-- 패키지 kind U(morph.py)·checks·conformance·합성·README·tests
-- esl bead_graph U 행·기저·공칭 0·range guard·matrix 422·core 교차·transfer_plan load_follow·stages spatial·지그 표식 stages 연결
-- 시험 V-0249-PU-1~30(코어 몫)·BM-1·2, H6·H5 표 /tmp/v0249_u_table.md
+- tests/doe/test_pos_u.py(PU-6·7·10·11·12·13·14·23·26·27·28·30 코어 몫), tests/mech BM-1·2(support_marks_full)
+- stages 사이드카 표식: _jig_view3d_src marks → support_marks_full + mark_rows(kind·dirs·val)
+- H6·H5 표 /tmp/v0249_u_table.md(range guard usable 부호별·blocked), work/findings.md 계약 보정 목록
+- 전체 시험(tests/doe·morph·mech·packages·selftest, tests/ 전체)
 
 ## 시험 상태
 - test_pos_u_golden old_snapshot·package 통과(코드 변경 전).
