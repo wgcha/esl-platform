@@ -490,6 +490,30 @@ def _load_follow_settings(c: dict[str, Any]) -> dict[str, Any]:
     return {"cell_mm": float(lf["cell_mm"]), "noise_floor_min": float(lf["noise_floor_min"])}
 
 
+VBEAD_SCHEMA = 1          # 스냅샷 virtual_bead.schema(esl_virtual_bead.md §7.2)
+
+
+def vbead_snapshot(c: dict[str, Any]) -> dict[str, Any] | None:
+    """v0.25.0 VB §7.2: 새 select 스터디의 가상 비드("추가 비드") 블록 ``doe.virtual_bead{schema 1, 해시 안 키}`` — 설정 bead_doe.virtual_bead
+    사본(해시 안 키 목록 = 코어 ``esl.morph.virtual_bead.HASH_KEYS`` 한 곳, 개정 2: + r_default_h_mult). enabled false = None = 키 없음
+    (그 스터디의 가상 비드 = VB_SCOPE). 해시 밖 키(max_count·d_max_limit_mm·default_on·preview_max_nodes·enabled)는 넣지 않음."""
+    from ...core.opt_core import morph_virtual_bead as vbm
+
+    vb = c["virtual_bead"]
+    if not vb.get("enabled", True):
+        return None
+    return {"schema": VBEAD_SCHEMA,
+            **{k: ([float(x) for x in vb[k]] if k == "theta_range_deg" else float(vb[k])) for k in vbm.HASH_KEYS}}
+
+
+def _vbead_settings(c: dict[str, Any]) -> dict[str, Any]:
+    """GET /doe/settings.virtual_bead(§8·§19.7 — 화면 칸 min·max·개수 상한): 해시 안팎 모두 표시용."""
+    vb = c["virtual_bead"]
+    return {"enabled": bool(vb["enabled"]), "max_count": int(vb["max_count"]), "theta_default_deg": float(vb["theta_default_deg"]),
+            "theta_range_deg": [float(x) for x in vb["theta_range_deg"]], "d_max_limit_mm": float(vb["d_max_limit_mm"]),
+            "min_wall_elems": float(vb["min_wall_elems"]), "r_default_h_mult": float(vb["r_default_h_mult"])}
+
+
 def _depth_section_notes() -> dict[str, str]:
     """복제 창 안내 문구 원본 = doe_messages.json(자리 {n}·{names} 는 화면이 채움). 영문 "(Info: …)" 꼬리는 뺀다."""
     from . import doe_select as sel_svc
@@ -518,6 +542,7 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "depth_section": str(c["depth_section"]),        # v0.24.7 DM §5.2 새 select 스터디 기본(복제 창 라디오·새 스터디 라디오 기본)
             "pos_u": _pos_u_settings(c),                     # v0.24.9 PU 새 스터디 기본(표시용 — 스냅샷에 고정되는 값)
             "load_follow": _load_follow_settings(c),
+            "virtual_bead": _vbead_settings(c),              # v0.25.0 VB 추가 비드 설정(화면 θ 칸 min·max·개수 상한)
             "depth_section_notes": _depth_section_notes(),   # v0.24.7 복제 창 안내 문구(resources/doe_messages.json — 영문 꼬리 없이, 화면에 문구 거울 없음)
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
@@ -1177,6 +1202,7 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
         inputs.setdefault("bead_source", "manual")
         inputs.setdefault("pos_u", None)              # v0.24.9 PU: 옛 스터디 = null(U 행 없음) — DB 에는 키를 쓰지 않음
         inputs.setdefault("load_follow", None)        # v0.24.9 PU: 옛 스터디 = null(node 경로)
+        inputs.setdefault("virtual_bead", None)       # v0.25.0 VB: 옛 스터디 = null(추가 비드 VB_SCOPE) — DB 에는 키를 쓰지 않음
         inputs.setdefault("depth_section", None)      # v0.24.7 DM §6: 옛·입구 고정 = null(화면 "입구 고정(이전)") — DB 에는 키를 쓰지 않음
         inputs.setdefault("spec_prefill", None)       # 복제만 값(원 doe.spec)
     out = {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
@@ -1457,6 +1483,9 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if body.scenario == "select" and (pu_snap := pos_u_snapshot(c)) is not None:    # v0.24.9 PU §3: 새 select 스터디만(스냅샷 = inputs 같은 블록)
         doe["pos_u"], doe["load_follow"] = copy.deepcopy(pu_snap[0]), copy.deepcopy(pu_snap[1])
         inputs["pos_u"], inputs["load_follow"] = copy.deepcopy(pu_snap[0]), copy.deepcopy(pu_snap[1])
+    if body.scenario == "select" and (vb_snap := vbead_snapshot(c)) is not None:    # v0.25.0 VB §7.2: 새 select 스터디만(스냅샷 = inputs 같은 블록, 복제 = 원 블록 그대로)
+        doe["virtual_bead"] = copy.deepcopy(vb_snap)
+        inputs["virtual_bead"] = copy.deepcopy(vb_snap)
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
     return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario=body.scenario, title=title,

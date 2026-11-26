@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, StrictBool, Tag, field_validator, model_serializer, model_validator
 
 FOLDER_RE = r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$"
 WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
@@ -1970,6 +1970,8 @@ class DoeSettingsOut(_Out):
     depth_section: Literal["entry_fixed", "floor_fixed"] | None = None   # v0.24.7 DM 새 스터디 기본 깊이 단면 동작(설정 bead_doe.depth_section)
     pos_u: dict[str, Any] | None = None             # v0.24.9 PU 새 스터디 기본(설정 bead_doe.pos_u: {enabled, range_rel, max_rel, gap_rel, hold_frac_max})
     load_follow: dict[str, Any] | None = None       # v0.24.9 PU 하중 공간 고정 설정 {cell_mm, noise_floor_min}
+    # v0.25.0 VB 추가 비드 설정(표시용): {enabled, max_count, theta_default_deg, theta_range_deg, d_max_limit_mm, min_wall_elems, r_default_h_mult}
+    virtual_bead: dict[str, Any] | None = None
     depth_section_notes: dict[str, str] | None = None   # v0.24.7 복제 창 안내 문구 {DS_CLONE_NOTE, DS_CLONE_NOTE_ENTRY({n}·{names} 자리), DS_CLONE_NOTE_ENTRY_NONE}
 
 
@@ -2019,6 +2021,8 @@ class DoeStudyOut(_Out):
     #                                                 spec_prefill(복제만 값 — 원 doe.spec, 없으면 null, §6.1)
     #                                                 v0.24.9 PU select: + pos_u({schema, range_rel, max_rel, gap_rel, hold_frac_max} | null — 옛 스터디 null =
     #                                                 U 행 없음), load_follow({schema, cell_mm} | null — 옛 null = node 경로)
+    #                                                 v0.25.0 VB select: + virtual_bead({schema, min_wall_elems, margin_mm, theta_default_deg, theta_range_deg,
+    #                                                 warp_max_deg, r_default_h_mult} | null — 옛 스터디 null = 추가 비드 VB_SCOPE)
     phase: DoePhaseLit
     version: int
     # select: {n_nodes, n_elems, fixed, auto?, select_base?, graph?} + v0.18.0 step 기준(esl_step_graph.md §4.2):
@@ -2638,6 +2642,29 @@ class SelectElemsBeadIn(SelectBeadIn):
 SelectBeadV2 = Annotated[Union[SelectGraphBeadIn, SelectElemsBeadIn], Field(discriminator="src")]
 
 
+_VB_NUM = Field(allow_inf_nan=False)
+
+
+class VirtualBeadIn(_Req):
+    """v0.25.0 VB(esl_virtual_bead.md §2.1·§19.9) 추가 비드 1개 — 평판 위 선분 + 단면. 형식은 (a) p0·p1 | (b) p0·length·angle_deg 중 하나(둘 다·
+    섞임 = 코어 422 VB_INPUT_INVALID), 범위·기본값·정규화·r_cap 은 코어 ``normalize_v2``(여기는 모양만). **side 키 없음**(개정 3 — 주면 422,
+    방향은 자동 + ``flip``). flip false·None, 생략 = 코어에 넘기지 않음(자동 방향). r 생략 = 요소 크기 기본(``r_default_h_mult``), 준 값은
+    0 도 그대로(각진 모서리)."""
+
+    id: str = Field(max_length=16)                                      # ^a[1-9]$ 고유(코어)
+    name: str | None = Field(default=None, max_length=256)             # 1..32, 제어문자 금지(코어)
+    p0: list[Annotated[float, _VB_NUM]] = Field(min_length=3, max_length=3)
+    p1: list[Annotated[float, _VB_NUM]] | None = Field(default=None, min_length=3, max_length=3)
+    length: float | None = Field(default=None, allow_inf_nan=False)
+    angle_deg: float | None = Field(default=None, allow_inf_nan=False)
+    w_top: float = Field(allow_inf_nan=False)
+    theta_deg: float | None = Field(default=None, allow_inf_nan=False)
+    d_max: float = Field(allow_inf_nan=False)
+    flip: StrictBool | None = None
+    end: Literal["round", "square"] | None = None
+    r: float | None = Field(default=None, allow_inf_nan=False)
+
+
 class SelectionInV2(_Req):
     """v0.17.0 SelectionIn schema 2(BG-D-36). graph 생략 = 분류 결과 없음(GRAPH_FAILED — elems 비드만)."""
 
@@ -2648,6 +2675,8 @@ class SelectionInV2(_Req):
     ties: list[Annotated[list[str], Field(min_length=2, max_length=100)]] = Field(default_factory=list, max_length=100)
     fixed_user: SelectElemSet = Field(default_factory=SelectElemSet)
     exclude: SelectElemSet = Field(default_factory=SelectElemSet)
+    # v0.25.0 VB §2.1: 추가 비드(빈 목록 = 코어에 넘기지 않음 — 옛 선택 sha 불변). 선택 규칙 = len(beads) + len(virtual_beads) ≥ 1(코어)
+    virtual_beads: list[VirtualBeadIn] = Field(default_factory=list, max_length=9)
 
 
 def _selection_tag(v: Any) -> str:
@@ -2685,6 +2714,20 @@ class SelectionDerived(_Out):
     # v0.17.0(esl_beadgraph.md §6.1): schema 2 — graph{sha256, graph_algo, edits_applied, segments, junction_zones, beads, sym_pairs}
     graph: dict[str, Any] | None = None
     graph_algo: int | None = None
+    # v0.25.0 VB §8·§19.7(가상 비드 있을 때만 값): virtual_beads[{id, name, p0, p1_resolved, len_mm, angle_deg, side_resolved("+"|"-" — 적용 방향),
+    # ok, reasons[{code, text}], warnings[{code, level, text, …}], h, n_wall, n_top, r_resolved, r_source("default"|"user"), host("base"|"area"|"plateau"),
+    # host_floor, stretch_max?, n_fp?, n_elems_fp?, outline_ab?, preview?{idx, vec, g, c}}], vb_frame{origin, e_xi, e_eta, n_h}
+    virtual_beads: list[dict[str, Any]] | None = None
+    vb_frame: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_vb_absent(self, handler):  # type: ignore[no-untyped-def]
+        """가상 비드가 없으면 두 키를 내지 않는다(옛 derive 응답 바이트 불변 — §7.3 "derive 응답 동일")."""
+        d = handler(self)
+        for k in ("virtual_beads", "vb_frame"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class DoeSelectAutoOut(_Out):

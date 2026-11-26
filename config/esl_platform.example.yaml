@@ -386,6 +386,18 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   load_follow:                        # v0.24.9 PU 하중 공간 고정(§2.2) — pos_u 블록이 있는 새 스냅샷에만
     cell_mm: 3.0                      # 전달 셀(mm) — load_transfer.cell_min_mm..cell_max
     noise_floor_min: 0.01             # 순위 noise 하한(해시 밖)
+  virtual_bead:                       # v0.25.0 VB 가상 비드 "추가 비드"(계약 esl_virtual_bead.md §7.1·§19) — 새 select 그래프 스터디 스냅샷 doe.virtual_bead 로 복사(옛 스터디 = 키 없음 = VB_SCOPE)
+    enabled: true                     # false = 새 스터디도 virtual_bead 블록 없음(해시 밖)
+    max_count: 4                      # 스터디당 추가 비드 개수 상한(1..9, 해시 밖 — 넘으면 422 VB_MAX_COUNT)
+    min_wall_elems: 2.0               # 사면 요소 수 경고 기준(1..10 — 이 미만 VB_WALL_COARSE)
+    margin_mm: 3.0                    # 이동 띠 밖 검사 여유(0..50 mm)
+    theta_default_deg: 45.0           # 사면 각 기본(theta_range_deg 안)
+    theta_range_deg: [15.0, 60.0]     # 사면 각 입력 범위(1 <= lo < hi <= 89, 상한은 select.quality.flip_deg 이하 — 어기면 CONFIG_INVALID)
+    r_default_h_mult: 1.0             # 모서리 둥글기 r 기본 = min(값 x 요소 크기, r_cap)(0..4, 0 = 각진 모서리)
+    d_max_limit_mm: 30.0              # 최대 깊이 입력 상한(0 초과 200 이하, 해시 밖 — 넘으면 422)
+    default_on: true                  # 변수 기본 포함(해시 밖)
+    warp_max_deg: 15.0                # 뒤틀린 사각 요소를 세는 기준(정보 VB_WARP_INFO — 범위를 줄이지 않음, 0..90)
+    preview_max_nodes: 50000          # derive 미리보기 자료 노드 수 상한(1000..1000000, 해시 밖 — 넘으면 생략 + VB_PREVIEW_SKIPPED)
   shape_rules:                        # v0.21.0 BEAD_SHAPE(계약 esl_bead_shape_v021.md §6) — 새 스터디 스냅샷 doe.shape_rules 원본(옛 스터디 = 키 없음 = v0.20.0 동작). 섹션 없으면 아래 기본
     enabled: true                     # false = 새 스터디도 스냅샷을 쓰지 않음
     w_partial: true                   # 항목 1 — 그래프 비드 W 를 폭 정보 있는 구간(S_W)에만

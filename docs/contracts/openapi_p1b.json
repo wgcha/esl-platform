@@ -6301,6 +6301,18 @@
           "step_max_mb": {
             "title": "Step Max Mb",
             "type": "number"
+          },
+          "virtual_bead": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Virtual Bead"
           }
         },
         "required": [
@@ -14254,6 +14266,33 @@
             ],
             "title": "Slope Suggested"
           },
+          "vb_frame": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vb Frame"
+          },
+          "virtual_beads": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Virtual Beads"
+          },
           "warnings": {
             "items": {
               "additionalProperties": true,
@@ -14381,6 +14420,14 @@
             },
             "maxItems": 100,
             "title": "Ties",
+            "type": "array"
+          },
+          "virtual_beads": {
+            "items": {
+              "$ref": "#/components/schemas/VirtualBeadIn"
+            },
+            "maxItems": 9,
+            "title": "Virtual Beads",
             "type": "array"
           }
         },
@@ -18304,6 +18351,140 @@
           "scale"
         ],
         "title": "View3dValuesArray",
+        "type": "object"
+      },
+      "VirtualBeadIn": {
+        "additionalProperties": false,
+        "description": "v0.25.0 VB(esl_virtual_bead.md §2.1·§19.9) 추가 비드 1개 — 평판 위 선분 + 단면. 형식은 (a) p0·p1 | (b) p0·length·angle_deg 중 하나(둘 다·\n섞임 = 코어 422 VB_INPUT_INVALID), 범위·기본값·정규화·r_cap 은 코어 ``normalize_v2``(여기는 모양만). **side 키 없음**(개정 3 — 주면 422,\n방향은 자동 + ``flip``). flip false·None, 생략 = 코어에 넘기지 않음(자동 방향). r 생략 = 요소 크기 기본(``r_default_h_mult``), 준 값은\n0 도 그대로(각진 모서리).",
+        "properties": {
+          "angle_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Angle Deg"
+          },
+          "d_max": {
+            "title": "D Max",
+            "type": "number"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "enum": [
+                  "round",
+                  "square"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "flip": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flip"
+          },
+          "id": {
+            "maxLength": 16,
+            "title": "Id",
+            "type": "string"
+          },
+          "length": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Length"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "p0": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "P0",
+            "type": "array"
+          },
+          "p1": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P1"
+          },
+          "r": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "R"
+          },
+          "theta_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theta Deg"
+          },
+          "w_top": {
+            "title": "W Top",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "p0",
+          "w_top",
+          "d_max"
+        ],
+        "title": "VirtualBeadIn",
         "type": "object"
       },
       "WorkerStatus": {

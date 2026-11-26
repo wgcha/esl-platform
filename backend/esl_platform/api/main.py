@@ -25,7 +25,8 @@ log = logging.getLogger("esl_platform.api")
 
 
 # 요청 검증 오류 중 계약이 전용 코드를 정한 필드(loc 에 이 이름이 있으면 INVALID_PARAMS 대신 그 코드 — 형식은 같음)
-FIELD_ERROR_CODES = {"hold_fixed": "SELECT_HOLD_INVALID"}      # v0.16.1 esl_select_relax.md §4.1·§10
+FIELD_ERROR_CODES = {"hold_fixed": "SELECT_HOLD_INVALID",      # v0.16.1 esl_select_relax.md §4.1·§10
+                     "virtual_beads": "VB_INPUT_INVALID"}      # v0.25.0 VB §2.1·§19.9.2: 추가 비드 모양 오류(side 키·flip 비 bool 포함)
 
 
 class StartupRefused(RuntimeError):
