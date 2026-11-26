@@ -432,18 +432,21 @@ def _row(res, code):
 
 def test_mesh_mismatch_case_quad_ref_vs_all_tri_shapes(tmp_path, capsys):
     """독립 검증 조건: 기준 = Case 메시(h 5 쿼드) ↔ 같은 설계(평판) 전삼각 Delaunay h 3·h 4 — 메시 차이만으로 개선율 수 %.
-    JIG_GRID_MESH_MISMATCH 1건(필드), noise_floor ≥ noise_floor_mismatch(0.05), 메시만 다른 형상 = noise 표식."""
+    JIG_GRID_MESH_MISMATCH 1건(필드), 메시가 다른 형상의 nf_d ≥ noise_floor_mismatch(0.05 — fix JG-26 형상별), 메시만 다른 형상 = noise 표식."""
     shapes = (("d001", {"mesh": G.delaunay_plate(3.0, seed=2, ring_n=17)}),
               ("d002", {"mesh": G.delaunay_plate(4.0, seed=3, ring_n=11, ring_r=(9.0,), node_base=500001)}))
     doe, out, _A = G.cmp_world(str(tmp_path), hA=5.0, rank=G.rank_snap(grid=True), shapes=shapes)
     res = G.run_cmp(doe, out)["result"]
     g = DEFAULTS["rank"]["jig_grid"]
     assert res["metric_effective"] == "jd"
-    nf = res["noise_floor"]
+    nf0 = res["noise_floor"]
+    ap = {x["id"]: x["noise_floor"] for x in res["jig"]["grid"]["noise_floor_mismatch_applied"]}
     imp = {r["id"]: r["improvement"] for r in res["ranking"] if r["id"] != "d000"}
     with capsys.disabled():
-        print(f"\nJG mesh-mismatch(Case h5 quad vs all-tri): nf {nf:.4f} · improvement {imp} · mesh {res['jig']['grid']['mesh']}")
-    assert nf >= g["noise_floor_mismatch"] == 0.05 and res["jig"]["grid"]["noise_floor"] == nf
+        print(f"\nJG mesh-mismatch(Case h5 quad vs all-tri): nf_base {nf0:.4f} · nf_d {ap} · improvement {imp} · mesh {res['jig']['grid']['mesh']}")
+    assert res["jig"]["grid"]["noise_floor"] == nf0 and set(ap) == {"d001", "d002"}
+    nf = max(ap.values())
+    assert all(v == max(nf0, g["noise_floor_mismatch"]) for v in ap.values()) and nf >= g["noise_floor_mismatch"] == 0.05
     assert max(imp.values()) > g["noise_floor_min"]                  # 이 조건은 하한(0.03)만으로는 noise 밖이었다(검증 4.8 %)
     assert all(r["noise"] is True for r in res["ranking"] if r["id"] != "d000")
     m = res["jig"]["grid"]["mesh"]
@@ -451,7 +454,7 @@ def test_mesh_mismatch_case_quad_ref_vs_all_tri_shapes(tmp_path, capsys):
     w = _row(res, "JIG_GRID_MESH_MISMATCH")
     assert len(w) == 1 and w[0]["n_shapes"] == 2 and w[0]["h_ref"] == m["h_ref"] and w[0]["tri_max"] == 1.0
     assert {"h_min", "h_max", "tri_ref"} <= set(w[0])
-    assert "기준 형상도 같은 방식으로 메시해 넣으세요" in w[0]["message"] and f"차이 {nf * 100:.3g} % 이내는 오차 범위" in w[0]["message"]
+    assert "기준 형상도 같은 방식으로 메시해 넣으세요" in w[0]["message"] and f"메시가 다른 형상 2개는 차이 {nf * 100:.3g} % 이내를 오차 범위로 표시" in w[0]["message"]
     for did in ("d000", "d001", "d002"):
         ms = _jgr(out, did)["mesh"]
         assert set(ms) == {"h", "tri_frac"} and ms["h"] > 0
@@ -472,9 +475,47 @@ def test_mesh_same_method_no_mismatch(tmp_path):
     j0 = _jgr(out, "d000")
     dp5 = max(r_["dpi_max"] for rows in j0["conv"].values() for r_ in rows if r_["cell_mm"] == 5.0)
     assert res["noise_floor"] == max(dp5, DEFAULTS["rank"]["jig_grid"]["noise_floor_min"])
-    assert res["jig"]["grid"]["mesh"]["mismatch"] is False
+    assert res["jig"]["grid"]["mesh"]["mismatch"] is False and res["jig"]["grid"]["noise_floor_mismatch_applied"] == []
+    assert not any(str(w).startswith("JIG_GRID_MESH_MISMATCH_SHAPE") for d in ("d001", "d002") for w in _res(out, d)["warnings"])
     x = next(r for r in res["ranking"] if r["id"] == "d002")
     assert x["improvement"] > res["noise_floor"] and x["noise"] is False
+
+
+def test_mesh_mismatch_per_shape_noise_floor(tmp_path, capsys):
+    """fix JG-26(재검증 현장 위험 재현): 기준 = Case h 5 쿼드, 같은 메시 형상에 실제 설계 차이(비드 3.71 mm — 4.15 %) + 전삼각 형상(메시 차이만
+    4.21 %)이 한 스터디. 메시가 다른 형상만 nf_d = max(nf_base, 0.05) — 같은 메시 형상은 nf_base 로 판정(noise 아님·ESL 모두 개선)."""
+    shapes = (("d001", {"h": 5.0, "bead": (35.0, 55.0, 3.71), "node_base": 850001}),
+              ("d002", {"mesh": G.delaunay_plate(3.0, seed=2, ring_n=17)}))
+    doe, out, _A = G.cmp_world(str(tmp_path), hA=5.0, rank=G.rank_snap(grid=True), shapes=shapes)
+    res = G.run_cmp(doe, out)["result"]
+    g = DEFAULTS["rank"]["jig_grid"]
+    assert res["metric_effective"] == "jd"
+    nf0 = res["noise_floor"]
+    gr = res["jig"]["grid"]
+    x1, x2 = (next(r for r in res["ranking"] if r["id"] == d) for d in ("d001", "d002"))
+    with capsys.disabled():
+        print(f"\nJG per-shape nf: nf_base {nf0:.4f} · applied {gr['noise_floor_mismatch_applied']} · d001 {x1['improvement']:.4f}/{x1['noise']}"
+              f" · d002 {x2['improvement']:.4f}/{x2['noise']}")
+    assert nf0 < g["noise_floor_mismatch"] and gr["noise_floor"] == nf0 and res["ratio_tol"] == max(DEFAULTS["rank"]["ratio_tol"], nf0)
+    assert gr["noise_floor_mismatch_applied"] == [{"id": "d002", "noise_floor": max(nf0, g["noise_floor_mismatch"])}]
+    assert 0.04 < x1["improvement"] < g["noise_floor_mismatch"] and x1["noise"] is False and x1["all_improved"] is True and x1["n_improved"] == 2
+    assert nf0 < x2["improvement"] < g["noise_floor_mismatch"] and x2["noise"] is True and x2["n_improved"] == 0 and x2["all_improved"] is False
+    # 형상 행 정보 1건(그 형상만), 다시 post 해도 1건
+    w2 = [w for w in _res(out, "d002")["warnings"] if str(w).startswith("JIG_GRID_MESH_MISMATCH_SHAPE")]
+    assert len(w2) == 1 and "이 형상은 기준과 메시가 달라 차이 5 % 이내는 오차 범위" in w2[0] and x2["warnings_n"] >= 1
+    assert not any(str(w).startswith("JIG_GRID_MESH_MISMATCH_SHAPE") for w in _res(out, "d001")["warnings"])
+    w = _row(res, "JIG_GRID_MESH_MISMATCH")
+    assert len(w) == 1 and w[0]["n_shapes"] == 1 and "메시가 다른 형상 1개는 차이 5 % 이내를 오차 범위로 표시" in w[0]["message"]
+    # 격자 출처 보기(jd·js)도 같은 형상별 판정
+    for k in ("jig_disp", "jig_spring"):
+        v = (res.get("rank_views") or {}).get(k)
+        if v:
+            r1, r2 = (next(r for r in v["ranking"] if r["id"] == d) for d in ("d001", "d002"))
+            assert v["noise_floor"] == nf0 and r2["noise"] is (abs(r2["improvement"]) < max(nf0, 0.05)) and r1["noise"] is (abs(r1["improvement"]) < nf0)
+    G.run_stage(out, doe, "bd_post")
+    res2 = U.read_json(os.path.join(out, "post", "result.json"))
+    assert [x["noise"] for x in res2["ranking"]] == [x["noise"] for x in res["ranking"]]
+    assert sum(1 for w in _res(out, "d002")["warnings"] if str(w).startswith("JIG_GRID_MESH_MISMATCH_SHAPE")) == 1
 
 
 def test_mesh_mismatch_keys_outside_hash(tmp_path):

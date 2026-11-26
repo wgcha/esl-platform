@@ -162,6 +162,19 @@ describe("새 Case — SCX 드라이브에서 고르기", () => {
     await waitFor(() => expect(screen.getByLabelText("올린 파일 확인 결과").textContent).toContain("rad·h3d 확인됨"), LONG);
   });
 
+  it("#92 한글·공백·괄호 이름의 기존 폴더로 들어가 rad 를 고른다(영문 이름 규칙은 읽기에 적용하지 않음)", async () => {
+    const { server } = await openScx();
+    const t = await enter(await screen.findByRole("table", { name: "SCX 드라이브 폴더 목록" }), "65QN80", "PROJ-000099_R95J개발과제", "해석 모델 (v2)");
+    expect(within(t).getByText("낙하_0000.rad")).toBeTruthy();
+    fireEvent.click(within(t).getByRole("button", { name: "rad 선택" }));
+    fireEvent.click(within(t).getByRole("button", { name: "h3d 선택" }));
+    const start = screen.getByTestId("scx-start") as HTMLButtonElement;
+    await waitFor(() => expect(start.disabled).toBe(false)); // Case 이름은 영문 규칙이라 제안 'case' — 드라이브 폴더 이름과 무관
+    fireEvent.click(start);
+    await screen.findByTestId("scx-fetch");
+    expect(server.scx.lastFetchIn).toMatchObject({ root: "drop", rad_rel: "65QN80/PROJ-000099_R95J개발과제/해석 모델 (v2)/낙하_0000.rad", h3d_rel: "65QN80/PROJ-000099_R95J개발과제/해석 모델 (v2)/낙하.h3d" });
+  });
+
   it("취소 → 취소됨 + 이어받기 안내, '다른 파일 고르기'로 탐색으로", async () => {
     const { server } = await openScx();
     const t = await enter(await screen.findByRole("table", { name: "SCX 드라이브 폴더 목록" }), "65QN80", "drop_rear");

@@ -50,11 +50,14 @@ describe("§1.4 코드 문구·정보 등급·gridOf", () => {
     expect(warnText({ code: "JIG_GRID_SOURCE_MISSING", entry: "Ch/R 낙하 A", method: "변위" })).toContain("엔트리 Ch/R 낙하 A 의 Case 에 변위 지그 결과가 없습니다");
     expect(warnText({ code: "JIG_GRID_SOURCE_MISSING" })).toContain("스터디를 복제하세요");
     expect(warnText({ code: "JIG_GRID_TIE_SNAP", n_shapes: 2, n_clusters_max: 1 })).toBe("체결부 1곳을 노드 1개로만 잡았습니다(형상 2개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요");
-    for (const c of ["SOURCE_MISSING", "TIE_MISS", "OUTSIDE", "LOAD_RESID", "AREA_RATIO", "FRAME_SHIFT", "CONV", "NO_REF", "RANK", "MESH_MISMATCH", "TIE_SNAP"]) expect(JIG_CODE_TEXT[`JIG_GRID_${c}`]).toBeTruthy();
+    // v0.24.8 fix JG-26: 형상별 오차 범위 — 스터디 줄은 메시가 다른 형상 수·그 범위, 형상 줄(정보)은 그 형상의 범위
+    expect(warnText({ code: "JIG_GRID_MESH_MISMATCH", n_shapes: 1, nf: "5" })).toContain("메시가 다른 형상 1개는 차이 5 % 이내를 오차 범위로 표시");
+    expect(warnText({ code: "JIG_GRID_MESH_MISMATCH_SHAPE", h: "3.44", tri: "1.00", nf: "5" })).toBe("이 형상은 기준과 메시가 달라 차이 5 % 이내는 오차 범위입니다(요소 변 3.44 mm · 삼각 비율 1.00)");
+    for (const c of ["SOURCE_MISSING", "TIE_MISS", "OUTSIDE", "LOAD_RESID", "AREA_RATIO", "FRAME_SHIFT", "CONV", "NO_REF", "RANK", "MESH_MISMATCH", "MESH_MISMATCH_SHAPE", "TIE_SNAP"]) expect(JIG_CODE_TEXT[`JIG_GRID_${c}`]).toBeTruthy();
   });
 
   it("정보 등급 5개(OUTSIDE·AREA_RATIO·FRAME_SHIFT·CONV·RANK)만 level 없이도 ⓘ, 경고 등급은 ⚠", () => {
-    expect([...JIG_GRID_INFO_CODES].sort()).toEqual(["JIG_GRID_AREA_RATIO", "JIG_GRID_CONV", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_ON_CLONE", "JIG_GRID_OUTSIDE", "JIG_GRID_RANK"]);
+    expect([...JIG_GRID_INFO_CODES].sort()).toEqual(["JIG_GRID_AREA_RATIO", "JIG_GRID_CONV", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE", "JIG_GRID_ON_CLONE", "JIG_GRID_OUTSIDE", "JIG_GRID_RANK"]);
     for (const c of JIG_GRID_INFO_CODES) expect(isInfoWarn({ code: c })).toBe(true);
     for (const c of ["JIG_GRID_SOURCE_MISSING", "JIG_GRID_TIE_MISS", "JIG_GRID_LOAD_RESID", "JIG_GRID_NO_REF", "JIG_GRID_TIE_SNAP"]) expect(isInfoWarn({ code: c })).toBe(false);
     expect(isInfoWarn({ code: "JIG_GRID_TIE_MISS", level: "info" })).toBe(true);
@@ -63,10 +66,13 @@ describe("§1.4 코드 문구·정보 등급·gridOf", () => {
   it("gridOf = jig.transfer grid ∧ jig.grid 있을 때만, 꼬리 문구", () => {
     expect(gridOf(null)).toBeNull();
     expect(gridOf({ jig: { transfer: "base", grid: null } })).toBeNull();
-    expect(gridOf({ jig: { transfer: "grid", grid: { cell_mm: 3, noise_floor: 0.03 } } })).toEqual({ cell_mm: 3, noise_floor: 0.03 });
+    expect(gridOf({ jig: { transfer: "grid", grid: { cell_mm: 3, noise_floor: 0.03 } } })).toEqual({ cell_mm: 3, noise_floor: 0.03, nf_by: {} });
+    expect(gridOf({ jig: { transfer: "grid", grid: { cell_mm: 3, noise_floor: 0.03, noise_floor_mismatch_applied: [{ id: "d002", noise_floor: 0.05 }] } } })).toEqual({ cell_mm: 3, noise_floor: 0.03, nf_by: { d002: 0.05 } });
     expect(GRID_TEXT.support(3)).toBe(" · 격자 3 mm");
     expect(GRID_TEXT.rankDef(3)).toBe("형상마다 Case 지그를 3 mm 격자로 매핑(기준 d000)");
     expect(GRID_TEXT.rankNoise(0.03)).toBe(" · 차이 3 % 이내는 매핑 오차 범위");
+    expect(GRID_TEXT.rankNoise(0.03, [])).toBe(" · 차이 3 % 이내는 매핑 오차 범위");
+    expect(GRID_TEXT.rankNoise(0.03, [0.05, 0.05])).toBe(" · 차이 3 % 이내는 매핑 오차 범위(메시가 다른 형상은 5 %)");
   });
 });
 
@@ -105,6 +111,21 @@ describe("V-0248-JG-13·17 ④ 격자 지그 결과 화면(픽스처 doe-60)", (
     expect(screen.getByTestId("doe-row-sens").textContent).toContain("민감도:");
     fireEvent.click(tabBtn("jig_spring"));
     await waitFor(() => expect(screen.getByTestId("v3d-cond").textContent).toContain("지그 tie 법선 스프링 + 3-2-1 면내 · 격자 3 mm"));
+  }, 40000);
+
+  it("fix JG-26 형상별 오차 범위: 메시가 다른 형상이 있으면 정의 꼬리 같은 줄에 그 범위, 그 형상 noise 배지 title 은 그 형상 값", async () => {
+    let rid = "";
+    open("doe-60", (r) => {
+      const x = r.ranking.find((y) => y.noise)!;
+      rid = x.id;
+      return { ...r, jig: { ...r.jig!, grid: { ...r.jig!.grid!, noise_floor_mismatch_applied: [{ id: x.id, noise_floor: 0.05 }] } } };
+    });
+    await screen.findByTestId("doe-result-rows", {}, { timeout: 8000 });
+    const defs = screen.getByTestId("metric-defs").textContent ?? "";
+    expect(defs).toContain("· 차이 3 % 이내는 매핑 오차 범위(메시가 다른 형상은 5 %)");
+    const row = screen.getAllByText("잡음 이내").map((b) => b.getAttribute("title"));
+    expect(rid).not.toBe("");
+    expect(row).toContain("격자 매핑 오차 범위 +5.0 % 이내");
   }, 40000);
 
   it("대조(transfer·grid 없음)는 꼬리·정의 꼬리가 없고 noise 배지 title 은 옛 문구", async () => {

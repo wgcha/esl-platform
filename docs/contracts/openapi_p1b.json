@@ -3826,6 +3826,25 @@
         "title": "DoeJigGridMethodOut",
         "type": "object"
       },
+      "DoeJigGridNfOut": {
+        "description": "v0.24.8 fix(D-0.24.8-JG-26): 형상별 오차 범위 — 기준과 메시가 다른 형상 id 와 그 형상 행에 쓴 noise_floor(= max(기본, noise_floor_mismatch)).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "noise_floor": {
+            "title": "Noise Floor",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "noise_floor"
+        ],
+        "title": "DoeJigGridNfOut",
+        "type": "object"
+      },
       "DoeJigGridOut": {
         "description": "v0.24.8 스터디 격자 지그 요약(esl_jig_grid_map.md §1.5·§6 — result.json jig.grid 값 그대로, 최악값).",
         "properties": {
@@ -3931,6 +3950,20 @@
               }
             ],
             "title": "Noise Floor"
+          },
+          "noise_floor_mismatch_applied": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DoeJigGridNfOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor Mismatch Applied"
           },
           "sample_outside_max": {
             "anyOf": [

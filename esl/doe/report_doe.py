@@ -384,9 +384,12 @@ def _jig_line(j: dict) -> str:
         rec = [m.get("grid", {}).get("recon_mac_d000") for m in ms.values() if (m.get("grid") or {}).get("recon_mac_d000") is not None]
         miss = g.get("tie_miss_max")
         nf = g.get("noise_floor")
+        msg = load_messages()["messages"]
+        nfm = sorted({float(x["noise_floor"]) for x in g.get("noise_floor_mismatch_applied") or []})   # fix JG-26 형상별 오차 범위
         return (f"형상마다 Case 지그를 {g.get('cell_mm')} mm 격자로 매핑(기준 d000) · d000 재현 MAC "
                 f"{'—' if not rec else format(min(rec), '.3f')} · 잡기 miss 최대 {'—' if miss is None else format(miss * 100, '.0f') + ' %'}"
-                + (f" · 차이 {nf * 100:.1f} % 이내는 매핑 오차 범위" if nf is not None else ""))
+                + (msg["JG_RANK_NOISE"].format(nf=f"{nf * 100:.1f}") if nf is not None else "")
+                + (msg["JG_RANK_NOISE_MISMATCH"].format(nf="·".join(f"{v * 100:.1f}" for v in nfm)) if nf is not None and nfm else ""))
     mac, err = j.get("fit_mac_min"), j.get("fit_umax_err_max")
     mnm = j.get("fit_mac_min_nomodes")
     nm = f" (모드 제외 {float(mnm):.3f})" if int(j.get("n_modes") or 0) > 0 and mnm is not None else ""

@@ -124,6 +124,40 @@ def test_full_flow_browse_fetch_case(client, fake_relay, worker_factory, upload_
     assert r.json()["input_kind"] == "H3D"
 
 
+# ---------------------------------------------------------------- #92 한글·공백·괄호 이름이 끝까지(탐색 → 내려받기 → Case)
+def test_non_ascii_folder_and_file_names_end_to_end(client, fake_relay, worker_factory, esl_root):
+    base = f"{ROOT_REL}/PROJ-000099_R95J개발과제"
+    files = {
+        f"{base}/해석 모델(v2)/기준 모델_0000.rad": mini_rad(["../포함 파일/부품(1).inc"]),
+        f"{base}/해석 모델(v2)/기준 모델_0001.rad": b"/RUN/ref/1\n0.01\n/END\n",
+        f"{base}/포함 파일/부품(1).inc": b"# part include\n",
+        f"{base}/결과 (최종)/낙하 결과.h3d": H3D_BYTES,
+    }
+    for k, v in files.items():
+        put(fake_relay, k, v)
+    b = client.get(f"{API}/scx/browse", params={"project_id": "p-1", "root": "drop", "path": "PROJ-000099_R95J개발과제/해석 모델(v2)"},
+                   headers=R)
+    assert b.status_code == 200, b.text
+    assert next(e["name"] for e in b.json()["entries"] if e["hint"] == "rad") == "기준 모델_0000.rad"
+    r = fetch(client, {"rad": "PROJ-000099_R95J개발과제/해석 모델(v2)/기준 모델_0000.rad",
+                       "h3d": "PROJ-000099_R95J개발과제/결과 (최종)/낙하 결과.h3d"}, name="한글 이름 모델")
+    assert r.status_code == 202, r.text
+    uid, jid = r.json()["upload_id"], r.json()["job_id"]
+    assert worker_factory().run_once("XFER") == "SUCCEEDED", job(client, jid)
+    up = upload(client, uid)
+    assert up["state"] == "COMPLETED", (up["result"].get("problems"), up["result"].get("missing_includes"), up["result"].get("warnings"))
+    d = Path(up["dir_path"])
+    got = {f["rel"] for f in up["files"]}
+    assert got == {"rad/해석 모델(v2)/기준 모델_0000.rad", "rad/해석 모델(v2)/기준 모델_0001.rad", "rad/포함 파일/부품(1).inc",
+                   "h3d/낙하 결과.h3d"}
+    assert all((d / rel).is_file() for rel in got) and up["result"]["missing_includes"] == []
+    res = up["result"]
+    r = create_case(client, {"rad": res["rad_path"], "csv": None}, folder="scxkor", results_dir=None,
+                    h3d_path=res["h3d_path"], part_title="Chassis rear")
+    assert r.status_code == 201, r.text
+    assert r.json()["input_kind"] == "H3D"
+
+
 # ---------------------------------------------------------------- include 폐포·누락 → 같은 세션에 추가
 def test_include_closure_missing_then_add(client, fake_relay, worker_factory):
     model = build_model(fake_relay, engine=False, extra_includes=[
