@@ -4559,6 +4559,21 @@
             "title": "Dropped Duplicates",
             "type": "integer"
           },
+          "load_follow": {
+            "anyOf": [
+              {
+                "enum": [
+                  "node",
+                  "spatial"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Follow"
+          },
           "matrix_sha256": {
             "title": "Matrix Sha256",
             "type": "string"
@@ -5185,6 +5200,18 @@
               }
             ],
             "title": "Lin Form"
+          },
+          "load_follow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Follow"
           },
           "load_source": {
             "anyOf": [
@@ -6092,6 +6119,18 @@
             "title": "Gmsh",
             "type": "object"
           },
+          "load_follow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Follow"
+          },
           "load_source_default": {
             "anyOf": [
               {
@@ -6148,6 +6187,18 @@
               }
             ],
             "title": "Part Title"
+          },
+          "pos_u": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pos U"
           },
           "rank": {
             "anyOf": [
@@ -18004,13 +18055,50 @@
       },
       "View3dSupport": {
         "properties": {
+          "dirs": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dirs"
+          },
           "dof": {
             "title": "Dof",
             "type": "string"
           },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
           "node_id": {
             "title": "Node Id",
             "type": "integer"
+          },
+          "val": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Val"
           },
           "vertex": {
             "title": "Vertex",

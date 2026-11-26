@@ -465,27 +465,34 @@ def _publish(tmp: str, dest: str, cdir: str, run_id: str, name: str, valid) -> b
     return True
 
 
-def _enrich_manifest_supports(tmp: str, sup_rows: list[dict[str, Any]]) -> None:
+def _enrich_manifest_supports(tmp: str, sup_rows: list[dict[str, Any]], m: dict[str, Any] | None = None) -> None:
     """코어 build_view 는 표식의 node_id·dof 만 manifest 에 쓴다 → 방식별 ``kind``·``dirs``·``val``(계약 §10.2 — 기존 ``dof`` 는 그대로)을
-    node_id 로 맞춰 manifest.json 에 덧붙인다(kind 없는 행은 손대지 않음 — 옛 지지 출처 그대로). 코어가 이 키를 직접 쓰면 값이 같아 무동작."""
+    node_id 로 맞춰 manifest.json 파일과 코어 반환 dict ``m`` 양쪽에 덧붙인다(kind 없는 행은 손대지 않음 — 옛 지지 출처 그대로).
+    코어가 이 키를 직접 쓰면 값이 같아 무동작."""
     extra = {int(r["node_id"]): r for r in sup_rows if isinstance(r, dict) and "kind" in r}
     if not extra:
         return
+
+    def _fill(rows: Any) -> bool:
+        changed = False
+        for row in rows or []:
+            e = extra.get(int(row.get("node_id", -1))) if isinstance(row, dict) else None
+            if e is not None:
+                for k in ("kind", "dirs", "val"):
+                    if row.get(k) != e[k]:
+                        row[k] = e[k]
+                        changed = True
+        return changed
+
+    if m is not None:
+        _fill(m.get("supports"))
     path = os.path.join(tmp, MANIFEST)
     try:
         with open(path, encoding="utf-8") as fh:
             man = json.load(fh)
     except (OSError, ValueError):
         return
-    changed = False
-    for row in man.get("supports") or []:
-        e = extra.get(int(row.get("node_id", -1))) if isinstance(row, dict) else None
-        if e is not None:
-            for k in ("kind", "dirs", "val"):
-                if row.get(k) != e[k]:
-                    row[k] = e[k]
-                    changed = True
-    if changed:
+    if _fill(man.get("supports")):
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(man, fh, ensure_ascii=False, allow_nan=False)
 
@@ -508,7 +515,7 @@ def _build(inp: Inputs) -> dict[str, Any]:
             u_rel=data["u_rel"], supports=sup_rows, key=inp.key, esl_run_id=inp.run["id"], units=_units(inp.ctx),
             cfg={k: getattr(cfg, k) for k in ("lod_min_nodes", "lod_target_vertices", "top_max", "cluster_k_max",
                                               "kmeans_max_iter")})
-        _enrich_manifest_supports(tmp, sup_rows)
+        _enrich_manifest_supports(tmp, sup_rows, m)
         glb = m["geometry"]["bytes"] + (m["lod"]["bytes"] if m.get("lod") else 0)
         if glb > cfg.max_glb_bytes or m["values"]["bytes"] > cfg.max_glb_bytes:
             raise _too_large(inp.ctx, n_nodes=n, glb_bytes=glb, values_bytes=m["values"]["bytes"])
