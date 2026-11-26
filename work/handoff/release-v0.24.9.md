@@ -32,8 +32,9 @@ PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_249_bt -o tmp_p
   work/v0249_u_table.md — H6·H5 U 가능 비드 15: 뒤집힘·오목·가드 left 0, range guard blocked 0)
 - 시험: packages/beadgraph 117 passed·2 skipped(기존), selftest PASS, tests/doe/test_pos_u 11, test_pos_u_golden, tests/mech BM 10
 
+- tests/ 전체 1762 passed·192 skipped·실패 3(허용 3건만) — 6272386e
+
 ## 남은 일
-- tests/doe·morph·mech 전체, tests/ 전체 결과 확인(허용 실패 3 외 0)
 - 백엔드 B1: derive_v2(pos_u=, tie_node_ids=) 호출, 스냅샷 pos_u·load_follow 블록, Case 3D support_marks 키워드 일반형
 - 프런트 F1: U 행 표시·u_reason 툴팁·load_follow 결과 줄
 
