@@ -2110,6 +2110,13 @@ class DoeJigGridMeshOut(_Out):
     mismatch: bool
 
 
+class DoeJigGridNfOut(_Out):
+    """v0.24.8 fix(D-0.24.8-JG-26): 형상별 오차 범위 — 기준과 메시가 다른 형상 id 와 그 형상 행에 쓴 noise_floor(= max(기본, noise_floor_mismatch))."""
+
+    id: str
+    noise_floor: float
+
+
 class DoeJigGridOut(_Out):
     """v0.24.8 스터디 격자 지그 요약(esl_jig_grid_map.md §1.5·§6 — result.json jig.grid 값 그대로, 최악값)."""
 
@@ -2122,7 +2129,8 @@ class DoeJigGridOut(_Out):
     tie_area_ratio_max: float | None = None
     k_scale_min: float | None = None                        # 스프링 방식이 없으면 null
     k_scale_max: float | None = None
-    noise_floor: float | None = None                        # 격자 순위에 넘긴 nf(solve 대체 순위면 null — 계약 §3)
+    noise_floor: float | None = None                        # 격자 순위 기본 nf(형상별 = noise_floor_mismatch_applied, solve 대체 순위면 null — 계약 §3)
+    noise_floor_mismatch_applied: list[DoeJigGridNfOut] | None = None   # fix JG-26: 메시가 다른 형상의 nf(옛 결과 = null, 같은 메시만 = [])
     load_dF_max: float | None = None
     load_dM_max: float | None = None
     corr_rel_max: float | None = None

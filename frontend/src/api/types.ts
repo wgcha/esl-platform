@@ -3487,8 +3487,10 @@ export interface DoeJigGridOut {
   /** 스프링 출처가 없으면 null */
   k_scale_min: number | null;
   k_scale_max: number | null;
-  /** 격자 순위에 넘긴 불확실 구간(solve 대체 순위면 null) */
+  /** 격자 순위 기본 불확실 구간(형상별 = noise_floor_mismatch_applied, solve 대체 순위면 null) */
   noise_floor: number | null;
+  /** v0.24.8 fix 기준과 메시가 다른 형상의 불확실 구간(옛 결과 null·키 없음, 메시가 모두 같으면 []) */
+  noise_floor_mismatch_applied?: DoeJigGridNfOut[] | null;
   load_dF_max: number | null;
   load_dM_max: number | null;
   corr_rel_max: number | null;
@@ -3498,6 +3500,11 @@ export interface DoeJigGridOut {
   warnings: string[];
   /** v0.24.8 fix 기준 d000 ↔ 형상 메시 비교(옛 결과 null·키 없음) */
   mesh?: DoeJigGridMeshOut | null;
+}
+/** v0.24.8 fix 형상별 오차 범위 — 기준과 메시가 다른 형상 id·그 행의 noise_floor */
+export interface DoeJigGridNfOut {
+  id: string;
+  noise_floor: number;
 }
 /** v0.24.8 fix 기준·형상 메시 통계 — h = 요소 변 길이 중앙값(mm), tri = 삼각형 요소 비율. mismatch = 격자 순위 noise_floor 상향 */
 export interface DoeJigGridMeshOut {

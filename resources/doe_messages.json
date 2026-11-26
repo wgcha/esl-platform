@@ -1,5 +1,5 @@
 {
- "version": "2026-11-26.2",
+ "version": "2026-11-26.3",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -316,11 +316,14 @@
   "JIG_GRID_NO_REF": "기준 형상(d000)의 {method} 격자 지그가 없거나 실패해({err}) 그 방식의 순위 기준이 없습니다. (Grid jig reference missing.)",
   "JIG_GRID_RANK": "다른 메시 비교 — 형상마다 Case 지그를 {cell_mm} mm 격자로 매핑해 지그 {method} 방식으로 순위를 매겼습니다(기준 d000 · 매핑 진단 참고). (Info: ranked by the grid-mapped jig.)",
   "JIG_GRID_ON_CLONE": "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다",
-  "JIG_GRID_MESH_MISMATCH": "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요(차이 {nf} % 이내는 오차 범위). (Info: reference and shape meshes differ in size or element type.)",
+  "JIG_GRID_MESH_MISMATCH": "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요(메시가 다른 형상 {n_shapes}개는 차이 {nf} % 이내를 오차 범위로 표시). (Info: reference and shape meshes differ in size or element type.)",
+  "JIG_GRID_MESH_MISMATCH_SHAPE": "형상 {did}: 이 형상은 기준과 메시가 달라 차이 {nf} % 이내는 오차 범위입니다(요소 변 {h} mm · 삼각 비율 {tri} — 기준 {h_ref} mm · {tri_ref}). (Info: shape mesh differs from the reference — wider noise band.)",
   "JIG_GRID_TIE_SNAP": "형상 {n_shapes}개에서 체결부를 노드 1개로만 잡았습니다(형상당 최대 {n_clusters_max}곳) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요. (Jig tie clusters captured by a single node.)",
   "JIG_GRID_TIE_SNAP_SHAPE": "형상 {did}: 체결부 {n}곳을 노드 1개로만 잡았습니다 — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요. (Jig tie clusters captured by a single node.)",
   "JG_RANK_NOTE_NEXT": "순위는 지그 {method} 방식으로 매깁니다",
   "JG_RANK_NOTE_SOLVE": "지금은 재풀이(solve) 순위입니다",
+  "JG_RANK_NOISE": " · 차이 {nf} % 이내는 매핑 오차 범위",
+  "JG_RANK_NOISE_MISMATCH": "(메시가 다른 형상은 {nf} %)",
   "W_USER_OFF": "사용자가 W 를 뺌",
   "W_NETWORK": "네트워크 묶기는 깊이만",
   "W_AREA": "면형 바닥 — 입구 선 없음",

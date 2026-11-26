@@ -1020,11 +1020,12 @@ def bd_post(spec: dict, echo=print) -> dict:
         if nr.get("status") == "OK" and b.get("status") == "OK":
             noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
     S_ = _sm_post(c)
-    res_rank, ls_w = _ls_rank_input(c, S_, results)          # v0.24.4 P3 load_source(없음 = results 그대로)
-    noise_r = noise
+    noise_r, nf_kw = noise, {}
     if S_ is not None and S_.get("grid_rank"):               # v0.24.8 JG §3: 격자 순위 noise_floor = max(ΔΠ_5, 하한, 메시 잡음 바닥)
         noise_r = c._jg_nf = _jg_nf(c, noise)
-    R = rk.rank(res_rank, noise_floor=noise_r, tol=float(c.cfg["rank"]["ratio_tol"]),
+        nf_kw = _jg_nf_shapes(c, results)                    # fix JG-26: 기준과 메시가 다른 형상만 nf_d(형상 행 정보 경고 포함)
+    res_rank, ls_w = _ls_rank_input(c, S_, results)          # v0.24.4 P3 load_source(없음 = results 그대로)
+    R = rk.rank(res_rank, noise_floor=noise_r, tol=float(c.cfg["rank"]["ratio_tol"]), **nf_kw,
                 **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
                     "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     labels = {e["id"]: e.get("label") or e["id"][:8] for e in c.D["entries"]}
@@ -5052,6 +5053,8 @@ def _rank_view_one(c: Ctx, m: dict, results: list, noise, S_: dict | None, label
     kw = {"lin_form": S_["lin_form"], "lin_valid": float(S_["lin_valid"])} if S_ else {}
     if src["v3d_store"] == "sidecar" and getattr(c, "_jg_nf", None) is not None:
         noise = c._jg_nf                                       # v0.24.8 JG §3: 격자 출처 보기(jd·js)도 같은 noise_floor
+        if getattr(c, "_jg_nf_by", None):                      # fix JG-26: 형상별 오차 범위도 같게
+            kw["noise_floor_by_id"] = c._jg_nf_by
     R = rk.rank(results, noise_floor=noise, tol=float(c.cfg["rank"]["ratio_tol"]), metric=metric, **kw)
     if m is None and _lt_plan(c)["dst"] == "shape":            # v0.24.8 ④ 격자 지그 보기(행렬 없음): 형상 이름(rk.attach_shapes)
         rk.attach_shapes(R, {x["id"]: x for x in _cmp_doc(c)["shapes"]})
@@ -5203,6 +5206,8 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
     S_ = _sm_post(c)
     if S_ is not None and S_.get("grid_rank"):                # v0.24.8 JG §3: 격자 출처 보기 = 순위와 같은 nf, 그 밖 보기 = 원래 잡음 바닥
         c._jg_nf = noise
+        c._jg_nf_by = {str(x["id"]): float(x["noise_floor"]) for x in                 # fix JG-26: 형상별 nf = 결과에 적힌 값
+                       ((res0.get("jig") or {}).get("grid") or {}).get("noise_floor_mismatch_applied") or []} or None
         noise = None
         npth = os.path.join(design_dir(c, NOISE), ev.RESULT_JSON)
         if _lt_plan(c)["dst"] == "design" and os.path.isfile(npth):     # 안마다 다시 메시(계획 dst design = 옛 ③)만 메시 잡음 바닥
@@ -6504,7 +6509,8 @@ def _jg_mesh_sum(runs: dict, cfg: dict) -> dict | None:
         if gm.mesh_mismatch(m0, m, h_ratio_warn=float(cfg["mesh_h_ratio_warn"]), tri_frac_warn=float(cfg["mesh_tri_frac_warn"])):
             bad.append(did)
     return {"h_ref": float(m0["h"]), "h_min": min(hs) if hs else None, "h_max": max(hs) if hs else None,
-            "tri_ref": float(m0["tri_frac"]), "tri_max": max(tris) if tris else None, "mismatch": bool(bad), "n_shapes": len(bad)}
+            "tri_ref": float(m0["tri_frac"]), "tri_max": max(tris) if tris else None, "mismatch": bool(bad), "n_shapes": len(bad),
+            "shapes": {did: {"h": float(runs[did]["mesh"]["h"]), "tri": float(runs[did]["mesh"]["tri_frac"])} for did in bad}}
 
 
 def _jg_ready(c: Ctx, src: str) -> bool:
@@ -6541,13 +6547,10 @@ def _jg_any_ready(c: Ctx) -> bool:
 
 
 def _jg_nf(c: Ctx, mesh_noise) -> float:
-    """격자 순위 noise_floor(§3) = max(방식·엔트리 최악 ΔΠ_5(conv_mm 중 가장 작은 크기 — 없으면 뺌), noise_floor_min, 옛 ③ 메시 잡음 바닥,
-    기준 d000 과 메시 방식이 다른 형상이 있으면 noise_floor_mismatch(v0.24.8 fix JG-23))."""
+    """격자 순위 기본 noise_floor nf_base(§3) = max(방식·엔트리 최악 ΔΠ_5(conv_mm 중 가장 작은 크기 — 없으면 뺌), noise_floor_min,
+    옛 ③ 메시 잡음 바닥). 기준 d000 과 메시 방식이 다른 형상의 nf_d 는 _jg_nf_shapes(fix JG-26 — 스터디 전체에 걸지 않음)."""
     cfg = _jg_cfg(c)
     vals = [float(cfg["noise_floor_min"])]
-    ms_ = _jg_mesh_sum(_jg_runs(c), cfg)
-    if ms_ is not None and ms_["mismatch"]:
-        vals.append(float(cfg["noise_floor_mismatch"]))
     if mesh_noise is not None:
         vals.append(float(mesh_noise))
     conv = (_jg_run_doc(c, BASELINE) or {}).get("conv") or {}
@@ -6558,6 +6561,34 @@ def _jg_nf(c: Ctx, mesh_noise) -> float:
         if dp:
             vals.append(max(dp))
     return float(max(vals))
+
+
+def _jg_nf_shapes(c: Ctx, results: list) -> dict:
+    """fix JG-26 형상별 오차 범위: 기준 d000 과 메시 방식이 다른 형상(JG-23 판정) d 의 nf_d = max(nf_base, noise_floor_mismatch),
+    같은 형상 = nf_base. c._jg_nf_by = {did: nf_d}(없으면 None), 그 형상 result 의 warnings 에 정보 JIG_GRID_MESH_MISMATCH_SHAPE 1건
+    (다시 실행해도 1건 — 옛 줄을 지우고 넣음). 반환 = rank 인수({} = 인수 없음 — 메시가 모두 같으면 옛 호출 그대로)."""
+    nf0 = getattr(c, "_jg_nf", None)
+    ms_ = _jg_mesh_sum(_jg_runs(c), _jg_cfg(c)) if nf0 is not None else None
+    by = {}
+    if ms_ is not None and ms_["mismatch"]:
+        nfm = max(float(nf0), float(_jg_cfg(c)["noise_floor_mismatch"]))
+        by = {did: nfm for did in sorted(ms_["shapes"])}
+    c._jg_nf_by = by or None
+    tag = "JIG_GRID_MESH_MISMATCH_SHAPE"
+    for r in results:
+        ws = r.get("warnings")
+        if ws is None or not isinstance(ws, list):
+            if r["id"] not in by:
+                continue
+            ws = []
+        kept = [w for w in ws if not (isinstance(w, str) and w.startswith(tag + ":"))]
+        if r["id"] in by:
+            sh = ms_["shapes"][r["id"]]
+            kept.append(_jg_text(tag, did=r["id"], h=_jg_fmt(sh["h"]), tri=_jg_fmt(sh["tri"], ".2f"), h_ref=_jg_fmt(ms_["h_ref"]),
+                                 tri_ref=_jg_fmt(ms_["tri_ref"], ".2f"), nf=f"{by[r['id']] * 100:.3g}"))
+        if len(kept) != len(ws) or r["id"] in by:
+            r["warnings"] = kept
+    return {"noise_floor_by_id": by} if by else {}
 
 
 def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
@@ -6631,6 +6662,7 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
             "k_scale_min": mn(vals(lambda rd: [t_.get("k_scale_min") for t_ in tie(rd)])),
             "k_scale_max": mx_(vals(lambda rd: [t_.get("k_scale_max") for t_ in tie(rd)])),
             "noise_floor": getattr(c, "_jg_nf", None),
+            "noise_floor_mismatch_applied": [{"id": did, "noise_floor": v} for did, v in sorted((getattr(c, "_jg_nf_by", None) or {}).items())],
             "load_dF_max": mx_(vals(lambda rd: [x.get("dF_rel") for x in ld(rd)])),
             "load_dM_max": mx_(vals(lambda rd: [x.get("dM_rel") for x in ld(rd)])),
             "corr_rel_max": mx_(vals(lambda rd: [x.get("corr_rel") for x in ld(rd)])),
@@ -6670,8 +6702,8 @@ def _jg_study_warns(c: Ctx, runs: dict, cfg: dict) -> list:
         c._jg_rows = {**(getattr(c, "_jg_rows", None) or {}), txt: {"code": txt.split(":", 1)[0], "message": txt, **row}}
     ms_ = _jg_mesh_sum(runs, cfg)
     if ms_ is not None and ms_["mismatch"]:
-        nf = getattr(c, "_jg_nf", None)
-        nf = float(nf) if nf is not None else max(float(cfg["noise_floor_min"]), float(cfg["noise_floor_mismatch"]))
+        nf = getattr(c, "_jg_nf", None)                      # fix JG-26: 메시가 다른 형상의 nf_d = max(nf_base, noise_floor_mismatch)
+        nf = max(float(nf) if nf is not None else float(cfg["noise_floor_min"]), float(cfg["noise_floor_mismatch"]))
         f = {k: ms_[k] for k in ("n_shapes", "h_ref", "h_min", "h_max", "tri_ref", "tri_max")}
         put(_jg_text("JIG_GRID_MESH_MISMATCH", nf=f"{nf * 100:.3g}", **{k: _jg_fmt(v) for k, v in f.items() if k != "n_shapes"},
                      n_shapes=ms_["n_shapes"]), f)
@@ -7072,7 +7104,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     S_ = _sm_post(c)
     nf = _jg_nf(c, None) if S_ is not None and S_.get("grid_rank") else None     # v0.24.8 JG §3: 격자 순위만(그 밖 None 그대로)
     c._jg_nf = nf
-    R = rk.rank(results, noise_floor=nf, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"},
+    nf_kw = _jg_nf_shapes(c, results) if nf is not None else {}                  # fix JG-26: 메시가 다른 형상만 nf_d
+    R = rk.rank(results, noise_floor=nf, tol=float(c.cfg["rank"]["ratio_tol"]), extra_failed={"FAILED_SIZE": "size"}, **nf_kw,
                 **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
                     "lin_valid": float(S_["lin_valid"])} if S_ else {}))
     rk.attach_shapes(R, shapes)

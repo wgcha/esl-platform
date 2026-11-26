@@ -1023,7 +1023,7 @@ export function withJigGrid(res: DoeResultOut, opts: { plain?: boolean; cellMm?:
     methods: { jig_disp: gm("prescribed", "강제 변위", false, 0), jig_spring: gm("spring", "스프링", true, 1) },
     ...(opts.plain ? {} : { transfer: "grid" as const, grid: {
       cell_mm: cell, n_groups: 1, n_shapes: ranking.length, n_shapes_failed: 0, tie_miss_max: 0, tie_area_ratio_min: 0.93, tie_area_ratio_max: 1.07, k_scale_min: 0.98, k_scale_max: 1.03,
-      noise_floor: nf, load_dF_max: 3e-12, load_dM_max: 5e-12, corr_rel_max: 0.004, small_frac_max: 0.12, frame_shift_max_mm: 0, sample_outside_max: 0, warnings: [] } }),
+      noise_floor: nf, noise_floor_mismatch_applied: [], load_dF_max: 3e-12, load_dM_max: 5e-12, corr_rel_max: 0.004, small_frac_max: 0.12, frame_shift_max_mm: 0, sample_outside_max: 0, warnings: [] } }),
   };
   const warnings = [...res.warnings, { code: "JIG_GRID_RANK", level: "info" as const, message: "순위 = 격자 지그(다른 메시 — 매핑 진단 참고)" }, { code: "JIG_GRID_AREA_RATIO", name: ranking[ranking.length - 1]?.id ?? "d001" }];
   const { view3d_jig: _a, view3d_jig_esl: _b, view3d_jig_ref: _c, jig_diag: _d, view3d_regen: _e, ...rest } = j;
