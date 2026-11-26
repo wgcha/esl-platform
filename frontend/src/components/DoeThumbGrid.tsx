@@ -36,7 +36,7 @@ export function useBlobUrl(url: string | null): { src: string | null; error: str
 export function shortName(params: DoeParam[], name: string): string {
   const p = params.find((x) => x.name === name);
   // v0.15.0 select: B1_D2 → "B1 D2"
-  if (p?.tier != null || /^B\d+_(D\d+|W)$/.test(name)) return name.replace("_", " ");
+  if (p?.tier != null || /^B\d+_(D\d+|W|U)$/.test(name)) return name.replace("_", " ");
   return p ? `${p.bead} ${p.type}` : name;
 }
 

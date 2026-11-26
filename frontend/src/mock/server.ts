@@ -99,6 +99,8 @@ export class MockServer {
   valSourcesMode: ValSourcesMode = "old";
   /** v0.24.4 지그 3행(jig·jig_disp·jig_spring — esl_jig_case.md §5.4·5.5): false = 옛 서버·옛 Case(새 행 없음, 4행 그대로 — 기존 시험 DOM 불변) */
   jigRows = false;
+  /** v0.24.9 시연: 지그 스프링 행도 가능(Case ③ 3방식 표식) — ?demoJigRows=2 */
+  jigSpringOk = false;
   /** v0.24.1 재현 오류 시연: 응답 없음(409 V3D_RECON_UNAVAILABLE) */
   v3dReconFail = false;
   cases: CaseOut[] = [];
@@ -549,7 +551,7 @@ export class MockServer {
     const na = (key: string, code: string, reason: string): View3dSourceRow => ({ key, available: false, code, reason, resp: false, resp_code: code, resp_reason: reason, rigid: null });
     const ok = (key: string): View3dSourceRow => ({ key, available: true, code: null, reason: null, resp: true, resp_code: null, resp_reason: null, rigid: "kabsch" });
     const rest = this.v3dSources.rows.filter((r) => r.key !== "jig");
-    return { ...this.v3dSources, rows: [ok("jig"), ok("jig_disp"), na("jig_spring", "JIG_NOT_RUN", "이 ESL 결과에는 지그 스프링 계산이 없습니다(v0.24.4 이전 계산) — ESL 을 다시 계산하면 생깁니다"), ...rest] };
+    return { ...this.v3dSources, rows: [ok("jig"), ok("jig_disp"), (this.jigSpringOk ? ok("jig_spring") : na("jig_spring", "JIG_NOT_RUN", "이 ESL 결과에는 지그 스프링 계산이 없습니다(v0.24.4 이전 계산) — ESL 을 다시 계산하면 생깁니다")), ...rest] };
   }
 
   private valSrcError(v: ValidationOut, src: string | null): MockResponse | null {

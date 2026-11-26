@@ -301,26 +301,26 @@ def jig_support_sample(x0: np.ndarray, idx: np.ndarray, m: int) -> np.ndarray:
     return J[np.asarray(pick, dtype=np.int64)]
 
 
+JIG_BC_ARRAYS = ("bc_node", "bc_kind", "bc_dir", "bc_val", "sp_node", "sp_dir", "sp_k", "sp_g")   # load npz 의 BC 배열(esl.mech.jig_bc.BC_KEYS)
+
+
 def _jig_supports(inp: Inputs, node_id: np.ndarray, x0: np.ndarray) -> list[dict[str, Any]]:
-    """지그 행: load npz 의 bc_node(노드 인덱스)·bc_kind·sp_node(스프링) → tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드(전부, 최대 3개).
-    읽지 못하면 빈 목록(표식 없음 — 3D 자체는 계속)."""
+    """지그 행: load npz 의 BC 배열 → 표식 행 = 코어 ``esl.mech.jig_bc.support_rows``(스터디 사이드카와 같은 함수 — 계약 esl_bead_pos_u.md
+    §10.4-3·통합 INT-1): tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드, 각 행 {node_id, dof(옛 문자열 그대로), kind, dirs, val}.
+    방향·값 배열이 없는 옛 npz = 옛 {node_id, dof} 만. kind 판정 = 출처 키(행 key — 방식 표 열 src)의 METHODS 행. 읽지 못하면 빈 목록(3D 는 계속)."""
+    from esl_worker import core_adapter
+
     try:
         with np.load(inp.support_npz or "", allow_pickle=False) as z:
-            bn = np.asarray(z["bc_node"], dtype=np.int64)
-            bk = np.asarray(z["bc_kind"]).astype(np.int64)
-            sp = np.asarray(z["sp_node"], dtype=np.int64) if "sp_node" in z.files else np.zeros(0, np.int64)
+            bc = {k: np.asarray(z[k]) for k in JIG_BC_ARRAYS if k in z.files}
+        if "bc_node" not in bc or "bc_kind" not in bc:
+            raise KeyError("bc_node")
     except (OSError, ValueError, KeyError):
         return []
-    n = int(node_id.size)
-    ok = (bn >= 0) & (bn < n)
     bd = getattr(inp.ctx.settings, "bead_doe", None)
     m = int((bd.view3d if bd is not None else BeadDoeView3dCfg()).jig_support_max)
-    # tie = 구속 행의 tie + 스프링 행(sp_node — 스프링 방식은 tie 가 구속이 아니라 스프링이라 bc_node 에 없음)
-    tie = jig_support_sample(x0, np.unique(np.r_[bn[ok & (bk == JIG_KIND_TIE)], sp[(sp >= 0) & (sp < n)]]), m)
-    aux = np.unique(bn[ok & (bk == JIG_KIND_AUX)])
-    shown = set(tie.tolist())
-    return ([{"node_id": int(node_id[i]), "dof": JIG_TIE_DOF} for i in tie]
-            + [{"node_id": int(node_id[i]), "dof": JIG_AUX_DOF} for i in aux if int(i) not in shown])
+    src = (getattr(inp, "row", None) or {}).get("key")      # 출처 키(계획 행 key = METHODS 열 src) — 없으면 값으로 판정
+    return core_adapter.jig_support_rows(bc, x0, m, node_id, str(src) if src else None)
 
 
 def _supports(inp: Inputs, data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -375,13 +375,14 @@ def _build(inp: Inputs) -> dict[str, Any]:
     n = int(data["node_id"].size)
     if n > cfg.max_nodes:
         raise _too_large(inp.ctx, n_nodes=n)
+    sup_rows = _supports(inp, data)
     parent = os.path.dirname(inp.dir)
     tmp = os.path.join(parent, f"{inp.row['dir']}.tmp-{uuid.uuid4().hex}")
     os.makedirs(tmp)
     try:
         m = core_adapter.view3d_build(
             tmp, node_id=data["node_id"], x0=data["x0"], conn=data["conn"], elem_type=data["elem_type"], f=data["f"],
-            u_rel=data["u_rel"], supports=_supports(inp, data), key=inp.key, esl_run_id=inp.run["id"], units=_units(inp.ctx),
+            u_rel=data["u_rel"], supports=sup_rows, key=inp.key, esl_run_id=inp.run["id"], units=_units(inp.ctx),
             cfg={k: getattr(cfg, k) for k in ("lod_min_nodes", "lod_target_vertices", "top_max", "cluster_k_max",
                                               "kmeans_max_iter")})
         glb = m["geometry"]["bytes"] + (m["lod"]["bytes"] if m.get("lod") else 0)

@@ -395,6 +395,7 @@ void main() {`,
     const w = Math.max(1, canvas.clientWidth);
     const h = Math.max(1, canvas.clientHeight);
     supMat.resolution.set(w, h);
+    for (const m of markMats.values()) m.resolution.set(w, h);
     overlayMat.resolution.set(w, h);
     for (const g of lineGroups) g.obj.material.resolution.set(w, h);
     writeHeads();
@@ -489,6 +490,9 @@ void main() {`,
   const supMat = new LineMaterial({ color: SUPPORT_COLOR, linewidth: SUPPORT_LINE_PX, depthTest: false, transparent: true, worldUnits: false });
   let supLines: LineSegments2 | null = null;
   const supSprites: Sprite[] = [];
+  // v0.24.9 방식별 기호: 색마다 선 묶음 1개
+  const markLines: LineSegments2[] = [];
+  const markMats = new Map<string, LineMaterial>();
   let supports: SupportSpec[] = [];
   const clearSupports = () => {
     if (supLines) {
@@ -496,6 +500,11 @@ void main() {`,
       supLines.geometry.dispose();
       supLines = null;
     }
+    for (const o of markLines) {
+      scene.remove(o);
+      o.geometry.dispose();
+    }
+    markLines.length = 0;
     for (const s of supSprites) {
       scene.remove(s);
       s.material.map?.dispose();
@@ -507,6 +516,7 @@ void main() {`,
   const applySupVis = () => {
     const on = layerOn.supports;
     if (supLines) supLines.visible = on;
+    for (const o of markLines) o.visible = on;
     for (const sp of supSprites) sp.visible = on;
   };
   // v0.24.6 최대·최소 표식 스프라이트, 원형 외곽선
@@ -786,13 +796,35 @@ void main() {`,
       clearSupports();
       supports = list;
       const pts: number[] = [];
+      const byColor = new Map<string, number[]>();
       for (const s of list) {
+        if (s.markSegs && s.markColor) {
+          const arr = byColor.get(s.markColor) ?? [];
+          for (const [a, b] of s.markSegs) arr.push(...a, ...b);
+          byColor.set(s.markColor, arr);
+          continue; // 방식별 기호는 선만 — 글자 기호 없음
+        }
         for (const [a, b] of s.segments) pts.push(...a, ...b);
         const sp = textSprite(s.symbol.label, SYMBOL_GLYPH[s.symbol.kind], { color: s.color ?? SUPPORT_COLOR, bg: "rgba(255,255,255,0.78)", px: 22 });
         sp.position.set(s.position[0], s.position[1], s.position[2]);
         sp.center.set(0.1, 1.0); // 기호 꼭짓점이 노드에 닿도록
         scene.add(sp);
         supSprites.push(sp);
+      }
+      for (const [color, arr] of byColor) {
+        let m = markMats.get(color);
+        if (!m) {
+          m = new LineMaterial({ color, linewidth: SUPPORT_LINE_PX + 0.5, depthTest: false, transparent: true, worldUnits: false });
+          m.resolution.copy(supMat.resolution);
+          markMats.set(color, m);
+        }
+        const g = new LineSegmentsGeometry();
+        g.setPositions(arr);
+        const o = new LineSegments2(g, m);
+        o.frustumCulled = false;
+        o.renderOrder = 8;
+        scene.add(o);
+        markLines.push(o);
       }
       if (pts.length) {
         const g = new LineSegmentsGeometry();
@@ -1135,7 +1167,7 @@ void main() {`,
       markMat.dispose();
       idTarget?.dispose();
       for (const g of [headGeo, sphereGeo]) g.dispose();
-      for (const m of [surfMat, arrowMat, supMat, selMarker.material as MeshBasicMaterial, elemMat, idMat, overlayMat]) m.dispose();
+      for (const m of [surfMat, arrowMat, supMat, ...markMats.values(), selMarker.material as MeshBasicMaterial, elemMat, idMat, overlayMat]) m.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
     },

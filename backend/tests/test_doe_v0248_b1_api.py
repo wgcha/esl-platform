@@ -36,7 +36,8 @@ GRID = {"cell_mm": 3.0, "n_groups": 1, "n_shapes": 3, "n_shapes_failed": 1, "tie
         "tie_area_ratio_max": 1.3, "k_scale_min": 0.9, "k_scale_max": 1.2, "noise_floor": 0.034, "load_dF_max": 1e-12,
         "load_dM_max": 2e-12, "corr_rel_max": 0.02, "small_frac_max": 0.6, "frame_shift_max_mm": 0.0, "sample_outside_max": 0,
         "warnings": ["스냅샷 tie_dofs normal 과 Case 값 translation 이 다름"],
-        "mesh": {"h_ref": 5.0, "h_min": 3.4, "h_max": 4.5, "tri_ref": 0.095, "tri_max": 1.0, "mismatch": True}}   # v0.24.8 fix JG-23
+        "mesh": {"h_ref": 5.0, "h_min": 3.4, "h_max": 4.5, "tri_ref": 0.095, "tri_max": 1.0, "mismatch": True},   # v0.24.8 fix JG-23
+        "noise_floor_mismatch_applied": [{"id": "d002", "noise_floor": 0.05}]}                                    # fix JG-26 형상별 오차 범위
 GRID_M = {"n_ok": 2, "n_failed": 1, "case_recon_mac_min": 0.998, "recon_mac_d000": 0.996, "recon_umax_err_d000": 0.01, "alpha": 0.01,
           "conv": [{"cell_mm": 5.0, "dpi_max": 0.008, "dumax_max": 0.01, "mac_min": 0.999},
                    {"cell_mm": 10.0, "dpi_max": 0.03, "dumax_max": 0.04, "mac_min": 0.997}]}

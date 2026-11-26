@@ -3826,6 +3826,25 @@
         "title": "DoeJigGridMethodOut",
         "type": "object"
       },
+      "DoeJigGridNfOut": {
+        "description": "v0.24.8 fix(D-0.24.8-JG-26): 형상별 오차 범위 — 기준과 메시가 다른 형상 id 와 그 형상 행에 쓴 noise_floor(= max(기본, noise_floor_mismatch)).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "noise_floor": {
+            "title": "Noise Floor",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "noise_floor"
+        ],
+        "title": "DoeJigGridNfOut",
+        "type": "object"
+      },
       "DoeJigGridOut": {
         "description": "v0.24.8 스터디 격자 지그 요약(esl_jig_grid_map.md §1.5·§6 — result.json jig.grid 값 그대로, 최악값).",
         "properties": {
@@ -3931,6 +3950,20 @@
               }
             ],
             "title": "Noise Floor"
+          },
+          "noise_floor_mismatch_applied": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DoeJigGridNfOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor Mismatch Applied"
           },
           "sample_outside_max": {
             "anyOf": [
@@ -4559,6 +4592,21 @@
             "title": "Dropped Duplicates",
             "type": "integer"
           },
+          "load_follow": {
+            "anyOf": [
+              {
+                "enum": [
+                  "node",
+                  "spatial"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Follow"
+          },
           "matrix_sha256": {
             "title": "Matrix Sha256",
             "type": "string"
@@ -5185,6 +5233,18 @@
               }
             ],
             "title": "Lin Form"
+          },
+          "load_follow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Follow"
           },
           "load_source": {
             "anyOf": [
@@ -6092,6 +6152,18 @@
             "title": "Gmsh",
             "type": "object"
           },
+          "load_follow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Follow"
+          },
           "load_source_default": {
             "anyOf": [
               {
@@ -6148,6 +6220,18 @@
               }
             ],
             "title": "Part Title"
+          },
+          "pos_u": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pos U"
           },
           "rank": {
             "anyOf": [
@@ -18004,13 +18088,50 @@
       },
       "View3dSupport": {
         "properties": {
+          "dirs": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dirs"
+          },
           "dof": {
             "title": "Dof",
             "type": "string"
           },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
           "node_id": {
             "title": "Node Id",
             "type": "integer"
+          },
+          "val": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Val"
           },
           "vertex": {
             "title": "Vertex",
@@ -18225,7 +18346,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.24.8"
+    "version": "0.24.9"
   },
   "openapi": "3.1.0",
   "paths": {

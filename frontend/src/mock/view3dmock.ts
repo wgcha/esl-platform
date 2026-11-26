@@ -1,6 +1,6 @@
 // mock 3D 하중 보기 자료(계약 esl_3d_load.md §3.3·§3.5·§3.6): 합성 굽은 판(플랜지) GLB(≤100 KB) + values.bin + manifest.
 // 서버 쪽 Python(esl/view3d.py)과 같은 배치·양자화 규칙을 TS 로 흉내 낸다. 결정적(난수 없음).
-import type { View3dClusterRow, View3dOut, View3dReconOut, View3dTopRow, View3dValuesArray } from "../api/types";
+import type { View3dClusterRow, View3dOut, View3dSupport, View3dReconOut, View3dTopRow, View3dValuesArray } from "../api/types";
 
 const DEF_NX = 48;
 const DEF_NY = 30;
@@ -352,6 +352,30 @@ function big(): boolean {
   }
 }
 
+/** v0.24.9 지그 3방식 표식 픽스처(계약 §10.3): 방식 키(jig·jig_disp·jig_spring 또는 jd·js 보기 키) → tie 기호 종류 */
+export const JIG_MARK_KIND: Record<string, "tie_fixed" | "tie_disp" | "tie_spring"> = { jig: "tie_fixed", jd: "tie_disp", jig_disp: "tie_disp", js: "tie_spring", jig_spring: "tie_spring" };
+const FLAT: [number, number, number][] = [[0, 0, 1]];
+const BENT: [number, number, number][] = [[0, 0, 1], [0.7071, 0, 0.7071]];
+/** 평평한 tie 1 · 꺾인 tie 1(법선 2) · 평평한 tie 1 · 면내 지지 n₁(2방향)·n₂(1방향). 위치는 base 지지 정점 + 보조 정점 */
+export function jigMarkSupports(base: View3dSupport[], method: string, pos: (v: number) => number[], idOf: (v: number) => number, n: number): View3dSupport[] {
+  const kind = JIG_MARK_KIND[method];
+  if (!kind) return base;
+  const g = 0.6;
+  // 값 형식 = 통합 INT-1(코어 support_marks_full): 방향별 목록, 스프링 {k: [..], g: [..]}, 고정 0
+  const tieVal = (nd: number) => (kind === "tie_fixed" ? 0 : kind === "tie_disp" ? (nd > 1 ? [g, 0.4] : [g]) : { k: nd > 1 ? [1200, 1200] : [1200], g: nd > 1 ? [g, 0.4] : [g] });
+  const mk = (v: number, k: View3dSupport["kind"], dirs: number[][], val: View3dSupport["val"]): View3dSupport => ({ node_id: idOf(v), vertex: v, dof: k === "aux_inplane" ? "ij" : "123", x0: pos(v), kind: k, dirs, val });
+  const [a, b, c] = base.map((x) => x.vertex);
+  const v4 = Math.floor(n * 0.37);
+  const v5 = n - 1;
+  return [
+    mk(a, kind, FLAT, tieVal(1)),
+    mk(b, kind, BENT, tieVal(2)),
+    mk(c, kind, FLAT, tieVal(1)),
+    mk(v4, "aux_inplane", [[1, 0, 0], [0, 1, 0]], [0, 0]),
+    mk(v5, "aux_inplane", [[1, 0, 0]], [0]),
+  ];
+}
+
 export function mockView3d(): MockView3d {
   if (cache) return cache;
   const isBig = big();
@@ -474,7 +498,13 @@ export function mockView3d(): MockView3d {
       sum_f,
       sum_m,
       moment_center: c0,
-      supports: supVerts.map((v, k) => ({ node_id: m.nodeIds[v], vertex: v, dof: supDof[k], x0: [m.x[v * 3], m.x[v * 3 + 1], m.x[v * 3 + 2]] })),
+      supports: jigMarkSupports(
+        supVerts.map((v, k) => ({ node_id: m.nodeIds[v], vertex: v, dof: supDof[k], x0: [m.x[v * 3], m.x[v * 3 + 1], m.x[v * 3 + 2]] })),
+        src ?? "",
+        (v) => [m.x[v * 3], m.x[v * 3 + 1], m.x[v * 3 + 2]],
+        (v) => m.nodeIds[v],
+        n,
+      ),
       top,
       clusters,
       geometry_url: `/esl-runs/${runId}/view3d/part.glb${q(src)}`,

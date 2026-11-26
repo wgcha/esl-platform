@@ -765,6 +765,25 @@ def mark_rows(marks, node_id) -> list[dict]:
     return [{"node_id": int(nid[i]), "dof": mark_dof(k), "kind": k, "dirs": d, "val": v} for i, k, d, v in marks]
 
 
+def method_row_of(src: str | None) -> dict | None:
+    """출처 키(jig·jig_disp·jig_spring — METHODS 열 src) → METHODS 행(표식 kind 판정). 모르는 키·None = None(값으로 판정)."""
+    return next((r for r in METHODS.values() if r["src"] == src), None) if src else None
+
+
+MARK_BC_KEYS = ("bc_dir", "bc_val")   # 일반형에 필요한 배열 — 없는 옛 npz(v0.24.6 이전)는 옛 2튜플 규칙(kind 없음)
+
+
+def support_rows(bc: dict, x0, smax: int, node_id, src: str | None = None) -> list[dict]:
+    """지그 지지 표식 행(백엔드 Case 3D·스터디 사이드카 공통 — v0.24.9 통합 INT-1): bc = BC 배열 매핑(npz 키 그대로),
+    src = 출처 키(METHODS 열 src). 일반형 배열(MARK_BC_KEYS)이 있으면 [{node_id, dof, kind, dirs, val}](``support_marks_full`` +
+    ``mark_rows``), 없으면 옛 [{node_id, dof}](``support_marks`` 2튜플 — 바이트 불변). 순수."""
+    nid = np.asarray(node_id, dtype=np.int64)
+    if not all(k in bc for k in MARK_BC_KEYS):
+        sp = bc.get("sp_node", np.zeros(0, np.int64))
+        return [{"node_id": int(nid[i]), "dof": d} for i, d in support_marks(bc["bc_node"], bc["bc_kind"], sp, x0, smax)]
+    return mark_rows(support_marks_full(load_bc(bc), x0, smax, method_row_of(src)), nid)
+
+
 # ====================================================================== (8) 저장 형식(배열 — 파일 IO 는 호출자)
 def save_bc(BC: dict) -> dict:
     """BC → npz 배열 dict(고정 dtype — 없으면 길이 0)."""

@@ -116,3 +116,38 @@ def test_mark_rows_and_view3d_fields(tmp_path):
 def test_support321_rows():
     r = jig_bc.support321_rows([{"node_id": 5, "dof": "123"}])
     assert r == [{"node_id": 5, "dof": "123", "kind": "support321", "dirs": None, "val": None}]
+
+
+# ---------------------------------------------------------------- v0.24.9 통합 INT-1(계약 §10.2 통합 보정): 한 함수 support_rows
+@pytest.mark.parametrize("method", sorted(jig_bc.METHODS))
+def test_support_rows_is_the_one_format(method):
+    """백엔드 Case 3D·스터디 사이드카 공통 행 = support_rows(npz 배열 매핑, 출처 키). 방식별 kind 가 BC 배열과 맞고(스프링 tie = 법선
+    스프링 {k[], g[]}·구속 행 없음, 받침점 = 면내 1·2 방향), 모든 방식이 tie '123' 세 방향 고정으로 보이던 v0.24.8 표식으로 돌아가지 않음."""
+    X, tie, aux, u = _world()
+    row = jig_bc.METHODS[method]
+    BC = jig_bc.build_bc(row, tie, aux, u, k=np.full(tie["node"].size, 5.0) if row["tie_stiff"] == "spring" else None)
+    z = {k: np.asarray(v) for k, v in jig_bc.save_bc(BC).items()}
+    nid = np.arange(1000, 1060)
+    rows = jig_bc.support_rows(z, X, 64, nid, row["src"])
+    assert rows == jig_bc.mark_rows(jig_bc.support_marks_full(BC, X, 64, row), nid)
+    assert jig_bc.method_row_of(row["src"]) is row and jig_bc.method_row_of(None) is None and jig_bc.method_row_of("full") is None
+    json.dumps(rows)
+    ties = [r for r in rows if r["kind"] != "aux_inplane"]
+    want = {"fixed": "tie_fixed", "prescribed": "tie_disp", "spring": "tie_spring"}[method]
+    assert {r["kind"] for r in ties} == {want}
+    for r in ties:
+        assert 1 <= len(r["dirs"]) <= 2                                            # normal: 법선 1(꺾임 2) — 세 축 고정 아님
+        if want == "tie_spring":
+            assert set(r["val"]) == {"k", "g"} and len(r["val"]["k"]) == len(r["val"]["g"]) == len(r["dirs"])
+            i = int(r["node_id"]) - 1000
+            assert not np.any((BC["bc_node"] == i) & (BC["bc_kind"] == jig_bc.KIND_TIE))
+        elif want == "tie_fixed":
+            assert r["val"] == 0.0
+        else:
+            assert isinstance(r["val"], list) and len(r["val"]) == len(r["dirs"])
+    for r in (r for r in rows if r["kind"] == "aux_inplane"):
+        assert len(r["dirs"]) in (1, 2) and all(abs(d[2]) < 1e-9 for d in r["dirs"])  # 면내(판 z = 0)
+    # 옛 npz(bc_dir·bc_val 없음) = 옛 {node_id, dof} 만(바이트 불변)
+    old = {k: z[k] for k in ("bc_node", "bc_kind", "sp_node")}
+    assert jig_bc.support_rows(old, X, 64, nid, row["src"]) == \
+        [{"node_id": int(nid[i]), "dof": d} for i, d in _old_support_marks(z["bc_node"], z["bc_kind"], z["sp_node"], X, 64)]

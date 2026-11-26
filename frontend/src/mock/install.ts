@@ -41,7 +41,8 @@ export function installMockFetch() {
   const dvs = params.get("demoValSrc");
   if (dvs === "ok" || dvs === "notrun") server.valSourcesMode = dvs;
   // v0.24.4 지그 3방식 시연: ?demoJigRows=1 — ③ 3D·④ 검증 출처 행에 jig·jig_disp·jig_spring(고정·변위 가능, 스프링 = JIG_NOT_RUN). 없으면 옛 Case(4행)
-  if (params.get("demoJigRows") === "1") server.jigRows = true;
+  if (params.get("demoJigRows") === "1" || params.get("demoJigRows") === "2") server.jigRows = true;
+  if (params.get("demoJigRows") === "2") server.jigSpringOk = true;
   // v0.24.5 화면 출처 숨김 시연: ?hiddenSources=default(실서버 기본 bforce·fint·jig) | <키,키…> | (없음 = 숨김 없음 = v0.24.4 화면)
   const hs = params.get("hiddenSources");
   if (hs) server.p3.hiddenSources = hs === "default" ? ["bforce", "fint", "jig"] : hs.split(",").filter(Boolean);
@@ -73,6 +74,8 @@ export function installMockFetch() {
   if (params.get("demoJig") === "1") server.doe.demoJig();
   // v0.24.8 격자 지그 시연: ?demoJigGrid=1 doe-60(④ 격자 지그 — jd·js 3D·매핑 오차 표식) · doe-61(대조) · doe-62·63(옛 스냅샷 — 복제 안내 2종)
   if (params.get("demoJigGrid") === "1") server.doe.demoJigGrid();
+  // v0.24.9 위치 U·지그 표식 시연: ?demoPosU=1 doe-70(① 변수 표 U 행) · doe-71(② 공간 고정 결과) · doe-72(④ 지그 3방식 표식) · Case ③ 지그 3D 표식 = ?demoJigRows=1 의 jig·jig_disp·jig_spring 출처(src 로 방식별 기호)
+  if (params.get("demoPosU") === "1") server.doe.demoPosU();
   // v0.24.0 경계력 ESL 시연: ?demoBforce=1 doe-50(contact 등급 ok) · doe-51(경계력 자료 없음)
   if (params.get("demoBforce") === "1") server.doe.demoBforce();
   if (params.get("demoPc") === "1") {

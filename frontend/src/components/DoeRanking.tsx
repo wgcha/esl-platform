@@ -11,7 +11,7 @@ import type { DoeParam, DoeResultOut, DoeShapeRules, EntryOut } from "../api/typ
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { GRID_TEXT, JIG_CODE_TEXT, JIG_SOURCE_NAME, SM_CODE_TEXT, VIEW_METRIC_TEXT, evalRegionText, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
+import { GRID_TEXT, loadFollowTail, JIG_CODE_TEXT, JIG_SOURCE_NAME, SM_CODE_TEXT, VIEW_METRIC_TEXT, evalRegionText, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
 /** v0.21.0 메시 품질 미달 행(mq 키 또는 warn 코드 — 새 스냅샷 ④ 만) */
@@ -19,7 +19,7 @@ const isMq = (r: { mq?: unknown; warn?: string[] | null }) => !!r.mq || !!r.warn
 
 export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg, shapeRules, perEslNote, resultNote, grid = null }: {
   /** v0.24.8 격자 지그 스터디(gridOf(원 결과)) — 탭 투영 결과는 jig 를 숨기므로 호출부가 원 결과로 넘긴다. 정의 문구 꼬리·잡음 배지 title 만 바꿈 */
-  grid?: { cell_mm: number; noise_floor: number | null } | null;
+  grid?: { cell_mm: number; noise_floor: number | null; nf_by?: Record<string, number> } | null;
   /** v0.23.1 ESL별 개선율 표 설명(ⓘ 지표 정의 안 — esl_doe_ui_tidy.md §4.1) */
   perEslNote?: string | null;
   /** v0.23.1 ④ 결과 안내문(ⓘ 지표 정의 안) */
@@ -117,7 +117,8 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 : solveNew
                   ? "score: max(C_안) / max(C_베이스라인) — C = 안마다 재풀이한 컴플라이언스(기본, 작을수록 좋음). 1차 강성 지표(ritz·taylor)는 보조 열"
                   : "score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)"}
-            {grid && ` · ${GRID_TEXT.rankDef(grid.cell_mm)}${grid.noise_floor != null ? GRID_TEXT.rankNoise(grid.noise_floor) : ""}`}
+            {grid && ` · ${GRID_TEXT.rankDef(grid.cell_mm)}${grid.noise_floor != null ? GRID_TEXT.rankNoise(grid.noise_floor, Object.values(grid.nf_by ?? {})) : ""}`}
+            {loadFollowTail(result)}
           </li>
           {evOn && (
             <li data-testid="metric-eval">
@@ -235,7 +236,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 <td className={`num ${r.improvement > 0 ? "ok-text" : "error-text"}`}>
                   {pctText(r.improvement)}
                   {r.noise && (
-                    <span className="badge neutral" title={grid ? GRID_TEXT.noiseTip(pctText(result.noise_floor ?? grid.noise_floor, 1)) : `③ 메시 잡음 바닥 ${pctText(result.noise_floor ?? null, 1)} 이내`}>
+                    <span className="badge neutral" title={grid ? GRID_TEXT.noiseTip(pctText(grid.nf_by?.[r.id] ?? result.noise_floor ?? grid.noise_floor, 1)) : `③ 메시 잡음 바닥 ${pctText(result.noise_floor ?? null, 1)} 이내`}>
                       잡음 이내
                     </span>
                   )}
