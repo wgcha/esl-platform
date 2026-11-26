@@ -1,0 +1,58 @@
+# release/v0.25.0 C1 진행 handoff (코어 — 가상 비드 "추가 비드", kind A)
+
+계약 docs/contracts/esl_virtual_bead.md, 결정 D-0.25.0-VB-1~20. 시험 환경 /tmp/rdenv_v0250.sh(= /tmp/rdenv_main.sh, REPO_ROOT=wt_v0250,
+PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_250_bt -o tmp_path_retention_policy=failed.
+발견·보정 = work/findings.md VB-C1-1~13(메인 결정 필요: VB-C1-5 warp 15° 가 r 0 을 막음, VB-C1-6 H6 부모 바닥 = 띠뿐, VB-C1-7 θ > flip 60°).
+
+## 계약면(B1·F1 이 맞출 것)
+- 설정 `bead_doe.virtual_bead`(DEFAULTS 만 C1 — pydantic `BeadDoeVirtualBeadCfg`·yaml 2 는 B1, 같은 이름·값):
+  `{enabled true, max_count 4, min_wall_elems 2.0, margin_mm 3.0, theta_default_deg 45.0, theta_range_deg [15.0, 75.0], d_max_limit_mm 30.0,
+  default_on true, warp_max_deg 15.0, preview_max_nodes 50000}`. 해시 안 키 = `esl.morph.virtual_bead.HASH_KEYS`
+  (min_wall_elems·margin_mm·theta_default_deg·theta_range_deg·warp_max_deg).
+- 스냅샷(B1, 새 select 그래프 스터디·enabled 만): `doe.virtual_bead = {"schema": 1, <HASH_KEYS 값>}`. 복제 = 원 블록 그대로. 코어는
+  `stages._vb(c)`(블록 없음 = VB_SCOPE), `_sel_cfg_sha += virtual_bead`(선택에 virtual_beads 있을 때만), basis.json `vb_rules`·`virtual_beads[]`.
+- 선택 schema 2 키 `virtual_beads[{id a1..a9, name?, p0, p1 | length+angle_deg, w_top, theta_deg?, d_max, side? "+"|"-", end? round|square,
+  r?}]` — 정규화 = `bead_graph.normalize_vbeads`(normalize_v2 안). 빈 목록·없음 = 키 없음(옛 sha 불변). 422 코드 VB_INPUT_INVALID·
+  VB_MAX_COUNT(detail vbead·key). beads 0 + virtual ≥ 1 허용. 백엔드 `SelectionInV2.virtual_beads`(빈 목록은 dump 에서 뺌).
+- derive(백엔드 → 코어): `derive_v2(mesh, norm, cfg, graph, labels, frame=…, fixed_scan=…, …, virtual_bead=<스냅샷 블록>,
+  vb_plan=<transfer_plan.plan_for(...)["vbead"]> (기본 "plate"), tie_node_ids=<지그 tie 노드 ID>)` — 가상 비드 있을 때만 키 효과.
+  응답 += `virtual_beads[{id, name, p0, p1_resolved, len_mm, angle_deg, side_resolved, ok, reasons[{code,text}], warnings[{code, level,
+  vbead, …, text}], h, n_wall, n_top, stretch_max?, n_fp?, n_elems_fp?, outline_ab?[{a,b}], preview?{idx[], vec[[3]], g[], c}}]`,
+  `vb_frame{origin, e_xi, e_eta, n_h}`(가상 비드 있을 때만). preview 상한 넘으면 생략 + warnings VB_PREVIEW_SKIPPED.
+  derive 캐시 키: 선택 sha 가 virtual_beads 포함 → 추가 불필요, 블록 sha 만 += (블록 있을 때).
+- params[] A 행: `{name "A<n>_A", type "A", bead "a<n>", tier null, form "hinge", nominal 0.0, unit "mm", feasible [0, d_max],
+  feasible_source "user", default_range [0, d_max | usable_hi], use_default (default_on ∧ ¬blocked), group_members [name],
+  label "추가 비드 n · 깊이", wall_elems, vb{w_top, theta_deg, side, n_wall, n_top, len_mm, angle_deg, d_max}, acc_hint{h, d, theta,
+  c_err_pct, pi_err_pct}|null, guard?}`. beads[] kind "virtual" 행 `{id, name, kind, warnings, vb_reason?{code, text}}`(params.json 은 같은
+  행 — vb_reason 에 text 포함).
+- 기저(basis.npz·basis.bin·basis.json): hinge 변수가 있을 때만 npz `form`(U6)·`g`(f64, idx 와 같은 ptr, linear 구간 0)·`c`(f64/변수),
+  bin = 그 변수 vec 뒤 `[g:f32×n]` 꼬리, basis.json vars[] 그 변수 `form:"hinge"`·`c`. 없으면 바이트 그대로.
+- **브라우저 `basis.ts` 동등 규칙(F1)**: `BasisVar += form?: "hinge"; g?: Float32Array; c?: number`; `parseBasis` 는 meta var.form ===
+  "hinge" 이면 vec 뒤 n 개 f32 g 를 읽고 끝 길이 엄격(남음·모자람 = 오류). 항 함수 `termAt(v, x, i)`:
+  linear = (x − nominal)·vec_i, hinge = vec_i·[ramp(x − g_i, c) − ramp(nominal − g_i, c)], `ramp(t, c)` = c ≤ 0 ? max(0, t) :
+  (t ≤ −c ? 0 : t ≥ c ? t : (t + c)²/(4c)) — 코어 `esl.morph.virtual_bead.ramp` 와 같은 식(V-0250-VB-8: float32 morph 차 ≤ 1e-4 mm,
+  파이썬 에뮬레이터 tests/doe/test_vbead.py::_ts_morph). derive preview → `BasisVar{form:"hinge", idx, vec, g, c, nominal 0}`.
+- 문구(resources/doe_messages.json): VB_SCOPE·VB_INPUT_INVALID·VB_MAX_COUNT·VB_NOT_ON_PLATE·VB_OVER_BEAD·VB_OVER_ISLAND·VB_OVER_HOLE·
+  VB_PLATE_EDGE·VB_FIXED·VB_OVER_VBEAD·VB_EXCLUDED·VB_MESH_COARSE·VB_WALL_COARSE({n_wall})·VB_TOP_NARROW·VB_EDGE_SMEAR({h})·
+  VB_BAND_OVERLAP·VB_PREVIEW_SKIPPED·VB_VERIFY_HINT·VB_LIST_TIP·A_RANGE_INVALID.
+- 범위 규칙(422): type A lo < 0 → DOE_RANGE_INVALID "추가 비드 깊이 하한은 0 이상"(matrix._NOMINAL_RULES 표 — U 와 같은 분기).
+  default_params 조건 = use_default ∧ (type ∈ default_types ∨ form == "hinge"). 썸네일 색 범위 A |hi| 포함.
+- 결과: BD_POST result.json warnings += "VB_VERIFY_HINT: …"(행렬에 A<n>_A 변수 있을 때만).
+- 계획 표: transfer_plan.PLANS 열 `vbead`(case/bmesh/step_once plate, 그 밖 none), section.SECTION_PLANS 열 `form`·`vb_host` + 행
+  `virtual`, 판정 `section.vb_allowed(plan_vbead, host_row)`.
+- 정확도 표 resources/vbead_accuracy.json(schema esl/vbead_accuracy/1, cells[{h, d, theta, wall_elems, status, *_err_pct, c_err_pct,
+  pi_err_pct}]) — tests/doe/vbead_accuracy.md 같은 값.
+
+## 끝난 일
+- 골든 c35b8ac1(b1e52fad 코드로 기록 — 4 스터디 세계·guard 표·정규화 sha·morph/basis 바이트), 코어 51f39eb7, 시험 d29704fd.
+- 시험: test_vbead_golden 12(옛·블록 + 가상 비드 0 바이트 동일), tests/morph/test_virtual_bead 12, tests/doe/test_vbead 37,
+  test_vbead_e2e 3, test_vbead_h6 4. H6 측정 = work/vbead_h6.md.
+
+## 남은 일
+- 정확도 표 생성(python tests/doe/synth_vbead.py OUT.json — h 1.5 칸 superlu ≈ 3.9 GB·135 s/칸, 다른 무거운 작업과 동시 실행 금지)
+  → resources/vbead_accuracy.json·tests/doe/vbead_accuracy.md·대조 시험.
+- 전체 시험(tests/·packages/beadgraph).
+- B1: 설정 거울·스냅샷 블록·SelectionInV2·derive 인수·settings 응답. F1: basis.ts hinge·VirtualBeadPanel·DoeParamTable kind virtual.
+
+## 다음 명령
+source /tmp/rdenv_v0250.sh; cd /home/claude/wt_v0250; $PY -m pytest -q tests/ --basetemp=/tmp/c1_250_bt -o tmp_path_retention_policy=failed
