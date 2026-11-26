@@ -1875,11 +1875,17 @@ export class DoeMock {
     const r70: Rec = { ...r30, out: { ...r30.out, id: "doe-70", title: "75형 Ch/R 비드 — 위치 U(v0.24.9)", created_at: "2026-11-26T05:00:00Z", inputs: { ...r30.out.inputs, ...posIn } }, jobIds: [...r30.jobIds] };
     const r40 = this.recs.find((r) => r.out.id === "doe-40")!;
     const base = r40.result!;
+    const addU = (sn: DoeResultOut["sensitivity"] | null | undefined): NonNullable<DoeResultOut["sensitivity"]> => {
+      const row = { name: "B8_U", src: -0.31, spearman: -0.27 };
+      return sn ? { ...sn, params: [...sn.params, row] } : { method: "src+spearman", r2: 0.71, params: [{ name: "B1_D", src: -0.52, spearman: -0.48 }, row] };
+    };
     const res71: DoeResultOut = {
       ...base,
       load_follow: { mode: "spatial", cell_mm: 3, dF_max: 2.1e-9, dM_max: 3.4e-8, corr_rel_max: 0.004, small_frac_max: 0.0, d000_shift_rel: 0.006 },
       warnings: [...base.warnings, { code: "LOAD_FOLLOW_SPATIAL", cell_mm: 3, n_pos_vars: 1, message: "위치 변수가 있어 하중을 공간에 고정했습니다(3 mm 셀) — 기준 포함 모든 안이 같은 경로" } as DoeWarning],
-      sensitivity: base.sensitivity ? { ...base.sensitivity, params: [...base.sensitivity.params, { name: "B8_U", src: -0.31, spearman: -0.27 }] } : base.sensitivity,
+      sensitivity: addU(base.sensitivity),
+      // 하중 정의 탭 보기(jig·full)가 가진 민감도 사본에도 같은 U 행
+      rank_views: base.rank_views ? Object.fromEntries(Object.entries(base.rank_views).map(([k, v]) => [k, v && typeof v === "object" ? { ...v, sensitivity: addU((v as { sensitivity?: DoeResultOut["sensitivity"] }).sensitivity ?? null) } : v])) as DoeResultOut["rank_views"] : base.rank_views,
     };
     const r71: Rec = { ...r40, out: { ...r40.out, id: "doe-71", title: "QN80J Ch/R 비드 — 위치 U 하중 공간 고정(v0.24.9)", created_at: "2026-11-26T06:00:00Z", inputs: { ...r40.out.inputs, ...posIn } }, jobIds: [...r40.jobIds], result: res71 };
     const r60 = this.recs.find((r) => r.out.id === "doe-60")!;
