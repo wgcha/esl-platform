@@ -13,19 +13,27 @@ Stable API (changing a signature or the schema major number = MAJOR):
     validate(graph) -> None
     one_side(graph, labels, nodes, elems, segs, *, min_nodes=3) -> dict      (1.2.0)
 
+basis kinds: D·W (MORPH_RULES), DF·W1 (1.2.0 — DF_RULES·W1_RULES), U (1.3.0 — U_RULES, esl contract esl_bead_pos_u.md §1.1):
+    kind U item = {name, kind "U", segs, zones?, hold (ignored — U always holds), hold_nodes? [node index] (extra held nodes,
+    e.g. jig tie nodes), range_rel? (ext when no range: range_rel·W_ref, default 0.25), gap_rel? (neighbour-gap limit of the
+    entry / band motion, default 0.5), guard_jac_min?, guard_tri_angle_min_deg? (quality guard criteria)}; nominal 0 (mm),
+    +ΔU = left of the skeleton direction. info += {dir [e1, e2] mean t⊥, w_ref, band_mm, clipped, hold_n_fixed, hold_frac,
+    tie_max, straight_resid_mm, guard_n, guard_frac, guard_left, guard_qual_left, gap_clip_n, cover, u_segs}.
+
 Versions (esl contract esl_bead_depth_mode.md §5.1): ``__version__`` = package (wheel) version; ``OUTPUT_VERSION`` =
 the version written into graph.json (``version``) — it only moves when RULES or MORPH_RULES move, so a MINOR that adds
-new basis kinds (1.2.0: DF, W1, one_side) keeps the graph.json / D·W basis bytes (and the esl graph sha) unchanged.
+new basis kinds (1.2.0: DF, W1, one_side; 1.3.0: U) keeps the graph.json / D·W basis bytes (and the esl graph sha) unchanged.
 """
 from __future__ import annotations
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 OUTPUT_VERSION = "1.1.0"  # graph.json header version: = the __version__ of the last RULES / MORPH_RULES bump
 SCHEMA = "beadgraph/1"
 RULES = 1                 # classification output rules (graph.json bytes) — bump = MINOR + expected.json update
 MORPH_RULES = 2           # morph basis numerics of kinds D·W — bump = MINOR, esl recomputes bases
 DF_RULES = 1              # kind DF numerics (depth, floor width kept) — esl basis reuse key
 W1_RULES = 1              # kind W1 numerics (one-sided entry width) — esl basis reuse key
+U_RULES = 1               # kind U numerics (bead position, perpendicular to the path — 1.3.0) — esl basis reuse key
 
 # submodules first: the API functions below share names with two submodules (classify, morph) and must win the
 # package attribute (a later ``from .morph import x`` does not rebind it once the module is loaded)
@@ -36,7 +44,7 @@ from .classify import CLS, LABEL_KEYS, BeadgraphError  # noqa: E402
 from .defaults import DEFAULTS  # noqa: E402
 
 __all__ = ["classify", "apply_edits", "resolve", "basis", "morph", "check", "validate", "graph_bytes", "one_side",
-           "DEFAULTS", "SCHEMA", "RULES", "MORPH_RULES", "DF_RULES", "W1_RULES", "OUTPUT_VERSION", "__version__",
+           "DEFAULTS", "SCHEMA", "RULES", "MORPH_RULES", "DF_RULES", "W1_RULES", "U_RULES", "OUTPUT_VERSION", "__version__",
            "BeadgraphError", "CLS", "LABEL_KEYS"]
 
 

@@ -19,19 +19,23 @@ from esl.errors import EslError
 DEPTH_SECTIONS = ("entry_fixed", "floor_fixed")
 LEGACY_DEPTH_SECTION = "entry_fixed"        # 키 없는 옛 스냅샷의 동작 — 값 고정이 목적(D-0.24.5-VT-16 선례)
 
-PLAN_COLUMNS = ("compose", "one_side", "theta", "feasible", "fig", "na")
+PLAN_COLUMNS = ("compose", "one_side", "theta", "feasible", "fig", "na", "pos")
 # 행 = 변수 출처(행을 만드는 쪽이 아는 값). compose: pkg_df(패키지 kind DF)|select_w_f0(elems 조합)|none(= entry_fixed),
 # one_side: pkg_w1(W1 변수·사유 판정)|none, theta: none(DF 가 노드마다)|run_med(elems), feasible: open_cap|none,
-# fig: floor_center|stretch|none(단면 그림 ds_dD), na: none|DS_ENGINE_NATIVE(적용 안 함 정보 코드)
+# fig: floor_center|stretch|none(단면 그림 ds_dD), na: none|DS_ENGINE_NATIVE(적용 안 함 정보 코드),
+# pos(v0.24.9 계약 esl_bead_pos_u.md §1.5 — 깊이 동작과 무관, ``pos_plan`` 으로 읽음): pkg_u(패키지 kind U)|native(paicad BEAD_POS_U
+# 그대로)|none(범위 밖)
 SECTION_PLANS = {
     "graph": {"compose": "pkg_df", "one_side": "pkg_w1", "theta": "none", "feasible": "open_cap",
-              "fig": "floor_center", "na": "none"},
+              "fig": "floor_center", "na": "none", "pos": "pkg_u"},
     "elems": {"compose": "select_w_f0", "one_side": "none", "theta": "run_med", "feasible": "open_cap",
-              "fig": "stretch", "na": "none"},
+              "fig": "stretch", "na": "none", "pos": "none"},
     "paicad": {"compose": "none", "one_side": "none", "theta": "none", "feasible": "none", "fig": "none",
-               "na": "DS_ENGINE_NATIVE"},
-    "none": {"compose": "none", "one_side": "none", "theta": "none", "feasible": "none", "fig": "none", "na": "none"},
+               "na": "DS_ENGINE_NATIVE", "pos": "native"},
+    "none": {"compose": "none", "one_side": "none", "theta": "none", "feasible": "none", "fig": "none", "na": "none",
+             "pos": "none"},
 }
+POS_VALUES = ("pkg_u", "native", "none")
 
 # W 사용 불가 사유(§4.1 — 첫 일치, 순서 고정)
 W_REASON_ORDER = ("W_USER_OFF", "W_NETWORK", "W_AREA", "W_EDIT_MERGED", "W_TIE_MIXED", "W_ONE_SIDE_EDGE",
@@ -72,11 +76,20 @@ def is_floor(value) -> bool:
 
 
 def row_plan(value, row: str, plans: dict | None = None) -> dict:
-    """동작 + 행 → 실제로 쓸 계획(entry_fixed 면 모든 열 none — 지금 경로·바이트)."""
+    """동작 + 행 → 실제로 쓸 계획(entry_fixed 면 모든 열 none — 지금 경로·바이트). pos 열은 깊이 동작과 무관 — ``pos_plan`` 으로
+    읽는다(이 함수의 pos 값은 쓰지 않음)."""
     p = plan(row, plans)
     if not is_floor(value):
         return dict(SECTION_PLANS["none"])
     return dict(p)
+
+
+def pos_plan(row: str, plans: dict | None = None) -> str:
+    """v0.24.9 §1.5: 변수 출처 행 → pos 열 값(pkg_u|native|none). 모르는 값 = CONFIG_INVALID."""
+    v = plan(row, plans)["pos"]
+    if v not in POS_VALUES:
+        raise EslError("CONFIG_INVALID", f"SECTION_PLANS[{row}].pos {v!r} ∉ {list(POS_VALUES)}")
+    return v
 
 
 # ---------------------------------------------------------------- θ
@@ -375,3 +388,138 @@ def hash_view(ds, rules: dict | None, has_elems: bool) -> dict | None:
         out["theta_min_deg"] = float(r["theta_min_deg"])
         out["theta_spread_deg"] = float(r["theta_spread_deg"])
     return out
+
+
+# ---------------------------------------------------------------- 위치 변수 U(v0.24.9 계약 esl_bead_pos_u.md §1)
+# 사용 불가 사유(§1.2 — 첫 일치, 순서 고정). U_OFF = 표시 없음(옛 스냅샷·설정 꺼짐).
+U_REASON_ORDER = ("U_OFF", "U_NETWORK", "U_AREA", "U_CLOSED", "U_ONE_SIDE", "U_NO_ENTRY", "U_HELD", "U_TIE_MIXED")
+U_TIE_MIRROR_DEG = 30.0                     # §1.3 PU-11 계약 규칙 값(|거울(t⊥_대표)·t⊥_m| ≥ cos 30°) — 설정 아님
+U_CURVE_DEG = 30.0                          # dir_text "바깥쪽/안쪽" 을 쓰는 곡선 비드: 골격 누적 회전 ≥ 30°(계약 보정 — findings)
+U_DIR_CODES = ("U_DIR_XI_POS", "U_DIR_XI_NEG", "U_DIR_ETA_POS", "U_DIR_ETA_NEG", "U_DIR_OUT", "U_DIR_IN")
+
+
+def u_reason(f: dict) -> str | None:
+    """사실(dict) → 첫 일치 U 사용 불가 코드(없으면 None — U 행 있음). 키(없으면 거짓): off(pos_u 블록 없음·꺼짐), network,
+    area(모든 세그먼트 area·plateau 또는 1점 골격), closed(S_U 에 닫힌 골격), s2(양쪽 입구 세그먼트 수), s1(한쪽 입구 세그먼트 수),
+    held(입구 hold 비율 > hold_frac_max 또는 tie 변위 > 1e-6·ext), tie_mixed(대칭 묶기 방향 불일치·구성원 U 불가)."""
+    if f.get("off"):
+        return "U_OFF"
+    if f.get("network"):
+        return "U_NETWORK"
+    if f.get("area"):
+        return "U_AREA"
+    s2, s1 = int(f.get("s2") or 0), int(f.get("s1") or 0)
+    if s2 and f.get("closed"):
+        return "U_CLOSED"
+    if s2 == 0 and s1:
+        return "U_ONE_SIDE"
+    if s2 == 0:
+        return "U_NO_ENTRY"
+    if f.get("held"):
+        return "U_HELD"
+    if f.get("tie_mixed"):
+        return "U_TIE_MIXED"
+    return None
+
+
+def u_reason_doc(code: str | None, messages: dict | None, point: bool = False) -> dict | None:
+    """코드 → {code, text}. U_OFF = None(표시 없음). point = 1점 골격(U_AREA 의 "경로가 없어 위치 이동 불가" 문구)."""
+    if code is None or code == "U_OFF":
+        return None
+    key = "U_AREA_POINT" if (code == "U_AREA" and point) else code
+    m = (messages or {}).get(key)
+    return {"code": code, "text": m if isinstance(m, str) and m else code}
+
+
+def u_feasible(W_ref: float, g_plus, g_minus, max_rel: float, gap_rel: float) -> list[float]:
+    """§1.3 feasible(부호별, source estimate): hi = min(max_rel·W_ref, gap_rel·g₊), lo = −min(max_rel·W_ref, gap_rel·g₋).
+    g± None = 그 쪽에 다른 형상 없음(max_rel·W_ref 만)."""
+    cap = float(max_rel) * float(W_ref)
+    hi = cap if g_plus is None else min(cap, float(gap_rel) * float(g_plus))
+    lo = cap if g_minus is None else min(cap, float(gap_rel) * float(g_minus))
+    return [-float(lo), float(hi)]
+
+
+def u_default(W_ref: float, feasible, range_rel: float) -> list[float]:
+    """§1.3 기본 범위 = [max(−range_rel·W_ref, lo), min(+range_rel·W_ref, hi)]."""
+    r = float(range_rel) * float(W_ref)
+    return [max(-r, float(feasible[0])), min(r, float(feasible[1]))]
+
+
+def u_range_ok(lo, hi, nominal: float = 0.0) -> bool:
+    """§1.3-5 type U 범위: lo ≤ 공칭 ≤ hi(공칭 0 이 범위 안 — 기준 d000 = 지금 형상)."""
+    return float(lo) <= float(nominal) <= float(hi)
+
+
+def skeleton_turn_deg(pts) -> float:
+    """골격 꺾은선(판 평면)의 부호 있는 누적 회전(°, 반시계 +)."""
+    P = np.asarray(pts, float).reshape(-1, 2)
+    if P.shape[0] < 3:
+        return 0.0
+    t = np.diff(P, axis=0)
+    t = t[np.linalg.norm(t, axis=1) > 1e-12]
+    if t.shape[0] < 2:
+        return 0.0
+    a = np.arctan2(t[:, 1], t[:, 0])
+    d = np.diff(a)
+    d = (d + np.pi) % (2.0 * np.pi) - np.pi
+    return float(np.degrees(d.sum()))
+
+
+def u_dir_code(dir2, turn_deg: float = 0.0, curve_deg: float = U_CURVE_DEG) -> str:
+    """평균 t⊥(판 평면 (ξ, η) 성분) → 표시 코드. |누적 회전| ≥ curve_deg 인 곡선 비드 = 바깥쪽/안쪽(왼쪽 법선 t⊥ 는 반시계
+    회전(+)이면 곡률 중심 쪽 = 안쪽), 아니면 큰 성분 축의 부호(+ξ·−ξ·+η·−η)."""
+    if abs(float(turn_deg)) >= float(curve_deg):
+        return "U_DIR_IN" if float(turn_deg) > 0 else "U_DIR_OUT"
+    v = np.asarray(dir2, float).reshape(2)
+    if abs(v[0]) >= abs(v[1]):
+        return "U_DIR_XI_POS" if v[0] >= 0 else "U_DIR_XI_NEG"
+    return "U_DIR_ETA_POS" if v[1] >= 0 else "U_DIR_ETA_NEG"
+
+
+def u_centroid(polys) -> list[float] | None:
+    """S_U 골격 꺾은선들의 길이 가중 도심(판 평면)."""
+    num, tot = np.zeros(2), 0.0
+    for pts in polys:
+        P = np.asarray(pts, float).reshape(-1, 2)
+        if P.shape[0] < 2:
+            continue
+        L = np.linalg.norm(np.diff(P, axis=0), axis=1)
+        num += (L[:, None] * 0.5 * (P[:-1] + P[1:])).sum(axis=0)
+        tot += float(L.sum())
+    return None if tot <= 0.0 else [float(x) for x in num / tot]
+
+
+def u_mirror_signs(members, h: float, deg: float = U_TIE_MIRROR_DEG) -> list[int] | None:
+    """§1.3 PU-11 대칭 묶기 U 부호: members = [(c, t)…](첫째 = 대표, c = S_U 골격 도심, t = 평균 t⊥ 단위 — 판 평면). 쌍마다
+    m = (c_m − c_대표)/‖·‖, 거울(t₀) = t₀ − 2(t₀·m)m, s_m = sign(거울(t₀)·t_m). |거울(t₀)·t_m| < cos(deg)·‖c_m − c_대표‖ < h·
+    방향·도심 없음 = None(U_TIE_MIXED). 반환 [1, s_2, …]."""
+    if not members:
+        return None
+    c0, t0 = members[0]
+    if c0 is None or t0 is None:
+        return None
+    c0, t0 = np.asarray(c0, float), np.asarray(t0, float)
+    cmin = math.cos(math.radians(float(deg)))
+    out = [1]
+    for c, t in members[1:]:
+        if c is None or t is None:
+            return None
+        d = np.asarray(c, float) - c0
+        nd = float(np.linalg.norm(d))
+        if nd < float(h):
+            return None
+        m = d / nd
+        mt = t0 - 2.0 * float(t0 @ m) * m
+        dot = float(mt @ np.asarray(t, float))
+        if abs(dot) < cmin:
+            return None
+        out.append(1 if dot > 0 else -1)
+    return out
+
+
+def pos_u_hash_view(pos_u: dict | None) -> dict | None:
+    """§3 ``_sel_cfg_sha`` 에 더할 pos_u 보기(range_rel·max_rel·gap_rel·hold_frac_max — 블록 있을 때만, 없으면 None)."""
+    if not isinstance(pos_u, dict):
+        return None
+    return {k: float(pos_u[k]) for k in ("range_rel", "max_rel", "gap_rel", "hold_frac_max")}

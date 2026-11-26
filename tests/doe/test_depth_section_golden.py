@@ -1,5 +1,5 @@
 """V-0247-DM-9·23: 옛 스냅샷(depth_section 키 없음)·entry_fixed 명시 스냅샷의 select 준비·행렬 산출물과 패키지 D·W 기저가
-main 1d71d983 골든(tests/doe/golden_v0247_c1/golden.json — main 코드로 기록, 다시 기록 금지)과 바이트 동일 — 패키지 1.2.0 설치 상태."""
+main 1d71d983 골든(tests/doe/golden_v0247_c1/golden.json — main 코드로 기록, 다시 기록 금지)과 바이트 동일 — 패키지 1.2.0 설치 상태 — v0.24.9 부터 1.3.0(kind U 추가, 출력 판·D·W 기저 불변)."""
 import os
 import sys
 
@@ -25,7 +25,7 @@ def test_old_bytes(tmp_path, case, ds):
 @pytest.mark.slow
 def test_package_bases_unchanged():
     import beadgraph as bg
-    assert bg.__version__ == "1.2.0" and bg.OUTPUT_VERSION == "1.1.0" and bg.MORPH_RULES == 2
+    assert bg.__version__ == "1.3.0" and bg.OUTPUT_VERSION == "1.1.0" and bg.MORPH_RULES == 2
     gold = G.load()["package"]
     got = G.package_bases()
     assert got == gold
