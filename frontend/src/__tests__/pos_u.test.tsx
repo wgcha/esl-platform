@@ -63,12 +63,7 @@ describe("INT-7·8 U 포화·짧은 구간 회색 꼬리표", () => {
     expect(posUTags("B9_U", ws)).toEqual([]);
     for (const c of POS_U_TAG_CODES) expect(isInfoWarn({ code: c }), c).toBe(true);
   });
-  it("guardTag: 포화만(reason U_SATURATED) = 꼬리표 없음(기본 범위 그대로 — U 회색 꼬리표가 알림), 조합 축소는 그대로", () => {
-    const g = { state: "limited" as const, from: [-15, 15] as [number, number], usable: [-1.5, 1.5] as [number, number], reason: "U_SATURATED", value: 0.1, combo_scale: null };
-    expect(guardTag(g, MOCK_SHAPE_RULES, "U")).toBeNull();
-    expect(guardTag({ ...g, combo_scale: 0.5 }, MOCK_SHAPE_RULES, "U")!.label).toBe("조합 축소");
-  });
-  it("변수 표(doe-70): 마지막 U 행에 회색 꼬리표 2개(툴팁 = 서버 문구 doe_messages), 축소 꼬리표 없음 — 다른 U 행은 없음", async () => {
+  it("변수 표(doe-70): 마지막 U 행에 회색 꼬리표 2개(툴팁 = 서버 문구 doe_messages), guard 꼬리표는 포화와 무관(그대로) — 다른 U 행은 없음", async () => {
     const r = renderApp("/p/p-body/doe/doe-70", "power", demo);
     await waitFor(() => expect(document.querySelectorAll('[data-testid^="param-"][data-testid$="_U"]').length).toBeGreaterThan(1), { timeout: 15000 });
     const rec = r.server.doe.recs.find((x) => x.out.id === "doe-70")!;
@@ -77,9 +72,10 @@ describe("INT-7·8 U 포화·짧은 구간 회색 꼬리표", () => {
     const sat = await screen.findByTestId(`utag-U_SATURATED-${last.name}`);
     expect(sat.textContent).toBe("포화 ×0.1");
     expect(sat.className).toContain("neutral");
-    expect(sat.getAttribute("title")).toMatch(/실제 이동이 요청의 ×0\.1 에 그침/);
+    expect(sat.getAttribute("title")).toMatch(/실제 이동이 요청의 ×0\.1 에 그침.*범위 끝에서 실제 이동/);
     expect(screen.getByTestId(`utag-U_SHORT_SEG-${last.name}`).getAttribute("title")).toMatch(/세그먼트 길이 36 mm < 접합 램프 2×44\.055 mm/);
-    expect(screen.queryByTestId(`guard-${last.name}`)).toBeNull();
+    expect(last.guard?.reason).not.toBe("U_SATURATED");                       // 포화는 guard 에 들어가지 않음(정보만)
+    expect(screen.getByTestId(`guard-${last.name}`).getAttribute("data-state")).toBe(last.guard?.state);
     for (const p of us.slice(0, -1)) expect(document.querySelectorAll(`[data-testid^="utag-"][data-testid$="-${p.name}"]`).length).toBe(0);
   }, 40000);
 });
