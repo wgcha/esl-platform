@@ -2077,6 +2077,70 @@ class DoeJigEntryOut(_Out):
     rot_deg: float            # 지그 노드 Kabsch 회전각
 
 
+class DoeJigGridConvOut(_Out):
+    """v0.24.8 격자 크기 수렴 진단 1크기(esl_jig_grid_map.md §4.2·§6 — d000, 방식·엔트리 최악)."""
+
+    cell_mm: float
+    dpi_max: float | None = None
+    dumax_max: float | None = None
+    mac_min: float | None = None
+
+
+class DoeJigGridMethodOut(_Out):
+    """v0.24.8 방식별 격자 진단(esl_jig_grid_map.md §6 — result.json jig.methods{src}.grid 값 그대로, types.ts 와 check:api 대조)."""
+
+    n_ok: int
+    n_failed: int
+    case_recon_mac_min: float | None = None
+    recon_mac_d000: float | None = None
+    recon_umax_err_d000: float | None = None
+    alpha: float | None = None                              # Case 스프링 α(기록만 — 스프링 출처가 아니면 null)
+    conv: list[DoeJigGridConvOut] = []
+
+
+class DoeJigGridMeshOut(_Out):
+    """v0.24.8 fix(D-0.24.8-JG-23): 기준 d000 ↔ 형상 메시 비교(요소 변 길이 중앙값 h mm·삼각형 요소 비율) — mismatch 참 = 격자 순위
+    noise_floor ≥ 설정 noise_floor_mismatch, 정보 JIG_GRID_MESH_MISMATCH. h_min·h_max·tri_max = 기준 밖 형상들(형상 없음 = null)."""
+
+    h_ref: float
+    h_min: float | None = None
+    h_max: float | None = None
+    tri_ref: float
+    tri_max: float | None = None
+    mismatch: bool
+
+
+class DoeJigGridNfOut(_Out):
+    """v0.24.8 fix(D-0.24.8-JG-26): 형상별 오차 범위 — 기준과 메시가 다른 형상 id 와 그 형상 행에 쓴 noise_floor(= max(기본, noise_floor_mismatch))."""
+
+    id: str
+    noise_floor: float
+
+
+class DoeJigGridOut(_Out):
+    """v0.24.8 스터디 격자 지그 요약(esl_jig_grid_map.md §1.5·§6 — result.json jig.grid 값 그대로, 최악값)."""
+
+    cell_mm: float
+    n_groups: int
+    n_shapes: int
+    n_shapes_failed: int
+    tie_miss_max: float | None = None
+    tie_area_ratio_min: float | None = None
+    tie_area_ratio_max: float | None = None
+    k_scale_min: float | None = None                        # 스프링 방식이 없으면 null
+    k_scale_max: float | None = None
+    noise_floor: float | None = None                        # 격자 순위 기본 nf(형상별 = noise_floor_mismatch_applied, solve 대체 순위면 null — 계약 §3)
+    noise_floor_mismatch_applied: list[DoeJigGridNfOut] | None = None   # fix JG-26: 메시가 다른 형상의 nf(옛 결과 = null, 같은 메시만 = [])
+    load_dF_max: float | None = None
+    load_dM_max: float | None = None
+    corr_rel_max: float | None = None
+    small_frac_max: float | None = None
+    frame_shift_max_mm: float | None = None
+    sample_outside_max: float | None = None
+    warnings: list[str] = []
+    mesh: DoeJigGridMeshOut | None = None                   # v0.24.8 fix JG-23 — 옛 결과(이 키 없음) = null
+
+
 class DoeJigMethodOut(_Out):
     """v0.24.6 지그 방식 한 개의 상태(esl_viewer_hv.md §9.2 — 코어 result.json jig.methods{src} 값 그대로, types.ts 와 check:api 대조).
     status = 코어 문자열(ok·poor·fallback·unsupported 등 — 좁히지 않고 통과), 실패 = code·detail."""
@@ -2094,6 +2158,7 @@ class DoeJigMethodOut(_Out):
     n_jig: int | None = None
     bc: dict[str, Any] | None = None
     spring: dict[str, Any] | None = None
+    grid: DoeJigGridMethodOut | None = None                 # v0.24.8 격자 지그(jig.transfer == "grid" 일 때만, 옛 결과 = null)
 
 
 class DoeJigOut(_Out):
@@ -2121,6 +2186,9 @@ class DoeJigOut(_Out):
     # v0.24.6(esl_viewer_hv.md §9.2): 지그 tie 자유도와 방식별 상태 — 코어 값 그대로(옛 결과 = null)
     tie_dofs: Literal["normal", "translation"] | None = None
     methods: dict[str, DoeJigMethodOut] | None = None
+    # v0.24.8(esl_jig_grid_map.md §6): 격자 지그 — transfer "grid" = ④·옛 ③ 형상마다 격자 매핑, "base" = 같은 메시 안(옛 결과·base 모드 = null)
+    transfer: Literal["base", "grid"] | None = None
+    grid: DoeJigGridOut | None = None
     th: DoeJigThOut
     entries: list[DoeJigEntryOut]
 
@@ -2328,7 +2396,7 @@ class DoeResultOut(_Out):
     view3d_ref: dict[str, str] | None = None
     view3d_esl: dict[str, str] | None = None
     # v0.23.2 지그 3D(esl_v0232_fixes.md §4): 지그 응답 변위장 view3d 폴더 {did: "<did>_jig"}·{did: entry_id}·{entry_id: "d000_jig_e<kk>"}
-    # (지그 계산된 새 결과만 — 없으면 null). jig_on_clone = 지그 블록 없는 결과에서 "복제하면 지그 계산" 여부(블록 있으면 null)
+    # (지그 계산된 새 결과만 — 없으면 null). jig_on_clone = 지그 블록 없는(또는 옛 ④·옛 ③ unsupported 블록) 결과에서 "복제하면 지그 계산" 여부(그 밖 블록 있으면 null)
     view3d_jig: dict[str, str] | None = None
     view3d_jig_esl: dict[str, str] | None = None
     view3d_jig_ref: dict[str, str] | None = None
@@ -2342,8 +2410,8 @@ class DoeResultOut(_Out):
     view3d_js_esl: dict[str, str] | None = None
     view3d_js_ref: dict[str, str] | None = None
     # v0.24.5 #88 후속: 이 스터디 모드의 계획 표 열 sm_jig(base = 같은 메시 안 지그 계산 | none = 이 모드는 지그 ESL 을 계산하지 않음 —
-    # 화면 지그 탭 사유를 모드 이름 대신 이 값으로 고름). 모르는 조합 = null
-    jig_plan: Literal["base", "none"] | None = None
+    # 화면 지그 탭 사유를 모드 이름 대신 이 값으로 고름). v0.24.8: grid = ④·옛 ③ 형상마다 Case 지그를 격자 매핑(jig_kind). 모르는 조합 = null
+    jig_plan: Literal["base", "grid", "none"] | None = None
     # v0.23.3(esl_jig_view.md §5): 지그 진단 3D 요약·하중 정의 탭 보기·3D 다시 만들기 가능 여부(사이드카 post/jig_view.json — 없으면 null)
     jig_diag: "DoeJigDiagOut | None" = None
     rank_views: "DoeRankViewsOut | None" = None

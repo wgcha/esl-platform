@@ -3455,8 +3455,71 @@ export interface DoeJigMethodOut {
   n_jig: number | null;
   bc: Record<string, unknown> | null;
   spring: Record<string, unknown> | null;
+  /** v0.24.8 격자 지그(esl_jig_grid_map.md §6) 방식별 진단 — 격자 스냅샷 ④·옛 ③ 만, 그 밖 null·키 없음 */
+  grid?: DoeJigGridMethodOut | null;
+}
+/** v0.24.8 격자 크기 수렴 진단 1줄(d000 — 크기마다 방식·엔트리 최악) */
+export interface DoeJigGridConvOut {
+  cell_mm: number;
+  dpi_max: number | null;
+  dumax_max: number | null;
+  mac_min: number | null;
+}
+/** v0.24.8 §6 result.json jig.methods[src].grid */
+export interface DoeJigGridMethodOut {
+  n_ok: number;
+  n_failed: number;
+  case_recon_mac_min: number | null;
+  recon_mac_d000: number | null;
+  recon_umax_err_d000: number | null;
+  alpha: number | null;
+  conv: DoeJigGridConvOut[];
+}
+/** v0.24.8 §6 result.json jig.grid — 스터디 요약(매핑 오차 최악값) */
+export interface DoeJigGridOut {
+  cell_mm: number;
+  n_groups: number;
+  n_shapes: number;
+  n_shapes_failed: number;
+  tie_miss_max: number | null;
+  tie_area_ratio_min: number | null;
+  tie_area_ratio_max: number | null;
+  /** 스프링 출처가 없으면 null */
+  k_scale_min: number | null;
+  k_scale_max: number | null;
+  /** 격자 순위 기본 불확실 구간(형상별 = noise_floor_mismatch_applied, solve 대체 순위면 null) */
+  noise_floor: number | null;
+  /** v0.24.8 fix 기준과 메시가 다른 형상의 불확실 구간(옛 결과 null·키 없음, 메시가 모두 같으면 []) */
+  noise_floor_mismatch_applied?: DoeJigGridNfOut[] | null;
+  load_dF_max: number | null;
+  load_dM_max: number | null;
+  corr_rel_max: number | null;
+  small_frac_max: number | null;
+  frame_shift_max_mm: number | null;
+  sample_outside_max: number | null;
+  warnings: string[];
+  /** v0.24.8 fix 기준 d000 ↔ 형상 메시 비교(옛 결과 null·키 없음) */
+  mesh?: DoeJigGridMeshOut | null;
+}
+/** v0.24.8 fix 형상별 오차 범위 — 기준과 메시가 다른 형상 id·그 행의 noise_floor */
+export interface DoeJigGridNfOut {
+  id: string;
+  noise_floor: number;
+}
+/** v0.24.8 fix 기준·형상 메시 통계 — h = 요소 변 길이 중앙값(mm), tri = 삼각형 요소 비율. mismatch = 격자 순위 noise_floor 상향 */
+export interface DoeJigGridMeshOut {
+  h_ref: number;
+  h_min: number | null;
+  h_max: number | null;
+  tri_ref: number;
+  tri_max: number | null;
+  mismatch: boolean;
 }
 export interface DoeJigOut {
+  /** v0.24.8 지그 전달 방식 — "grid" = 다른 메시 스터디의 격자 매핑 지그, "base" = 같은 메시. 옛 결과 null·키 없음 */
+  transfer?: "base" | "grid" | null;
+  /** v0.24.8 격자 지그 요약(transfer = grid 일 때만) */
+  grid?: DoeJigGridOut | null;
   /** v0.24.6 지그 tie 자유도(법선 | 병진) — 옛 결과 null */
   tie_dofs?: "normal" | "translation" | null;
   /** v0.24.6 방식별 결과 {rank 출처 키: …} — 옛 단일 경로(고정만) 결과 = null */
@@ -3555,8 +3618,8 @@ export interface DoeResultOut {
   view3d_js_ref?: Record<string, string> | null;
   /** v0.23.2 지그 블록 없는 결과: 복제하면 지그가 계산되는가(블록 있으면 null) */
   jig_on_clone?: boolean | null;
-  /** v0.24.5 #88 후속: 이 모드의 계획 표 열 sm_jig — base = 지그 계산 모드, none = 이 모드는 지그 ESL 을 계산하지 않음(탭 사유를 이 값으로 고름). 모르는 조합 = null */
-  jig_plan?: "base" | "none" | null;
+  /** v0.24.5 #88 후속: 이 모드의 계획 표 열 sm_jig — base = 지그 계산 모드, none = 이 모드는 지그 ESL 을 계산하지 않음(탭 사유를 이 값으로 고름), v0.24.8 grid = 다른 메시 스터디의 격자 매핑 지그(상태 판정은 base 와 같음). 모르는 조합 = null */
+  jig_plan?: "base" | "grid" | "none" | null;
   /** v0.23.3 기준 d000 엔트리별 지그 진단(목표·맞춤·오차 3D + 값, esl_jig_view.md §1.5) — 사이드카 없으면 null */
   jig_diag?: DoeJigDiagOut | null;
   /** v0.23.3 하중 정의 탭 보기 {jig, full}(§2) — 지그 계산된 결과만 */

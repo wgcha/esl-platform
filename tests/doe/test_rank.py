@@ -139,3 +139,22 @@ def test_per_esl_tolerance_noise_floor():
     x = R["ranking"][0]
     assert R["ratio_tol"] == 0.01 and x["n_worsened"] == 0 and x["n_unchanged"] == 1
     assert rk.ratio_tol(None, 1e-6) == 1e-6 and rk.ratio_tol(1e-9, 1e-6) == 1e-6
+
+
+def test_noise_floor_by_id_per_shape():
+    """v0.24.8 fix JG-26: 형상별 오차 범위 — noise_floor_by_id 에 있는 안만 그 nf 로 행 판정(noise·ESL별 tol·n_improved·all_improved),
+    최상위 noise_floor·ratio_tol·정렬은 기본 값 그대로. None·{} = 옛 계산과 같은 출력."""
+    rs = [res("d000", Cs=(10.0, 4.0)), res("d001", Cs=(9.585, 3.834)), res("d002", Cs=(9.58, 3.83)), res("d003", Cs=(9.0, 3.6))]
+    R0 = rk.rank(rs, noise_floor=0.03)
+    assert rk.rank(rs, noise_floor=0.03, noise_floor_by_id=None) == R0 == rk.rank(rs, noise_floor=0.03, noise_floor_by_id={})
+    assert rk.rank(rs) == rk.rank(rs, noise_floor_by_id=None)
+    R = rk.rank(rs, noise_floor=0.03, noise_floor_by_id={"d002": 0.05})
+    by = {x["id"]: x for x in R["ranking"]}
+    assert R["noise_floor"] == 0.03 and R["ratio_tol"] == 0.03
+    assert [x["id"] for x in R["ranking"]] == [x["id"] for x in R0["ranking"]] and [x["score"] for x in R["ranking"]] == [x["score"] for x in R0["ranking"]]
+    assert by["d001"]["noise"] is False and by["d001"]["n_improved"] == 2 and by["d001"]["all_improved"] is True     # 4.15 % — nf_base
+    assert by["d002"]["noise"] is True and by["d002"]["n_improved"] == 0 and by["d002"]["all_improved"] is False    # 4.2 % — 메시 다름 nf 0.05
+    assert by["d002"]["n_unchanged"] == 2
+    assert by["d003"]["noise"] is False and by["d003"]["n_improved"] == 2
+    for d in ("d001", "d003"):
+        assert by[d] == next(x for x in R0["ranking"] if x["id"] == d)

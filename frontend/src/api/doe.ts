@@ -481,6 +481,44 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_TIE_RELATIVE: "체결 노드끼리도 변형됩니다(고정 지그의 한계) — 기준 재현이 낮아질 수 있습니다",
   JIG_DESIGN_FAILED: "그 안의 지그 재풀이에 실패했습니다",
   JIG_SUPPORT_WEAK: "체결 노드가 한곳에 몰려 지그 지지가 약합니다 — 순위가 체결부 근처 국부 강성에 민감할 수 있습니다",
+  // v0.24.8 격자 지그(esl_jig_grid_map.md §1.4) — 원본 문구는 API text(warnText 가 message 를 먼저 씀), 이 표는 text 가 없을 때의 대체. {…} 는 경고 필드로 채움
+  JIG_GRID_SOURCE_MISSING: "엔트리 {entry} 의 Case 에 {method} 지그 결과가 없습니다 — 그 Case 에서 ③ ESL 을 다시 실행(v0.24.4 이후)한 뒤 스터디를 복제하세요. 지금은 재풀이(solve) 순위입니다",
+  JIG_GRID_TIE_MISS: "Case 지그 체결부(tie) 일부를 이 형상에서 찾지 못했습니다 — 못 찾은 비가 기준을 넘으면 그 형상은 지그 계산에서 빠집니다",
+  JIG_GRID_OUTSIDE: "3-2-1 지지점이 격자 밖이라 변위 값 0 으로 두었습니다(면내 강체 위치에만 영향)",
+  JIG_GRID_LOAD_RESID: "형상으로 옮긴 맞춤 하중의 합력·모멘트가 원본과 허용 오차 이상 다릅니다(계산은 계속)",
+  JIG_GRID_AREA_RATIO: "이 형상에서 잡은 체결부 면적이 Case 와 크게 다릅니다 — 매핑 오차가 클 수 있습니다",
+  JIG_GRID_FRAME_SHIFT: "하중 칸(frame 정규화)과 경계조건 표본(배치) 위치가 어긋납니다",
+  JIG_GRID_CONV: "격자 크기를 바꾸면 기준 형상 결과가 허용 이상 달라집니다 — 순위는 매핑 오차 범위 안에서 참고하세요",
+  JIG_GRID_NO_REF: "기준(d000) 격자 지그 계산이 실패해 그 방식의 기준값이 없습니다 — 안 결과는 비어 있습니다",
+  JIG_GRID_RANK: "순위 = 격자 지그(형상마다 Case 지그를 격자로 매핑 — 다른 메시라 매핑 오차 참고)",
+  JIG_GRID_ON_CLONE: "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다",
+  JIG_GRID_MESH_MISMATCH: "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요(메시가 다른 형상 {n_shapes}개는 차이 {nf} % 이내를 오차 범위로 표시)",
+  JIG_GRID_MESH_MISMATCH_SHAPE: "이 형상은 기준과 메시가 달라 차이 {nf} % 이내는 오차 범위입니다(요소 변 {h} mm · 삼각 비율 {tri})",
+  JIG_GRID_TIE_SNAP: "체결부 {n_clusters_max}곳을 노드 1개로만 잡았습니다(형상 {n_shapes}개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요",
+};
+/** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */
+export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE"]);
+/** JIG_GRID_* 대체 문구의 {필드} 채움(경고에 없으면 "–") */
+const fillJigTpl = (tpl: string, w: Record<string, unknown>): string => tpl.replace(/\{(\w+)\}/g, (_, k: string) => (w[k] != null && w[k] !== "" ? String(w[k]) : "–"));
+/** 격자 지그 스터디(jig.transfer === "grid") — 화면 문구가 격자 뜻으로 바뀌는 열 값 */
+export type GridInfo = { cell_mm: number; noise_floor: number | null; nf_by: Record<string, number> };
+/** nf_by = 기준과 메시가 다른 형상의 오차 범위(v0.24.8 fix JG-26 — 형상별, 옛 결과·같은 메시 = {}) */
+export const gridOf = (r: { jig?: { transfer?: string | null; grid?: { cell_mm: number; noise_floor: number | null; noise_floor_mismatch_applied?: { id: string; noise_floor: number }[] | null } | null } | null } | null | undefined): GridInfo | null =>
+  r?.jig?.transfer === "grid" && r.jig.grid
+    ? { cell_mm: r.jig.grid.cell_mm, noise_floor: r.jig.grid.noise_floor ?? null, nf_by: Object.fromEntries((r.jig.grid.noise_floor_mismatch_applied ?? []).map((x) => [x.id, x.noise_floor])) }
+    : null;
+/** 순위 정의 문구 꼬리·3D 조건 줄 꼬리(계약 §5) — 문구는 이 표 한 곳 */
+export const GRID_TEXT = {
+  support: (cellMm: number) => ` · 격자 ${cellMm} mm`,
+  rankDef: (cellMm: number) => `형상마다 Case 지그를 ${cellMm} mm 격자로 매핑(기준 d000)`,
+  /** v0.24.8 fix: 격자 모드 지그 순위 정의(영역 개념 없음 — 옛 "가압 하중(영역 0개)" 문구 대신) */
+  jigDef: "score: max(C_jig 안) / max(C_jig 기준) — Case 지그의 맞춤 하중과 체결부 경계를 형상마다 옮겨 같은 조건으로 재풀이한 컴플라이언스. 작을수록 좋음",
+  /** 꼬리(같은 줄) — 메시가 다른 형상이 있으면 그 값을 덧붙임(fix JG-26, 원본 doe_messages.json JG_RANK_NOISE·JG_RANK_NOISE_MISMATCH) */
+  rankNoise: (nf: number, nfMismatch: number[] = []) => {
+    const u = [...new Set(nfMismatch.map((v) => +(v * 100).toFixed(2)))].sort((a, b) => a - b);
+    return ` · 차이 ${+(nf * 100).toFixed(2)} % 이내는 매핑 오차 범위${u.length ? `(메시가 다른 형상은 ${u.join("·")} %)` : ""}`;
+  },
+  noiseTip: (pct: string) => `격자 매핑 오차 범위 ${pct} 이내`,
 };
 /** 지그 하중 영역 출처 이름 */
 export const JIG_SOURCE_NAME: Record<string, string> = { contact: "접촉", mixed: "접촉+패치", patch: "패치" };
@@ -507,9 +545,9 @@ export const warnText = (w: { code: string; message?: string | null; level?: unk
     ? `${String(w.var ?? "")} 기본 범위 끝에서 요소가 뒤집힙니다 — 뒤집힘 없는 범위 ≈ ${Number(w.usable[0])}~${Number(w.usable[1])} mm`
     : "") ||
   autoWarnText(w) ||
-  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || JIG_CODE_TEXT[w.code] || w.code;
+  CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || (JIG_CODE_TEXT[w.code] && fillJigTpl(JIG_CODE_TEXT[w.code], w)) || w.code;
 /** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시. v0.16.2 AUTO_GROUP_DROPPED·AUTO_SLOPE_DIFF 도 */
-export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && AUTO_INFO.has(w.code));
+export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && (AUTO_INFO.has(w.code) || JIG_GRID_INFO_CODES.has(w.code)));
 
 // ---------------------------------------------------------------- v0.15.0 비드 직접 선택 문구(서버 문구가 없을 때만 — 원본 resources/doe_messages.json)
 export const SELECT_CODE_TEXT: Record<string, string> = {

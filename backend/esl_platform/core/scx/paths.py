@@ -15,7 +15,14 @@ from ..errors import DomainError, not_found
 from . import messages
 
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
+_DRIVE = re.compile(r"^[A-Za-z]:")          # 드라이브 문자 구간('C:' — 홈 기준 상대 경로에 올 수 없음)
 HIDDEN = "."
+
+
+def drive_segment(rel: str) -> str | None:
+    """기본 안전 검사(읽기·쓰기·설정 루트 rel 공통): 어느 구간이든 드라이브 문자('C:')로 시작하면 사유, 아니면 None.
+    #92 읽기 완화(SEGMENT_RE 제외) 뒤에도 드라이브 문자 구간은 거부(재검증 Fail)."""
+    return "드라이브 문자 구간('X:')" if any(_DRIVE.match(g) for g in (rel or "").split("/")) else None
 
 
 def _fold(s: str) -> str:
@@ -45,7 +52,7 @@ def sub_segments(path: str | None) -> list[str]:
         raise _bad("제어문자")
     if "\\" in p:
         raise _bad("'\\' 구분자")
-    if p.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", p):
+    if p.startswith(("/", "~")) or _DRIVE.match(p):
         raise _bad("절대경로·'~'")
     segs = p.split("/")
     for s in segs:
@@ -56,17 +63,24 @@ def sub_segments(path: str | None) -> list[str]:
     return segs
 
 
-def check_drive_rel(rel: str, health: dict[str, Any] | None, home_display: str = "", *, write: bool = False) -> str:
+def check_drive_rel(rel: str, health: dict[str, Any] | None, home_display: str = "", *, write: bool = False,
+                    new_from: int | None = None) -> str:
     """완성된 드라이브 상대 경로 검사(어댑터 rel_problem + SPDM 금지 + relay_base 안). 통과하면 NFC 정규화 경로.
     write=False(기능 A 읽기 — 목록·고르기·내려받기) = esl 은 SPDM 판정을 하지 않음(대시보드 relay 가 판정 — 403 PATH_NOT_ALLOWED
     는 SCX_PATH_NOT_ALLOWED "대시보드가 SPDM 폴더 읽기를 막고 있습니다"로 안내). write=True(기능 B 업로드·제출 폴더) = 어댑터
-    forbidden_reason 그대로(SPDM 루트 안, 또는 프로젝트 폴더가 SPDM 루트이거나 그 상위 폴더면 거부)."""
+    forbidden_reason 그대로(SPDM 루트 안, 또는 프로젝트 폴더가 SPDM 루트이거나 그 상위 폴더면 거부).
+    폴더 이름 형식(어댑터 SEGMENT_RE — ASCII)은 esl 이 새로 만드는 구간에만(#92): 읽기는 어느 구간에도 적용하지 않고(기본 안전 검사
+    — 제어문자·`\\`·빈 구간·`..`·길이·첫 구간 `.` — 만), 쓰기는 `new_from` 번째 구간부터(없으면 전체 — 이전 동작)."""
     from simdash_adapters.hpc.scx_naming import forbidden_reason, rel_problem
 
     rel = unicodedata.normalize("NFC", rel or "")
-    why = rel_problem(rel)
+    nseg = rel.count("/") + 1
+    start = nseg if not write else (0 if new_from is None else new_from)      # SEGMENT_RE 적용 시작 구간
+    why = rel_problem(rel, segment_check_from=start) or drive_segment(rel)
     if why:
         raise _bad(why)
+    if not write and any(g.startswith(HIDDEN) for g in rel.split("/")):          # 목록이 숨기는 '.' 시작 폴더·파일은 읽지 않음
+        raise _bad("숨김 이름('.' 시작)")
     h = health or {}
     hd = str(h.get("home_display") or home_display)
     fb = forbidden_reason(rel, list(h.get("forbidden_prefixes") or []), "", hd) if write else None
@@ -142,6 +156,16 @@ def display(settings, rel: str | None) -> str | None:
     return display_path(getattr(cfg, "home_display", "") if cfg else "", rel)
 
 
+def job_new_from(settings) -> int:
+    """기능 B 잡 경로(`<drive_base>/<프로젝트>/<잡>`)에서 esl 이 새로 만드는 첫 구간 번호 = drive_base 구간 수(설정 값 — SEGMENT_RE 제외)."""
+    from simdash_adapters.hpc.scx_naming import drive_base_rel
+
+    from .settings import scx_cfg
+
+    base = drive_base_rel(scx_cfg(settings).drive_base)
+    return len(base.split("/")) if base else 0
+
+
 def verify_job_parent(settings, project_folder: str) -> str:
     """기능 B 잡 폴더의 부모 = <drive_base>/<프로젝트 구간>(SR-D-12, 어댑터 drive_base_rel·sanitize_project)."""
     from simdash_adapters.hpc.scx_naming import drive_base_rel, sanitize_project
@@ -154,4 +178,4 @@ def verify_job_parent(settings, project_folder: str) -> str:
 
 
 __all__ = ["find_root", "sub_segments", "check_drive_rel", "resolve", "within", "in_root", "root_sub", "hint", "display",
-           "verify_job_parent"]
+           "verify_job_parent", "job_new_from"]

@@ -143,8 +143,11 @@ def pareto_flags(vecs: dict[str, list[float]], baseline: list[float] | None = No
 
 def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 1e-6,
          extra_failed: dict | None = None, metric: str = "solve", lin_form: str = sm.LIN_FORM_DEFAULT,
-         lin_valid: float | None = None) -> dict:
+         lin_valid: float | None = None, noise_floor_by_id: dict | None = None) -> dict:
     """result.json 목록(베이스라인 포함) → DoeResultOut 순위 부분(+ ESL별 개선 지표, 행의 per_esl).
+
+    noise_floor_by_id(v0.24.8 fix JG-26) = 형상(안)별 noise_floor {id: nf_d} — 있는 안의 행 판정(ESL별 tol·noise 표식·n_improved·
+    all_improved)은 nf_d, 없는 안은 noise_floor. 최상위 noise_floor·ratio_tol 은 noise_floor 그대로. None = 옛 계산(바이트 동일).
 
     extra_failed = 추가 실패 상태 {상태: n_failed 키}(④ ``{"FAILED_SIZE": "size"}`` — 없으면 ①②③ 결과 그대로).
     metric·lin_form = 순위 지표(SM-2) — 기본 solve = 옛 정의 바이트 동일, lin 은 새 스냅샷(per_esl 에 C_lin) 에서만.
@@ -217,11 +220,14 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
         for x in per:
             if "umax_ev" in pe[x["entry_id"]]:
                 x["umax_ev"] = _f(pe[x["entry_id"]]["umax_ev"])
-        met = per_esl_metrics([x["ratio"] for x in per], tl)
+        nf_r = noise_floor
+        if noise_floor_by_id and r["id"] in noise_floor_by_id:   # 형상별 오차 범위(JG-26) — 그 안의 행 판정만
+            nf_r = float(noise_floor_by_id[r["id"]])
+        met = per_esl_metrics([x["ratio"] for x in per], tl if nf_r is noise_floor else ratio_tol(nf_r, tol))
         row = {"id": r["id"], "values": dict(r.get("values") or {}), "score": s, "improvement": imp,
                "worst_entry_id": a["worst"], "umax": a["umax"], "epsmax": a["epsmax"],
                "umax_all": a["umax_all"], "epsmax_all": a["epsmax_all"],
-               "noise": None if noise_floor is None else bool(abs(imp) < float(noise_floor)),
+               "noise": None if nf_r is None else bool(abs(imp) < float(nf_r)),
                "warnings_n": len(r.get("warnings") or []), **met, "per_esl": per,
                "C": {p["entry_id"]: float(p[k_r]) for p in r.get("per_esl") or []}}
         if "umax_ev" in a:

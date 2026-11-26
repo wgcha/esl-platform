@@ -37,13 +37,18 @@ JIG_DEFAULT = {"enabled": True, "fix_kinds": ["INTER_TYPE2_SECONDARY", "INTER_TY
                "spring_k_value": None, "spring_alpha_scan": []}
 NEW_JIG = ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reaction_warn", "spring_k_mode", "spring_alpha",
            "spring_k_value", "spring_alpha_scan")
+# v0.24.8 격자 지그(esl_jig_grid_map.md §7.1) — rank.jig_grid 기본
+JIG_GRID_DEFAULT = {"enabled": True, "cell_mm": 3.0, "conv_mm": [5.0, 10.0], "tie_capture_rel": 0.25, "tie_snap_rel": 0.75,
+                    "tie_normal_deg": 30.0, "tie_miss_frac_max": 0.1, "sample_nbr": 1, "sample_normal_deg": 45.0,
+                    "area_ratio_warn": 2.0, "conv_warn": 0.05, "frame_shift_warn": 0.5, "load_resid_warn": 1e-6,
+                    "noise_floor_min": 0.03, "noise_floor_mismatch": 0.05, "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
-                "imbalance_warn": 0.02, "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [], "jig": JIG_DEFAULT}
+                "imbalance_warn": 0.02, "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [], "jig": JIG_DEFAULT, "jig_grid": JIG_GRID_DEFAULT}
 # v0.24.0 보완(esl_fint.md §6.2): 새 스냅샷에 평가 영역 고정
 EVAL_SNAP = {"mode": "part", "free_edge_mm": 10.0, "boxes": []}
 # v0.23.0: 새 스냅샷 = metric 기본 jig + rank.jig 설정 전체 + schema 2(esl_jig_rank.md §4)
 SNAP = {"metric": "jig", "lin_form": "ritz", "lin_valid": 0.3, "imbalance_warn": 0.02, "jig": JIG_DEFAULT, "schema": 2,
-        "eval_region": EVAL_SNAP}
+        "eval_region": EVAL_SNAP, "jig_grid": {**JIG_GRID_DEFAULT, "schema": 1}}   # v0.24.8: rank.jig 가 있으면 jig_grid 블록(블록 안 schema 1)
 
 
 # ================================================================ 설정 거울·검사
@@ -59,7 +64,8 @@ def test_rank_defaults_mirror():
 
     # 코어 DEFAULTS 전체 거울(jig 절 새 키 9개 포함 — v0.24.4 통합 후 예외 없음)
     core = DEFAULTS["rank"]
-    assert {k: v for k, v in core.items() if k != "jig"} == {k: v for k, v in RANK_DEFAULT.items() if k != "jig"}
+    skip = ("jig", "jig_grid") if "jig_grid" not in core else ("jig",)     # v0.24.8 jig_grid: 코어 DEFAULTS 병합 전에만 뺌(병합 후 전체 대조)
+    assert {k: v for k, v in core.items() if k != "jig"} == {k: v for k, v in RANK_DEFAULT.items() if k not in skip}
     assert core["jig"] == JIG_DEFAULT
 
 
@@ -133,7 +139,7 @@ def test_snapshot_follows_config_and_clone(tmp_path, engine, fake_dashboard, clo
         assert r.status_code == 201, r.text
         s = r.json()
         want = {"metric": "solve", "lin_form": "taylor", "lin_valid": 0.5, "imbalance_warn": 0.1, "jig": JIG_DEFAULT,
-                "schema": 2, "eval_region": EVAL_SNAP}
+                "schema": 2, "eval_region": EVAL_SNAP, "jig_grid": {**JIG_GRID_DEFAULT, "schema": 1}}
         assert s["inputs"]["rank_metric"] == "solve" and _job(engine, s["job"]["id"])["params"]["doe"]["rank"] == want
         finish_job(engine, s["job"]["id"])
         d2 = copy.deepcopy(d)
@@ -303,7 +309,8 @@ def test_results_pass_jig_block(client, world, engine, esl_root):
                                                     "cross_mesh": False, "jig": JIG_BLOCK, "n_failed": {"jig": 1}}, [row])
     o = api(client, "GET", f"/doe/studies/{sid}/results").json()
     assert o["metric"] == "jig" and o["metric_effective"] == "jig" and o["rank"]["metric_effective"] == "jig"
-    assert o["jig"] == {**JIG_BLOCK, "methods": None, "tie_dofs": None} and o["n_failed"] == {"jig": 1}   # v0.24.6 새 키 null
+    assert o["jig"] == {**JIG_BLOCK, "methods": None, "tie_dofs": None, "transfer": None, "grid": None} \
+        and o["n_failed"] == {"jig": 1}   # v0.24.6·v0.24.8 새 키 null
     r0 = o["ranking"][0]
     assert (r0["score_jig"], r0["umax_jig"], r0["C_jig"]) == (0.8, 0.9, {"e1": 80.0})
     sid2 = _done(client, world, engine, esl_root, {"metric": "jig", "metric_effective": "solve", "cross_mesh": True,
@@ -331,7 +338,7 @@ def test_openapi_jig_schemas():
     assert set(sc["DoeJigOut"]["properties"]) == {"status", "code", "region_source", "n_jig", "n_regions", "n_contact", "n_patch",
                                                   "fit_mac_min", "fit_umax_err_max", "fit_mac_min_nomodes",
                                                   "fit_umax_err_max_nomodes", "cancel_rel_max", "fit_work_eff_min", "tie_rel_max", "tie_spread",
-                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries", "tie_dofs", "methods"}   # v0.24.6
+                                                  "n_modes", "hz_jig", "hz_321", "hz_ratio", "th", "entries", "tie_dofs", "methods", "transfer", "grid"}   # v0.24.6 · v0.24.8 transfer·grid
     assert set(sc["DoeJigThOut"]["properties"]) == {"mac_min", "umax_err_max", "tie_rel_warn", "cancel_warn", "work_eff_min",
                                                          "tie_spread_min"}
     assert set(sc["DoeJigEntryOut"]["properties"]) == {"entry_id", "label", "mac", "umax_err", "mac_nomodes",

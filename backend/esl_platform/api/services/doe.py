@@ -362,6 +362,7 @@ def shape_snapshot(c: dict[str, Any]) -> dict[str, Any] | None:
 
 LT_SCHEMA = 1       # 작업 spec params.doe.load_transfer.schema(esl_load_transfer.md §4.2)
 RANK_SCHEMA_JIG = 2
+RANK_JIG_GRID_SCHEMA = 1   # 스냅샷 rank.jig_grid.schema(esl_jig_grid_map.md §6)
 RANK_SCHEMA = 1     # 작업 spec params.doe.rank.schema(esl_stiffness_metric.md §6)
 
 
@@ -375,6 +376,9 @@ def rank_snapshot(c: dict[str, Any]) -> dict[str, Any]:
     if isinstance(jig, dict) and jig.get("enabled"):      # v0.23.0 JIG-11: 지그 설정 전체 고정 + schema 2(꺼짐 = 키 없음·schema 1)
         out["jig"] = copy.deepcopy(jig)
         out["schema"] = RANK_SCHEMA_JIG
+        jg = r.get("jig_grid")                            # v0.24.8(esl_jig_grid_map.md §6·§7.1): 격자 지그 설정 블록 고정(블록 안 schema 1, rank.schema 값은 불변).
+        if isinstance(jg, dict) and jg.get("enabled"):    # 모든 시나리오에 넣고 코어가 계획(jig_kind)으로 무시 — base 모드 해시 불변
+            out["jig_grid"] = {**copy.deepcopy(jg), "schema": RANK_JIG_GRID_SCHEMA}
     # v0.24.0 보완(esl_fint.md §6.2): 평가 영역 고정(새 스냅샷 — 이 키가 있으면 코어가 umax(평가 영역)을 계산)
     out["eval_region"] = {"mode": str(r.get("eval_region", "part")), "free_edge_mm": float(r.get("eval_free_edge_mm", 10.0)),
                           "boxes": [{"lo": [float(v) for v in b["lo"]], "hi": [float(v) for v in b["hi"]]}
@@ -1844,6 +1848,8 @@ def clone(ctx: AppContext, principal: Principal, sid: str, body: dict[str, Any] 
         if new_rank != d["rank"]:
             om, nm = d["rank"].get("metric", "solve"), new_rank["metric"]
             add = ", 지그 계산 추가" if "jig" in new_rank and "jig" not in d["rank"] else ""
+            if "jig_grid" in new_rank and "jig_grid" not in d["rank"]:       # v0.24.8: ④·옛 ③ 격자 지그(같은 메시 모드는 코어가 무시)
+                add += ", 지그 격자 설정 추가"
             rank_warns.append({"code": "RANK_REFRESHED",
                                "message": f"순위 설정을 지금 설정으로 갱신했습니다(원 스터디 순위 지표 {om} → {nm}{add})"})
         d["rank"] = new_rank
@@ -1947,24 +1953,78 @@ def _file_entry(base: str, rel: str, lim: int) -> dict[str, Any] | None:
 RESULT_SORT_KEYS = ("score", "worst_ratio", "geo_mean_improvement", "n_worsened", "pareto")
 
 
-def _rank_snapshot_out(ctx: AppContext, sid: str) -> dict[str, Any] | None:
+def _rank_snapshot_raw(ctx: AppContext, sid: str) -> dict[str, Any] | None:
+    """스터디 DOE_PREP 작업의 스냅샷 doe.rank 원본(없음·옛 형식 = None)."""
     with ctx.engine.connect() as conn:
         pj = doe_repo.latest_job(conn, sid, job_type="DOE_PREP")
     snap = (((pj or {}).get("params") or {}).get("doe") or {}).get("rank")
     if not isinstance(snap, dict) or "metric" not in snap:
         return None
+    return snap
+
+
+def _rank_snapshot_out(ctx: AppContext, sid: str) -> dict[str, Any] | None:
+    snap = _rank_snapshot_raw(ctx, sid)
+    if snap is None:
+        return None
     return {k: snap.get(k) for k in ("metric", "lin_form", "lin_valid", "imbalance_warn")}
 
 
-def _plan_sm_jig(s: dict[str, Any]) -> str | None:
-    """계획 표 열 sm_jig(시나리오 이름 분기 없음 — transfer_plan.plan_for). 모르는 조합 = None."""
+def _study_plan(s: dict[str, Any]) -> dict[str, Any] | None:
+    """스터디 모드의 계획 표 행(시나리오 이름 분기 없음 — transfer_plan.plan_for). 모르는 조합 = None."""
     from ...core.opt_core import EslError, doe_transfer_plan as tp
 
     try:
         sb = (s.get("inputs") or {}).get("select_base")
-        return tp.plan_for(s["scenario"], sb if sb in ("mesh", "step") else "case")["sm_jig"]   # 코어 select_base() 와 같은 기본
+        return tp.plan_for(s["scenario"], sb if sb in ("mesh", "step") else "case")   # 코어 select_base() 와 같은 기본
     except EslError:
         return None
+
+
+def _jig_kind(plan: dict[str, Any], grid_snap: dict[str, Any] | None) -> str:
+    """esl_jig_grid_map.md §2.2: 코어 ``tp.jig_kind(plan, grid_snap)``(base | grid | none) — 백엔드도 같은 함수를 부른다.
+    코어에 아직 없으면(C1 이전) 계약 정의대로 계획 열만 읽어 같은 값을 낸다: sm_jig base = base, jig_fix grid ∧ 스냅샷 jig_grid = grid,
+    그 밖 none(옛 스냅샷·꺼짐 = none)."""
+    from ...core.opt_core import doe_transfer_plan as tp
+
+    fn = getattr(tp, "jig_kind", None)
+    if callable(fn):
+        return str(fn(plan, grid_snap))
+    if plan["sm_jig"] == "base":
+        return "base"
+    return "grid" if plan.get("jig_fix") == "grid" and grid_snap else "none"
+
+
+def _plan_sm_jig(s: dict[str, Any], grid_snap: dict[str, Any] | None = None) -> str | None:
+    """응답 jig_plan = jig_kind(plan, grid_snap)(base | grid | none). 모르는 조합 = None."""
+    plan = _study_plan(s)
+    return None if plan is None else _jig_kind(plan, grid_snap)
+
+
+_JG_HEAD = re.compile(r"^JIG_GRID_[A-Z_]+:\s*")
+_JG_TAIL = re.compile(r"\s*\([^()가-힣]*\)\s*$")
+
+
+def _jig_grid_msg(w: dict[str, Any]) -> dict[str, Any]:
+    """코어 JIG_GRID_* 경고 {code, message, …} 의 message 에서 "CODE: " 머리와 영문 "(Info: …)" 꼬리를 뺀 사본(화면 = message 우선 표시)."""
+    m = w.get("message")
+    if str(w.get("code", "")).startswith("JIG_GRID_") and isinstance(m, str):
+        return {**w, "message": _JG_TAIL.sub("", _JG_HEAD.sub("", m))}
+    return w
+
+
+def _jig_on_clone(c: dict[str, Any], s: dict[str, Any], rank_out: dict[str, Any] | None, kind: str | None) -> bool:
+    """지그 블록이 없는 결과에서 "복제하면 지그 계산" 여부(esl_jig_grid_map.md §6): 지금 규칙(계획 base) + jig_plan none ∧ 계획 jig_fix grid
+    이면 설정 rank.jig.enabled ∧ rank.jig_grid.enabled(옛 ④·옛 ③ 스냅샷 — 복제하면 새 스냅샷이 격자를 켬)."""
+    if rank_out is None:
+        return False
+    if kind == "base":
+        return True
+    plan = _study_plan(s)
+    if kind == "none" and plan is not None and plan.get("jig_fix") == "grid":
+        r = c["rank"]
+        return bool((r.get("jig") or {}).get("enabled")) and bool((r.get("jig_grid") or {}).get("enabled"))
+    return False
 
 
 def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score") -> dict[str, Any]:
@@ -2017,6 +2077,7 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
              for w in r.get("warnings") or []]
     if r.get("sensitivity") is None and r.get("sensitivity_reason") and r.get("sensitivity_reason") != "COMPARE_NO_PARAMS":
         warns.append({"code": "SENSITIVITY_TOO_FEW", "message": str(r.get("sensitivity_reason"))})
+    warns = [_jig_grid_msg(w) for w in warns]               # v0.24.8 INT: 코어 JIG_GRID_* message 의 "CODE: " 머리·영문 꼬리 제거(응답 때만)
     keep_b = ("id", "score", "umax", "epsmax") + (("shape",) if s["scenario"] == "compare" else ()) \
         + (("umax_def",) if "umax_def" in b else ())        # v0.20.0 강체 제거 umax(새 스냅샷만 — 옛 결과 키 불변)
     out = {"scenario": s["scenario"], "reference_source": r.get("reference_source"),
@@ -2059,11 +2120,21 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
                 out["rank"]["n_fallback"] = int(r["n_fallback"])
     if isinstance(r.get("C_ref_solve"), (int, float)) and not isinstance(r.get("C_ref_solve"), bool):
         out["C_ref_solve"] = float(r["C_ref_solve"])         # 재풀이 C 기준값(보조 열 score_solve 의 분모)
-    if isinstance(r.get("jig"), dict):                        # v0.23.0 지그 블록(DoeJigOut) — 코어 값 그대로(옛 결과 = 키 없음 → null)
-        out["jig"] = r["jig"]
-    else:                                                     # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가
-        out["jig_on_clone"] = out["rank"] is not None and _plan_sm_jig(s) == "base"
-    out["jig_plan"] = _plan_sm_jig(s)                         # v0.24.5 #88 후속: 계획 열 sm_jig(base | none) — 탭 사유 "이 모드는 지그 ESL 을 계산하지 않음"
+    # v0.24.8 jig_plan = tp.jig_kind(계획, 스냅샷 rank.jig_grid) — 옛 스냅샷·꺼짐 = none(기존 키 값 그대로), 격자 스냅샷 ④·옛 ③ = grid
+    snap_raw = _rank_snapshot_raw(ctx, sid)
+    gsnap = (snap_raw or {}).get("jig_grid")
+    kind = _plan_sm_jig(s, gsnap if isinstance(gsnap, dict) and (snap_raw or {}).get("jig") else None)
+    jb = r.get("jig")
+    if isinstance(jb, dict):                                  # v0.23.0 지그 블록(DoeJigOut) — 코어 값 그대로(옛 결과 = 키 없음 → null; v0.24.8 transfer·grid 도 그대로)
+        out["jig"] = jb
+    # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가(v0.24.8: 격자 포함). v0.24.8 fix(D-0.24.8-JG-21): 옛 ④·옛 ③ 결과는 코어가
+    # jig {status: unsupported} 블록을 쓰므로 블록이 있어도 unsupported 이거나 jig_plan none ∧ 계획 jig_fix grid 면 같은 규칙(계약 §6)
+    if not isinstance(jb, dict) or jb.get("status") == "unsupported" or (kind == "none" and _plan_col(s, "jig_fix") == "grid"):
+        out["jig_on_clone"] = _jig_on_clone(c, s, out["rank"], kind)
+    out["jig_plan"] = kind                                    # v0.24.5 #88 후속·v0.24.8: base | grid | none — 탭 사유 문구를 이 값으로 고름
+    if kind == "none" and out.get("jig_on_clone") is True and _plan_col(s, "jig_fix") == "grid":
+        # v0.24.8 INT 4: 옛 ④·옛 ③ 스터디(jig_plan none ∧ 복제하면 격자 지그) — 정보 안내 1줄을 응답 때만 덧붙임(DB·산출물 불변, 옛 산출물 바이트 동일)
+        out["warnings"] = [*out["warnings"], {"code": "JIG_GRID_ON_CLONE", "level": "info", "message": up_svc.doe_text("JIG_GRID_ON_CLONE")}]
     for k in ("view3d_ref", "view3d_esl", *RANK_V3D["jig"]):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}
