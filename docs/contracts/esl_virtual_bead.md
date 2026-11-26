@@ -1,6 +1,6 @@
 # 계약: 가상 비드 추가 — 평판 위 선분 + 단면 입력 → 기존 노드 법선 모핑, 깊이 = 설계 변수 (VB, v0.25.0)
 
-- 상태: 초안(2026-11-26) — 메인 설계 지침 14개를 코드 감사(§0)로 구체화. **개정 1**(같은 날 메인 결정 — 불일치 3건 확정 D-0.25.0-VB-13~15, 한쪽 범위 보정 승인 VB-16, 정확도 표·안내·툴팁 VB-17~19 — 본문 반영, §15). 구현 코드 없음 — 이 문서가 원본. 브랜치 `release/v0.25.0`(base main 6030b213 = v0.24.7). **v0.24.8(`esl_jig_grid_map.md`, origin `release/v0.24.8` 0e4264c7)·v0.24.9(`esl_bead_pos_u.md`, origin `release/v0.24.9` 6f05e34a)가 먼저 머지되므로 구현은 그 위에 재기반**(§11.2 겹침 표). 행 번호 = main 6030b213.
+- 상태: 초안(2026-11-26) — 메인 설계 지침 14개를 코드 감사(§0)로 구체화. **개정 2**(같은 날 사용자 결정 3건 — C1 측정 VB-C1-5·6·7 → D-0.25.0-VB-21~25: r 기본 = h·warp 정보화·평탄부 host·θ [15, 60] — **§19 가 원본, 본문 해당 절에 반영**). **개정 1**(같은 날 메인 결정 — 불일치 3건 확정 D-0.25.0-VB-13~15, 한쪽 범위 보정 승인 VB-16, 정확도 표·안내·툴팁 VB-17~19 — 본문 반영, §15). 구현 코드 없음 — 이 문서가 원본. 브랜치 `release/v0.25.0`(base main 6030b213 = v0.24.7). **v0.24.8(`esl_jig_grid_map.md`, origin `release/v0.24.8` 0e4264c7)·v0.24.9(`esl_bead_pos_u.md`, origin `release/v0.24.9` 6f05e34a)가 먼저 머지되므로 구현은 그 위에 재기반**(§11.2 겹침 표). 행 번호 = main 6030b213.
 - 관계: `esl_bead_select.md` BS-D-9(선형 기저 합 — 이 계약이 "꺾인 선형" 1종을 더함)·§7.3(basis.bin), `esl_beadgraph.md` BG-D-34·36·38·39, `esl_bead_shape_v021.md` SH-10~16·SH-28(range guard), `esl_bead_depth_mode.md`(계획 표 `SECTION_PLANS`·판 고정 방식), `esl_bead_pos_u.md` §1.3 공칭 0 감사(A0-1)·§2 `load_follow`. 충돌하면 `virtual_beads` 가 있는 선택 문서에서 이 문서가 우선.
 - 패키지 `beadgraph` **무변경**(분류 결과 labels·graph 만 읽음). `GRAPH_ALGO`·`bead_select.ALGO/RULES`·`PLAN_VERSION` 불변. DB migration 없음.
 - ID: 결정 `D-0.25.0-VB-n`, 시험 `V-0250-VB-n`, 후속 `R-VB-n`, 미결 `Q-VB-n`, 현장 `F-VB-n`, 불일치 `X-VB-n`(개정 1 에서 모두 결정).
@@ -123,13 +123,13 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 | p0·p1 | 모델 좌표(mm, 유한), p1 있으면 length·angle_deg 금지(둘 다 = 422 `VB_INPUT_INVALID`) | – |
 | length·angle_deg | (b) 형식: length > 0, angle_deg ∈ (−180, 180] — **ESL frame 판 평면에서 +ξ 기준 +η 쪽으로 잰 각** | – |
 | w_top | > 0 | – |
-| theta_deg | `theta_range_deg` 안 | `theta_default_deg`(45) |
+| theta_deg | `theta_range_deg`([15, 60]) 안 ∧ ≤ 스냅샷 flip_deg(§19.4) | `theta_default_deg`(45) |
 | d_max | > 0, ≤ `d_max_limit_mm` | – |
 | side | `"+"` \| `"-"`(판 법선 n_host 기준 미는 쪽) | 그래프 비드 깊이 방향 다수결(§2.3) |
 | end | `"round"` \| `"square"` | round |
-| r | 모서리 반경 ≥ 0 | 0 |
+| r | 모서리 반경 ≥ 0, ≤ r_cap(§19.1 — 넘으면 422 `VB_INPUT_INVALID` key r) · **준 값은 0 이어도 키 유지**("r 0" = 각진 모서리) | **생략 = `r_default_h_mult`·h**(요소 크기 — derive 가 정함, §19.1) |
 - 입력 형식은 받은 대로 저장(정규화가 (b)를 (a)로 바꾸지 않음 — 화면 복원). derived 에는 둘 다(`p1_resolved`).
-- 정규화: 키 정렬, 숫자 1e-4 반올림, id 정렬, 기본값 키 생략(BG-D-36 선례). **`virtual_beads` 가 없거나 빈 목록이면 키를 쓰지 않음** → 옛 선택 문서·sha·`select/<sha12>`·모든 산출물 바이트 불변.
+- 정규화: 키 정렬, 숫자 1e-4 반올림, id 정렬, 기본값 키 생략(BG-D-36 선례 — **r 은 예외: 기본이 메시에 따라 정해지므로 준 값은 그대로 남김**, §19.1). **`virtual_beads` 가 없거나 빈 목록이면 키를 쓰지 않음** → 옛 선택 문서·sha·`select/<sha12>`·모든 산출물 바이트 불변.
 - beads 개수 규칙: `len(beads) + len(virtual_beads) ≥ 1`(가상 비드만도 허용 — `bead_graph.py:582-584` 를 이렇게 바꿈, beads 만 있는 선택의 오류 문구·코드 불변).
   - 그래프 비드 0개일 때(가상 비드만): **방향 기본**(§2.3) = 그래프 비드 다수결 대상 없음 → ESL frame `n` 과 n_h 내적 부호의 반대(같은 함수의 동률 가지 — 값 결정적) · **fixed 집합**(§3.2 VB_FIXED) = fixed-scan ∪ fixed_user ∪ 지그 tie 그대로(그래프 비드와 무관한 스터디 입력 — `_sel_fixed_ids`·PU-14 함수) · **range guard**(§6) = carriers 가 A 변수만, 조합 묶음 상대 없음(단일 점검만), 준비 표 `range_guard_table` 은 지금처럼 그래프 분류 결과로 만들어지나 쓰이지 않음. 분류 결과(graph·labels)는 host 판 판정에 필수 — GRAPH_FAILED 면 VB_SCOPE(시험 V-0250-VB-19).
 - 백엔드 `SelectionInV2 += virtual_beads: list[VirtualBeadIn] = Field(default_factory=list, max_length=9)`, `VirtualBeadIn(_Req)` = 위 키(정규화·기본값은 코어). `selection_in`(`doe_select.py:404-414`) 은 `exclude_none` dump 그대로 — 빈 목록은 dump 에서 빼서 코어에 넘김(옛 sha 불변).
@@ -140,14 +140,14 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 - p0 = p1(길이 < 1e-6) → `VB_INPUT_INVALID`. 사영 거리 > `margin_mm` + 2h 인 점(판에서 먼 점을 찍음) → `VB_NOT_ON_PLATE`.
 
 ### 2.3 방향 side
-- 생략 = 선택의 그래프 비드 깊이 방향(`b.n_hat`) 중 n_h 와 내적 부호의 다수(동률·그래프 비드 없음 = ESL frame `n` 과 n_h 내적 부호의 반대 — 판에서 frame 법선 반대쪽으로 들어감; **메인 지침 "기본은 기존 비드 다수와 같은 쪽"**). derived `side_resolved`.
+- (평탄부 host 의 기본 방향은 §19.3-4 가 우선.) 생략 = 선택의 그래프 비드 깊이 방향(`b.n_hat`) 중 n_h 와 내적 부호의 다수(동률·그래프 비드 없음 = ESL frame `n` 과 n_h 내적 부호의 반대 — 판에서 frame 법선 반대쪽으로 들어감; **메인 지침 "기본은 기존 비드 다수와 같은 쪽"**). derived `side_resolved`.
 
 ## 3. 놓을 수 있는 곳 · 메시 해상도 (지침 5·6)
 
 ### 3.1 host 판 · 발자국
-- host 요소 H = `cls == floor` ∧ segments[`segment`].type == `"base"`(부모 바닥 = 뿌리 판) ∧ `junction_zone == −1` ∧ `island == −1` ∧ ¬exclude. (플래토·기존 비드 깊이면 위는 1차 범위 밖 — R-VB-7.)
+- host 요소 H = `cls == floor` ∧ segments[`segment`].type ∈ **`VB_HOST_SEG_TYPES` = ("base", "area", "plateau")**(부모 바닥 + 평탄 영역 — 개정 2, §19.3) ∧ `junction_zone == −1` ∧ `island == −1` ∧ ¬exclude ∧ `wall_islands` floor 아님. 한 가상 비드의 host = 씨앗 요소와 **같은 floor** 요소만(VB-C1-9). (골격이 있는 기존 비드의 깊이면 위는 범위 밖 — R-VB-7.)
 - 거리 d(x) = 판 평면 사영 x' 에서 선분 [p0', p1'] 까지 거리(end round), square = max(|y|, max(0, −s, s − L))(s = 선분 방향 좌표, y = 수직 좌표).
-- 이동 띠 d_move = W_top/2 + d_max·cotθ + a_r(§4.1 모서리 반경 몫), 검사 띠 d_chk = d_move + `margin_mm`.
+- 이동 띠 d_move = W_top/2 + d_max·cotθ + a_r(a_r = r·tan(θ/2), r = 해석된 r — §19.1), 검사 띠 d_chk = d_move + `margin_mm`.
 - 발자국 노드 N_fp = {d < d_move}, 검사 요소 E_chk = 노드 하나라도 d < d_chk 인 요소.
 
 ### 3.2 거부 사유 (그 가상 비드는 변수 없음 — 사유 목록 전부, 순서 고정)
@@ -157,10 +157,10 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 | VB_INPUT_INVALID | §2.1 키 오류·길이 0 — **422**(저장 거부) | – (422 문구) |
 | VB_MAX_COUNT | 개수 > `max_count` — **422** | – |
 | VB_NOT_ON_PLATE | E_chk 중 H 아닌 요소(벽·다른 바닥·lance 포함) 또는 점 사영 거리 초과 | 선이 평판 밖(벽·다른 면)에 걸침 |
-| VB_OVER_BEAD | E_chk ∋ 비-base 세그먼트·접합 구역·transition 요소 | 기존 비드와 겹침 |
+| VB_OVER_BEAD | E_chk ∋ host 종류가 아닌 세그먼트(골격 있는 비드)·접합 구역·**host 의 바깥 테두리가 아닌** transition 요소(§19.3-2) | 기존 비드와 겹침 |
 | VB_OVER_ISLAND | E_chk ∋ island·lance 요소 | 보스·섬과 겹침 |
 | VB_OVER_HOLE | E_chk 노드 ∋ 구멍 자유 모서리 노드(판 안쪽 고리) | 구멍과 겹침 |
-| VB_PLATE_EDGE | E_chk 노드 ∋ 판 외곽 자유 모서리 노드 | 판 가장자리에 닿음 |
+| VB_PLATE_EDGE | E_chk 노드 ∋ 판 외곽 자유 모서리 노드 **또는 E_chk ∋ host floor 의 바깥 테두리 transition 요소**(평탄부 가장자리 벽 — §19.3-2) | 판·평탄부 가장자리에 닿음 |
 | VB_FIXED | E_chk 노드 ∋ fixed(fixed-scan ∪ fixed_user ∪ 지그 tie — v0.24.9 PU-14 와 같은 집합 함수 재사용) | 체결부와 겹침 |
 | VB_OVER_VBEAD | 다른 가상 비드의 E_chk 와 요소 공유 | 다른 추가 비드와 겹침 |
 | VB_EXCLUDED | E_chk ∋ exclude 요소 | 제외 영역과 겹침 |
@@ -169,7 +169,7 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 - 422 는 형식 오류만(VB_INPUT_INVALID·VB_MAX_COUNT). 놓을 수 없는 곳은 저장 가능(화면에 사유) — 사용자가 고치거나 지우게.
 
 ### 3.3 메시 해상도 (지침 6)
-- h = 발자국 요소(N_fp 노드를 가진 H 요소) 변 길이 중앙값.
+- h = **r 0 발자국**(d < W_top/2 + d_max·cotθ) 요소(그 노드를 가진 H 요소) 변 길이 중앙값 — r 기본을 정하기 전에 한 번 구하고 다시 구하지 않음(§19.1).
 - n_wall = run/h(사면 폭의 요소 수), n_top = W_top/h.
 
 | 조건 | 판정 | 코드(경고, 행은 만듦) |
@@ -186,7 +186,7 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 - g_i = tanθ·Q_a(d_i − W_top/2), Q_a(t) = 0 (t ≤ −a) · (t + a)²/(4a) (|t| < a) · t (t ≥ a), a = r·tan(θ/2)·(1 + cosθ)/2 (r = 0 → a = 0, Q = max(0, t)) — 깊이면 가장자리 모서리 둥글림(D 와 무관).
 - F_c(t) = 0 (t ≤ −c) · (t + c)²/(4c) (|t| < c) · t (t ≥ c), c = r·tan(θ/2)·tanθ (r = 0 → F = max(0, t)) — 입구 모서리 둥글림(D 와 같이 움직임, t = D − g 만의 함수라 형식 유지).
 - r = 0 이면 **u(d, D) = s·n·max(0, D − g(d)), g(d) = max(0, d − W_top/2)·tanθ** — 지침 식 그대로. D ↑ → W_top·θ 그대로, 입구 W_open = W_top + 2D·cotθ.
-- 성질: D = 0 → u = 0(정확 — F_c(−g) 를 뺌), D 에 대해 단조 증가(꺾인 선형), 깊이면(d ≤ W_top/2) 노드 = s·n·(D − F_c(0)+…) ≈ s·n·D.
+- 성질: D = 0 → u = 0(정확 — F_c(−g) 를 뺌), D 에 대해 단조 증가(꺾인 선형), 깊이면(d ≤ W_top/2 − a) 노드 = s·n·(F_c(D) − c/4) — **D ≥ c 이면 D − c/4, D < c 이면 D/2 + D²/(4c)**(r > 0 이면 변수 값 D 보다 실제 깊이가 c/4 얕음 — r 기본 = h 가 되면서 늘 해당, 표시 `depth_max_mm` §19.1-6).
 - 면내 이동 0 → **하중 공간 고정 불필요**(노드 하중의 면내 위치 불변, v0.24.9 `has_pos_var` 에 넣지 않음), 지그 tie·fixed 는 발자국 밖(§3.2 VB_FIXED)이라 움직이지 않음.
 
 ### 4.2 형식 일반화 — 변수 항 1개의 평가 함수 (한 곳)
@@ -233,7 +233,7 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 
 ### 6.1 점검
 - BD_MATRIX `guard_selection`(`bead_graph.py:2248-`) carriers 에 켜진 A 변수 추가(가상 비드는 준비 표 `range_guard_table` 후보 아님 — 선택마다 생김). range guard 꺼진 스냅샷이면 `range_check` 경로(`stages.py:6857`)가 같은 morph 로 끝값 뒤집힘만 경고.
-- 단일: [0, d_max] 를 `rgm.single` 로 — 끝 d_max 판정 + 위반이면 [0, d_max] 이분(중간값 판정 = 이분 단계, `steps` 기존 값). 기준 = 기존 accept(뒤집힘·jac·tri·넓이 비·새 fail 비율) + **A 전용 warpage**: crit `warp_max_deg`(= `virtual_bead.warp_max_deg`, A 항목에만 넣음 — 그 밖 crit 키 없음 = 바이트 불변), `mesh_quality.guard_probe` 에 선택 인수 `warp_max_deg` → `warp_bad_new`(쉼 ≤ 기준 ∧ 안 > 기준 quad 수), `rgm.accept` 에 reason `"warp"`(키 있을 때만).
+- 단일: [0, d_max] 를 `rgm.single` 로 — 끝 d_max 판정 + 위반이면 [0, d_max] 이분(중간값 판정 = 이분 단계, `steps` 기존 값). 기준 = 기존 accept(뒤집힘·jac·tri·넓이 비·새 fail 비율) **만**. **warpage 는 판정에서 뺌(개정 2, §19.2)**: A 항목 crit 에 `warp_max_deg` 를 넣지 않고(= 모든 항목 crit 이 문서 머리와 같음), usable 끝에서 `mesh_quality.guard_probe(…, warp_max_deg=)`(선택 인수 — 그대로) 로 `warp_bad_new`·`warp_max` 를 **재서 정보 `VB_WARP_INFO` 로만** 싣는다. `rgm.accept` 의 reason `"warp"` 가지는 crit 키가 없어 어느 항목에서도 타지 않음(코드 남겨도 됨).
 - 조합: 같은 비드 안 변수 1개라 자체 조합 없음. **기존 그래프 비드 변수(D·DF·W·W1·U)의 띠·영향 요소가 A 지지 요소와 겹치면** `rgm.interacting(supports)` 가 자동 묶음(기존 코드 그대로 — supports 에 A 지지 요소만 넣으면 됨). 정보 `VB_BAND_OVERLAP{vbead, vars}`(겹침 있을 때).
 
 ### 6.2 한쪽 범위 보정
@@ -251,15 +251,16 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 | min_wall_elems | 2.0 | 1..10 | 안 |
 | margin_mm | 3.0 | 0..50 | 안 |
 | theta_default_deg | 45.0 | theta_range 안 | 안 |
-| theta_range_deg | [15.0, 75.0] | 1..89 | 안 |
+| theta_range_deg | **[15.0, 60.0]** | 1..89 ∧ **상한 ≤ `select.quality.flip_deg`**(§19.4 — 어기면 `CONFIG_INVALID`) | 안 |
+| **r_default_h_mult** | **1.0** | 0..4 | 안 |
 | d_max_limit_mm | 30.0 | (0, 200] | 밖(422) |
 | default_on | true | bool | 밖 |
-| warp_max_deg | 15.0 | (0, 90) | 안 |
+| warp_max_deg | 15.0 | (0, 90) | 안 — **판정 기준이 아니라 정보 `VB_WARP_INFO` 의 세는 기준**(§19.2, 이름 유지) |
 | preview_max_nodes | 50000 | 1000..10⁶ | 밖 |
 
 ### 7.2 스냅샷
-- 새 select 그래프 스터디(설정 enabled)만 `doe.virtual_bead{schema: 1, min_wall_elems, margin_mm, theta_default_deg, theta_range_deg, warp_max_deg}`(해시 안 키 사본). 복제 = 원 블록 그대로(없던 스터디에 주입 안 함 — v0.24.7 §6.1·v0.24.9 §3 원칙).
-- `_sel_cfg_sha`(`stages.py:7009-7025`) += `virtual_bead` 해시 보기 — **선택 문서에 virtual_beads 가 있을 때만**. 기저 재사용 조건 += `bj.get("vb_rules") == VB_RULES`(키 있을 때만), `VB_RULES = 1`(`virtual_bead.py` 상수 — 수치 바뀌면 +1).
+- 새 select 그래프 스터디(설정 enabled)만 `doe.virtual_bead{schema: 1, min_wall_elems, margin_mm, theta_default_deg, theta_range_deg, warp_max_deg, r_default_h_mult}`(해시 안 키 사본 — `r_default_h_mult` 없는 블록 = 0.0, §19.1-7). 복제 = 원 블록 그대로(없던 스터디에 주입 안 함 — v0.24.7 §6.1·v0.24.9 §3 원칙).
+- `_sel_cfg_sha`(`stages.py:7009-7025`) += `virtual_bead` 해시 보기 — **선택 문서에 virtual_beads 가 있을 때만**. 기저 재사용 조건 += `bj.get("vb_rules") == VB_RULES`(키 있을 때만), **`VB_RULES = 2`**(`virtual_bead.py` 상수 — 수치 바뀌면 +1; 개정 2 에서 1 → 2).
 - basis.json += `virtual_beads[{id, n_fp, h, n_wall, n_top, stretch_max, side, reasons}]`·`vb_rules`(가상 비드 있을 때만).
 
 ### 7.3 하위 호환 (지침 13)
@@ -305,7 +306,7 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 | C1 코어 | opus | `esl/morph/virtual_bead.py`(신규), `esl/morph/core.py`(`basis_term`), `esl/morph/section.py`(열 form·vb_host, 행 virtual, `vb_allowed`), `esl/morph/range_guard.py`(blocked 한쪽), `esl/doe/bead_select.py`(morph·fixed_violation_detail·save/load_basis·basis_bin·basis_meta), `esl/doe/bead_graph.py`(normalize_v2 키·개수, derive·`virtual_beads` 블록·V 행·`param_beads` kind virtual·basis_v2 V 항목·_Prober hinge·guard carriers·SH-28 보정), `esl/doe/matrix.py`(V 범위 규칙 행·default_params·썸네일 색), `esl/doe/mesh_quality.py`(guard_probe warp — 선택 인수), `esl/doe/transfer_plan.py`(열 vbead), `esl/doe/stages.py`(_sel_cfg_sha·재사용 조건·basis.json 키·VB_VERIFY_HINT), `esl/doe/__init__.py`(DEFAULTS·`PARAM_TYPES += "A"`), `resources/doe_messages.json`(VB_* · `VB_LIST_TIP`), `resources/vbead_accuracy.json`(정확도 표 — V-0250-VB-11 측정값), `tests/morph/test_virtual_bead*.py`·`tests/doe/test_vbead*.py`·`tests/doe/synth_vbead.py`, 골든 `tests/doe/golden_v0250_c1/` |
 | B1 백엔드 | sonnet | `backend/esl_platform/core/config.py`(BeadDoeVirtualBeadCfg), yaml 2, `api/schemas.py`(VirtualBeadIn·SelectionInV2·derive 출력·settings), `api/services/doe_select.py`(selection_in·derive 인수·캐시 키), `api/services/doe.py`(스냅샷 블록·복제 보존·settings), openapi, `backend/tests/test_doe_v0250_*.py`(코어 e2e 1개 포함) |
 | F1 프런트 | sonnet | `frontend/src/api/types.ts`·`api/doe.ts`(rowProblem A 행·defaultRows·TYPE 라벨), `view3d/select/basis.ts`(hinge), `components/BeadList.tsx`(추가 비드 절)·신규 `components/VirtualBeadPanel.tsx`, `components/BeadSelectCard.tsx`(GraphTool "vb"·찍기·overlay·`MorphStage` 추출), `components/DoeParamTable.tsx`(kind virtual 가지), `pages/doe/DoeStudy.tsx`(계획 칩), `mock/*.ts`, `__tests__/vbead*.test.ts(x)`, Playwright |
-- 순서: C1 이 `virtual_bead.py` 시그니처·basis 형식(§4.2)·코드 표 첫 커밋 → B1·F1 병렬 → 통합(메인: CHANGELOG·user.md "추가 비드" 절(정확도 표 "얼마나 믿을 수 있나" 포함)·계약 §19 구현 메모(정확도 표)·admin 설정·`docs/manual/field_check_v0250.md`) → 독립 Verifier(옛 바이트·정확도 표 V-0250-VB-11 독립 재현).
+- 순서: C1 이 `virtual_bead.py` 시그니처·basis 형식(§4.2)·코드 표 첫 커밋 → B1·F1 병렬 → 통합(메인: CHANGELOG·user.md "추가 비드" 절(정확도 표 "얼마나 믿을 수 있나" 포함)·계약 §20 구현 메모(정확도 표)·admin 설정·`docs/manual/field_check_v0250.md`) → 독립 Verifier(옛 바이트·정확도 표 V-0250-VB-11 독립 재현).
 
 ### 11.2 v0.24.8 · v0.24.9 와 겹치는 파일 (두 버전 머지 뒤 재기반)
 | 파일 | v0.24.8 | v0.24.9 | v0.25.0 | 접점 |
@@ -331,14 +332,14 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 6. 계획 표: 새 열·행 모든 칸(빈 칸 CONFIG_INVALID), `vb_allowed` 진리표(5 계획 × 5 행), paicad same(case_once) = 불가, 호출 쪽 시나리오 이름 분기 0(정적).
 7. basis 형식: hinge 없는 basis.npz·basis.bin·basis.json 바이트 = main, hinge 있음 → npz 키 form·g·c, bin 꼬리, 왕복(save→load) 같음, 브라우저 `parseBasis` 길이 검사(꼬리 빠짐·남음 = 오류).
 8. 브라우저 = 워커: 같은 values 로 `basis.ts morph` 와 `bead_select.morph` 차 ≤ 1e-4 mm(float32, V-BS-12 기준), derive preview 로 만든 BasisVar 결과 = basis.bin 결과(같은 선택).
-9. range guard: 합성 평판에 좁은 W_top·가파른 θ(75°) 가상 비드 → d_max 끝 위반 → usable_hi < d_max·`RG_RANGE_LIMITED`(blocked 아님 — SH-28 보정), usable_hi = 0 → blocked, warp 기준 키는 A 항목에만(다른 항목 crit 바이트 = main), **기존 D·W·U 범위 판정 표 바이트 = 골든**(준비 range_guard.json·선택 range_guard.json·params guard — H5·H6·synth, v0.24.9 U 스터디 포함; 한쪽 보정이 양쪽 범위에 영향 없음), W 띠가 A 지지와 겹치면 조합 묶음·`VB_BAND_OVERLAP`.
+9. range guard(**개정 2: θ 75° 는 입력 불가 — 위반 세계는 V-0250-VB-21 의 것으로 바꿈, warp 문장은 §19.2 로 대체**): 합성 평판에 끝 위반이 나는 가상 비드 → d_max 끝 위반 → usable_hi < d_max·`RG_RANGE_LIMITED`(blocked 아님 — SH-28 보정), usable_hi = 0 → blocked, A 항목 crit 키 없음(모든 항목 crit = 문서 머리 — §19.2), **기존 D·W·U 범위 판정 표 바이트 = 골든**(준비 range_guard.json·선택 range_guard.json·params guard — H5·H6·synth, v0.24.9 U 스터디 포함; 한쪽 보정이 양쪽 범위에 영향 없음), W 띠가 A 지지와 겹치면 조합 묶음·`VB_BAND_OVERLAP`.
 10. 기본 켬·범위 규칙: A 행 use_default true → default_params 에 포함(`default_types [D, W]` 그대로), lo < 0 → 422 문구, lo = 0 통과, `_POSITIVE` 경로 불변, U 규칙(v0.24.9)과 같은 표.
-11. **정확도(지침 12 — 사용자 신뢰 기준, D-0.25.0-VB-17)**: 합성 평판 400×300·t 1.0·E 210 GPa(합성 `synth_vbead` — 정렬 quad, gmsh 없음, 결정적), 비드 L 200·W_top 20. (A) **실제 메시 비드** = 사면 각·깊이면 폭·깊이가 같은 **사다리꼴 단면, 모서리 반경 0**(노드 행이 깊이면 가장자리·입구 선에 정확히 놓인 구조 격자 — 요소 경계 = 모서리), (B) **가상 비드** = 같은 h 균일 평판 격자 + 힌지 모핑(r 0). 두 모형 **같은 하중(균일 압력 1·집중 하중 1)·같은 지지**에서 컴플라이언스 C(solve)와 지그 Π(v0.24.4 `METHODS` 강제 변위 prescribed·스프링 spring 둘 다)를 비교. 표 = h 5·3·1.5 mm × D 3·6 mm × θ 45·60° (12칸 × 지표 3) — C_B/C_A − 1·Π_B/Π_A − 1(%)·wall_elems. **h 3 에서 |차| ≤ 5 %(초안 — 측정 후 확정)**, h 1.5 차 ≤ h 3 차(수렴 방향), run < h 칸은 VB_MESH_COARSE 로 표에 "불가" 표기·run < 2h 칸은 VB_WALL_COARSE 표기. 표는 `tests/doe/vbead_accuracy.md`(시험이 대조)·`resources/vbead_accuracy.json`(화면 툴팁 자료)·**계약 구현 메모(§19 — 구현 때 추가)·사용자 매뉴얼 `docs/manual/user.md` "추가 비드 — 얼마나 믿을 수 있나" 절**에 같은 값으로 싣는다(사용자가 모핑 비드 신뢰도를 이 표로 판단).
-12. **비정렬 실제 모형 H6**(v0.24.7 교훈 — 기본 범위 끝까지 독립 측정): H6 평탄부(부모 바닥 판)에 가상 비드 2개(ξ 방향 1·30° 1, W_top 15·θ 45°·d_max 5)를 놓아 ok 확인 → D = d_max·0.5·d_max 에서 뒤집힘 0, 품질 위반 수(jac < jac_min·tri < 기준·warp > 기준 새 요소 수) 기록, range guard usable 기록(blocked 아님), 허용 구역(발자국) 밖 이동 ≤ 1e-12. 위반이 있으면 시험은 완화하지 않고 측정값을 계약 §15 에 적어 메인 결정.
+11. **정확도(지침 12 — 사용자 신뢰 기준, D-0.25.0-VB-17)**: 합성 평판 400×300·t 1.0·E 210 GPa(합성 `synth_vbead` — 정렬 quad, gmsh 없음, 결정적), 비드 L 200·W_top 20. (A) **실제 메시 비드** = 사면 각·깊이면 폭·깊이가 같은 **사다리꼴 단면, 모서리 반경 0**(노드 행이 깊이면 가장자리·입구 선에 정확히 놓인 구조 격자 — 요소 경계 = 모서리), (B) **가상 비드** = 같은 h 균일 평판 격자 + 힌지 모핑(r 0). 두 모형 **같은 하중(균일 압력 1·집중 하중 1)·같은 지지**에서 컴플라이언스 C(solve)와 지그 Π(v0.24.4 `METHODS` 강제 변위 prescribed·스프링 spring 둘 다)를 비교. 표 = h 5·3·1.5 mm × D 3·6 mm × θ 45·60° (12칸 × 지표 3) — C_B/C_A − 1·Π_B/Π_A − 1(%)·wall_elems. **h 3 에서 |차| ≤ 5 %(초안 — 측정 후 확정)**, h 1.5 차 ≤ h 3 차(수렴 방향), run < h 칸은 VB_MESH_COARSE 로 표에 "불가" 표기·run < 2h 칸은 VB_WALL_COARSE 표기. 표는 `tests/doe/vbead_accuracy.md`(시험이 대조)·`resources/vbead_accuracy.json`(화면 툴팁 자료)·**계약 구현 메모(§20 — 구현 때 추가)·사용자 매뉴얼 `docs/manual/user.md` "추가 비드 — 얼마나 믿을 수 있나" 절**에 같은 값으로 싣는다(사용자가 모핑 비드 신뢰도를 이 표로 판단).
+12. (**개정 2: 평탄부 = plateau host 로 실제 derive — V-0250-VB-23 이 대체, 측정 기록 work/vbead_h6.md 는 r 0·warp 판정 시절 값으로 보존**) **비정렬 실제 모형 H6**(v0.24.7 교훈 — 기본 범위 끝까지 독립 측정): H6 평탄부(부모 바닥 판)에 가상 비드 2개(ξ 방향 1·30° 1, W_top 15·θ 45°·d_max 5)를 놓아 ok 확인 → D = d_max·0.5·d_max 에서 뒤집힘 0, 품질 위반 수(jac < jac_min·tri < 기준·warp > 기준 새 요소 수) 기록, range guard usable 기록(blocked 아님), 허용 구역(발자국) 밖 이동 ≤ 1e-12. 위반이 있으면 시험은 완화하지 않고 측정값을 계약 §15 에 적어 메인 결정.
 13. 결과 경로 e2e: 합성 그래프 스터디(그래프 비드 1 + 가상 비드 1 켬) → BD_MATRIX → 미리보기 grid → BD_EVAL → BD_POST → API: 변수 행·순위·민감도(V1_D 행)·보고서·view3d(design.npz 좌표 = morph 결과)·재낙하 zip(바뀐 노드 = 발자국 노드만, max_disp = d_max 안 값) 정상, d000 = 가상 비드 없는 같은 스터디 d000 결과와 같음(공칭 0 = 지금 형상).
 14. 하위 호환(지침 13): 구현 직전 main 헤드 골든(sel_regress·selreg ①②③, v0.24.6 그래프 스터디, v0.24.9 U 스터디, ④ regress) — virtual_beads 없는 선택·블록 있는 새 스냅샷 + 가상 비드 0 두 경우 §7.3 파일 전부·input_sha256·`_sel_cfg_sha`·derive 응답 동일.
 15. 하중: A 변수 있는 스터디 `load_follow_effective` = node(v0.24.9), lin 보조 열 null 아님, 지그 tie 노드 변위 0.
-16. 설정 거울: DEFAULTS = pydantic = yaml 2(10키), 범위 검사, 해시 안 키만 `_sel_cfg_sha`(virtual_beads 있을 때만), 복제 = 원 블록.
+16. 설정 거울: DEFAULTS = pydantic = yaml 2(**11키** — 개정 2 `r_default_h_mult`), 범위 검사, 해시 안 키만 `_sel_cfg_sha`(virtual_beads 있을 때만), 복제 = 원 블록.
 17. API·화면: 422 2종, derive `virtual_beads`·`vb_frame`·preview(상한 넘으면 생략 + 정보), 두 점 찍기(mock pickElem)·좌표 칸 자동 채움·각도 ξ 기준 왕복(±1e-3°), [비드 추가]·[삭제]·사유 배지·슬라이더 미리보기 변위 = §4.1, `SelectDesign3D` DOM 스냅숏 불변(`MorphStage` 추출 뒤), 변수 표 kind virtual 가지·라벨·거부 1줄, 2560·1920 가로 스크롤 없음·접힘 상태 scrollHeight ±0, mock.
 18. 비용: 합성 120×80(9,801 노드) 가상 비드 1·4개 — derive 추가 시간·BD_MATRIX 기저 추가 시간·guard 추가 평가 수·안 1개 morph 추가 시간·basis.npz 크기 증가 기록, 목표 = §13 추정 이내.
 19. **가상 비드만 있는 선택**(그래프 비드 0, D-0.25.0-VB-15): 합성 평판(분류 결과 있음·fixed 노드·지그 tie 있음)에 A1 1개 → 정규화 통과·sha, side 생략 = frame n 반대쪽(결정적), fixed·tie 노드에 겹치게 놓으면 VB_FIXED, range guard 단일 점검 실행(조합 0)·usable 기록, BD_MATRIX → BD_EVAL d000·d001 정상, GRAPH_FAILED 스터디 = VB_SCOPE, beads 0 + virtual 0 = 기존 SELECT_EMPTY_TIER 그대로.
@@ -354,7 +355,7 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 
 ## 14. 미결 (결과를 바꾸는 것만 — 기본 가정으로 진행)
 - **Q-VB-1 메시 해상도 거부 기준** — 기본: run < 1·h 거부, 1·h ≤ run < 2·h 경고(VB_WALL_COARSE). 대안: run < 2·h 거부(정확도 기준 V-0250-VB-11 측정 결과로 다시 정함).
-- **Q-VB-2 host 범위** — 기본: 부모 바닥(뿌리 판, segment type base)만. 대안: 기존 비드 깊이면·플래토 위에도 허용(비드 안 비드 — 그 비드 D·DF 기저와 겹침 조합 필수).
+- **Q-VB-2 host 범위** — **결정(개정 2, D-0.25.0-VB-23): 부모 바닥 + 평탄 영역(area·plateau)**. 골격 있는 기존 비드의 깊이면 위는 계속 범위 밖(R-VB-7).
 - **Q-VB-3 방향 기본** — 기본: 그래프 비드 다수 쪽(없으면 frame n 반대). 대안: 항상 사용자가 고름(기본 없음 — 입력 1칸 필수).
 
 ## 15. 불일치 — 메인 결정 완료 (2026-11-26, 본문 반영)
@@ -363,7 +364,7 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 - **X-VB-3 → D-0.25.0-VB-15**: 선택 필수 조건 = `beads + virtual_beads ≥ 1`(가상 비드만 있는 스터디 허용, §2.1 — 그래프 비드 0개일 때 방향 기본·fixed·range guard 동작 명시, 시험 V-0250-VB-19).
 - 승인(D-0.25.0-VB-16): SH-28·`range_guard.blocked` = "폭 > 0 인 쪽만 판정"(§6.2), 기존 D·W·U 표 바이트 불변을 시험으로 고정(V-0250-VB-9). Q-VB-1~3 기본 가정 그대로.
 
-## 16. 결정 요약 — 전문 `docs/decisions.md` 2026-11-26 D-0.25.0-VB-1~12(초안)·VB-13~19(개정 1).
+## 16. 결정 요약 — 전문 `docs/decisions.md` 2026-11-26 D-0.25.0-VB-1~12(초안)·VB-13~20(개정 1)·**VB-21~25(개정 2 — §19)**.
 
 ## 17. 후속 (R-VB-n)
 - R-VB-1 위치·각도·길이 연속 변수(안마다 발자국·g 재계산 — 기저 고정 불가, 안 평가 비용 + 발자국 검사 안마다).
@@ -372,10 +373,117 @@ virtual_beads: [{id, name?, p0:[x,y,z], p1:[x,y,z]            # (a) 두 점
 - R-VB-4 기존 비드와 교차·접합(부분 겹침 허용, 접합 구역 규칙).
 - R-VB-5 폭 W_top 변수(g 가 W 에 따라 바뀜 — 2변수 힌지 항).
 - R-VB-6 선택(요소)·paicad·④ 에서의 추가 비드(④ 는 형상 자체가 입력 — 문서화만).
-- R-VB-7 플래토·기존 비드 깊이면 위 host(Q-VB-2 대안).
+- R-VB-7 골격 있는 기존 비드의 깊이면 위 host(비드 안 비드). 평탄 영역(area·plateau) 몫은 개정 2 에서 이번 버전으로 옮김(§19.3).
 - R-VB-8 가상 비드 대칭 묶기.
 
 ## 18. 현장 확인 (F-VB-n — `docs/manual/field_check_v0250.md` 는 통합 때)
 - F-VB-1 #88 모델 평탄부(부모 바닥)에 후보 비드 2~3개(하중 경로를 가로·나란히·대각): derive 사유·경고(n_wall·n_top·h), 화면 두 점 찍기·좌표 입력 왕복.
 - F-VB-2 그 스터디 실행: A<n>_A 민감도(SRC·ρ)·순위, 미리보기 3D 로 입구 넓어짐·깊이면 폭 유지 눈 확인, range guard usable.
 - F-VB-3 가장 유리한 후보 1개를 실제 형상(④ 형상 직접 비교 또는 재낙하)으로 확인 — 가상 비드 안 대비 C·Π·재낙하 소성 변형률 순서 일치 여부(정확도 표 V-0250-VB-11 과 대조).
+
+## 19. C1 보정 — 사용자 결정 11-26 (개정 2, D-0.25.0-VB-21~25)
+
+C1 측정(work/findings.md VB-C1-5·6·7, work/vbead_h6.md)에 대한 사용자 결정 3건을 구현 가능한 수준으로 적는다. **본문과 다르면 이 절이 우선**. 코드 기준 = release/v0.25.0 7dfc71d6. 이 절로 바뀌는 수치 규칙은 `VB_RULES 1 → 2`(가상 비드가 있는 선택의 기저만 다시 만듦 — 가상 비드 없는 선택은 §7.3 그대로 바이트 불변). v0.25.0 은 출시 전이라 `VB_RULES 1` 산출물을 가진 운영 스터디는 없다.
+
+### 사용자 결정 원문 (변경 금지)
+1. VB-C1-5: 모서리 둥글기 r 기본 = h(대상 메시 요소 크기; 사용자 입력 r 이 있으면 그 값). 근거(사용자 확인): 낙하 메시는 h 미만 r 을 표현 못 하므로 r = h 가 직접 메시한 비드의 단순화 수준. 가상 비드(A) 항목의 warp 는 range guard 에서 막지 않고 정보로만; 뒤집힘·jac·tri 위반은 계속 막음. 기존 D/W/U 판정·결과 바이트 불변.
+2. VB-C1-6: 평탄 영역(plateau, floor kind area)도 host 로 허용(Q-VB-2 대안 채택, R-VB-7 을 이번 버전으로). H6 넓은 평탄부·#88 유사 모형에 놓을 수 있어야 함.
+3. VB-C1-7: θ 입력 범위 [15, 60]°, select.quality.flip_deg 와의 관계를 설정 검증 규칙으로 명시.
+
+### 19.1 r 기본 = 요소 크기 (D-0.25.0-VB-21)
+1. **설정 키** `bead_doe.virtual_bead.r_default_h_mult` — 기본 **1.0**, 범위 [0, 4], 해시 안(`HASH_KEYS` += 이 키, 스냅샷 블록에 복사). 0 = 기본 r 0(개정 1 동작). 4곳 같은 이름(§7.1).
+2. **h 의 정의(하나로 확정)**: h = **r 0 발자국** {d < W_top/2 + d_max·cotθ} 의 노드를 가진 host 요소의 **변 길이 중앙값**(`virtual_bead.edge_median` — 지금 §3.3 의 h 와 같은 함수·같은 값). r 을 정한 뒤 넓어진 발자국으로 h 를 다시 구하지 않는다(한 번 — 결정적). §3.3 해상도 판정·`wall_elems`·`acc_hint` 의 h 도 이 값.
+   - 결정 근거: 중앙값은 지금 코드가 이미 쓰는 대표 크기이고, 되풀이 계산을 없애면 같은 입력 → 같은 r.
+3. **해석 순서**(derive·basis 같은 함수): ① r 0 발자국 → h ② r 생략이면 `r = round(min(r_default_h_mult·h, r_cap), 1e-4)`, 준 값이면 그 값(0 포함) ③ 그 r 로 발자국(d_move = W_top/2 + d_max·cotθ + r·tan(θ/2))·검사 띠·host 검사·장(`field`) 계산. h 가 없으면(발자국 요소 없음) 지금처럼 `VB_NOT_ON_PLATE`.
+4. **기하 유효 조건** `virtual_bead.r_cap(w_top, theta_deg, d_max)` = min(r₁, r₂):
+   - r₁ = W_top / sinθ — 깊이면 양쪽 둥글림이 가운데서 만나지 않음(2a ≤ W_top, a = r·sinθ/2 — §4.1 의 a 와 같은 값).
+   - r₂ = d_max·cotθ / (sinθ/2 + tan(θ/2)) — d_max 에서 깊이면 쪽 둥글림(폭 a)과 입구 쪽 둥글림(폭 r·tan(θ/2))이 사면에서 겹치지 않음(직선 사면 길이 ≥ 0). 이 조건이면 c = r·tan(θ/2)·tanθ ≤ d_max 도 성립.
+   - **준 r > r_cap + 1e-4 → 422 `VB_INPUT_INVALID`**(detail `{vbead, key: "r", r_max}` — 입력만으로 판정되므로 정규화에서). 기본 r 은 거부하지 않고 r_cap 으로 줄임 + 정보 `VB_R_CLAMPED{r, r_h}`(r_h = r_default_h_mult·h). 참고: §3.2 `VB_MESH_COARSE`(run ≥ h, W_top ≥ h)를 통과한 비드는 θ ≤ 45° 에서 줄임이 일어나지 않고, θ 60°·run ≈ h 에서만 약 1 % 줄어든다.
+   - 결정 근거: 조건을 넘는 r 은 지정한 W_top·θ 가 단면에 나타나지 않는다(이름과 다른 형상) — 조용히 받는 것보다 막는 편이 변수 의미를 지킨다.
+5. **정규화**: r 은 "기본값 키 생략" 대상에서 뺀다 — 준 값은 0 이어도 키를 남긴다(`"r": 0.0` = 각진 모서리, 키 없음 = 요소 크기 기본). 그래서 r 없는 문서와 r 0 문서는 sha 가 다르다.
+6. **실제 깊이 표시**: r > 0 이면 비드 가운데 실제 깊이 = F_c(D) − F_c(0) (D ≥ c 에서 D − c/4). derive·변수 행에 `depth_max_mm` = F_c(d_max) − F_c(0)(1e-4 반올림)을 싣는다. 예: h 3·θ 45° → c 1.243, 깊이 차 0.31 mm; h 3·θ 60° → c 3.0, 차 0.75 mm. 변수 값·범위·이름은 그대로 D(식 변경 없음 — 사용자 질문 1).
+7. **호환**:
+   - 가상 비드 없는 선택(옛·새 스터디): 변화 없음(§7.3).
+   - `r_default_h_mult` 없는 스냅샷 블록(개정 2 전 개발 중에 만든 스터디): **0.0 으로 읽음**(없던 규칙을 주입하지 않는 원칙 — 복제도 원 블록 그대로). 새 스터디만 설정값 복사.
+   - 개정 2 전 문서의 가상 비드는 r 0 이 정규화에서 빠져 있었다 → 다시 읽으면 "기본"으로 해석된다(블록 키가 없으면 0.0 이라 결과 같음, 새 블록이면 r = h). 출시 전이라 이행 처리 없음.
+   - 옛 A 없는 스터디(`doe.virtual_bead` 블록 없음) = 지금처럼 `VB_SCOPE`.
+
+### 19.2 warp 는 정보로만 (D-0.25.0-VB-22)
+1. **판정에서 제외**: A 항목 range guard 의 state(ok | limited | blocked)·usable·`RG_RANGE_LIMITED`·`RG_VAR_BLOCKED`·SH-28(`side_stuck`)·조합 묶음(`interacting` 꼭짓점 판정) 모두 **기존 accept 기준만**으로 정한다 — 뒤집힘(flip_deg)·jac_min·tria 각·넓이 비·새 fail 비율(D·W·U 와 같은 crit, 같은 함수). A 전용으로 더했던 `crit.warp_max_deg` 는 싣지 않는다(선택 `range_guard.json` A 항목에 `crit` 키 없음). 기존 accept 안에 이미 들어 있는 품질 항목은 건드리지 않는다(D·W·U 표 바이트 불변 — V-0250-VB-9 골든 그대로).
+2. **측정**: A 항목마다 **usable 상한**(막힘이면 d_max)에서 그 변수만 움직인 형상의 `guard_probe(…, warp_max_deg=블록 warp_max_deg)` → `warp_bad_new`(공칭 ≤ 기준 ∧ 안 > 기준인 quad 수)·`warp_max`(°). 이미 평가한 점이면 그 값을 쓰고 아니면 평가 1회 추가(비용 V-0250-VB-18 다시 기록).
+3. **자료**: 선택 `range_guard.json` A 항목 += `warp{limit_deg, n, max_deg, at}`(늘 있음 — n 0 가능), params A 행 `guard.warp` = 같은 값(+ API 가 n > 0 일 때 `text`). range guard 꺼진 스냅샷(`range_check` 경로)은 키 없음.
+4. **정보 코드** `VB_WARP_INFO{n, max, d}`(level info — 경고·실패 아님, 기본 켬·범위에 영향 없음). `resources/doe_messages.json` 문구:
+   - `"VB_WARP_INFO": "깊이 {d} mm 에서 뒤틀린 사각 요소 {n} 개(최대 {max}°) — 꺾인 모서리가 요소를 비스듬히 지나서 생김. 범위는 줄이지 않음"`
+   - `"VB_R_CLAMPED": "모서리 둥글기를 {r} mm 로 줄임(요소 크기 {r_h} mm 는 이 단면에 들어가지 않음)"`
+   - `"VB_PLATE_EDGE": "판·평탄부 가장자리에 닿음"`(문구만 바뀜 — §19.3)
+   - `"VB_THETA_FLIP": "추가 비드 사면 각 상한({theta_hi}°)이 뒤집힘 기준 select.quality.flip_deg({flip}°)보다 큼"`(§19.4)
+5. **화면(F1)**: 변수 표 A 행의 guard 꼬리표(`ShapeTags`) 옆 **회색 정보 꼬리표 "뒤틀림 {n}"**(n > 0 일 때만, 툴팁 = `guard.warp.text`). 색·아이콘은 정보 단계(경고 색 금지), 새 줄 없음. 추가 비드 목록(선택 화면)에는 없음 — derive 는 range guard 를 돌리지 않는다. B1 은 `guard.warp` 를 그대로 전달 + text 동봉.
+6. **정확도 표와의 관계**: warp 는 요소 모양 지표이고, 강성 결과를 얼마나 믿을지는 정확도 표(§19.5)가 답한다. 정확도 표 칸에 같은 방법으로 잰 `warp_n`·`warp_max_deg` 를 함께 싣어 "뒤틀림이 이 정도일 때 오차 몇 %"를 한 표에서 본다. 행 툴팁의 예상 오차(`acc_hint`)는 그대로.
+7. `warp_max_deg` 설정 키는 이름·기본(15)·해시 안 그대로 — 뜻만 "세는 기준".
+   - 결정 근거: 키 이름을 바꾸면 4곳 거울·스냅샷·B1 이 함께 바뀐다. 뜻은 이 절과 §7.1 표에 적는다.
+
+### 19.3 평탄 영역 host (D-0.25.0-VB-23)
+1. **host 종류**: `virtual_bead.VB_HOST_SEG_TYPES = ("base", "area", "plateau")`(상수 한 곳 — 호출 쪽 문자열 비교 금지). host 요소 = `cls == floor` ∧ 세그먼트 종류 ∈ 이 표 ∧ `junction_zone < 0` ∧ `island < 0` ∧ ¬exclude ∧ **`wall_islands()` 가 고른 floor 아님**(벽에 먹힌 보스 — `VB_OVER_ISLAND` 로 셈). 골격이 있는 비드(세그먼트 종류 없음 = 채널 비드)의 깊이면은 host 아님(`VB_OVER_BEAD` — R-VB-7). 계획 표(`vb_host`·`vbead`)는 값·판정 그대로.
+   - **놓이는 면**: 평탄 영역의 floor 라벨 요소 = 부모 바닥에서 들어간(또는 올라온) **평탄면 자체**(벽·transition 제외). 평면 (p_h, n_h) 는 지금처럼 그 floor 요소의 국부 최소제곱(§2.2 — 씨앗과 같은 floor 만).
+2. **가장자리**: host floor f 의 **바깥 테두리 transition** = graph `transitions[]` 중 `child == f` 인 것(f 와 그 부모 floor 사이 벽). 검사 띠 E_chk 가
+   - 바깥 테두리 transition 요소를 포함 → **`VB_PLATE_EDGE`**(평탄부 가장자리 벽에 닿음). 이때 그 벽 너머 부모 floor 요소는 `VB_NOT_ON_PLATE` 로 세지 않는다(같은 원인 — VB-C1-1 "설명되지 않는 것만" 원칙).
+   - 그 밖 transition 요소(f 위의 자식 비드 벽, 접합) → `VB_OVER_BEAD`(지금과 같음).
+   - transition 라벨이 없는 벽·다른 floor → `VB_NOT_ON_PLATE`(지금과 같음).
+   - host = base 는 `child == root` transition 이 없으므로 결과가 개정 1 과 같다(판 외곽 자유 모서리 = `VB_PLATE_EDGE` 그대로).
+3. **거리 규칙**(새 설정 없음 — 모두 검사 띠 d_chk = d_move + `margin_mm` 한 가지): 가장자리 벽·이웃 비드·섬·구멍·체결부(fixed-scan ∪ fixed_user ∪ 지그 tie)·제외 영역·다른 추가 비드까지 **발자국 끝에서 margin_mm(기본 3) 이상**. 평탄부 위의 구멍 = `VB_OVER_HOLE`, 평탄부 위 체결부 = `VB_FIXED`(base 와 같은 마스크). 사유 순서(`REASONS`)·"전부 목록" 그대로.
+   - 결정 근거: host 종류마다 다른 여유를 두면 계획 표 열이 늘어난다. 벽 발치는 transition 라벨이 이미 덮는다.
+4. **방향(어느 쪽으로 눌리나)**: n_h = host 평면 법선(그래프 frame n0 쪽으로 맞춤 — VB-C1-2), side "+" = n_h 쪽. **생략 기본**: host 가 평탄 영역이면 **그 평탄부가 부모 바닥에서 들어간 방향과 같은 쪽**(= sign(floors[f].level − floors[parent(f)].level) 을 n0 기준으로 — 더 깊어지는 쪽), level 차가 0 이면 §2.3 다수결. host = base 는 §2.3 그대로.
+   - 결정 근거: 평탄부 평면을 기준으로 하면 기존 비드 바닥이 양쪽에 섞여 다수결이 뜻을 잃는다. "기존 형상과 같은 쪽"이라는 메인 지침의 최소 해석(사용자 질문 2).
+5. **기존 기저와 겹침**: 평탄 영역이 선택된 그래프 비드(D 변수 — area floor 는 D 만)이면 발자국 노드는 그 D 기저의 지지 안에 있다.
+   - 좌표 = 항의 합(§4.2 `basis_term` — 순서 무관): 평탄부가 D 로 움직인 위에 추가 비드가 얹힌다. A 의 g·방향은 공칭 형상 기준 고정.
+   - range guard: `rgm.interacting(supports)` 가 A 와 그 D(및 띠가 닿는 이웃 변수)를 **항상 조합 묶음**으로 점검(기존 코드 — supports 에 A 지지 요소만 넣으면 됨), 정보 `VB_BAND_OVERLAP{vbead, vars}`.
+   - 평탄부를 선택하지 않았으면(변수 없음) 단일 점검만.
+   - 고정 침범·바깥 이동(BG-D-34)은 변수별 idx 기준 그대로.
+6. **load_follow · U**: A 는 면내 이동 0 → host 종류와 무관하게 `has_pos_var` 아님(node 하중 유효). 평탄 영역은 U 불가(`U_AREA`)라 host 자신의 U 는 없다. 이웃 비드의 U 띠가 발자국과 겹치면 ⑤ 와 같은 조합 점검 + `VB_BAND_OVERLAP` — 그 스터디는 U 때문에 이미 spatial 이고, 추가 비드 노드는 U 만큼 면내로 함께 움직인다(g 는 노드에 붙은 값 — 허용, 막지 않음).
+7. basis.json `virtual_beads[]`·derive `virtual_beads[]`·변수 행 `vb` += `host: "base" | "area" | "plateau"`·`host_floor`(floor id).
+
+### 19.4 θ 범위 · 설정 검증 (D-0.25.0-VB-24)
+1. `theta_range_deg` 기본 **[15.0, 60.0]**.
+2. **설정 검증 규칙**(설정을 읽을 때 — 코어 `esl.doe` 설정 로더와 backend pydantic 모델 검증 둘 다, 같은 식): `1 ≤ lo < hi ≤ 89`, `theta_default_deg ∈ [lo, hi]`, **`theta_range_deg[1] ≤ select.quality.flip_deg`**(같아도 통과). 어기면 **`CONFIG_INVALID`**, 문구 = `VB_THETA_FLIP`(§19.2-4), detail `{key: "bead_doe.virtual_bead.theta_range_deg", theta_hi, flip_deg}`.
+   - 결정 근거: 사면 요소는 θ 만큼 법선이 돈다 → θ > flip_deg 이면 늘 "뒤집힘"으로 막힌다(VB-C1-7 측정). 새 오류 코드 대신 기존 `CONFIG_INVALID` + 전용 문구(설정 오류 코드는 하나라는 지금 관례).
+3. **스냅샷 쪽**(설정이 바뀐 뒤의 옛 블록 대비): 가상 비드 θ 의 유효 상한 = min(블록 `theta_range_deg[1]`, 그 스냅샷의 flip_deg — `_crit` 가 읽는 값). 넘는 `theta_deg` → 422 `VB_INPUT_INVALID`(key theta_deg).
+4. **경계 θ = flip_deg**: 뒤집힘 판정은 `cos(각) < cos(flip_deg)`(`mesh_quality.inverted_count`)라 정확히 같은 각에서 부동소수 오차로 걸릴 수 있다 → 장 계산에 쓰는 각만 **θ_f = min(θ, flip_deg − `VB_FLIP_EPS_DEG`)**, `VB_FLIP_EPS_DEG = 0.01`(`virtual_bead.py` 상수, VB_RULES 에 포함). 표시·저장·발자국의 θ 는 입력값. `mesh_quality` 판정식은 바꾸지 않는다(D·W·U 바이트 불변).
+5. `GET /doe/settings` `virtual_bead.theta_range_deg` 는 설정값 그대로(화면 칸 min·max).
+
+### 19.5 정확도 표 다시 재기 (D-0.25.0-VB-25)
+1. **결정: 다시 잰다.** 기본 동작이 r = h 로 바뀌어 지금 표(r 0)는 사용자가 실제로 돌리는 형상의 오차가 아니다.
+2. 비교: (A) 그대로 — 모서리 정렬 실제 메시 사다리꼴(모서리 반경 0, 같은 W_top·θ·D) = "그 요소 크기로 직접 메시한 비드". (B) 균일 격자 + 힌지 모핑 **r 생략(기본 = min(h, r_cap))**. h → 0 이면 r → 0 이라 (A) 로 수렴해야 한다.
+3. 칸: h 5·3·1.5 × D 3·6 × θ 45·60°(12칸 — 그대로), 지표 C 압력·C 집중·Π 강제 변위·Π 스프링 + **추가 열 `r`(해석된 값)·`depth_mm`(§19.1-6)·`warp_n`·`warp_max_deg`(§19.2-6)**.
+4. 기준(그대로, 완화 금지): h 3 에서 |차| ≤ 5 %, h 1.5 최대 |차| ≤ h 3 최대 |차|, run < h 칸 "불가". 넘으면 시험을 고치지 않고 측정값을 findings 에 적어 메인 결정(r > 0 은 실제 깊이가 c/4 얕아 강성이 낮게 나오는 쪽 — 지금 r 0 표는 높게 나오는 쪽이라 부호가 바뀔 수 있음).
+5. 파일: `resources/vbead_accuracy.json` schema `esl/vbead_accuracy/2` — `cells`(r 기본) + **`cells_r0`(지금 값 그대로 보존 — 다시 계산하지 않음)** + `world.r_mm: "default"`. `tests/doe/vbead_accuracy.md` 는 두 표. `acc_hint` 고르기: r 생략 → `cells`, 준 r 0 → `cells_r0`, 그 밖의 준 r → 해석된 r 이 가장 가까운 칸 r 의 1/1.25..1.25 배 안일 때만 `cells`, 아니면 null("측정 범위 밖").
+6. 실행 계획: h 1.5 네 칸은 칸당 약 135 s·메모리 약 3.9 GB(전체 약 12 분) — **다른 무거운 작업·전체 pytest 와 동시에 돌리지 않는다**, pytest 는 h 5·3 칸만 다시 계산해 대조(지금과 같음).
+
+### 19.6 시험 추가 (V-0250-VB-20~28)
+20. **r 기본**: 합성 h 5·3·1.5 — r 생략 → `r_resolved` = min(mult·h, r_cap) ± 1e-4, h = r 0 발자국 중앙값(발자국 다시 잡은 뒤에도 같은 값), 발자국 d_move 에 r·tan(θ/2) 포함. 준 r 0 → 키 유지·각진 장(§4.1 r 0 식 ± 1e-12)·sha 가 r 없는 문서와 다름. 준 r > r_cap → 422(key r, r_max), r = r_cap 통과. θ 60·run = h → `VB_R_CLAMPED`. `r_default_h_mult` 0 또는 블록에 키 없음 → r 0 과 같은 장. D = 0 → 0 정확, `depth_max_mm` = F_c(d_max) − F_c(0).
+21. **r = h 일 때 guard · warp 정보**: 합성 h 5·W 10·θ 45·d_max 6(VB-C1-5 세계) r 생략 → state·usable **측정값 기록**(warp 로 막히지 않음 — 뒤집힘·jac·tri 새 위반 0 이면 ok·usable = d_max), A 항목에 `crit` 없음·`warp{limit_deg, n, max_deg, at}` 있음. 같은 세계 준 r 0 → warp n > 0 이어도 state 가 warp 로 줄지 않음 + `guard.warp.text`. **뒤집힘은 계속 막음**: flip_deg 30 인 스냅샷에 θ 30 근처 가파른 단면(또는 좁은 W_top) → limited/blocked reason inverted. 기존 D·W·U 표 바이트 = 골든(V-0250-VB-9 그대로).
+22. **평탄 영역 host(합성)**: 부모 바닥 + 평탄부(벽 있음) + 평탄부 위 자식 채널 비드 + 평탄부 위 구멍·fixed — 평탄부 가운데 = ok(`host: "plateau"`), 가장자리 벽에 닿음 = `VB_PLATE_EDGE` **만**, 자식 비드에 닿음 = `VB_OVER_BEAD` 만, 구멍 = `VB_OVER_HOLE`, fixed = `VB_FIXED`, margin 경계(± 0.1) 판정 뒤집힘, 방향 기본 = 평탄부가 들어간 쪽(level 부호 양쪽 세계 각 1), `wall_islands` floor = `VB_OVER_ISLAND`. 평탄부를 D 변수로 선택 → 좌표 = D 항 + A 항(개별 합 ± 1e-12), 조합 묶음 1개·`VB_BAND_OVERLAP`, tie 노드 변위 0. 채널 비드 깊이면 위 = `VB_OVER_BEAD`(R-VB-7 유지).
+23. **H6 평탄부(실제 derive — host 덮어쓰기 없이)**: (125, 300) ξ L 120 계약 단면(W_top 15·θ 45·d_max 5, r 생략)·(250, 300) **30°** L 100 같은 단면·같은 자리 **θ 60**(W_top 15·d_max 5) — 셋 다 derive ok·`host` 값 기록, D = d_max·0.5 d_max 에서 뒤집힘 0·jac·tri 새 위반 0, 발자국 밖 이동 ≤ 1e-12, range guard state **blocked 아님**(usable·warp n·max 기록). 위반이 있으면 완화하지 않고 측정값을 findings 에 적어 메인 결정. 기록 = work/vbead_h6.md 에 새 표(옛 표 보존).
+24. **띠(base host) 회귀**: H6 위 띠 y 654 x 400→600 = derive ok(사유·경고 코드 개정 1 과 같음 — `VB_WALL_COARSE`), 위 띠 30° = `VB_PLATE_EDGE`, V-0250-VB-3 합성 세계의 사유 코드 전부 개정 1 과 같음(host = base 는 §19.3 으로 코드가 바뀌지 않음). r 생략으로 바뀌는 수치(n_fp·usable)는 새로 기록.
+25. **설정 검증**: `theta_range_deg` 상한 61 ∧ flip_deg 60 → `CONFIG_INVALID`(문구 VB_THETA_FLIP, detail 키), 상한 60 통과, flip_deg 를 50 으로 내리면 기본 [15, 60] 이 `CONFIG_INVALID`, default 가 범위 밖 = `CONFIG_INVALID` — 코어·pydantic 같은 결과, yaml 2 기본값 통과. 블록 상한 75 인 옛 스냅샷 + θ 70 → 422 key theta_deg. **경계**: 정렬 평판·θ 60·준 r 0·run ≥ 3h → 사면 요소 뒤집힘 0(θ_f = 59.99°).
+26. **골든 유지**: `tests/doe/golden_v0250_c1/`(c35b8ac1) 다시 기록 금지 — 가상 비드 없는 선택·블록 있는 새 스냅샷 + 가상 비드 0 이 §7.3 파일 전부 바이트 동일(블록에 `r_default_h_mult` 가 늘어도 가상 비드 없으면 `_sel_cfg_sha` 불변). `VB_RULES 2` 는 가상 비드 있는 basis.json 에만.
+27. **정확도 다시 재기**(§19.5): 새 `cells` 12칸 + `cells_r0` = f238144d 값과 같음, md = json, h 3 ≤ 5 %·수렴 방향, `acc_hint` 세 갈래(r 생략·r 0·그 밖).
+28. **B1·F1**: 설정 거울 11키·settings 응답, derive·params 새 키(§19.7) 전달, r 칸 비움 = 키 없음·0 입력 = `"r": 0`, 정보 꼬리표 "뒤틀림 n"(n 0 이면 없음), 목록 행 host·r 표시, θ 칸 min·max = 설정, 2560·1920 가로 스크롤 없음.
+
+### 19.7 B1 · F1 인터페이스 변화 요약
+| 곳 | 변화 |
+|---|---|
+| 설정(4곳 거울) | `theta_range_deg` 기본 [15, 60] · 새 키 `r_default_h_mult` 1.0(0..4) · 검증 `theta_range_deg[1] ≤ select.quality.flip_deg`(`CONFIG_INVALID`) · `warp_max_deg` 뜻 = 정보 기준 |
+| 스냅샷 `doe.virtual_bead` | += `r_default_h_mult`(없으면 0.0), schema 1 그대로, 복제 = 원 블록 |
+| `GET /doe/settings` `virtual_bead` | += `r_default_h_mult` |
+| 선택 문서 | `r`: 준 값은 0 도 키 유지(생략 = 기본) · 준 r > r_cap → 422 `VB_INPUT_INVALID{key r, r_max}` · θ > min(범위 상한, flip_deg) → 422. B1 `VirtualBeadIn.r: float \| None`(None 은 dump 에서 빠짐, 0 은 남김) |
+| derive `virtual_beads[]` | += `r_resolved`·`r_source`("default" \| "user")·`depth_max_mm`·`host`·`host_floor`, warnings += `VB_R_CLAMPED`(info). preview `g`·`c` 는 해석된 r 기준 |
+| params A 행 | `vb` += `r`·`r_source`·`depth_max_mm`·`host` · `guard.warp{limit_deg, n, max_deg, at, text?}` · `acc_hint` 고르기 §19.5-5 |
+| 선택 `range_guard.json` | A 항목 `crit` 없어짐, `warp{…}` 추가(D·W·U 항목 불변) |
+| basis.json | `vb_rules` 2, `virtual_beads[]` += `r`·`host` |
+| 문구 `doe_messages.json` | 새 `VB_WARP_INFO`·`VB_R_CLAMPED`·`VB_THETA_FLIP`, 바뀜 `VB_PLATE_EDGE` |
+| 화면(F1) | r 칸: 비움 = 기본, 자리 표시 "요소 크기", 목록 행에 `r 3.0(기본)`·평탄부 host 면 "평탄부" · 3D 찍기의 "평판 위를 찍으세요" 판정에 평탄 영역 포함 · 변수 표 A 행 회색 정보 꼬리표 "뒤틀림 n" · 행 툴팁에 "실제 깊이 최대 {depth_max_mm} mm" 한 구절 추가 · θ 칸 범위 15~60 |
+| `resources/vbead_accuracy.json` | schema 2 — `cells`(r 기본)·`cells_r0`(보존) |
+
+### 19.8 사용자 질문 (가정으로 진행)
+1. r > 0 이면 변수 값 D 보다 실제 깊이가 c/4 얕다(h 3 기준 θ 45° 0.31 mm, θ 60° 0.75 mm). **가정: 식은 그대로 두고 `depth_max_mm` 로 표시만.** 변수 값 = 실제 깊이가 되게 식을 고치는 것은 정확도 표(§19.5) 결과를 보고 정한다.
+2. 평탄부 위 추가 비드의 기본 방향. **가정: 평탄부가 들어간 쪽으로 더 깊게**(§19.3-4). 반대(부모 바닥 쪽으로 되돌아옴)를 기본으로 원하면 한 줄 규칙만 바뀐다.
