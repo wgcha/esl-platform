@@ -79,23 +79,31 @@ def real_bead(h, D, theta, w_top=W_TOP, line=LINE, size=PLATE) -> dict:
     return m
 
 
-def virtual(h, D, theta, w_top=W_TOP, line=LINE, size=PLATE, end="square") -> tuple[dict, dict]:
-    """(B) 균일 격자 + 힌지 모핑(코어 ``virtual_bead`` 식). 반환 (모핑 메시, field)."""
+def virtual(h, D, theta, w_top=W_TOP, line=LINE, size=PLATE, end="square", r=None):
+    """(B) 균일 격자 + 힌지 모핑(코어 ``virtual_bead`` 식 — 개정 2·3: r 생략 = min(r_default_h_mult·h, r_cap), h = r 0 발자국 요소 변
+    길이 중앙값, θ_f = min(θ, flip_deg − ε), 깊이 보상 e(D)). 반환 (모핑 메시, field, r, 공칭 메시)."""
+    from esl.doe import DEFAULTS
     from esl.morph import virtual_bead as vbm
     m = uniform(h, size)
     X = m["x0"]
+    C, et = m["conn"], m["elem_type"]
     p0 = np.array([line[0][0], line[0][1], 0.0])
     p1 = np.array([line[1][0], line[1][1], 0.0])
     nh = np.array([0.0, 0.0, 1.0])
     q0, q1, t, L = vbm.resolve_line(p0, p1, None, None, None, (p0, nh))
-    fp = vbm.footprint(X, (q0, q1, t, L, nh), w_top, theta, D, end, 0.0, 0.0)
+    th = vbm.theta_field(theta, DEFAULTS["select"]["quality"]["flip_deg"])
+    if r is None:
+        fp0 = vbm.footprint(X, (q0, q1, t, L, nh), w_top, th, D, end, 0.0, 0.0)
+        hm = vbm.edge_median(X, C, et, vbm.chk_elems(C, et, fp0["move_mask"]))
+        r = round(min(float(DEFAULTS["virtual_bead"]["r_default_h_mult"]) * hm, vbm.r_cap(w_top, th, D)), 4)
+    fp = vbm.footprint(X, (q0, q1, t, L, nh), w_top, th, D, end, r, 0.0)
     idx = np.flatnonzero(fp["move_mask"])
-    nrm = vbm.node_normals(X, m["conn"], m["elem_type"], np.ones(m["conn"].shape[0], bool), nh)[idx]
-    fd = vbm.field(fp["d"][idx], nrm, -1, w_top, theta, 0.0, idx=idx)
+    nrm = vbm.node_normals(X, C, et, np.ones(C.shape[0], bool), nh)[idx]
+    fd = vbm.field(fp["d"][idx], nrm, -1, w_top, th, r, idx=idx)
     out = dict(m)
     out["x0"] = X.copy()
     out["x0"][idx] += vbm.displacement(fd, D)
-    return out, fd
+    return out, fd, float(r), m
 
 
 # ---------------------------------------------------------------- 풀이
@@ -176,18 +184,28 @@ METRICS = ("C_p", "C_f", "Pi_prescribed", "Pi_spring")
 MIN_WALL = 2.0                                    # = DEFAULTS virtual_bead.min_wall_elems(표 판정 — 값은 설정에서 읽어 대조)
 
 
-def cell(h, D, theta, min_wall=MIN_WALL) -> dict:
-    """한 칸: 해상도 판정(``virtual_bead.resolution``) + (불가 아니면) A·B 지표와 차(%)."""
+def cell(h, D, theta, min_wall=MIN_WALL, r=None) -> dict:
+    """한 칸: 해상도 판정(``virtual_bead.resolution``) + (불가 아니면) A·B 지표와 차(%) + r(해석된 값)·warp_n·warp_max_deg(B 를 D 에서
+    ``guard_probe(warp_max_deg = 설정)`` — §19.2-6). r None = 기본(min(h, r_cap)), 0 = 각진 모서리(cells_r0)."""
+    from esl.doe import DEFAULTS
+    from esl.doe import mesh_quality as mq
     from esl.morph import virtual_bead as vbm
     rs = vbm.resolution(h, W_TOP, theta, D, min_wall)
     out = {"h": h, "d": D, "theta": theta, "wall_elems": round(rs["n_wall"], 3),
            "status": "VB_MESH_COARSE" if rs["codes"] else ("VB_WALL_COARSE" if any(
                w["code"] == "VB_WALL_COARSE" for w in rs["warns"]) else "ok")}
     if rs["codes"]:
-        out.update({f"{k}_err_pct": None for k in METRICS}, c_err_pct=None, pi_err_pct=None)
+        out.update({f"{k}_err_pct": None for k in METRICS}, c_err_pct=None, pi_err_pct=None, r=None, warp_n=None,
+                   warp_max_deg=None)
         return out
     a = metrics(real_bead(h, D, theta))
-    b = metrics(virtual(h, D, theta)[0])
+    mb, _fd, rr, m0 = virtual(h, D, theta, r=r)
+    X0, X1 = m0["x0"], mb["x0"]
+    am = np.flatnonzero(np.linalg.norm(X1 - X0, axis=1)[m0["conn"]].max(axis=1) > 1e-9)
+    pr = mq.guard_probe(X0, X1, m0["conn"], m0["elem_type"], am, flip_deg=DEFAULTS["select"]["quality"]["flip_deg"],
+                        jac_min=None, tria_angle_min_deg=None, warp_max_deg=DEFAULTS["virtual_bead"]["warp_max_deg"])
+    out.update(r=rr, warp_n=int(pr["warp_bad_new"]), warp_max_deg=round(float(pr["warp_max"] or 0.0), 2))
+    b = metrics(mb)
     for k in METRICS:
         out[f"{k}_err_pct"] = round((b[k] / a[k] - 1.0) * 100.0, 3)
     out["c_err_pct"] = max((out["C_p_err_pct"], out["C_f_err_pct"]), key=abs)
@@ -195,166 +213,64 @@ def cell(h, D, theta, min_wall=MIN_WALL) -> dict:
     return out
 
 
-def table(cells=None) -> dict:
+def table(cells=None, cells_r0=None) -> dict:
+    """schema 2(§19.5): cells = r 기본(min(h, r_cap)) 재측정, cells_r0 = 옛 r 0 값 그대로(다시 계산하지 않음 — 인수로 받음)."""
     import itertools
     keys = cells or list(itertools.product(GRID["h"], GRID["d"], GRID["theta"]))
-    return {"schema": "esl/vbead_accuracy/1",
+    return {"schema": "esl/vbead_accuracy/2",
             "world": {"plate_mm": list(PLATE), "t_mm": T, "E_mpa": E, "nu": NU, "line": [list(p) for p in LINE],
-                      "w_top_mm": W_TOP, "end": "square", "r_mm": 0.0, "side": "-",
+                      "w_top_mm": W_TOP, "end": "square", "r_mm": "default", "side": "-",
                       "loads": ["uniform pressure 1 MPa (-z)", "point 1 N at (200,150) (-z)"],
                       "support": "4 edges z + in-plane 3-2-1", "jig": "8 ties translation, target g_z = 0.2·x/400·y/300, "
                       "load = pressure 1, methods prescribed·spring(alpha 1)"},
-            "metric": "B/A - 1 (%) — A = 모서리 정렬 실제 메시 사다리꼴, B = 균일 격자 + 힌지 모핑; c = max|C_p, C_f|, "
-                      "pi = max|Π prescribed, Π spring|",
-            "cells": [cell(h, d, th) for h, d, th in keys]}
+            "metric": "B/A - 1 (%) — A = 모서리 정렬 실제 메시 사다리꼴(r 0), B = 균일 격자 + 힌지 모핑(cells: r 기본 = min(h, r_cap), "
+                      "깊이 보상 — D = 실제 깊이; cells_r0: r 0); c = max|C_p, C_f|, pi = max|Π prescribed, Π spring|",
+            "cells": [cell(h, d, th) for h, d, th in keys],
+            "cells_r0": list(cells_r0 or [])}
+
+
+def _md_rows(cells, extra: bool) -> list:
+    st = {"ok": "–", "VB_WALL_COARSE": "VB_WALL_COARSE", "VB_MESH_COARSE": "불가(VB_MESH_COARSE)"}
+    out = []
+    for c in cells:
+        head = f"| {c['h']:g} | {c['d']:g} | {c['theta']:g} | {c['wall_elems']:.2f} | {st[c['status']]} |"
+        if extra:
+            head += " – | – | – |" if c.get("r") is None else f" {c['r']:.4f} | {c['warp_n']} | {c['warp_max_deg']:.2f} |"
+        if c["c_err_pct"] is None:
+            out.append(head + " 불가 | 불가 | 불가 | 불가 |")
+        else:
+            out.append(head + "".join(f" {c[k]:+.3f} |" for k in ("C_p_err_pct", "C_f_err_pct", "Pi_prescribed_err_pct",
+                                                                   "Pi_spring_err_pct")))
+    return out
 
 
 def table_md(doc: dict) -> str:
-    """tests/doe/vbead_accuracy.md 본문(같은 값 — 시험이 대조)."""
-    st = {"ok": "–", "VB_WALL_COARSE": "VB_WALL_COARSE", "VB_MESH_COARSE": "불가(VB_MESH_COARSE)"}
-    lines = ["# 가상 비드 정확도 표 (V-0250-VB-11, D-0.25.0-VB-17)", "",
+    """tests/doe/vbead_accuracy.md 본문(두 표 — 같은 값, 시험이 대조)."""
+    lines = ["# 가상 비드 정확도 표 (V-0250-VB-11·27, D-0.25.0-VB-17·25·26)", "",
              "생성: `python tests/doe/synth_vbead.py OUT.json` → resources/vbead_accuracy.json(같은 값). 차 = B/A − 1 (%),",
-             "A = 모서리 정렬 실제 메시 사다리꼴 비드, B = 균일 격자(같은 h) + 힌지 모핑. 세계: " +
+             "A = 모서리 정렬 실제 메시 사다리꼴 비드(r 0), B = 균일 격자(같은 h) + 힌지 모핑. D = 실제 깊이(개정 3 보상). 세계: " +
              json.dumps(doc["world"], ensure_ascii=False), "",
-             "| h mm | D mm | θ ° | 사면 요소 n_wall | 상태 | C 압력 % | C 집중 % | Π 강제 변위 % | Π 스프링 % |",
-             "|---|---|---|---|---|---|---|---|---|"]
-    for c in doc["cells"]:
-        head = f"| {c['h']:g} | {c['d']:g} | {c['theta']:g} | {c['wall_elems']:.2f} | {st[c['status']]} |"
-        if c["c_err_pct"] is None:
-            lines.append(head + " 불가 | 불가 | 불가 | 불가 |")
-        else:
-            lines.append(head + "".join(f" {c[k]:+.3f} |" for k in ("C_p_err_pct", "C_f_err_pct", "Pi_prescribed_err_pct",
-                                                                      "Pi_spring_err_pct")))
+             "## r 기본(= min(h, r_cap)) — cells", "",
+             "| h mm | D mm | θ ° | 사면 요소 n_wall | 상태 | r mm | 뒤틀림 n | 뒤틀림 최대 ° | C 압력 % | C 집중 % | Π 강제 변위 % "
+             "| Π 스프링 % |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines += _md_rows(doc["cells"], True)
+    lines += ["", "## r 0(각진 모서리, f238144d 값 보존) — cells_r0", "",
+              "| h mm | D mm | θ ° | 사면 요소 n_wall | 상태 | C 압력 % | C 집중 % | Π 강제 변위 % | Π 스프링 % |",
+              "|---|---|---|---|---|---|---|---|---|"]
+    lines += _md_rows(doc.get("cells_r0") or [], False)
     return "\n".join(lines) + "\n"
 
 
-if __name__ == "__main__":                       # 표 생성(느림 — h 1.5 칸): python tests/doe/synth_vbead.py OUT.json
-    import json
+if __name__ == "__main__":                       # 표 생성(느림 — h 1.5 칸): python tests/doe/synth_vbead.py OUT.json [OLD_R0.json]
     import sys
-    doc = table()
+    old = None
+    if len(sys.argv) > 2:
+        with open(sys.argv[2], encoding="utf-8") as fh:
+            o = json.load(fh)
+        old = o.get("cells_r0") if o.get("schema") == "esl/vbead_accuracy/2" else o.get("cells")
+    doc = table(cells_r0=old)
     with open(sys.argv[1], "w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False, indent=1)
         fh.write("\n")
     for c in doc["cells"]:
         print(c, flush=True)
-
-
-# ---------------------------------------------------------------- 그래프 세계(derive·guard·e2e 시험)
-GW_SIZE = (300.0, 200.0)
-GW_CHANNEL = ((60.0, 60.0), (240.0, 60.0))        # 실제 채널 비드(−z, D 6·θ 45·W_top 20 → 입구 폭 32)
-GW_HOLE = (240.0, 150.0, 10.0)                    # 구멍 중심·반폭(요소 제거) — 둘레 노드 = fixed-scan
-
-
-def graph_mesh(h: float = 5.0, channel: bool = True, hole: bool = True) -> dict:
-    """평판 300×200(정렬 quad) + 채널 비드(실제 메시) + 사각 구멍 → esl mesh dict(노드 압축)."""
-    m = real_bead(h, 6.0, 45.0, line=GW_CHANNEL, size=GW_SIZE) if channel else uniform(h, GW_SIZE)
-    if hole:
-        X, C = m["x0"], m["conn"]
-        cen = X[C].mean(axis=1)
-        cx, cy, r = GW_HOLE
-        keep = ~((np.abs(cen[:, 0] - cx) < r) & (np.abs(cen[:, 1] - cy) < r))
-        C = C[keep]
-        used = np.unique(C.ravel())
-        remap = np.full(X.shape[0], -1)
-        remap[used] = np.arange(used.size)
-        n, e = used.size, int(keep.sum())
-        m = {"node_id": np.arange(1, n + 1, dtype=np.int64), "x0": X[used], "elem_id": np.arange(1, e + 1, dtype=np.int64),
-             "elem_type": np.full(e, 4, np.int8), "conn": remap[C], "elem_pid": np.ones(e, np.int64),
-             "elem_mid": np.ones(e, np.int64), "thickness": np.full(e, T), "E": np.full(e, E), "nu": np.full(e, NU)}
-    return m
-
-
-def hole_rim_ids(m) -> np.ndarray:
-    """구멍 둘레 노드 ID(fixed-scan 대역)."""
-    cx, cy, r = GW_HOLE
-    X, C = m["x0"], m["conn"]
-    E = np.sort(np.concatenate([C[:, [0, 1]], C[:, [1, 2]], C[:, [2, 3]], C[:, [3, 0]]]), axis=1)
-    u, cnt = np.unique(E, axis=0, return_counts=True)
-    free = np.unique(u[cnt == 1].ravel())
-    near = (np.abs(X[free, 0] - cx) <= 2 * r) & (np.abs(X[free, 1] - cy) <= 2 * r)
-    return m["node_id"][free[near]]
-
-
-def graph_world(h: float = 5.0, channel: bool = True, hole: bool = True, fixed: bool = True):
-    """(mesh, graph, labels, fixed node ids, prep dir) — ``bead_graph.prep_graph`` 분류."""
-    import tempfile
-
-    from esl.doe import bead_graph as bgr
-    from esl.doe import settings
-    cfg = settings({"bead_doe": {"enabled": True}})
-    m = graph_mesh(h, channel, hole)
-    fx = tuple(int(i) for i in hole_rim_ids(m)) if (hole and fixed) else ()
-    d = tempfile.mkdtemp(prefix="vb_gw_")
-    st = bgr.prep_graph(m, list(fx), cfg, d)
-    assert st["ok"], st
-    g, lab = bgr.load_graph(d)
-    return m, g, lab, fx, d
-
-
-def frame_of(n=(0.0, 0.0, 1.0)) -> dict:
-    return {"origin": [0.0, 0.0, 0.0], "e_xi": [1.0, 0.0, 0.0], "e_eta": [0.0, 1.0 if n[2] > 0 else -1.0, 0.0],
-            "n": list(n), "L_xi": GW_SIZE[0], "L_eta": GW_SIZE[1]}
-
-
-# ---------------------------------------------------------------- 평탄부 세계(§19.3 — V-0250-VB-22·32)
-PW_SIZE = (300.0, 220.0)
-PW_RECT = (50.0, 250.0, 40.0, 180.0)              # 평탄부 윗면 사각(x0, x1, y0, y1)
-PW_CHILD = ((80.0, 70.0), (220.0, 70.0))          # 평탄부 위 자식 채널(W_top 10·D 3·θ 45)
-PW_HOLE = (200.0, 140.0, 6.0)
-
-
-def plateau_mesh(h: float = 4.0, level: float = 4.0, child: bool = True, hole: bool = True) -> dict:
-    """부모 바닥(z 0) + 평탄부(z = level, 45° 벽 — level < 0 이면 들어간 평탄부) + 평탄부 위 자식 채널 + 평탄부 위 구멍.
-    모서리 선(벽 위·아래, 자식 채널 깊이면·입구)에 노드 행이 놓인 정렬 격자."""
-    x0, x1, y0, y1 = PW_RECT
-    run = abs(level)
-    (cx0, cy), (cx1, _c) = PW_CHILD
-    cw, cd = 10.0, 3.0
-    bx = sorted({0.0, PW_SIZE[0], x0 - run, x0, x1, x1 + run, cx0 - cw / 2 - cd, cx0 - cw / 2, cx1 + cw / 2,
-                 cx1 + cw / 2 + cd})
-    by = sorted({0.0, PW_SIZE[1], y0 - run, y0, y1, y1 + run, cy - cw / 2 - cd, cy - cw / 2, cy + cw / 2, cy + cw / 2 + cd})
-    m = _grid(_axis(bx, h, 0.5 * PW_SIZE[0]), _axis(by, h, cy))
-    X = m["x0"]
-    inside = np.minimum.reduce([X[:, 0] - x0, x1 - X[:, 0], X[:, 1] - y0, y1 - X[:, 1]])
-    z = np.sign(level) * np.clip(run + inside, 0.0, run)
-    if child:
-        z = z - np.sign(level) * depth_z(X[:, 0], X[:, 1], cd, 45.0, cw, PW_CHILD)
-    X[:, 2] = z
-    if hole:
-        hx, hy, r = PW_HOLE
-        C = m["conn"]
-        cen = X[C].mean(axis=1)
-        keep = ~((np.abs(cen[:, 0] - hx) < r) & (np.abs(cen[:, 1] - hy) < r))
-        C = C[keep]
-        used = np.unique(C.ravel())
-        remap = np.full(X.shape[0], -1)
-        remap[used] = np.arange(used.size)
-        n, e = used.size, int(keep.sum())
-        m = {"node_id": np.arange(1, n + 1, dtype=np.int64), "x0": X[used], "elem_id": np.arange(1, e + 1, dtype=np.int64),
-             "elem_type": np.full(e, 4, np.int8), "conn": remap[C], "elem_pid": np.ones(e, np.int64),
-             "elem_mid": np.ones(e, np.int64), "thickness": np.full(e, T), "E": np.full(e, E), "nu": np.full(e, NU)}
-    return m
-
-
-def plateau_world(h: float = 4.0, level: float = 4.0, child: bool = True, hole: bool = True):
-    """(mesh, graph, labels, fixed ids(구멍 둘레), prep dir)."""
-    import tempfile
-
-    from esl.doe import bead_graph as bgr
-    from esl.doe import settings
-    cfg = settings({"bead_doe": {"enabled": True}})
-    m = plateau_mesh(h, level, child, hole)
-    fx = ()
-    if hole:
-        hx, hy, r = PW_HOLE
-        X, C = m["x0"], m["conn"]
-        E = np.sort(np.concatenate([C[:, [0, 1]], C[:, [1, 2]], C[:, [2, 3]], C[:, [3, 0]]]), axis=1)
-        u, cnt = np.unique(E, axis=0, return_counts=True)
-        free = np.unique(u[cnt == 1].ravel())
-        near = (np.abs(X[free, 0] - hx) <= 2 * r) & (np.abs(X[free, 1] - hy) <= 2 * r)
-        fx = tuple(int(i) for i in m["node_id"][free[near]])
-    d = tempfile.mkdtemp(prefix="vb_pw_")
-    st = bgr.prep_graph(m, list(fx), cfg, d)
-    assert st["ok"], st
-    g, lab = bgr.load_graph(d)
-    return m, g, lab, fx, d

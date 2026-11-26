@@ -43,6 +43,31 @@ PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_250_bt -o tmp_p
 - 정확도 표 resources/vbead_accuracy.json(schema esl/vbead_accuracy/1, cells[{h, d, theta, wall_elems, status, *_err_pct, c_err_pct,
   pi_err_pct}]) — tests/doe/vbead_accuracy.md 같은 값.
 
+## 개정 2·3 계약면 변화(dd3c3ada §19 — D-0.25.0-VB-21~28, B1·F1 이 맞출 것; 위 절보다 우선)
+- 설정 11키: `theta_range_deg` 기본 **[15, 60]**, 새 키 **`r_default_h_mult` 1.0**(0..4, 해시 안 — HASH_KEYS 에 포함), `warp_max_deg` =
+  정보 세는 기준. 검증(코어 `esl.doe.check_virtual_bead` — settings() 가 부름, pydantic 같은 식): 1 ≤ lo < hi ≤ 89, default ∈ [lo, hi],
+  **hi ≤ select.quality.flip_deg** → `CONFIG_INVALID`, 문구 `VB_THETA_FLIP`({theta_hi}, {flip}), detail {key
+  "bead_doe.virtual_bead.theta_range_deg", theta_hi, flip_deg}.
+- 스냅샷 블록 `doe.virtual_bead` += `r_default_h_mult`(코어: 블록에 키 없으면 0.0). `GET /doe/settings` += r_default_h_mult.
+- 선택 문서: **`flip: true`**(false·None = 키 없음 — B1 은 코어에 넘기지 않음), **`side` 키 삭제(주면 422 key side)**, `r` 은 준 값이면 0
+  도 키 유지(None = dump 에서 빠짐), 준 r > r_cap + 1e-4 → 422 VB_INPUT_INVALID detail {vbead, key "r", r_max}, θ > min(설정 상한,
+  flip_deg) → 422 key theta_deg. `flip` 이 bool 아님 → 422 key flip.
+- derive `virtual_beads[]` += `r_resolved`·`r_source`("default"|"user")·`host`("base"|"area"|"plateau")·`host_floor`; warnings +=
+  `VB_R_CLAMPED{r, r_h}`(info), 모든 warnings 에 text(자리표시 채움). `side_resolved` = 적용 방향(자동 × flip). `depth_max_mm` 없음.
+  preview 형식 그대로(g·c — 보상은 평가 식).
+- params A 행 `vb` += `r`·`r_source`·`host`(`vb.side` = 적용 방향), `guard.warp{limit_deg, n, max_deg, at}`(range guard 켬일 때 —
+  n > 0 이면 B1 이 `text` = VB_WARP_INFO 문구 동봉), `acc_hint` += `r`(칸 값 — 고르기: r 생략 → cells, 준 r 0 → cells_r0, 그 밖 준 r →
+  칸 r 의 1/1.25..1.25 배 안일 때만). 비드 warnings += `VB_WARP_INFO{n, max, d}`(info).
+- 선택 `range_guard.json` A 항목: `crit` 없음, `warp{limit_deg, n, max_deg, at}` 있음. D·W·U 항목 불변.
+- basis.json `vb_rules` **3**, `virtual_beads[]` += `r`·`host`. basis.npz·bin 형식 그대로.
+- **브라우저 `basis.ts` 동등 규칙(F1, 개정 3)**: `depthEff(v, c)` = c ≤ 0 ∨ v ≤ 0 ? v : (v ≥ 0.75c ? v + c/4 : c·(√(1 + 4v/c) − 1));
+  `termAt` hinge = vec_i·[ramp(depthEff(x, c) − g_i, c) − ramp(depthEff(nominal, c) − g_i, c)], `ramp` 그대로(코어
+  `virtual_bead.depth_eff`·`hinge` — 파이썬 에뮬레이터 tests/doe/test_vbead.py::_ts_morph, 차 ≤ 1e-4 mm).
+- 문구: 새 VB_WARP_INFO·VB_R_CLAMPED·VB_THETA_FLIP, 바뀜 VB_PLATE_EDGE("판·평탄부 가장자리에 닿음").
+- 화면(F1): r 칸 비움 = 기본(자리 표시 "요소 크기"), 방향 = 체크 칸 "방향 뒤집기" 1개(라디오 없음 → flip), θ 칸 15~60, "평판 위를
+  찍으세요" 판정에 평탄부(host area·plateau) 포함, A 행 회색 정보 꼬리표 "뒤틀림 n"(guard.warp.n > 0).
+- 정확도 표 resources/vbead_accuracy.json schema 2: `cells`(r 기본 — 열 += r·warp_n·warp_max_deg)·`cells_r0`(f238144d 보존).
+
 ## 끝난 일
 - 골든 c35b8ac1(b1e52fad 코드로 기록 — 4 스터디 세계·guard 표·정규화 sha·morph/basis 바이트), 코어 51f39eb7, 시험 d29704fd.
 - 시험: test_vbead_golden 12(옛·블록 + 가상 비드 0 바이트 동일), tests/morph/test_virtual_bead 12, tests/doe/test_vbead 37,

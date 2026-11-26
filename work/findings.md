@@ -40,3 +40,23 @@
   메모리 ≈ 3.9 GB·칸당 ≈ 135 s(pytest 에서 다시 풀지 않음 — 표 대조 시험은 h 5·3 칸만 재계산).
 - VB-C1-13 (§7.2) 선택 basis.json `virtual_beads[]` 에 거부된 가상 비드도 행(reasons) — 재사용·진단용. `_sel_cfg_sha += virtual_bead`
   보기 = 해시 안 키 5개 + vb_rules.
+
+## 개정 2·3 구현(dd3c3ada 계약, D-0.25.0-VB-21~28) — VB-C1-5·6·7 은 VB-21~25 로 종결
+- VB-C1-14 (§19.4-4·§19.9.1-4) 발자국 d_move·검사 띠는 계약상 "입력 θ" 지만 장은 θ_f 로 계산 → θ = flip_deg 에서 장이 d_move 밖으로
+  ≈ 1e-3 mm 넘침. 최소 해석: 발자국(이동·검사 띠·r 0 발자국 h)도 θ_f 로 계산(차 ≤ 0.01°). 해상도 판정(run·n_wall)·표시·저장은 입력 θ.
+- VB-C1-15 (§19.3-2) 평탄부 바깥 테두리 transition(child = host floor)에 닿으면 VB_PLATE_EDGE, 그 너머 부모 floor 요소는 VB_NOT_ON_PLATE
+  뿐 아니라 VB_OVER_BEAD 로도 세지 않음(H6 평탄부 floor 11 의 부모 = 링 비드 floor 4 라 "같은 원인" 원칙이 OVER_BEAD 에도 필요).
+  host 아닌 다른 area·plateau floor 요소 = VB_OVER_BEAD(base host 의 개정 1 사유 그대로 — 평탄부도 그래프 비드).
+- VB-C1-16 (§19.6-24) H6 위 띠 30°(700, 649) L 20: 개정 1 = [VB_PLATE_EDGE] → 지금 [VB_OVER_BEAD, VB_PLATE_EDGE](r 기본으로 발자국이
+  1.25·r·tan(θ/2) ≈ 1.55 mm 넓어져 링 비드에도 닿음). 시험은 PLATE_EDGE 포함으로.
+- VB-C1-17 (§19.6-23) H6 평탄부 계약 자리 (125, 300) ξ L 120·(250, 300) 30° L 100 은 보스·구멍·자식 비드에 닿아 거부(VB_OVER_BEAD·
+  ISLAND·HOLE) — 30° L 100 은 평탄부 어디에도 빈자리 없음(25 mm 격자 탐색). 측정 자리 = (150, 180) ξ L 120 θ 45, (250, 180) 30° L 60
+  θ 45, (200, 480) 30° L 60 θ 60 — 모두 ok·range guard ok usable [0, 5]·뒤집힘 0(work/vbead_h6.md).
+- VB-C1-18 (§19.4-3) normalize_v2 는 스냅샷 블록을 받지 않음 → θ 상한 = min(지금 설정 theta_range_deg[1], flip_deg(스냅샷 range guard
+  블록 값, 없으면 select.quality)). 블록 상한 75 인 옛 스냅샷 + θ 70 은 설정 상한 60 으로 422(key theta_deg) — 시험 V-25 통과.
+- VB-C1-19 (§19.3-1) wall_islands floor 제외(→ VB_OVER_ISLAND) 구현(섬 크기 = select.graph.island.max_mm)했으나 합성 세계(벽에 먹힌
+  보스)는 만들지 않음 — 시험 없음.
+- VB-C1-20 (§19.5-6·지시 4) 정확도 재측정 전 "가용 ≥ 8 GB" — 이 머신 전체 7.8 GiB 라 불가. 다른 작업 없을 때(가용 7.0 GB) 단독 실행
+  (h 1.5 칸 최대 ≈ 3.9 GB).
+- VB-C1-21 (§19.5-5) acc_hint 준 r(0 아님): 고른 칸 r 의 1/1.25..1.25 배 밖이면 null. 행 acc_hint += r(칸 값).
+
