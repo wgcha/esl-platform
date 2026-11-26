@@ -15,7 +15,14 @@ from ..errors import DomainError, not_found
 from . import messages
 
 _CTRL = re.compile(r"[\x00-\x1f\x7f]")
+_DRIVE = re.compile(r"^[A-Za-z]:")          # 드라이브 문자 구간('C:' — 홈 기준 상대 경로에 올 수 없음)
 HIDDEN = "."
+
+
+def drive_segment(rel: str) -> str | None:
+    """기본 안전 검사(읽기·쓰기·설정 루트 rel 공통): 어느 구간이든 드라이브 문자('C:')로 시작하면 사유, 아니면 None.
+    #92 읽기 완화(SEGMENT_RE 제외) 뒤에도 드라이브 문자 구간은 거부(재검증 Fail)."""
+    return "드라이브 문자 구간('X:')" if any(_DRIVE.match(g) for g in (rel or "").split("/")) else None
 
 
 def _fold(s: str) -> str:
@@ -45,7 +52,7 @@ def sub_segments(path: str | None) -> list[str]:
         raise _bad("제어문자")
     if "\\" in p:
         raise _bad("'\\' 구분자")
-    if p.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", p):
+    if p.startswith(("/", "~")) or _DRIVE.match(p):
         raise _bad("절대경로·'~'")
     segs = p.split("/")
     for s in segs:
@@ -69,7 +76,7 @@ def check_drive_rel(rel: str, health: dict[str, Any] | None, home_display: str =
     rel = unicodedata.normalize("NFC", rel or "")
     nseg = rel.count("/") + 1
     start = nseg if not write else (0 if new_from is None else new_from)      # SEGMENT_RE 적용 시작 구간
-    why = rel_problem(rel, segment_check_from=start)
+    why = rel_problem(rel, segment_check_from=start) or drive_segment(rel)
     if why:
         raise _bad(why)
     if not write and any(g.startswith(HIDDEN) for g in rel.split("/")):          # 목록이 숨기는 '.' 시작 폴더·파일은 읽지 않음

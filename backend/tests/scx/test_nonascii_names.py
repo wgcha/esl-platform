@@ -42,6 +42,25 @@ def test_read_still_rejects_unsafe(bad):
     assert getattr(ei.value, "code", "") == "SCX_PATH_NOT_ALLOWED", bad
 
 
+@pytest.mark.parametrize("bad", ["C:/x", "Proj/D:/a", "c:", "공유 폴더/z:x/y"])
+def test_drive_letter_segment_rejected_read_and_write(bad):
+    """재검증 Fail(#92 읽기 완화 뒤 'C:/x' 통과): 드라이브 문자 구간은 읽기·쓰기 공통 기본 안전 검사에서 거부(같은 코드)."""
+    assert paths.drive_segment(bad)
+    for kw in ({}, {"write": True, "new_from": bad.count("/") + 1}, {"write": True}):
+        with pytest.raises(Exception) as ei:
+            paths.check_drive_rel(bad, {"relay_base": ""}, **kw)
+        assert getattr(ei.value, "code", "") == "SCX_PATH_NOT_ALLOWED", (bad, kw)
+    assert paths.drive_segment("공유 폴더/해석 모델(v2)/ref [1]") is None and paths.drive_segment("a/ab:c/d") is None
+
+
+def test_browse_drive_letter_subpath_rejected_korean_still_ok(client, fake_relay):
+    r = _b(client, "D:/a")
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "SCX_PATH_NOT_ALLOWED", r.text
+    r = _b(client, "x/D:/a")
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "SCX_PATH_NOT_ALLOWED", r.text
+    assert paths.check_drive_rel("공유 폴더/해석 모델(v2)/ref [1]", HEALTH) == "공유 폴더/해석 모델(v2)/ref [1]"
+
+
 def test_write_new_segments_keep_segment_re_but_configured_base_may_be_non_ascii():
     new = "한글기지/p-1/VD1_20261030T000000"
     with pytest.raises(Exception) as ei:                                              # 기본(new_from 없음) = 이전 동작(전체 구간)
@@ -72,7 +91,7 @@ def test_settings_root_rel_non_ascii_allowed(settings_dict):
     lc = load_config_dict(settings_dict, environ={})
     assert lc.ok, lc.errors()
     assert drive_problems(lc.settings) == []                                           # 한글·공백 rel 허용
-    for bad in ("공유 폴더/../x", ".숨김/x", "공유 폴더/.git", "공유\\폴더"):
+    for bad in ("공유 폴더/../x", ".숨김/x", "공유 폴더/.git", "공유\\폴더", "C:/data", "Proj/D:/a"):   # 드라이브 문자 구간도 거부(재검증 Fail)
         d = dict(settings_dict)
         d["scx_drive"] = {**d["scx_drive"], "roots": [{"key": "x", "label": "x", "rel": bad}]}
         lc = load_config_dict(d, environ={})
