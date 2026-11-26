@@ -96,6 +96,32 @@ def test_plateau_derive_v23(H6, p0, ang, L, th):
     _check(measure(H6, D))
 
 
+@pytest.mark.parametrize("z", [0.0, -0.0008], ids=["base_level", "vb_frame_level"])
+@pytest.mark.parametrize("p0,ang,L", [((150.0, 180.0), 0.0, 120.0), ((113.0, 182.0), 0.0, 60.0), ((250.0, 180.0), 30.0, 60.0)],
+                         ids=["xi", "113", "30deg"])
+def test_plateau_coordinate_input_seated_int8(H6, z, p0, ang, L):
+    """INT-8: 좌표·길이·각도 입력의 p0 는 vb_frame 판 높이(부모 바닥 z 0 근처)로 온다 — 평탄부(z 10) 세 자리 모두 코어가 host 면 높이로
+    맞춰 ok, 결과 = z 10 으로 넣은 것과 같은 발자국(idx)·g·vec 차 ≤ 1e-4 mm(맞춘 높이 = 요소 중심, 판 맞춤 노드가 조금 달라 1e-5 수준), derive p0_resolved z = 10(옛: VB_NOT_ON_PLATE)."""
+    v = {"id": "a1", "p0": [p0[0], p0[1], z], "length": L, "angle_deg": ang, "w_top": 15.0, "d_max": 5.0}
+    D = _derive(H6, [v])
+    ref = _derive(H6, [{**v, "p0": [p0[0], p0[1], 10.0]}])
+    a, b = D.vbeads[0], ref.vbeads[0]
+    assert a.ok and a.host == "plateau" and a.host_floor == 11, a.reasons
+    assert a.seat0 == pytest.approx(10.0 - z, abs=1e-4) and b.seat0 == 0.0 and abs(float(a.p0r[2]) - 10.0) < 1e-4  # 요소 중심 높이(평탄부 약 9.99999)
+    assert np.array_equal(a.field["idx"], b.field["idx"]) and np.allclose(a.field["g"], b.field["g"], atol=1e-4)
+    assert np.allclose(a.field["vec"], b.field["vec"], atol=1e-4) and a.field["c"] == pytest.approx(b.field["c"])
+
+
+def test_band_coordinate_and_pick_regression_int8(H6):
+    """INT-8 회귀: 위 띠(base) — 두 점(3D 찍기, 면 위) = 높이 그대로(seat 0), 좌표 입력을 다른 높이(z 10)로 넣어도 띠 면으로 맞춤(같은 결과)."""
+    pick = _derive(H6, [{"id": "a1", "p0": [400.0, 654.0, 0.0], "p1": [600.0, 654.0, 0.0], "w_top": 15.0, "d_max": 5.0}]).vbeads[0]
+    coord = _derive(H6, [{"id": "a1", "p0": [400.0, 654.0, 10.0], "length": 200.0, "angle_deg": 0.0, "w_top": 15.0,
+                          "d_max": 5.0}]).vbeads[0]
+    assert pick.ok and pick.host == "base" and pick.seat0 == 0.0
+    assert coord.ok and coord.host == "base" and coord.seat0 == pytest.approx(-10.0, abs=1e-4)
+    assert np.array_equal(pick.field["idx"], coord.field["idx"]) and np.allclose(pick.field["vec"], coord.field["vec"], atol=1e-4)
+
+
 def test_contract_plateau_spots_rejected_v23(H6):
     """계약 자리 (125, 300) ξ L 120·(250, 300) 30° L 100 은 평탄부 위 보스·구멍·자식 비드에 닿음(측정 고정 — VB-C1-17)."""
     D = _derive(H6, [{"id": "a1", "p0": [125.0, 300.0, 10.0], "length": 120.0, "angle_deg": 0.0, "w_top": 15.0,

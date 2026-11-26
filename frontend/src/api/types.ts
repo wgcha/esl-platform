@@ -4433,6 +4433,8 @@ export interface DoeVirtualBeadDerived {
   id: string;
   name: string;
   p0: [number, number, number];
+  /** INT-8: 판 평면 위 시작점(좌표 입력 높이를 코어가 host 면에 맞춘 뒤 — 옛 서버면 없음) */
+  p0_resolved?: [number, number, number] | null;
   p1_resolved: [number, number, number] | null;
   len_mm: number | null;
   angle_deg: number | null;

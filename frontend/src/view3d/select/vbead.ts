@@ -204,11 +204,12 @@ export function previewVar(d: DoeVirtualBeadDerived): BasisVar | null {
 /** 3D 겹쳐 그리기 선분(쌍마다 6 float): 발자국 윤곽(outline_ab → 모델 좌표) + 중심선 p0→p1. 판 법선 쪽 높이는 p0 기준 */
 export function vbOverlayLines(d: DoeVirtualBeadDerived, fr: VbFrame | null): Float32Array | null {
   if (!fr) return null;
-  const dn = dot(sub(d.p0, fr.o), fr.n);                // 평탄부 등 판 높이가 frame 판과 다른 비드 = p0 높이로 올림
+  const p0 = d.p0_resolved ?? d.p0;                     // INT-8: 코어가 맞춘 판 위 시작점(좌표 입력도 host 면 높이)
+  const dn = dot(sub(p0, fr.o), fr.n);                  // 평탄부 등 판 높이가 frame 판과 다른 비드 = 그 높이로 올림
   const segs: number[] = [];
   const pts = (d.outline_ab ?? []).map((q) => toModel(fr, q.a, q.b).map((x, k) => x + dn * fr.n[k]) as V3);
   for (let i = 0; i + 1 < pts.length; i++) segs.push(...pts[i], ...pts[i + 1]);
-  if (d.p1_resolved) segs.push(...d.p0, ...d.p1_resolved);
+  if (d.p1_resolved) segs.push(...p0, ...d.p1_resolved);
   return segs.length ? Float32Array.from(segs) : null;
 }
 

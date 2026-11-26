@@ -572,7 +572,7 @@ export function mockVBeads(list: VirtualBeadIn[], shape?: DoeShapeRules | null):
     const warnings: DoeVirtualBeadDerived["warnings"] = [];
     if (!reasons.length && run < 2 * h) warnings.push({ code: "VB_WALL_COARSE", vbead: v.id, n_wall: +(run / h).toFixed(2), text: kor("VB_WALL_COARSE").replace("{n_wall}", (run / h).toFixed(2)) });
     const d: DoeVirtualBeadDerived = {
-      id: v.id, name: v.name ?? `추가 비드 ${v.id.slice(1)}`, p0, p1_resolved: p1, len_mm: p1 ? +L.toFixed(3) : null, angle_deg: p1 ? +ang.toFixed(3) : null,
+      id: v.id, name: v.name ?? `추가 비드 ${v.id.slice(1)}`, p0, p0_resolved: p0, p1_resolved: p1, len_mm: p1 ? +L.toFixed(3) : null, angle_deg: p1 ? +ang.toFixed(3) : null,
       side_resolved: v.flip ? "+" : "-", ok: !reasons.length, reasons, warnings, h, n_wall: +(run / h).toFixed(2), n_top: +(v.w_top / h).toFixed(2),
       r_resolved: +rr.toFixed(4), r_source: v.r != null ? "user" : "default", host: "base", host_floor: 0,
     };

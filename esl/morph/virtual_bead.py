@@ -141,6 +141,31 @@ def _proj(p, plane) -> np.ndarray:
     return p - float(np.dot(p - np.asarray(ph, float), nh)) * nh
 
 
+def seat_point(p, cen, n, tol: float):
+    """INT-8 입력 점의 판 법선 방향 높이 = host 후보면 위(좌표 입력은 frame 판 높이로 오므로 — 평탄부·부모 바닥 높이가 다름).
+    cen = host 후보 요소 중심(k×3), n = 판 법선(그래프 frame n0), tol = 요소 크기 h(그래프 frame h_mm).
+    후보 = 면내(n 에 수직) 거리 ≤ 최소 면내 거리 + tol 인 요소, 그중 p 와 법선 방향 높이 차가 가장 작은 요소(같으면 앞 번호).
+    그 차 ≤ tol(점이 이미 그 면 위 — 3D 찍기) 또는 최소 면내 거리 > 2·tol(판 밖 — 사유는 host 검사가 냄)이면 p 그대로(같은 객체 값),
+    아니면 p 를 n 방향으로 그 요소 중심 높이까지 옮긴 점. 반환 (점, 옮긴 거리 mm)."""
+    p = np.asarray(p, dtype=np.float64)
+    cen = np.asarray(cen, dtype=np.float64).reshape(-1, 3)
+    if not cen.shape[0]:
+        return p, 0.0
+    nu = _unit(n)
+    R = cen - p
+    hgt = R @ nu
+    din = np.linalg.norm(R - hgt[:, None] * nu[None, :], axis=1)
+    dmin = float(din.min())
+    if dmin > 2.0 * float(tol):
+        return p, 0.0
+    cand = np.flatnonzero(din <= dmin + float(tol))
+    j = cand[int(np.argmin(np.abs(hgt[cand])))]
+    dh = float(hgt[j])
+    if abs(dh) <= float(tol):
+        return p, 0.0
+    return p + dh * nu, dh
+
+
 def resolve_line(p0, p1, length, angle_deg, frame_axes, plane):
     """§2.2: (a) 두 점 또는 (b) 시작점 + 길이 + 각도(ESL frame 판 평면 +ξ 기준 +η 쪽) → 판 평면 사영 (p0', p1', t̂, L).
     frame_axes = (e_xi, e_eta), plane = (p_h, n_h). 길이 < 1e-6 → ValueError("VB_INPUT_INVALID")."""

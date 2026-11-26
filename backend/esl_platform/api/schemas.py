@@ -2714,7 +2714,7 @@ class SelectionDerived(_Out):
     # v0.17.0(esl_beadgraph.md §6.1): schema 2 — graph{sha256, graph_algo, edits_applied, segments, junction_zones, beads, sym_pairs}
     graph: dict[str, Any] | None = None
     graph_algo: int | None = None
-    # v0.25.0 VB §8·§19.7(가상 비드 있을 때만 값): virtual_beads[{id, name, p0, p1_resolved, len_mm, angle_deg, side_resolved("+"|"-" — 적용 방향),
+    # v0.25.0 VB §8·§19.7(가상 비드 있을 때만 값): virtual_beads[{id, name, p0, p0_resolved(INT-8 — 판 평면 위 시작점), p1_resolved, len_mm, angle_deg, side_resolved("+"|"-" — 적용 방향),
     # ok, reasons[{code, text}], warnings[{code, level, text, …}], h, n_wall, n_top, r_resolved, r_source("default"|"user"), host("base"|"area"|"plateau"),
     # host_floor, stretch_max?, n_fp?, n_elems_fp?, outline_ab?, preview?{idx, vec, g, c}}], vb_frame{origin, e_xi, e_eta, n_h}
     virtual_beads: list[dict[str, Any]] | None = None

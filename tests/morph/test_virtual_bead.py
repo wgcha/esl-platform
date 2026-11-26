@@ -293,3 +293,25 @@ def test_host_check_edge_skip_v22():
     mk["bead"][e[:2]] = True                                                          # 테두리 벽·부모 floor 가 비드 라벨이어도
     assert vbm.host_check(m["conn"], chk, {**mk, "edge": edge, "skip": skip}) == ["VB_PLATE_EDGE"]
     assert "VB_OVER_BEAD" in vbm.host_check(m["conn"], chk, {**mk, "edge": np.zeros_like(edge), "skip": skip})
+
+
+def test_seat_point_int8():
+    """INT-8 seat_point: 면 위 점(3D 찍기) = 그대로, frame 판 높이로 온 좌표 입력 = 그 (ξ,η) 의 host 면 높이로, 높이 후보가 둘이면
+    p 와 높이 차가 작은 쪽, 판 밖(면내 거리 > 2·tol) = 그대로."""
+    n = np.array([0.0, 0.0, 1.0])
+    xs = np.arange(0.0, 30.0, 3.0)
+    base = np.array([[x, y, 0.0] for x in xs for y in xs])                    # 부모 바닥 z 0
+    plat = np.array([[x + 40.0, y, 10.0] for x in xs for y in xs])            # 평탄부 z 10(옆)
+    cen = np.vstack([base, plat])
+    p = np.array([12.0, 12.0, 0.0])
+    q, dh = vbm.seat_point(p, cen, n, 3.0)
+    assert dh == 0.0 and np.array_equal(q, p)                                 # 이미 면 위
+    q, dh = vbm.seat_point([52.0, 12.0, 0.0], cen, n, 3.0)
+    assert dh == pytest.approx(10.0) and q.tolist() == pytest.approx([52.0, 12.0, 10.0])
+    q, dh = vbm.seat_point([52.0, 12.0, 10.4], cen, n, 3.0)
+    assert dh == 0.0 and q.tolist() == [52.0, 12.0, 10.4]                     # 차 ≤ tol = 그대로
+    q, dh = vbm.seat_point([200.0, 12.0, 5.0], cen, n, 3.0)
+    assert dh == 0.0 and q.tolist() == [200.0, 12.0, 5.0]                     # 판 밖 = 그대로(host 검사가 사유)
+    two = np.vstack([base, base + [0.0, 0.0, 20.0]])                          # 같은 (ξ,η) 에 높이 0·20
+    assert vbm.seat_point([12.0, 12.0, 14.0], two, n, 3.0)[0][2] == pytest.approx(20.0)
+    assert vbm.seat_point([12.0, 12.0, 6.0], two, n, 3.0)[0][2] == pytest.approx(0.0)

@@ -2857,6 +2857,7 @@ class VirtualBead:
         self.h = self.n_wall = self.n_top = None
         self.p0 = list(spec["p0"])
         self.p1 = self.t = self.L = self.angle = self.plane = None
+        self.p0r, self.seat0 = None, 0.0                  # INT-8: 판 평면 사영 시작점·높이 맞춤 거리
         self.side = None
         self.diag = None
         self.chk = None
@@ -2989,13 +2990,15 @@ def virtual_beads(D, mesh, blk: dict | None, *, vb_plan: str = "plate", frame=No
         if not hidx.size:
             vb.reasons = ["VB_NOT_ON_PLATE"]
             continue
-        p0 = np.asarray(sp["p0"], np.float64)
+        # INT-8: 점 높이 = host 후보면(좌표 입력은 frame 판 높이 — 평탄부·부모 바닥 높이 차를 코어가 정함, 3D 찍기 점은 그대로)
+        p0, vb.seat0 = vbm.seat_point(sp["p0"], cen[hidx], n0, h_g)
+        p1s = vbm.seat_point(sp["p1"], cen[hidx], n0, h_g)[0] if "p1" in sp else None
         seed = hidx[int(np.argmin(np.linalg.norm(cen[hidx] - p0, axis=1)))]
         f = int(floor[seed])
         H = host_all & (floor == f)
         vb.host, vb.host_floor = str(etype[seed]), f
-        if "p1" in sp:
-            p1r = np.asarray(sp["p1"], np.float64)
+        if p1s is not None:
+            p1r = p1s
             Lr = float(np.linalg.norm(p1r - p0))
         else:
             al = np.radians(float(sp["angle_deg"]))
@@ -3012,15 +3015,15 @@ def virtual_beads(D, mesh, blk: dict | None, *, vb_plan: str = "plate", frame=No
             nh = -nh
         vb.plane = (ph, nh)
         try:
-            q0, q1, t, L = vbm.resolve_line(p0, sp.get("p1"), sp.get("length"), sp.get("angle_deg"), (e_xi, e_eta),
+            q0, q1, t, L = vbm.resolve_line(p0, p1s, sp.get("length"), sp.get("angle_deg"), (e_xi, e_eta),
                                             (ph, nh))
         except ValueError:
             vb.reasons = ["VB_INPUT_INVALID"]
             continue
-        vb.p1, vb.t, vb.L = q1, t, L
+        vb.p0r, vb.p1, vb.t, vb.L = q0, q1, t, L
         ex, ey = vbm.frame_in_plane((e_xi, e_eta), nh)
         vb.angle = float(np.degrees(np.arctan2(float(t @ ey), float(t @ ex))))
-        far = max(vbm.plane_dist(p0, (ph, nh)), vbm.plane_dist(p1r if "p1" in sp else q1, (ph, nh))) > margin + 2.0 * h_g
+        far = max(vbm.plane_dist(p0, (ph, nh)), vbm.plane_dist(p1r if p1s is not None else q1, (ph, nh))) > margin + 2.0 * h_g
         line = (q0, q1, t, L, nh)
         # §19.1-2·3: ① r 0 발자국 → h(한 번) ② r 생략 = min(mult·h, r_cap) ③ 그 r 로 발자국
         fp0 = vbm.footprint(X, line, vb.w_top, vb.theta_f, vb.d_max, vb.end, 0.0, margin)
@@ -3209,6 +3212,7 @@ def vb_derive_doc(D, cfg=None, frame=None) -> tuple[list[dict], dict | None]:
     rows, vfr = [], None
     for vb in getattr(D, "vbeads", None) or []:
         r = {"id": vb.id, "name": vb.name, "p0": list(vb.spec["p0"]),
+             "p0_resolved": None if vb.p0r is None else [_r(float(x)) for x in vb.p0r],
              "p1_resolved": None if vb.p1 is None else [_r(float(x)) for x in vb.p1],
              "len_mm": None if vb.L is None else _r(vb.L), "angle_deg": None if vb.angle is None else _r(vb.angle, 3),
              "side_resolved": None if vb.side is None else ("+" if vb.side > 0 else "-"), "ok": bool(vb.ok),

@@ -195,6 +195,10 @@ describe("추가 비드 입력 검사·요청 만들기", () => {
     const l = vbOverlayLines(d, FR)!;
     expect(l.length).toBe((2 + 1) * 6); // 윤곽 꺾은선 3점 = 2 선분 + 중심선 1
     expect(Array.from(l.slice(0, 6))).toEqual([100, 50, 0, 101, 50, 0]);
+    // INT-8: 서버가 맞춘 시작점(p0_resolved — 평탄부 z 10)이 있으면 윤곽·중심선 높이 = 그 점(입력 p0 높이 아님)
+    const s = vbOverlayLines({ ...d, p0: [0, 0, 0], p0_resolved: [0, 0, 10], p1_resolved: [10, 0, 10] } as DoeVirtualBeadDerived, FR)!;
+    expect(Array.from(s.slice(0, 6))).toEqual([100, 50, 10, 101, 50, 10]);
+    expect(Array.from(s.slice(12, 18))).toEqual([0, 0, 10, 10, 0, 10]);
   });
 });
 

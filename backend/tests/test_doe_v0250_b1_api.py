@@ -594,6 +594,7 @@ def test_core_e2e_derive_response_shape(real_core, vworld):  # noqa: F811
     v = d["virtual_beads"][0]
     assert v["ok"] is True and v["reasons"] == [] and v["host"] == "base" and v["r_source"] == "default" and v["r_resolved"] > 0
     assert v["side_resolved"] in ("+", "-") and "depth_max_mm" not in v and v["preview"]["idx"] and v["outline_ab"]
+    assert v["p0_resolved"] == pytest.approx(VB["p0"], abs=1e-6)                                    # INT-8: 판 위 시작점(평판 z 0 = 입력 그대로)
     assert set(d["vb_frame"]) == {"origin", "e_xi", "e_eta", "n_h"}
     out = SelectionDerived.model_validate(d).model_dump()                                           # 응답 모델이 두 키를 버리지 않음
     assert out["virtual_beads"][0]["id"] == "a1" and out["vb_frame"]
