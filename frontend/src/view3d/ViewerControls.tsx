@@ -17,12 +17,14 @@ export interface ViewerControlsProps {
   deformOn: boolean;
   /** 막대가 칸 폭의 60 % 를 넘으면 칩 글자를 줄임 */
   compact?: boolean;
+  /** v0.24.9 [경계조건] 칩 툴팁 범례 줄(기호별 한 줄 뜻 — supportMarks.markLegend). 없으면 지금 툴팁 그대로 */
+  bcLegend?: string[] | null;
 }
 
-export function ViewerChips({ store, hasBc, hasLoad, compact }: ViewerControlsProps) {
+export function ViewerChips({ store, hasBc, hasLoad, compact, bcLegend }: ViewerControlsProps) {
   const plan = planOf(store.planKey);
   const { state, set } = store;
-  const chip = (layer: "bc" | "load", full: string, short: string, has: boolean, noTitle: string, key: string) => {
+  const chip = (layer: "bc" | "load", full: string, short: string, has: boolean, noTitle: string, key: string, legend?: string[] | null) => {
     if (!plan.layers.includes(layer as ViewerLayer)) return null;
     const on = state[layer] && has;
     return (
@@ -32,7 +34,7 @@ export function ViewerChips({ store, hasBc, hasLoad, compact }: ViewerControlsPr
         className={`btn small ghost v3d-vbtn v3d-chip${on ? " on" : ""}`}
         aria-pressed={on}
         aria-label={full}
-        title={has ? `${full} 표식 ${on ? "끄기" : "켜기"} (단축키 ${key})` : noTitle}
+        title={has ? `${full} 표식 ${on ? "끄기" : "켜기"} (단축키 ${key})${legend?.length ? `\n${legend.join("\n")}` : ""}` : noTitle}
         disabled={!has}
         data-testid={`v3d-layer-${layer}`}
         onClick={() => set({ [layer]: !state[layer] })}
@@ -43,7 +45,7 @@ export function ViewerChips({ store, hasBc, hasLoad, compact }: ViewerControlsPr
   };
   return (
     <>
-      {chip("bc", "경계조건", "경계", hasBc, NO_BC_TITLE, "B")}
+      {chip("bc", "경계조건", "경계", hasBc, NO_BC_TITLE, "B", bcLegend)}
       {chip("load", "하중", "하중", hasLoad, NO_LOAD_TITLE, "L")}
       <span className="v3d-bar-sep" aria-hidden="true" />
     </>

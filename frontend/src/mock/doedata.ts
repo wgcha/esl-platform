@@ -1863,6 +1863,30 @@ export class DoeMock {
     );
   }
 
+  /** v0.24.9 시연·시험(?demoPosU=1): doe-70 = ① 그래프 select 새 스냅샷(pos_u — 변수 표 U 행·u_reason 툴팁) · doe-71 = ② select 지그 결과 + 하중 공간 고정(spatial 경고 줄·순위 꼬리·민감도 U 행) ·
+   *  doe-72 = ④ 형상 비교 지그 3방식 표식(새 스냅샷 pos_u — 고정·변위·스프링 + 꺾인 노드·면내 지지). 옛 스냅샷 대조 = doe-30(U 행 없음)·doe-60(옛 표식 — pos_u 없음) */
+  demoPosU() {
+    if (this.recs.some((r) => r.out.id === "doe-70")) return;
+    this.demoShape();
+    this.demoJig();
+    this.demoJigGrid();
+    const posIn = { pos_u: { schema: 1, range_rel: 0.25, max_rel: 0.5, gap_rel: 0.5, hold_frac_max: 0.2 }, load_follow: { schema: 1, cell_mm: 3 } };
+    const r30 = this.recs.find((r) => r.out.id === "doe-30")!;
+    const r70: Rec = { ...r30, out: { ...r30.out, id: "doe-70", title: "75형 Ch/R 비드 — 위치 U(v0.24.9)", created_at: "2026-11-26T05:00:00Z", inputs: { ...r30.out.inputs, ...posIn } }, jobIds: [...r30.jobIds] };
+    const r40 = this.recs.find((r) => r.out.id === "doe-40")!;
+    const base = r40.result!;
+    const res71: DoeResultOut = {
+      ...base,
+      load_follow: { mode: "spatial", cell_mm: 3, dF_max: 2.1e-9, dM_max: 3.4e-8, corr_rel_max: 0.004, small_frac_max: 0.0, d000_shift_rel: 0.006 },
+      warnings: [...base.warnings, { code: "LOAD_FOLLOW_SPATIAL", cell_mm: 3, n_pos_vars: 1, message: "위치 변수가 있어 하중을 공간에 고정했습니다(3 mm 셀) — 기준 포함 모든 안이 같은 경로" } as DoeWarning],
+      sensitivity: base.sensitivity ? { ...base.sensitivity, params: [...base.sensitivity.params, { name: "B8_U", src: -0.31, spearman: -0.27 }] } : base.sensitivity,
+    };
+    const r71: Rec = { ...r40, out: { ...r40.out, id: "doe-71", title: "QN80J Ch/R 비드 — 위치 U 하중 공간 고정(v0.24.9)", created_at: "2026-11-26T06:00:00Z", inputs: { ...r40.out.inputs, ...posIn } }, jobIds: [...r40.jobIds], result: res71 };
+    const r60 = this.recs.find((r) => r.out.id === "doe-60")!;
+    const r72: Rec = { ...r60, out: { ...r60.out, id: "doe-72", title: "Ch/R 형상 비교 — 지그 표식 방식별(v0.24.9)", created_at: "2026-11-26T07:00:00Z", inputs: { ...r60.out.inputs, ...posIn } }, jobIds: [...r60.jobIds] };
+    this.recs.push(r70, r71, r72);
+  }
+
   /** v0.24.7 시연(?demoDepth=1): doe-30 = 깊이면 폭 유지(D 배지·W 사유 줄·W1 꼬리표) · doe-5 = 요소 비드 깊이면 폭 유지(단면 그림 ds_dD) · doe-6 = 복제 가능(FAILED, 키 없음 = 입구 고정(이전)) — 복제 창·칩 */
   demoDepth() {
     this.demoShape();
@@ -2059,7 +2083,7 @@ export class DoeMock {
   paramsOf(r: Rec): DoeParam[] {
     if (r.out.scenario !== "select") return DEFAULT_PARAMS;
     if (!r.sel) return [];
-    if (r.sel.input.schema_version === 2) return graphParams(r.sel.input, r.out.inputs.shape_rules, r.out.inputs.depth_section).params;
+    if (r.sel.input.schema_version === 2) return graphParams(r.sel.input, r.out.inputs.shape_rules, r.out.inputs.depth_section, !!r.out.inputs.pos_u).params;
     return selParams(r.sel.input, r.sel.derived, this.settings.select?.fixed_policy ?? "warn").params;
   }
   private selectCells(r: Rec, m: DoeMatrixOut): DoePreviewCell[] {
@@ -2205,12 +2229,12 @@ export class DoeMock {
     }
     if (method === "GET" && sub === "/select/basis" && rec.sel?.input.schema_version === 2) {
       if (!rec.out.doe?.preview) return err(409, "PREVIEW_NOT_READY", "미리보기 전이라 기저가 없습니다.");
-      const bs = graphBasis(rec.sel.input, rec.out.inputs.shape_rules, rec.out.inputs.depth_section);
+      const bs = graphBasis(rec.sel.input, rec.out.inputs.shape_rules, rec.out.inputs.depth_section, !!rec.out.inputs.pos_u);
       return query.get("meta") === "1" ? ok(bs.meta) : { status: 200, body: bs.bin };
     }
     if (method === "GET" && (sub === "/params" || sub === "/plan-view") && rec.sel?.input.schema_version === 2) {
       if (!prepReady) return notReady();
-      return ok(sub === "/params" ? graphParams(rec.sel.input, rec.out.inputs.shape_rules, rec.out.inputs.depth_section) : rec.out.inputs.select_base === "step" ? stepPlan(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
+      return ok(sub === "/params" ? graphParams(rec.sel.input, rec.out.inputs.shape_rules, rec.out.inputs.depth_section, !!rec.out.inputs.pos_u) : rec.out.inputs.select_base === "step" ? stepPlan(rec.sel.input) : withBoundary(rec, graphPlan(rec.sel.input)));
     }
     return null;
   }
@@ -2822,10 +2846,12 @@ export class DoeMock {
         const src = jigOf ?? (jigRefE ? "d000" : did);
         const row = res!.ranking.find((x) => x.id === src);
         const eid = jigOf ? jigEslMap[jigOf] ?? null : jigRefE ?? (isRef ? Object.entries(res!.view3d_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null : row?.worst_entry_id ?? res!.esl?.[0]?.entry_id ?? null);
-        const m = mockView3d().manifest(eid ?? `doe-${rec.out.id}-${did}`);
         const jigView = !!(jigOf || jigRefE);
+        // v0.24.9 새 스냅샷(inputs.pos_u 블록 있음)의 지그 3D = 방식별 표식(kind·dirs·val) — 옛 스터디는 dof 문자열 그대로
+        const newFmt = jigView && !!(rec.out.inputs as { pos_u?: unknown }).pos_u;
+        const m = mockView3d().manifest(eid ?? `doe-${rec.out.id}-${did}`, newFmt ? jk : null);
         const ratio = (row ? row.umax / res!.baseline.umax : 1) * (jigView ? 0.12 : 1);
-        return ok({ ...m, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, ...(jigView ? { supports: m.supports.map((x) => ({ ...x, dof: "123" })) } : {}), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
+        return ok({ ...m, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, ...(jigView ? { supports: newFmt ? m.supports : m.supports.map((x) => ({ ...x, dof: "123" })) } : {}), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
       }
       return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);
     }

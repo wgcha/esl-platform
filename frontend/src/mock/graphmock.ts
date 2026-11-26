@@ -326,12 +326,14 @@ export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null): 
 
 /** v0.24.7 서버 문구 원본(resources/doe_messages.json) — 목 서버가 API text 로 동봉(화면은 text 를 그대로 씀) */
 export const MOCK_MESSAGES = (MESSAGES as { messages: Record<string, string> }).messages;
+/** v0.24.9 U 불가 사유 문구(서버 text 의 목 — 화면은 API text 를 그대로 씀) */
+export const MOCK_U_REASON: Record<string, string> = { U_ONE_SIDE: "한쪽 입구 비드 — 위치 대신 한쪽 W 를 쓰세요", U_NETWORK: "네트워크 묶기는 위치를 옮길 수 없음" };
 const kor = (code: string) => (MOCK_MESSAGES[code] ?? code).replace(/\s*\((?:Info|Warn)[^)]*\)\s*$/, "");
 export const mockWReason = (code: string) => ({ code, text: kor(code) });
 
 /** 변수(BG-D-22): B<n>_D · B<n>_W(k 없음). 대칭 묶기 = 작은 id 변수 1개 + group_members.
  *  v0.24.7 depth_section = floor_fixed: D 행 section·W 없는 비드 = 첫 비드 W1(한쪽 입구)·그 밖 W 사유(마지막 비드 = 입구 없음 → D 입구 고정 대체 + DS_FALLBACK) */
-export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds?: DoeDepthSection | null): DoeParamsOut {
+export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds?: DoeDepthSection | null, posU = false): DoeParamsOut {
   const r = resolve(sel, shape);
   if ("bad" in r) return { beads: [], params: [], warnings: [] };
   const tieOf = (id: string) => (sel.ties ?? []).find((t) => t.includes(id)) ?? null;
@@ -346,7 +348,9 @@ export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, d
     const oneSide = floor && !hasW && noW[0] === b.id;
     const none = floor && !hasW && !oneSide;
     const fellBack = none && noW[noW.length - 1] === b.id;
-    beads.push({ id: b.id, k: i + 1, shape: "select", sense: b.segs[0]?.rel_depth < 0 ? "concave" : "convex", center_ab: [sk[0], sk[1]], nominal: { depth: b.D, width: b.W ?? 0 }, fixed_overlap: false, png: null, kind: "select", name: b.name, n_tiers: 1, W_nom: b.W, W_min: b.W, W_max: b.W, blend_mm: b.W ? 12 : 0, warnings: [], islands_n: 0, ...(none ? { w_reason: mockWReason(fellBack ? "W_ENTRY_NONE" : "W_AREA") } : {}) });
+    // v0.24.9 위치 U(posU = 스냅샷 pos_u 블록): 양쪽 입구(W 있음) = U 행, 아니면 u_reason(서버 text — 목은 고정 문구)
+    const uWhy = posU && !(b.vars.includes("W") && b.W != null) ? { code: "U_ONE_SIDE", text: MOCK_U_REASON.U_ONE_SIDE } : null;
+    beads.push({ id: b.id, k: i + 1, shape: "select", sense: b.segs[0]?.rel_depth < 0 ? "concave" : "convex", center_ab: [sk[0], sk[1]], nominal: { depth: b.D, width: b.W ?? 0 }, fixed_overlap: false, png: null, kind: "select", name: b.name, n_tiers: 1, W_nom: b.W, W_min: b.W, W_max: b.W, blend_mm: b.W ? 12 : 0, warnings: [], islands_n: 0, ...(none ? { w_reason: mockWReason(fellBack ? "W_ENTRY_NONE" : "W_AREA") } : {}), ...(uWhy ? { u_reason: uWhy } : {}) });
     const t = tieOf(b.id);
     if (t && t[0] !== b.id) return;
     const up = b.id.toUpperCase();
@@ -367,6 +371,14 @@ export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, d
       params.push(guarded({ name: `${up}_W`, type: "W", bead: b.id, nominal: 18, feasible: [10, 27], feasible_source: "estimate", default_range: range(18, 0.2), use_default: true, group_members: others("W"), w_side: "one" }));
     if (b.vars.includes("W") && b.W != null)
       params.push(guarded({ name: `${up}_W`, type: "W", bead: b.id, nominal: b.W, feasible: [+(2 * b.D + Wf).toFixed(2), +(b.W * 1.5).toFixed(2)], feasible_source: "estimate", default_range: range(b.W, 0.2), use_default: true, group_members: others("W"), ...(b.wSegs ? { w_segs: b.wSegs, w_cover: b.wCover } : {}) }));
+    if (posU && b.vars.includes("W") && b.W != null) {
+      const wref = b.W;
+      const half = +(0.25 * wref).toFixed(2);
+      const u: DoeParam = { name: `${up}_U`, type: "U", bead: b.id, nominal: 0, feasible: [-half * 1.6, +(half * 1.2).toFixed(2)], feasible_source: "estimate", default_range: [-half, half], use_default: false, group_members: [], dir: i % 2 ? { xi: 0.05, eta: -0.99 } : { xi: 0.99, eta: 0.1 }, dir_text: i % 2 ? "−η 쪽" : "+ξ 쪽", w_ref: wref };
+      // 부호별 비대칭 usable(range guard): 한쪽(−)만 이웃 간격 때문에 줄어듦
+      if (shape?.range_guard) u.guard = { state: "limited", from: u.default_range, usable: [+(-half * 0.4).toFixed(2), half], reason: "inverted", value: null, combo_scale: null };
+      params.push(u);
+    }
   });
   return { beads, params, warnings };
 }
@@ -404,10 +416,10 @@ export function graphPlan(sel: DoeSelectionV2): DoePlanOut {
 }
 
 /** 기저(목): D = 그 세그먼트 바닥 노드를 부모에서 멀어지는 쪽 n0 로 1(자손 생략), W = 없음(0 변위) */
-export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds?: DoeDepthSection | null): { meta: DoeBasisMeta; bin: ArrayBuffer; params: DoeParam[] } {
+export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds?: DoeDepthSection | null, posU = false): { meta: DoeBasisMeta; bin: ArrayBuffer; params: DoeParam[] } {
   const m = graphMesh();
   const r = resolve(sel, shape);
-  const ps = graphParams(sel, shape, ds);
+  const ps = graphParams(sel, shape, ds, posU);
   const vars: { idx: number[]; vec: number[] }[] = [];
   const meta: DoeBasisMeta = { schema: "esl/bead_select_basis/1", sha256: "", selection_sha256: graphSelSha(sel), n_nodes: m.n, vars: [] };
   for (const p of ps.params) {
