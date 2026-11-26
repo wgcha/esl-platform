@@ -5,3 +5,4 @@
 - [x] 4. JIG_GRID_ON_CLONE(doe_messages.json·응답 warnings level info·프런트 정보 코드)
 - [x] 5·7·8 문서(decisions INT-1~7, 계약 §5·§16, CHANGELOG, user/admin/field_check), 버전 0.24.8, handoff·findings 삭제, npm ci, openapi 재생성
 - [ ] 스위트: tests/ · beadgraph · backend · worker · vitest · typecheck/build/check:api/dump_openapi --check
+- tests/: 3 failed(허용) 1726 passed 192 skipped; beadgraph 89 passed 2 skipped + selftest

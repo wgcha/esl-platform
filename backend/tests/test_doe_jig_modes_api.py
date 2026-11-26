@@ -11,6 +11,7 @@ post/result.json·post/jig_view.json, sm_jig none 모드는 그 계획의 BD_POS
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 
@@ -46,6 +47,13 @@ def _study(client, world, engine, esl_root, m: dict) -> str:
     base_row = {"entry_id": s["entry_ids"][0], "case_id": "c-1", "part_title": "chassis rear"} if m["scenario"] == "same" else None
     update_study(engine, sid, scenario=m["scenario"], inputs={**s["inputs"], **m["inputs"]}, result=m["result"],
                  **({"base": base_row} if base_row else {}))
+    if m["sm_jig"] == "none":          # 픽스처 = v0.24.5 결과(지그 unsupported) = 옛 스냅샷 — v0.24.8 새 스냅샷의 jig_grid 를 뺀다(그러면 jig_plan none)
+        from test_doe_v0248_b1_api import _jobs, _set_params
+
+        for jid, params in _jobs(engine, sid):
+            p = copy.deepcopy(params)
+            p["doe"]["rank"].pop("jig_grid", None)
+            _set_params(engine, jid, p)
     return sid
 
 
