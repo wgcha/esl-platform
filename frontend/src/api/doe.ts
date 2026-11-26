@@ -909,8 +909,6 @@ const gr = (v: XY) => `${Number(v[0].toFixed(2))}~${Number(v[1].toFixed(2))}`;
 export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules | null, type?: string): { label: string; kind: "info" | "warn" | "neutral"; tip: string } | null {
   if (!g || (g.state === "ok" && !(g.combo_scale != null && g.combo_scale < 1))) return null;
   if (g.state === "unchecked") return { label: "미점검", kind: "neutral", tip: "품질 점검 전 — 준비 표에 없는 변수라 미리보기 준비에서 점검합니다" };
-  // v0.24.9 INT-7: U 포화만으로 limited(기본 범위는 그대로) — "축소" 대신 U 회색 꼬리표(posUTags)가 알림
-  if (g.reason === "U_SATURATED" && !(g.combo_scale != null && g.combo_scale < 1)) return null;
   const why = g.reason ? `${guardReasonText(g.reason, g.value)}${guardLimit(g.reason, rules)}` : "";
   // v0.24.9 U: 부호별 비대칭 usable 을 같은 꼬리표 툴팁에 풀어 보임(새 요소 없음)
   const range = g.usable ? `${gr(g.from)} → ${gr(g.usable)} mm${type === "U" ? `\n${POS_U_TEXT.usable(g.usable[0], g.usable[1])}` : ""}` : "";

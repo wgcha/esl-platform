@@ -75,7 +75,7 @@
 - **U 행은 있으나 이동이 작은 경우(정보 — 행·기저·결과 불변, INT-7·8, 독립 검증 2026-11-26)**: 비드 경고(`var` = U 변수)로, 변수 표 U 행 회색 꼬리표(툴팁 = 서버 문구 `resources/doe_messages.json`).
   | 코드 | 조건 | 필드 | 꼬리표 |
   |---|---|---|---|
-  | U_SATURATED | range guard U 항목: 실제/요청 이동 비 r = max‖ΔU 당 기저 이동‖ < 설정 `pos_u.sat_ratio_min`(0.9) | var, ratio, from, usable, lo_mm, hi_mm | "포화 ×r" |
+  | U_SATURATED | range guard U 항목: 실제/요청 이동 비 r = max‖ΔU 당 기저 이동‖ < 설정 `pos_u.sat_ratio_min`(0.9) | var, ratio, from, move_mm, lo_mm, hi_mm(이동 mm — 변수 단위 아님) | "포화 ×r" |
   | U_SHORT_SEG | U 기저에 달성 구간 없음(패키지 info.short) ∧ S_U 길이 < 2·램프 L(양 끝 접합 — 간격·가드 때문인 short 는 아님) | var, length_mm, ramp_mm, ratio | "짧은 구간" |
 - 선택(요소) 방식·paicad·④: 이번 범위 밖(§1.5 계획 표 `none`, R-PU-2·3). paicad 의 BEAD_POS_U 는 그대로.
 
@@ -86,7 +86,7 @@
 - feasible(추정, `source: estimate`) — 부호별: hi = min(`max_rel`·W_ref, `gap_rel`·g₊), lo = −min(`max_rel`·W_ref, `gap_rel`·g₋), g± = 그 쪽 입구 선에서 가장 가까운 "다른 형상"(다른 비드 구역·섬·fixed·판 외곽) 노드까지 평면 거리의 5 % 분위(직선 표본).
 - 기본 범위 = [max(−`range_rel`·W_ref, lo), min(+`range_rel`·W_ref, hi)]. 사용자 범위가 feasible 밖 = 경고 배지(막지 않음), lo ≥ hi·0 을 포함하지 않는 범위 = 422(공칭 0 이 범위 안이어야 함 — 기준 d000 = 지금 형상).
 - range guard(SH-13~16): U 후보를 ±ext 에서 조합 포함 점검(같은 비드 D·W·U 자동 묶음, 이웃 비드와는 띠가 영향 요소를 공유하면 `interacting` 이 묶음) → usable 범위를 줄여 표에 표시(`RG_OUTSIDE_GUARD`·`RG_VAR_BLOCKED` 기존 코드). **부호별 비대칭 usable** 을 그대로 표시.
-  **포화(INT-7)**: U 항목은 품질 점검 뒤 실제/요청 이동 비 r(`section.u_motion_ratio` — 기저가 선형이라 범위 안 모든 값에서 같음)을 재서 r < `pos_u.sat_ratio_min`(설정 — DEFAULTS·pydantic·yaml 2, 해시·스냅샷·settings 응답 밖)이면 품질 ok 였을 때 state limited·usable = 포화 전 범위 [lo·r, hi·r]·끝 reason `U_SATURATED`·value r + 정보 `U_SATURATED`. **기본 범위·feasible 은 줄이지 않는다**(기저가 range_basis 에 고정 — 줄이면 실제 이동이 r² 로 더 작아짐), 품질 점검이 이미 줄였으면 그 결과 + 정보만. 실측 H6 기본 범위 B3 0.102·B4 0.100(→ ±1.5 mm), B6·B7 0.956(포화 아님), 나머지 1.0. 검증 강제(±0.5W) H6 0.07~0.36·H5 B3·B5 0.49 = limited.
+  **포화(INT-7)**: U 항목은 품질 점검 뒤 실제/요청 이동 비 r(`section.u_motion_ratio` — 기저가 선형이라 범위 안 모든 값에서 같음)을 재서 r < `pos_u.sat_ratio_min`(설정 — DEFAULTS·pydantic·yaml 2, 해시·스냅샷·settings 응답 밖)이면 **정보만**: guard 문서 항목 `u_sat{ratio, move_mm[lo·r, hi·r]}`(이동 mm) + 비드 정보 `U_SATURATED`. guard `state`·`usable`·`ends`(변수 단위 품질 점검 결과)·기본 범위·feasible 은 바꾸지 않는다(기저가 range_basis 에 고정 — 줄이면 실제 이동이 r² 로 더 작아짐; 이동 mm 를 변수 단위 usable 에 넣으면 `outside_guard` 가 기본 범위 끝까지 RG_OUTSIDE_GUARD 를 냄 — 재검증 Fail 보정). 설정이 해시 밖이라 값 변경은 범위 점검이 다시 돌 때만 반영(기존 선택은 그대로). 실측 H6 기본 범위 B3 0.102·B4 0.100(→ ±1.5 mm), B6·B7 0.956(포화 아님), 나머지 1.0. 검증 강제(±0.5W) H6 0.07~0.36·H5 B3·B5 0.49 = 정보 U_SATURATED.
 - 공칭 0 대응(A0-1 확정 — 근거 §0):
   1. 공칭 선택을 한 함수로: `_nom(b, typ)` = D → D_nom, W → W_nom, U → 0.0. `bead_graph.py:1092·1144·1642·1776·1902·1923` 의 `D_nom if D else W_nom` 를 모두 이것으로(D·W 값·바이트 불변).
   2. 기본·feasible: `derive_obj_v2`(`:1006-1017`)에 U 가지 — 위 식(W_ref·g±). `range_default/range_feasible/range_basis["U"]` 는 pos_u 블록이 있고 U 가 가능한 비드만(없으면 키 없음 — 옛 summary 바이트 불변).
@@ -343,5 +343,5 @@
 - 통합 상태: PU-C1-1·PU-C1-8 = §5-13 문구 반영(INT-4). 나머지는 구현 기록(계약 규칙과 충돌 없음 — 근거·측정은 work/v0249_u_table.md).
 - 독립 검증 보정(2026-11-26 — INT-5~8): INT-5 = §10.6(스터디 지그 고정 3D 표식 한 경로). INT-6 = §5-13·PU-C1-1 정정(U 가능 비드가 있으면 input_sha256·
   basis_sha256·report.html 다름 — 결과·순위 동일, 채널 골든 `test_channel_pos_u_block_u0_allowed_diffs`). INT-7 = §1.3 range guard U 포화(`U_SATURATED`, 설정
-  `pos_u.sat_ratio_min`, 기본 범위 불변·보고만). INT-8 = §1.2 `U_SHORT_SEG`(짧은 세그먼트 U — BG_SEGMENT_SHORT 문구가 깊이만 말함). 7·8 시험
+  `pos_u.sat_ratio_min`, 정보만 — guard state·usable·기본 범위 불변, 재검증 보정으로 limited 표기 제거). INT-8 = §1.2 `U_SHORT_SEG`(짧은 세그먼트 U — BG_SEGMENT_SHORT 문구가 깊이만 말함). 7·8 시험
   `tests/doe/test_pos_u_sat.py`(채널 강제 범위·설정 키·문구·거울 + slow H6 B3·B4), 프런트 `pos_u.test.tsx`(회색 꼬리표·guardTag), 골든 `test_pos_u_golden` 바이트 불변.

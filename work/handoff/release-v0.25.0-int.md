@@ -9,4 +9,4 @@
 3. 코어 보완 INT-1~3(계약 §20) 7ff3eb3d. 4. F1 보정 INT-4·5(계약 §20). 5. openapi 재생성 = 변화 없음(B1 이 이미 생성), check:api·check-api.test 통과.
 
 ## 남은 단계
-- merge origin/release/v0.24.9 7d99c017(U_SATURATED 정보화) 6. 문서(CHANGELOG·매뉴얼·field_check_v0250·VERSION) 7. 전체 시험 → handoff 삭제(내용 = 계약 §20·decisions)
+6. 문서(CHANGELOG·매뉴얼·field_check_v0250·VERSION) 7. 전체 시험 → handoff 삭제(내용 = 계약 §20·decisions)

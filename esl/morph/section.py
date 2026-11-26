@@ -571,7 +571,7 @@ def u_motion_ratio(vec) -> float:
 
 def u_saturation(vec, lo: float, hi: float, ratio_min: float) -> dict | None:
     """v0.24.9 INT-7 range guard U 포화 판정(순수): ratio = ``u_motion_ratio`` < ratio_min(설정 pos_u.sat_ratio_min) 이면 포화 —
-    {ratio, usable[lo·ratio, hi·ratio]}(포화 전 범위 = 범위 끝에서 실제로 닿는 이동), 아니면 None. 기저·결과 불변(보고만)."""
+    {ratio, usable[lo·ratio, hi·ratio]}(이동 mm — 범위 끝에서 실제로 닿는 이동, 변수 단위 아님), 아니면 None. 기저·결과 불변(보고만)."""
     r = u_motion_ratio(vec)
     if r >= float(ratio_min):
         return None

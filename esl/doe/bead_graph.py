@@ -2384,13 +2384,11 @@ def _apply_single(b, typ: str, e: dict, nom: float) -> None:
          "value": bad[0]["value"] if bad else None, "combo_scale": None}
     b.guard[typ] = g
     b.warnings[:] = [w for w in b.warnings if not (w.get("code") == "RG_UNCHECKED" and w.get("var") == name)]
+    b.warnings[:] = [w for w in b.warnings if not (w.get("code") == U_SAT_CODE and w.get("var") == name)]
     us = e.get("u_sat")
-    if us is not None:                                  # v0.24.9 INT-7: 정보 U_SATURATED(변수 표 회색 꼬리표 — 문구 doe_messages)
-        b.warnings[:] = [w for w in b.warnings if not (w.get("code") == U_SAT_CODE and w.get("var") == name)]
+    if us is not None:                                  # v0.24.9 INT-7: 정보만(guard 상태·usable 불변 — 변수 표 회색 꼬리표)
         b.warnings.append({"code": U_SAT_CODE, "level": "info", "bead": b.id, "var": name, "ratio": us["ratio"],
-                           "from": frm, "usable": list(us["usable"]), "lo_mm": us["usable"][0], "hi_mm": us["usable"][1]})
-        if all(x.get("reason") == U_SAT_CODE for x in bad):
-            return                                      # 포화만 = 기저가 기본 범위로 고정(선형) — 기본 범위를 줄이면 이동이 더 줄어 그대로
+                           "from": frm, "move_mm": list(us["move_mm"]), "lo_mm": us["move_mm"][0], "hi_mm": us["move_mm"][1]})
     if e["state"] == "ok":
         return
     sides = [x["side"] for x in bad]
@@ -2490,7 +2488,7 @@ def _apply_combo(targets, c: dict) -> None:
                         "bad_n": c["bad_n"], "scale": c["scale"], "reason": c["reason"]})
 
 
-U_SAT_CODE = "U_SATURATED"      # v0.24.9 INT-7 정보 코드(range guard U 포화 — 끝 reason 과 같은 값)
+U_SAT_CODE = "U_SATURATED"      # v0.24.9 INT-7 정보 코드(range guard U 포화 — 정보만, guard 상태 불변)
 
 
 def _u_sat_min(cfg) -> float:
@@ -2500,21 +2498,13 @@ def _u_sat_min(cfg) -> float:
 
 
 def _u_sat_entry(e: dict, v: dict, lo: float, hi: float, ratio_min: float) -> None:
-    """range guard U 항목 e 에 포화(실제/요청 이동 비 < ratio_min — ``section.u_saturation``)를 반영(제자리): u_sat{ratio, usable},
-    품질 점검이 ok 였으면 state limited·usable = 포화 전 범위(lo·ratio, hi·ratio — 0 을 포함할 때만)·끝 reason U_SATURATED·value ratio.
-    품질 점검이 이미 줄였으면 그 결과 그대로(정보만 더함). 기저·결과 불변."""
+    """range guard U 항목 e 에 포화(실제/요청 이동 비 < ratio_min — ``section.u_saturation``)를 정보로만 붙임(제자리): u_sat{ratio,
+    move_mm[lo·ratio, hi·ratio]}(이동 mm — 변수 단위 아님). state·usable·ends(변수 단위 품질 점검 결과)는 그대로 — RG_OUTSIDE_GUARD·
+    기본 범위·기저·결과 불변(INT-7 재검증 보정)."""
     from esl.morph import section as sec
     sat = sec.u_saturation(v["vec"], lo, hi, ratio_min)
-    if sat is None:
-        return
-    r = _r(sat["ratio"])
-    u = [_r(sat["usable"][0]), _r(sat["usable"][1])]
-    nom = float(e["nominal"])
-    e["u_sat"] = {"ratio": r, "usable": u}
-    if e["state"] != "ok" or not (u[0] < nom < u[1]):
-        return
-    e["state"], e["usable"] = "limited", u
-    e["ends"] = [{**x, "ok": False, "reason": U_SAT_CODE, "value": r} for x in e["ends"]]
+    if sat is not None:
+        e["u_sat"] = {"ratio": _r(sat["ratio"]), "move_mm": [_r(sat["usable"][0]), _r(sat["usable"][1])]}
 
 
 def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None) -> dict | None:
@@ -2575,7 +2565,7 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
         done += 1
         e = {"key": key, "var": name, "src": "selection", "nominal": res["nominal"], "from": res["from"],
              "usable": res["usable"], "state": res["state"], "ends": res["ends"]}
-        if typ == "U":                                  # v0.24.9 INT-7: 실제/요청 이동 비 → 포화면 limited(보고만)
+        if typ == "U":                                  # v0.24.9 INT-7: 실제/요청 이동 비 → 포화면 정보 u_sat(보고만)
             _u_sat_entry(e, v, lo, hi, _u_sat_min(cfg))
         wd = None
         if typ == VB_TYPE:                              # §19.2: usable 상한(막힘 = d_max)에서 warp 측정 — 판정에 안 씀

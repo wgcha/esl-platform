@@ -17,14 +17,14 @@
 | U 행 | U 가능 비드마다 D·W 행 아래 "위치 U" 행, **체크 해제**, 이름 옆 방향 문구(+ξ 쪽 등), 범위 mm | |
 | U 없는 비드 | 비드 이름 툴팁에 사유(네트워크·면형·닫힌 고리·한쪽 입구·입구 없음·체결부·대칭 방향) — 비드·사유를 적음 | |
 | W_ref·feasible | 사내 서버 LLM 질문(아래)으로 비드별 `w_ref`·`feasible`·`default_range`·guard usable 표를 받음 | |
-| U 포화·짧은 구간 | 행렬 만든 뒤(범위 점검 후) U 행 회색 꼬리표 "포화 ×비"·"짧은 구간" 이 있는 비드와 툴팁 값(비·포화 전 범위·길이·램프)을 적음 — 그 U 는 실제 이동이 요청보다 작아 민감도가 작게 나옴(H6 실측 B3·B4 비 ≈ 0.10) | |
+| U 포화·짧은 구간 | 행렬 만든 뒤(범위 점검 후) U 행 회색 꼬리표 "포화 ×비"·"짧은 구간" 이 있는 비드와 툴팁 값(비·범위 끝 실제 이동 mm·길이·램프) — 그 U 의 범위 끝 값에 "점검된 안전 범위 밖" 경고가 없어야 함을 적음 — 그 U 는 실제 이동이 요청보다 작아 민감도가 작게 나옴(H6 실측 B3·B4 비 ≈ 0.10) | |
 | 표 높이 | U 행이 있어도 페이지가 길어지지 않고 표 안에서 스크롤(2560·1920) | |
 
 ```
 읽기 전용 진단 — 파일 쓰기·수정 금지, 계산이 필요하면 임시 폴더에서만.
 esl-platform 서버의 비드 직접 선택 스터디 #<번호> 에 대해 GET /doe/studies/<번호>/params 응답을 표로 정리하세요.
 - params 중 type 이 "U" 인 행: name, bead, nominal, w_ref, feasible[lo, hi], default_range[lo, hi], dir_text, guard(usable·state·reason), group_signs.
-- 비드·전체 warnings 중 code 가 U_SATURATED·U_SHORT_SEG 인 항목: var, ratio, lo_mm·hi_mm(포화 전 범위), length_mm·ramp_mm.
+- 비드·전체 warnings 중 code 가 U_SATURATED·U_SHORT_SEG 인 항목: var, ratio, lo_mm·hi_mm(범위 끝 실제 이동 mm), length_mm·ramp_mm.
 - beads 중 u_reason 이 있는 비드: id, name, u_reason.code, u_reason.text.
 - 기존 스터디 데이터·설정·DB 는 바꾸지 마세요.
 ```
