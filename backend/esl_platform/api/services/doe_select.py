@@ -245,6 +245,13 @@ def pos_u_of(s: dict[str, Any]) -> dict[str, Any]:
     return {"pos_u": pu if isinstance(pu, dict) else None, "load_follow": lf if isinstance(lf, dict) else None}
 
 
+def vbead_of(s: dict[str, Any]) -> dict[str, Any]:
+    """v0.25.0 VB §7.2: 스터디 inputs.virtual_bead(새 select 스냅샷만 — 키 없음 = None = 옛 스터디, 가상 비드는 코어가 VB_SCOPE). 코어 derive_v2 키 이름
+    그대로(virtual_bead). 복제 = 원 블록(여기서도 읽기만)."""
+    v = (s.get("inputs") or {}).get("virtual_bead")
+    return {"virtual_bead": v if isinstance(v, dict) else None}
+
+
 def _ids_sha(ids: Any) -> str | None:
     """derive 캐시 키용 노드 ID 배열 해시(None = None)."""
     if ids is None:
@@ -302,7 +309,7 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
         hit = _GRAPH_CACHE.get(key)
         if hit is not None and (hit["labels"] is not None or not labels or lst is None):
             _GRAPH_CACHE.move_to_end(key)
-            return {**hit, "shape_rules": sr, **depth_of(s), **pos_u_of(s)}
+            return {**hit, "shape_rules": sr, **depth_of(s), **pos_u_of(s), **vbead_of(s)}
     if st.st_size > _svc()._max_mb(c) * 1024 * 1024:
         return None
     try:
@@ -346,7 +353,7 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
         _GRAPH_CACHE[key] = out
         while len(_GRAPH_CACHE) > _LOAD_N:
             _GRAPH_CACHE.popitem(last=False)
-    return {**out, "shape_rules": sr, **depth_of(s), **pos_u_of(s)}
+    return {**out, "shape_rules": sr, **depth_of(s), **pos_u_of(s), **vbead_of(s)}
 
 
 def check_schema(s: dict[str, Any], sel: dict[str, Any]) -> None:
@@ -393,7 +400,7 @@ def pos_u_tie_ids(ctx: AppContext, s: dict[str, Any], inputs: dict[str, Any]) ->
     from ...core.opt_core import doe_paicad_io as pio
     from ...core.opt_core import doe_pos_u_tie_ids
 
-    if pos_u_of(s)["pos_u"] is None:
+    if pos_u_of(s)["pos_u"] is None and vbead_of(s)["virtual_bead"] is None:     # v0.25.0 VB: 추가 비드 fixed 집합도 같은 tie 집합(§2.1 VB_FIXED)
         return None
     try:
         with ctx.engine.connect() as conn:
@@ -431,8 +438,12 @@ def _with_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], inputs: d
     if study_schema(s) != 2:
         return inputs
     g = load_graph(ctx, s, c)
-    if g is not None and g.get("pos_u") is not None:
+    if g is not None and (g.get("pos_u") is not None or g.get("virtual_bead") is not None):
         g = {**g, "tie_node_ids": pos_u_tie_ids(ctx, s, inputs)}
+    if g is not None and g.get("virtual_bead") is not None:       # v0.25.0 VB §1.2: 계획 표 열 vbead(시나리오 이름 분기 없음 — 코어 plan_for 한 곳)
+        plan = (_svc()._study_plan(s) or {}).get("vbead")
+        if isinstance(plan, str):
+            g = {**g, "vb_plan": plan}
     return {**inputs, "graph": g}
 
 
@@ -473,12 +484,27 @@ def selection_in(sel) -> dict[str, Any]:
     """API SelectionIn → 코어 입력 dict. v0.16.1 hold_fixed 는 준 비드에만(생략 = 키 없음 — 기존 선택 sha 불변, SR-D-13a).
     v0.17.0 schema 2(SelectionInV2) = 별칭(as)·None 생략 dump(정규화·기본값은 코어 normalize_v2)."""
     if int(getattr(sel, "schema_version", 1) or 1) == 2:
-        return sel.model_dump(by_alias=True, exclude_none=True)
+        d = sel.model_dump(by_alias=True, exclude_none=True)
+        vbs = d.pop("virtual_beads", None)               # v0.25.0 VB §2.1: 빈 목록은 코어에 넘기지 않음(옛 선택 sha 불변), flip false 도 키 없음(§19.9.2)
+        if vbs:
+            d["virtual_beads"] = [{k: v for k, v in b.items() if not (k == "flip" and v is False)} for b in vbs]
+        return d
     d = sel.model_dump()
     for b in d.get("beads") or []:
         if b.get("hold_fixed") is None:
             b.pop("hold_fixed", None)
     return d
+
+
+def _vb_norm_cfg(c: dict[str, Any], selection: dict[str, Any], graph: dict[str, Any] | None) -> dict[str, Any]:
+    """v0.25.0 VB §19.4-3: 가상 비드 θ 기본·상한은 **그 스터디 스냅샷 블록**(doe.virtual_bead 의 theta_default_deg·theta_range_deg) 기준 — 설정이
+    스터디 생성 뒤 바뀌어도 선택 sha 가 같게. 코어 normalize_v2 는 cfg 의 같은 키를 읽으므로 블록 값을 그 자리에 덮어 넘긴다(가상 비드가 있는
+    선택만 — 없으면 c 그대로, 옛 경로 불변). flip_deg 는 코어가 스냅샷 shape_rules 에서 읽음."""
+    blk = (graph or {}).get("virtual_bead")
+    if not selection.get("virtual_beads") or not isinstance(blk, dict):
+        return c
+    ov = {k: copy.deepcopy(blk[k]) for k in ("theta_default_deg", "theta_range_deg") if k in blk}
+    return {**c, "virtual_bead": {**(c.get("virtual_bead") or {}), **ov}} if ov else c
 
 
 def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None,
@@ -493,7 +519,7 @@ def normalize(c: dict[str, Any], selection: dict[str, Any], mesh: dict | None,
                           limit_kb=float(scfg(c)["max_selection_kb"]))
     try:
         if sel_schema(selection) == 2:
-            norm, sha = _graph_call("normalize_v2", selection, (graph or {}).get("graph"), c, mesh=mesh,
+            norm, sha = _graph_call("normalize_v2", selection, (graph or {}).get("graph"), _vb_norm_cfg(c, selection, graph), mesh=mesh,
                                     labels=(graph or {}).get("labels"), shape_rules=(graph or {}).get("shape_rules"))
         else:
             norm, sha = _bs().normalize(selection, c, mesh=mesh)
@@ -520,7 +546,9 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
            (inputs.get("graph") or {}).get("depth_section"),             # v0.24.7 DM: 깊이 단면 동작·규칙이 다르면 다른 derive
            shape_sha((inputs.get("graph") or {}).get("section_rules")),
            shape_sha((inputs.get("graph") or {}).get("pos_u")),          # v0.24.9 PU: 위치 변수 설정이 다르면 다른 derive(U 행·u_reason)
-           _ids_sha((inputs.get("graph") or {}).get("tie_node_ids")))    # v0.24.9 PU-14: 지그 tie 집합(U_HELD·hold 비율)
+           _ids_sha((inputs.get("graph") or {}).get("tie_node_ids")),    # v0.24.9 PU-14: 지그 tie 집합(U_HELD·hold 비율)
+           shape_sha((inputs.get("graph") or {}).get("virtual_bead")),   # v0.25.0 VB: 스냅샷 블록·계획 열이 다르면 다른 derive(선택 sha 는 virtual_beads 포함)
+           (inputs.get("graph") or {}).get("vb_plan"))
     if n > 0:
         with _DERIVE_LOCK:
             hit = _DERIVE_CACHE.get(key)
@@ -534,7 +562,13 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
                            range_guard=g.get("range_guard"), shape_rules=g.get("shape_rules"),
                            depth_section=g.get("depth_section"), section_rules=g.get("section_rules"),
                            pos_u=g.get("pos_u"),
-                           **({"tie_node_ids": g["tie_node_ids"]} if g.get("tie_node_ids") is not None else {}))   # 새 키 = 코어가 받을 때만(_graph_call)
+                           # 지그 tie 집합 = U(pos_u 블록) 또는 추가 비드(선택에 virtual_beads)가 쓸 때만 전달(그 밖 = 호출 불변)
+                           **({"tie_node_ids": g["tie_node_ids"]} if g.get("tie_node_ids") is not None
+                              and (g.get("pos_u") is not None or norm.get("virtual_beads")) else {}),   # 새 키 = 코어가 받을 때만(_graph_call)
+                           # v0.25.0 VB §8: 가상 비드가 있는 선택만 블록·계획 열 전달(없음 = 호출 불변 — 코어도 norm.virtual_beads 있을 때만 씀)
+                           **({"virtual_bead": g.get("virtual_bead"),
+                               **({"vb_plan": g["vb_plan"]} if g.get("vb_plan") is not None else {})}
+                              if norm.get("virtual_beads") else {}))
     else:
         bs = _bs()
         fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],
@@ -634,6 +668,9 @@ def summary(derived: dict[str, Any]) -> dict[str, Any]:
     d = {k: copy.deepcopy(v) for k, v in derived.items() if k not in DERIVE_ONLY}
     d["beads"] = [{k: v for k, v in b.items() if k not in SUMMARY_DROP} for b in d.get("beads") or []
                   if isinstance(b, dict)]
+    if isinstance(d.get("virtual_beads"), list):         # v0.25.0 VB: 미리보기 자료(노드 수천 × 7 수)는 응답 때만 — DB 요약에는 쓰지 않음(조회는 지금 derive)
+        d["virtual_beads"] = [{k: v for k, v in b.items() if k != "preview"} if isinstance(b, dict) else b
+                              for b in d["virtual_beads"]]
     return d
 
 
@@ -950,12 +987,51 @@ def _params_v2(doc: dict[str, Any], c: dict[str, Any] | None) -> dict[str, Any]:
                              "warnings": [w for w in d.get("warnings") or [] if isinstance(w, dict)]})
 
 
+def with_vb_text(table: dict[str, Any]) -> dict[str, Any]:
+    """v0.25.0 VB §19.2-3·§19.7: params A 행 ``guard.warp{limit_deg, n, max_deg, at}`` 가 n > 0 이면 ``text`` = VB_WARP_INFO 문구(자리 n·max·d 채움 —
+    문구 원본 doe_messages.json 한 곳), 가상 비드 행(kind virtual) warnings·vb_reason 의 text 없는 항목도 같은 방법. 응답 때만(DB·작업 params 불변).
+    가상 비드가 없는 표는 같은 객체를 그대로 돌려줌."""
+    from . import uploads as up_svc
+
+    rows = table.get("params") if isinstance(table.get("params"), list) else []
+    beads = table.get("beads") if isinstance(table.get("beads"), list) else []
+    if not any(isinstance(r, dict) and r.get("type") == "A" for r in rows) and not any(isinstance(b, dict) and b.get("kind") == "virtual" for b in beads):
+        return table
+
+    def _warp(r: dict[str, Any]) -> dict[str, Any]:
+        gd = r.get("guard")
+        wp = gd.get("warp") if isinstance(gd, dict) else None
+        if r.get("type") != "A" or not isinstance(wp, dict) or "text" in wp or not (wp.get("n") or 0) > 0:
+            return r
+        txt = up_svc.doe_text("VB_WARP_INFO", n=int(wp["n"]), max=wp.get("max_deg"), d=wp.get("at"))
+        return {**r, "guard": {**gd, "warp": {**wp, "text": txt}}}
+
+    def _text(item: Any) -> Any:
+        if isinstance(item, dict) and isinstance(item.get("code"), str) and not item.get("text"):
+            return {**item, "text": up_svc.doe_text(item["code"], **{k: v for k, v in item.items() if k not in ("code", "level", "text")
+                                                                      and isinstance(v, (str, int, float))})}
+        return item
+
+    def _bead(b: Any) -> Any:
+        if not isinstance(b, dict) or b.get("kind") != "virtual":
+            return b
+        nb = dict(b)
+        if isinstance(nb.get("warnings"), list):
+            nb["warnings"] = [_text(w) for w in nb["warnings"]]
+        if isinstance(nb.get("vb_reason"), dict):
+            nb["vb_reason"] = _text(nb["vb_reason"])
+        return nb
+
+    return {**table, "params": [_warp(r) if isinstance(r, dict) else r for r in rows], "beads": [_bead(b) for b in beads]}
+
+
 def params_w_reason(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dict[str, Any],
                     table: dict[str, Any]) -> dict[str, Any]:
     """변수 표 응답의 그래프 비드에 w_reason{code, text}|null(§4.3). 저장 요약에 사유가 없으면(옛 스터디) 지금 derive(캐시)의 값으로 —
     응답 때만 계산, 저장 안 함. derive 가 실패하면 있는 값만."""
     if sel_schema(doc.get("input")) != 2 or not isinstance(table.get("beads"), list):
         return table
+    table = with_vb_text(table)                           # v0.25.0 VB §19.2-3: A 행 guard.warp 문구(n > 0)
     fresh = fresh_u = None
     has_pu = pos_u_of(s)["pos_u"] is not None            # v0.24.9: U 사유 때문에 다시 derive 하는 것은 pos_u 블록이 있는 새 스터디만
     if any(isinstance(b, dict) and b.get("src") == "graph" and (b.get("w_reason") is None or (has_pu and b.get("u_reason") is None))

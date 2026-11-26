@@ -1284,6 +1284,24 @@ class BeadDoeShapeRulesCfg(_M):
     mesh_route: BeadDoeShapeMeshRouteCfg = BeadDoeShapeMeshRouteCfg()
 
 
+class BeadDoeVirtualBeadCfg(_M):
+    """v0.25.0 VB(esl_virtual_bead.md §7.1·§19.4 — 같은 이름 4곳: esl/doe DEFAULTS·이 모델·yaml 2). 가상 비드("추가 비드", 변수 종류 A).
+    새 select 스냅샷 doe.virtual_bead 로 복사(해시 안 키만). 1 ≤ lo < hi ≤ 89·default ∈ [lo, hi]·hi ≤ select.quality.flip_deg 검증은
+    코어 ``esl.doe.check_virtual_bead`` 를 BeadDoeCfg 가 부른다(같은 판정 한 곳 — 중복 구현 없음)."""
+
+    enabled: bool = True
+    max_count: int = Field(4, ge=1, le=9)
+    min_wall_elems: float = Field(2.0, ge=1.0, le=10.0)
+    margin_mm: float = Field(3.0, ge=0.0, le=50.0)
+    theta_default_deg: float = Field(45.0, ge=1.0, le=89.0)
+    theta_range_deg: list[float] = Field(default_factory=lambda: [15.0, 60.0], min_length=2, max_length=2)
+    r_default_h_mult: float = Field(1.0, ge=0.0, le=4.0)
+    d_max_limit_mm: float = Field(30.0, gt=0.0, le=200.0)
+    default_on: bool = True
+    warp_max_deg: float = Field(15.0, gt=0.0, lt=90.0)
+    preview_max_nodes: int = Field(50000, ge=1000, le=1_000_000)
+
+
 class BeadDoeRedropCfg(_M):
     """v0.22.0 REDROP 재낙하 입력 묶음 받기(esl_redrop_bundle.md §6). 섹션 없으면 기본값."""
 
@@ -1564,6 +1582,17 @@ class BeadDoeSelectCfg(_M):
     derive_timeout_s: float = Field(default=20, gt=0, le=600)
 
 
+def _check_virtual_bead(vb: dict[str, Any], flip_deg: float) -> None:
+    """v0.25.0 VB §19.4-2 설정 검증 = 코어 ``esl.doe.check_virtual_bead`` 호출(theta_range_deg 1 ≤ lo < hi ≤ 89, theta_default ∈ [lo, hi],
+    hi ≤ select.quality.flip_deg). 어기면 ValueError(코어 문구 — 설정 로더가 CONFIG_INVALID 로 올림)."""
+    from .opt_core import EslError, doe_check_virtual_bead
+
+    try:
+        doe_check_virtual_bead({"virtual_bead": vb, "select": {"quality": {"flip_deg": flip_deg}}})
+    except EslError as exc:
+        raise ValueError(str(exc)) from None
+
+
 class BeadDoeCfg(_M):
     """비드 형상 DOE(esl_bead_doe.md §14). 섹션이 없으면 enabled false(GET /doe/settings reason DOE_DISABLED)."""
 
@@ -1597,6 +1626,7 @@ class BeadDoeCfg(_M):
     depth_section_rules: BeadDoeDepthSectionRulesCfg = BeadDoeDepthSectionRulesCfg()
     pos_u: BeadDoePosUCfg = BeadDoePosUCfg()                 # v0.24.9 PU 비드 위치 변수 U(esl_bead_pos_u.md §3)
     load_follow: BeadDoeLoadFollowCfg = BeadDoeLoadFollowCfg()   # v0.24.9 PU 하중 공간 고정
+    virtual_bead: BeadDoeVirtualBeadCfg = BeadDoeVirtualBeadCfg()   # v0.25.0 VB 가상 비드 "추가 비드"(esl_virtual_bead.md §7.1)
     select: BeadDoeSelectCfg = BeadDoeSelectCfg()            # v0.15.0 select(esl_bead_select.md §10)
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
 
@@ -1621,6 +1651,7 @@ class BeadDoeCfg(_M):
             # 기본값이 하한 아래인 채 새 스터디를 만들면 스냅샷 단계(doe.pos_u_snapshot)가 422 CONFIG_INVALID 로 알린다.
             raise ValueError(f"bead_doe.load_follow.cell_mm {lf:g} 는 load_transfer.cell_min_mm..{LT_CELL_MAX_MM:g} "
                              f"({cmin:g}..{LT_CELL_MAX_MM:g}) 안이어야 합니다")
+        _check_virtual_bead(self.virtual_bead.model_dump(), self.select.quality.flip_deg)    # v0.25.0 VB §19.4-2(코어와 같은 판정)
         return self
 
 
