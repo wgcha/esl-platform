@@ -451,3 +451,22 @@ def test_virtual_only_guard_single_v19():
     doc = bgr.guard_selection(m, D, B, CFG, only=["A1_A"])
     assert [e["var"] for e in doc["entries"]] == ["A1_A"] and doc["combos"] == []     # 단일 점검만(조합 상대 없음)
     assert doc["entries"][0]["state"] in ("ok", "limited", "blocked")
+
+
+def test_vb_frame_before_first_bead_int4():
+    """INT-4: 블록 있는(켜진) 스터디는 가상 비드 0개여도 derive 가 vb_frame(입력 칸 ξ·η 용 — 첫 비드 전), 계획 none·블록 없음 = 키 없음.
+    origin 은 판 평면 위(법선 성분 = 부모 바닥 높이), 비드가 있으면 그 비드 판 기준 — 두 frame 이 같다고 가정하지 않음(이 평판 세계에서만 같음)."""
+    m, g, lab, fx, _d = W()
+    n0, _ = norm(sel([]))
+    assert "virtual_beads" not in n0
+    base = bgr.derive_v2(m, n0, CFG, g, lab, frame=FR, fixed_scan=fx, virtual_bead=BLK)
+    vf = base["vb_frame"]
+    assert "virtual_beads" not in base and set(vf) == {"origin", "e_xi", "e_eta", "n_h"}
+    nh = np.asarray(vf["n_h"])
+    assert abs(float(np.dot(np.asarray(vf["e_xi"]), nh))) < 1e-9 and abs(float(np.dot(np.asarray(vf["e_eta"]), nh))) < 1e-9
+    assert float(np.dot(np.asarray(vf["origin"]), nh)) == pytest.approx(float(np.median(np.asarray(m["x0"]) @ nh)), abs=1e-6)
+    assert "vb_frame" not in bgr.derive_v2(m, n0, CFG, g, lab, frame=FR, fixed_scan=fx, virtual_bead=BLK, vb_plan="none")
+    assert "vb_frame" not in bgr.derive_v2(m, n0, CFG, g, lab, frame=FR, fixed_scan=fx)
+    one = bgr.derive_v2(m, norm(sel([VB_OK]))[0], CFG, g, lab, frame=FR, fixed_scan=fx, virtual_bead=BLK)["vb_frame"]
+    for k in ("e_xi", "e_eta", "n_h", "origin"):
+        assert np.allclose(one[k], vf[k], atol=1e-6), k

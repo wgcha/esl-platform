@@ -556,10 +556,11 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
                            # 지그 tie 집합 = U(pos_u 블록) 또는 추가 비드(선택에 virtual_beads)가 쓸 때만 전달(그 밖 = 호출 불변)
                            **({"tie_node_ids": g["tie_node_ids"]} if g.get("tie_node_ids") is not None
                               and (g.get("pos_u") is not None or norm.get("virtual_beads")) else {}),   # 새 키 = 코어가 받을 때만(_graph_call)
-                           # v0.25.0 VB §8: 가상 비드가 있는 선택만 블록·계획 열 전달(없음 = 호출 불변 — 코어도 norm.virtual_beads 있을 때만 씀)
+                           # v0.25.0 VB §8·INT-4: 블록 있는 스터디(가상 비드 켜짐)면 블록·계획 열 전달 — 비드 0개면 코어는 vb_frame 만 더함
+                           # (derive_obj_v2 호출·나머지 응답 불변), 블록 없음 = 호출 불변
                            **({"virtual_bead": g.get("virtual_bead"),
                                **({"vb_plan": g["vb_plan"]} if g.get("vb_plan") is not None else {})}
-                              if norm.get("virtual_beads") else {}))
+                              if g.get("virtual_bead") is not None else {}))
     else:
         bs = _bs()
         fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],
@@ -663,6 +664,8 @@ def summary(derived: dict[str, Any]) -> dict[str, Any]:
     if isinstance(d.get("virtual_beads"), list):         # v0.25.0 VB: 미리보기 자료(노드 수천 × 7 수)는 응답 때만 — DB 요약에는 쓰지 않음(조회는 지금 derive)
         d["virtual_beads"] = [{k: v for k, v in b.items() if k != "preview"} if isinstance(b, dict) else b
                               for b in d["virtual_beads"]]
+    else:                                                # INT-4: 비드 0개 vb_frame 은 입력 칸용(응답만) — 가상 비드 없는 선택의 DB 요약 모양 그대로
+        d.pop("vb_frame", None)
     return d
 
 

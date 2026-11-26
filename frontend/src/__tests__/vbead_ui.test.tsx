@@ -37,6 +37,11 @@ describe("추가 비드 절 (doe-10 + demoVBead)", () => {
     await openStudy(false);
     expect(screen.queryByTestId("bs-vb")).toBeNull();
     cleanup();
+    // INT-5: 설정은 켜졌지만 스터디 스냅샷 블록 없음(옛 스터디 inputs.virtual_bead null) = 숨김
+    renderApp("/p/p-body/doe/doe-10", "power", (s: { doe: { demoVBead: (b?: boolean) => void } }) => s.doe.demoVBead(false));
+    await waitFor(() => expect(screen.getByTestId("bead-b1")).toBeTruthy(), { timeout: 10000 });
+    expect(screen.queryByTestId("bs-vb")).toBeNull();
+    cleanup();
     await openStudy(true);
     const d = screen.getByTestId("bs-vb") as HTMLDetailsElement;
     expect(d.open).toBe(false);

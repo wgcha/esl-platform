@@ -2720,6 +2720,16 @@ export interface DoeSettingsOut {
   /** v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED, paicad 무관). null = 사용 가능 */
   select_reason?: string | null;
 }
+/** v0.25.0 스냅샷 doe.virtual_bead = inputs.virtual_bead(§7.2 — schema 1 + 해시 안 키) */
+export interface DoeVbBlock {
+  schema: number;
+  min_wall_elems?: number;
+  margin_mm?: number;
+  theta_default_deg?: number;
+  theta_range_deg?: [number, number];
+  warp_max_deg?: number;
+  r_default_h_mult?: number;
+}
 /** v0.25.0 GET /doe/settings virtual_bead 칸(§8·§19.7) */
 export interface DoeVirtualBeadCfg {
   enabled: boolean;
@@ -3169,6 +3179,8 @@ export interface DoeStudyOut {
     /** v0.24.9 위치 U 설정 블록(새 스냅샷만 — 없으면 U 행 없음·하중 node) · 하중 공간 고정 설정 */
     pos_u?: { schema: number; range_rel?: number; max_rel?: number; gap_rel?: number; hold_frac_max?: number } | null;
     load_follow?: { schema: number; cell_mm: number } | null;
+    /** v0.25.0 추가 비드 스냅샷 블록(새 select 그래프 스터디·설정 켬만 — 옛 스터디 = null = 추가 비드 절 숨김, INT-5) */
+    virtual_bead?: DoeVbBlock | null;
     /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) */
     load_source?: string | null;
     load_source_check?: LoadSourceCheck | null;

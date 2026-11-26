@@ -96,9 +96,10 @@ def _fake_derive(mesh, norm, cfg, graph, labels, *, frame=None, fixed_scan=None,
                 params.append({"name": f"{b['id'].upper()}_{kind}", "type": kind, "bead": b["id"], "tier": 1, "nominal": 4.0, "feasible": [1.0, 8.0],
                                "feasible_source": "estimate", "default_range": [2.0, 6.0], "use_default": True,
                                "group_members": [f"{b['id'].upper()}_{kind}"]})
+    if vbs or virtual_bead is not None:                 # INT-4: 블록 있는 스터디 = 비드 0개여도 vb_frame(코어 derive_v2 와 같은 모양)
+        d["vb_frame"] = {"origin": [0.0, 0.0, 0.0], "e_xi": [1.0, 0.0, 0.0], "e_eta": [0.0, 1.0, 0.0], "n_h": [0.0, 0.0, 1.0]}
     if vbs:
         d["virtual_beads"] = [_vb_row(v) for v in vbs]
-        d["vb_frame"] = {"origin": [0.0, 0.0, 0.0], "e_xi": [1.0, 0.0, 0.0], "e_eta": [0.0, 1.0, 0.0], "n_h": [0.0, 0.0, 1.0]}
         for v in vbs:
             n = v["id"][1:]
             params.append({"name": f"A{n}_A", "type": "A", "bead": v["id"], "tier": None, "form": "hinge", "nominal": 0.0, "unit": "mm",
@@ -364,8 +365,8 @@ def test_derive_passes_block_plan_and_tie_only_with_virtual_beads(client, world,
     s, sha = ready2(client, world, engine, esl_root)
     sel0 = sel2(sha, gbead("b1", 11))
     d0 = derive(client, s, sel0)
-    assert d0.status_code == 200 and (KW[-1]["virtual_bead"], KW[-1]["vb_plan"]) == (None, None)     # 가상 비드 없음 = 호출 불변
-    assert "virtual_beads" not in d0.json() and "vb_frame" not in d0.json()                       # 옛 응답 모양 그대로(키 없음)
+    assert d0.status_code == 200 and (KW[-1]["virtual_bead"], KW[-1]["vb_plan"]) == (BLOCK, "plate")  # INT-4: 블록 있는 스터디 = 블록 전달
+    assert "virtual_beads" not in d0.json() and set(d0.json()["vb_frame"]) == {"origin", "e_xi", "e_eta", "n_h"}   # 비드 0개 = frame 만
     d1 = derive(client, s, sel2(sha, gbead("b1", 11), virtual_beads=[VB]))
     assert d1.status_code == 200, d1.text
     assert KW[-1]["virtual_bead"] == BLOCK == s["inputs"]["virtual_bead"]
@@ -375,6 +376,8 @@ def test_derive_passes_block_plan_and_tie_only_with_virtual_beads(client, world,
     s2 = api(client, "GET", f"/doe/studies/{s['id']}").json()
     r = derive(client, s2, sel2(sha, gbead("b1", 11), virtual_beads=[VB]))
     assert r.status_code == 200 and KW[-1]["virtual_bead"] is None and KW[-1]["vb_plan"] is None        # 옛 스터디 = 블록 없음(코어가 VB_SCOPE)
+    r0 = derive(client, s2, sel0)
+    assert r0.status_code == 200 and "vb_frame" not in r0.json() and "virtual_beads" not in r0.json()   # 옛 스터디 비드 0개 = 옛 응답 모양
 
 
 def test_vb_plan_from_core_plan_table_not_scenario_name(client, world, engine, esl_root, monkeypatch):  # noqa: F811
@@ -583,6 +586,8 @@ def _e2e(vworld, vbs, *, block=None, plan="plate", c=None, beads=True):
 
 def test_core_e2e_derive_response_shape(real_core, vworld):  # noqa: F811
     from esl_platform.api.schemas import SelectionDerived
+    from esl_platform.api.services import doe_select as ds
+    from esl_platform.core.config import bead_doe_settings
 
     d, norm, sha = _e2e(vworld, [VB])
     assert norm["virtual_beads"][0]["id"] == "a1"
@@ -596,8 +601,20 @@ def test_core_e2e_derive_response_shape(real_core, vworld):  # noqa: F811
     assert arow["name"] == "A1_A" and arow["form"] == "hinge" and arow["label"] == "추가 비드 1 · 깊이" and arow["feasible"] == [0.0, 6.0]
     assert arow["vb"]["host"] == "base" and arow["vb"]["r_source"] == "default" and "depth_max_mm" not in arow["vb"]
     assert any(b["id"] == "a1" and b["kind"] == "virtual" for b in d["param_beads"])
-    nov, _, _ = _e2e(vworld, [])                                                                    # 가상 비드 없음 = 키 없음
-    assert "virtual_beads" not in nov and "vb_frame" not in nov
+    nov, _, _ = _e2e(vworld, [])                                                                    # 가상 비드 없음 = virtual_beads 키 없음
+    assert "virtual_beads" not in nov and set(nov["vb_frame"]) == {"origin", "e_xi", "e_eta", "n_h"}   # INT-4: 켜진 스터디 = 첫 비드 전 frame
+    vf0, vf1 = nov["vb_frame"], d["vb_frame"]
+    o0, n0 = np.asarray(vf0["origin"]), np.asarray(vf0["n_h"])
+    p0 = np.asarray(VB["p0"])
+    lev = float(np.median(np.asarray(vworld[0]["x0"]) @ n0))                                          # 합성 평판(평평) 높이
+    assert abs(float(o0 @ n0) - lev) < 1e-6                                                           # origin = 판 위(법선 성분 = 판 높이)
+    a0 = [float((p0 - o0) @ np.asarray(vf0[k])) for k in ("e_xi", "e_eta")]
+    a1 = [float((p0 - np.asarray(vf1["origin"])) @ np.asarray(vf1[k])) for k in ("e_xi", "e_eta")]
+    assert np.allclose(a0, a1, atol=1e-6)                                                             # 평평한 판: 첫 비드 전후 ξ·η 같음(이 세계의 사실)
+    nob = ds.derive(bead_doe_settings(None), {"mesh": vworld[0], "frame": vworld[4], "fixed_scan": vworld[3],
+                                              "graph": {**_e2e_gd(vworld), "virtual_bead": None}, "mesh_sha256": "m" * 64}, *_norm0(vworld))
+    assert "vb_frame" not in nob                                                                      # 블록 없음 = 키 없음
+    assert "vb_frame" not in ds.summary(nov)                                                          # DB 요약 모양 그대로(비드 0개)
     assert "virtual_beads" not in SelectionDerived.model_validate(nov).model_dump()
 
 
@@ -617,6 +634,25 @@ def test_core_e2e_flip_r_and_scope(real_core, vworld):  # noqa: F811
     d_none, _, _ = _e2e_noblock(vworld)
     v = d_none["virtual_beads"][0]
     assert v["ok"] is False and [x["code"] for x in v["reasons"]] == ["VB_SCOPE"] and v["reasons"][0]["text"]       # 블록 없는 옛 스터디 = VB_SCOPE
+
+
+def _e2e_gd(vworld):
+    from esl.doe import bead_graph as bgr
+
+    _m, g, lab, _fx, _fr = vworld
+    return {"graph": g, "labels": lab, "sha256": bgr.graph_sha_of(g), "w_clamp": None, "range_guard": None, "shape_rules": None}
+
+
+def _norm0(vworld):
+    """가상 비드 없는 선택(_e2e 와 같은 그래프 비드 1개 — virtual_beads 키 없음)."""
+    from esl_platform.api.services import doe_select as ds
+    from esl_platform.core.config import bead_doe_settings
+
+    m, g = vworld[0], vworld[1]
+    gd = {**_e2e_gd(vworld), "virtual_bead": BLOCK}
+    sel = {"schema_version": 2, "graph": {"sha256": gd["sha256"], "rules": int(g["rules"]), "edits": {}},
+           "beads": [{"id": "b1", "src": "graph", "segs": [{"anchor": int(g["segments"][1]["anchor"])}]}]}
+    return ds.normalize(bead_doe_settings(None), sel, m, gd)
 
 
 def _e2e_noblock(vworld):

@@ -1526,7 +1526,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const seedOn = isAuto || stepBaseSel;
   const autoSeed = usePolling(() => (seedOn && prepDone ? loadSelectAuto(id) : Promise.resolve(null)), 0, [id, seedOn, prepDone]);
   const seedSel = !seedOn ? null : autoSeed.data ? autoSeed.data.seed?.selection ?? null : autoSeed.error ? null : undefined;
-  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null, prepWarnings: s?.prep?.warnings ?? null });
+  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null, prepWarnings: s?.prep?.warnings ?? null, vbBlock: s?.inputs.virtual_bead ?? null });
   const varsReady = beadPrep && (!isSelect || !!selSha);
   /** select 변수·평면도: 409 SELECTION_MISSING 은 오류 대신 '선택 없음'(SELECTION_DROPPED 면 안내) */
   const selGuard = <T,>(p: Promise<T>): Promise<T | null> =>

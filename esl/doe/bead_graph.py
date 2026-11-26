@@ -809,6 +809,7 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     v0.21.0: shape_rules(스냅샷 해석값)·range_guard(prep/select/range_guard.json) → ``derive_obj_v2``.
     v0.24.7 DM: depth_section·section_rules(스냅샷 값) → ``derive_obj_v2``, beads[].w_reason{code, text}(옛 스터디도 계산)."""
     from esl.doe import bead_select as bs
+    from esl.morph import section as sec
     dskw = {"depth_section": depth_section, "section_rules": section_rules} if depth_section is not None else {}
     if pos_u is not None:                                  # v0.24.9 PU: 스냅샷 pos_u 블록(없음 = 호출 불변)
         dskw.update(pos_u=pos_u, tie_node_ids=tie_node_ids)
@@ -827,10 +828,14 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-46 그래프 비드 평면도·단면 자료
     w_reason_rows(D, doc["beads"])
     u_reason_rows(D, doc["beads"])
+    vfr = None
     if getattr(D, "vbeads", None):                         # v0.25.0 VB §8: 가상 비드 있을 때만 키
         doc["virtual_beads"], vfr = vb_derive_doc(D, cfg, frame)
-        if vfr is not None:
-            doc["vb_frame"] = vfr
+    if vfr is None and isinstance(virtual_bead, dict) and graph is not None and \
+            sec.vb_allowed(vb_plan, "graph" if norm.get("graph") is not None else "none"):
+        vfr = vb_frame_base(D, mesh, frame)                # INT-4: 켜진 스터디는 비드 0개(첫 비드 전)여도 입력 칸 frame
+    if vfr is not None:
+        doc["vb_frame"] = vfr
     return doc
 
 
@@ -3238,13 +3243,51 @@ def vb_derive_doc(D, cfg=None, frame=None) -> tuple[list[dict], dict | None]:
                                 "g": np.round(f["g"], 6).tolist(), "c": float(f["c"])}
         rows.append(r)
         if vfr is None and vb.plane is not None:
-            ph, nh = vb.plane
-            fr = getattr(D, "graph", {}).get("frame") or {}
-            exa = np.asarray(frame["e_xi"] if frame else fr.get("e1") or [1, 0, 0], float)
-            eya = np.asarray(frame["e_eta"] if frame else fr.get("e2") or [0, 1, 0], float)
-            ex, ey = vbm.frame_in_plane((exa, eya), nh)
-            org = np.asarray(frame["origin"], float) if frame and frame.get("origin") is not None and \
-                len(frame["origin"]) == 3 else ph
-            vfr = {"origin": [_r(float(x)) for x in org], "e_xi": [round(float(x), 9) for x in ex],
-                   "e_eta": [round(float(x), 9) for x in ey], "n_h": [round(float(x), 9) for x in nh]}
+            vfr = _vb_frame_doc(D, frame, *vb.plane)
     return rows, vfr
+
+
+def _vb_frame_doc(D, frame, ph, nh) -> dict:
+    """vb_frame{origin, e_xi, e_eta, n_h}: 입력 칸 ξ·η 축 = ESL frame 축(없으면 그래프 e1·e2)을 판 평면(n_h)에 사영(``frame_in_plane`` —
+    resolve_line (b) 와 같은 축), origin = ESL frame 원점(없으면 판 점 ph)을 판 평면(ph, n_h)에 사영(INT-4 — ξ·η 값은 그대로, 판 위 점은
+    법선 성분 0 → 프런트 역변환이 판 높이를 따로 추정하지 않음)."""
+    from esl.morph import virtual_bead as vbm
+    fr = (getattr(D, "graph", None) or {}).get("frame") or {}
+    ph, nh = np.asarray(ph, np.float64), np.asarray(nh, np.float64)
+    exa = np.asarray(frame["e_xi"] if frame else fr.get("e1") or [1, 0, 0], float)
+    eya = np.asarray(frame["e_eta"] if frame else fr.get("e2") or [0, 1, 0], float)
+    ex, ey = vbm.frame_in_plane((exa, eya), nh)
+    nu = nh / float(np.linalg.norm(nh))
+    org = np.asarray(frame["origin"], float) if frame and frame.get("origin") is not None and \
+        len(frame["origin"]) == 3 else ph
+    org = org - float(np.dot(org - ph, nu)) * nu
+    return {"origin": [_r(float(x)) for x in org], "e_xi": [round(float(x), 9) for x in ex],
+            "e_eta": [round(float(x), 9) for x in ey], "n_h": [round(float(x), 9) for x in nu]}
+
+
+def vb_frame_base(D, mesh, frame=None) -> dict | None:
+    """INT-4: 가상 비드가 켜진 스터디의 입력 칸 frame(비드 0개 — 첫 비드 전에도 derive 가 줌). 판 = 그래프 frame 법선 n0(바닥 쪽) ·
+    높이 = 부모 바닥(segment base ∧ floor ∧ 접합·섬 아님) 노드의 n0 성분 중앙값(없으면 host 종류 전체 → floor 전체). 그래프 없음 = None."""
+    from esl.morph import virtual_bead as vbm
+    g2, l2 = getattr(D, "graph", None), getattr(D, "labels", None)
+    if g2 is None or l2 is None:
+        return None
+    fr = g2.get("frame") or {}
+    n0 = np.asarray(fr.get("n0") or [0.0, 0.0, 1.0], np.float64)
+    n0 = n0 / float(np.linalg.norm(n0))
+    X = np.asarray(mesh["x0"], np.float64)
+    C = _conn(mesh)
+    seg = np.asarray(l2["segment"])
+    stype = np.array([sg["type"] for sg in g2.get("segments") or []] or ["base"], dtype=object)
+    etype = np.where(seg >= 0, stype[np.clip(seg, 0, stype.size - 1)], None)
+    flo = (np.asarray(l2["cls"]) == 0) & (np.asarray(l2["junction_zone"]) < 0) & (np.asarray(l2["island"]) < 0)
+    sel = None
+    for m in (flo & (etype == "base"), flo & np.array([t in vbm.VB_HOST_SEG_TYPES for t in etype.tolist()], bool), flo):
+        if m.any():
+            sel = m
+            break
+    if sel is None:
+        return None
+    nodes = np.unique(C[sel][C[sel] >= 0])
+    lev = float(np.median(X[nodes] @ n0))
+    return _vb_frame_doc(D, frame, lev * n0, n0)

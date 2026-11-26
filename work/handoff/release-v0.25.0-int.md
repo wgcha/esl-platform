@@ -5,5 +5,8 @@
 ## 끝난 단계
 1. merge origin/release/v0.24.9 04a7dba1 — 충돌 docs/decisions.md(v0.24.9 INT-5~8 줄 + v0.25.0 절 둘 다), esl/doe/bead_graph.py guard_selection(U 포화 `_u_sat_entry` + A warp 정보 둘 다). 빠른 시험 79 passed.
 
+2. merge wip/v0.25.0-b1(충돌 없음)·f1(충돌 DoeParamTable import·graphmock — U 포화 목 + 추가 비드 목 둘 다). node_modules = wt_v0250_f1 복사.
+3. 코어 보완 INT-1~3(계약 §20) 7ff3eb3d. 4. F1 보정 INT-4·5(계약 §20). 5. openapi 재생성 = 변화 없음(B1 이 이미 생성), check:api·check-api.test 통과.
+
 ## 남은 단계
-2. merge wip/v0.25.0-b1·f1 3. 코어 보완(tie 출처·normalize_v2 블록·VB_SCOPE INT) 4. F1 보정(vb_frame·절 표시) 5. openapi·types 6. 문서 7. 전체 시험
+- merge origin/release/v0.24.9 7d99c017(U_SATURATED 정보화) 6. 문서(CHANGELOG·매뉴얼·field_check_v0250·VERSION) 7. 전체 시험 → handoff 삭제(내용 = 계약 §20·decisions)

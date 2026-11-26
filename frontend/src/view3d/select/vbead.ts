@@ -1,8 +1,7 @@
 // v0.25.0 추가 비드(가상 비드, kind "A") 입력 규칙 — 순수 함수(esl_virtual_bead.md §2.1·§9·§19.4·§19.9.2).
 // 입력 칸(문자열) → 검사 → VirtualBeadIn(요청 형식 그대로 저장), derive 응답 → 미리보기 BasisVar·3D 겹쳐 그리기.
-import type { DoeSettingsOut, DoeVbFrame, DoeVirtualBeadDerived, VirtualBeadIn } from "../../api/types";
+import type { DoeSettingsOut, DoeVbBlock, DoeVbFrame, DoeVirtualBeadDerived, VirtualBeadIn } from "../../api/types";
 import type { BasisVar } from "./basis";
-import type { GraphIndex } from "./graph";
 
 type V3 = [number, number, number];
 
@@ -14,13 +13,15 @@ export interface VbCfg {
   thetaDefault: number;
   dMaxLimit: number;
 }
-export function vbCfg(st: DoeSettingsOut | null | undefined): VbCfg {
+export function vbCfg(st: DoeSettingsOut | null | undefined, block?: DoeVbBlock | null): VbCfg {
   const v = st?.virtual_bead;
   return {
-    enabled: !!v?.enabled,
+    // INT-5: 설정 enabled ∧ 스터디 스냅샷 블록(inputs.virtual_bead) 있음 — 옛 스터디(null)는 절 숨김
+    enabled: !!v?.enabled && !!block,
     maxCount: v?.max_count ?? 4,
-    thetaRange: v?.theta_range_deg ?? [15, 60],
-    thetaDefault: v?.theta_default_deg ?? 45,
+    // θ 기본·범위 = 스냅샷 블록 값(서버 정규화 INT-2 와 같은 출처), 없으면 설정
+    thetaRange: block?.theta_range_deg ?? v?.theta_range_deg ?? [15, 60],
+    thetaDefault: block?.theta_default_deg ?? v?.theta_default_deg ?? 45,
     dMaxLimit: v?.d_max_limit_mm ?? 30,
   };
 }
@@ -46,13 +47,12 @@ export const emptyVbForm = (thetaDefault = 45): VbForm => ({ mode: "pick", xi: "
 /** 3D 에서 찍은 두 점(모델 좌표). 길이 0~2 */
 export type VbPicks = V3[];
 
-/** 입력 칸 좌표계: ab = ((x − o)·ex, (x − o)·ey), 판 법선 n(역변환의 법선 쪽 값 dn = (판 위 점 − o)·n) */
+/** 입력 칸 좌표계(derive vb_frame 그대로 — INT-4): ab = ((x − o)·ex, (x − o)·ey), o = 판 평면 위 점, n = 판 법선 */
 export interface VbFrame {
   o: V3;
   ex: V3;
   ey: V3;
   n: V3;
-  dn: number;
 }
 const dot = (a: ArrayLike<number>, b: ArrayLike<number>) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const sub = (a: ArrayLike<number>, b: ArrayLike<number>): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -64,33 +64,12 @@ export function toAb(fr: VbFrame, p: ArrayLike<number>): [number, number] {
   return [dot(q, fr.ex), dot(q, fr.ey)];
 }
 export function toModel(fr: VbFrame, xi: number, eta: number): V3 {
-  return [0, 1, 2].map((k) => fr.o[k] + xi * fr.ex[k] + eta * fr.ey[k] + fr.dn * fr.n[k]) as V3;
+  return [0, 1, 2].map((k) => fr.o[k] + xi * fr.ex[k] + eta * fr.ey[k]) as V3;
 }
 
-/** derive 의 vb_frame(있으면 — 코어와 같은 ξ'·η') 아니면 그래프 frame 으로 대신(첫 추가 비드 전). plateLevel = 판 법선 쪽 높이(노드 법선 성분 중앙값) */
-export function vbFrameOf(vf: DoeVbFrame | null | undefined, gi: GraphIndex | null, plateLevel: number | null, refP0?: V3 | null): VbFrame | null {
-  if (vf) {
-    const fr: VbFrame = { o: vf.origin, ex: vf.e_xi, ey: vf.e_eta, n: vf.n_h, dn: 0 };
-    if (refP0) fr.dn = dot(sub(refP0, vf.origin), vf.n_h);
-    return fr;
-  }
-  const g = gi?.graph.frame;
-  if (!g) return null;
-  const o2 = g.origin ?? [0, 0];
-  const L = plateLevel ?? 0;
-  const o: V3 = [0, 1, 2].map((k) => o2[0] * g.e1[k] + o2[1] * g.e2[k] + L * g.n0[k]) as V3;
-  return { o, ex: g.e1, ey: g.e2, n: g.n0, dn: 0 };
-}
-
-/** 노드 위치(평탄 배열) → 법선 n 방향 성분 중앙값(부모 바닥 높이 근사 — 그래프 frame 으로 ξ·η 를 모델 좌표로 되돌릴 때만) */
-export function plateLevelOf(positions: ArrayLike<number>, n: ArrayLike<number>): number | null {
-  const m = positions.length / 3;
-  if (!m) return null;
-  const step = Math.max(1, Math.floor(m / 4000));
-  const h: number[] = [];
-  for (let i = 0; i < m; i += step) h.push(positions[i * 3] * n[0] + positions[i * 3 + 1] * n[1] + positions[i * 3 + 2] * n[2]);
-  h.sort((a, b) => a - b);
-  return h[h.length >> 1];
+/** 입력 칸 frame = derive 의 vb_frame 만(INT-4 — 가상 비드가 켜진 스터디는 비드 0개여도 서버가 줌, 그래프 frame 대체 없음). 없으면 null */
+export function vbFrameOf(vf: DoeVbFrame | null | undefined): VbFrame | null {
+  return vf ? { o: vf.origin, ex: vf.e_xi, ey: vf.e_eta, n: vf.n_h } : null;
 }
 
 const num = (s: string): number => (s.trim() === "" ? NaN : Number(s));
@@ -225,10 +204,9 @@ export function previewVar(d: DoeVirtualBeadDerived): BasisVar | null {
 /** 3D 겹쳐 그리기 선분(쌍마다 6 float): 발자국 윤곽(outline_ab → 모델 좌표) + 중심선 p0→p1. 판 법선 쪽 높이는 p0 기준 */
 export function vbOverlayLines(d: DoeVirtualBeadDerived, fr: VbFrame | null): Float32Array | null {
   if (!fr) return null;
-  const dn = dot(sub(d.p0, fr.o), fr.n);
-  const f2 = { ...fr, dn };
+  const dn = dot(sub(d.p0, fr.o), fr.n);                // 평탄부 등 판 높이가 frame 판과 다른 비드 = p0 높이로 올림
   const segs: number[] = [];
-  const pts = (d.outline_ab ?? []).map((q) => toModel(f2, q.a, q.b));
+  const pts = (d.outline_ab ?? []).map((q) => toModel(fr, q.a, q.b).map((x, k) => x + dn * fr.n[k]) as V3);
   for (let i = 0; i + 1 < pts.length; i++) segs.push(...pts[i], ...pts[i + 1]);
   if (d.p1_resolved) segs.push(...d.p0, ...d.p1_resolved);
   return segs.length ? Float32Array.from(segs) : null;

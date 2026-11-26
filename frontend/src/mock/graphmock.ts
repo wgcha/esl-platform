@@ -275,7 +275,7 @@ export function mockGuard(name: string, type: "D" | "W", nominal: number, def: X
   return { guard: ok, ...keep };
 }
 
-export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null): MockResponse {
+export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null, vbOn = false): MockResponse {
   const m = graphMesh();
   const g = graphFor(!!shape);
   const r = resolve(sel, shape);
@@ -325,8 +325,8 @@ export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null): 
   if (sel.virtual_beads?.length) {
     const vbs = mockVBeads(sel.virtual_beads, shape);
     out.virtual_beads = vbs.map((x) => x.d);
-    out.vb_frame = VB_FRAME;
   }
+  if (vbOn || sel.virtual_beads?.length) out.vb_frame = VB_FRAME;   // INT-4: 블록 있는 스터디 = 비드 0개여도 frame
   return { status: 200, body: out };
 }
 

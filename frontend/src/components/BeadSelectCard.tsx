@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { MsgFold, type FoldItem } from "./MsgFold";
 import { BEAD_SOURCE_NAME, BG_STALE_TEXT, GRAPH_FAILED_TEXT, doe, isInfoWarn, seedHasFixed, warnText } from "../api/doe";
 import { ApiError, errorText } from "../api/client";
-import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut, DoeShapeRules, DoeVirtualBeadDerived, VirtualBeadIn } from "../api/types";
+import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut, DoeShapeRules, DoeVbBlock, DoeVirtualBeadDerived, VirtualBeadIn } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
 import { DIVERGING_GRADIENT } from "../view3d/colors";
@@ -21,7 +21,7 @@ import {
 import { editView, graphColors, graphIndex, parseGraphBin, planXY, resolveRef, segsMask, targetMask, targetOfElem, COLOR_MODE_NAME, type EditView, type GraphColorMode, type GraphIndex, type GraphTarget } from "../view3d/select/graph";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
 import { parseSelectBin, type SelectBin } from "../view3d/select/view";
-import { plateLevelOf, vbCfg, vbFrameOf, vbOverlayLines, type VbCfg, type VbFrame, type VbPicks } from "../view3d/select/vbead";
+import { vbCfg, vbFrameOf, vbOverlayLines, type VbCfg, type VbFrame, type VbPicks } from "../view3d/select/vbead";
 import { heightChange, maxAbs, morph, parseBasis, type BasisVar } from "../view3d/select/basis";
 import { elemsBbox } from "../view3d/viewFit";
 import { PartStage, usePartScene } from "../view3d/part/PartStage";
@@ -306,7 +306,7 @@ export function useBeadSelect(
   saved: DoeSelectionOut | null,
   st: DoeSettingsOut | null,
   seed: DoeSelectionAny | null | undefined = null,
-  opts: { schema?: 1 | 2 | null; prepWarnings?: DoeWarning[] | null } = {},
+  opts: { schema?: 1 | 2 | null; prepWarnings?: DoeWarning[] | null; /** v0.25.0 스터디 스냅샷 inputs.virtual_bead(옛 스터디 null = 추가 비드 절 숨김 — INT-5) */ vbBlock?: DoeVbBlock | null } = {},
 ): BeadSelectCtrl {
   const { data, error } = useSelectData(studyId, on);
   const schema: 1 | 2 = opts.schema === 2 || saved?.input.schema_version === 2 || seed?.schema_version === 2 ? 2 : 1;
@@ -576,16 +576,10 @@ export function useBeadSelect(
   const activeIsGraph = graphMode && curBead?.src === "graph";
   const vbList = stRef.current?.vbeads ?? [];
   const vbDerived = derive?.virtual_beads ?? [];
-  const vbPlate = useMemo(() => {
-    const n0 = gi?.graph.frame.n0;
-    return data && n0 ? plateLevelOf(data.glb.positions, n0) : null;
-  }, [data, gi]);
-  const vbFrame = useMemo(() => vbFrameOf(derive?.vb_frame, gi, vbPlate, vbList[0]?.p0 ?? null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [derive?.vb_frame, gi, vbPlate, vbList.length]);
+  const vbFrame = useMemo(() => vbFrameOf(derive?.vb_frame), [derive?.vb_frame]);
   const vb: VbCtrl = {
-    show: graphMode && !!st?.virtual_bead?.enabled && !!stRef.current?.vbeads,
-    cfg: vbCfg(st),
+    show: graphMode && vbCfg(st, opts.vbBlock).enabled && !!stRef.current?.vbeads,
+    cfg: vbCfg(st, opts.vbBlock),
     list: vbList,
     derived: vbDerived,
     frame: vbFrame,

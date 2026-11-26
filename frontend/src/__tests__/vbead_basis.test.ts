@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import core from "./fixtures/vbead_hinge_core.json";
 import { depthEff, heightChange, morph, parseBasis, ramp, termAt, writeBasis, type BasisVar } from "../view3d/select/basis";
 import { addVBead, cloneState, emptyState, fromSelectionIn, removeVBead, resetAll, toSelectionAny } from "../view3d/select/layers";
-import { buildVBead, emptyVbForm, fillFromPicks, formOf, nextVbId, previewVar, vbCfg, vbHeadText, vbProblem, vbRowText, vbStatus, vbOverlayLines, type VbForm, type VbFrame } from "../view3d/select/vbead";
+import { buildVBead, emptyVbForm, fillFromPicks, formOf, nextVbId, previewVar, toAb, toModel, vbCfg, vbFrameOf, vbHeadText, vbProblem, vbRowText, vbStatus, vbOverlayLines, type VbForm, type VbFrame } from "../view3d/select/vbead";
 import { defaultRows, rowProblem, vbRowTip, warpTag, VB_TEXT } from "../api/doe";
 import { applyPatch } from "../view3d/select/layers";
 import type { DoeParam, DoeSettingsOut, DoeVirtualBeadDerived, VirtualBeadIn } from "../api/types";
@@ -96,15 +96,30 @@ describe("basis.ts hinge = 코어 (V-0250-VB-8·31)", () => {
   });
 });
 
-const CFG = vbCfg({ virtual_bead: { enabled: true, max_count: 4, theta_default_deg: 45, theta_range_deg: [15, 60], d_max_limit_mm: 30, min_wall_elems: 2 } } as DoeSettingsOut);
+const ST = { virtual_bead: { enabled: true, max_count: 4, theta_default_deg: 45, theta_range_deg: [15, 60], d_max_limit_mm: 30, min_wall_elems: 2 } } as DoeSettingsOut;
+const BLK = { schema: 1, theta_default_deg: 45, theta_range_deg: [15, 60] as [number, number] };
+const CFG = vbCfg(ST, BLK);
 const okForm = (): VbForm => ({ ...emptyVbForm(45), mode: "coord", xi: "10", eta: "20", length: "120", angle: "30", dMax: "5", wTop: "20" });
-const FR: VbFrame = { o: [100, 50, 0], ex: [1, 0, 0], ey: [0, 1, 0], n: [0, 0, 1], dn: 0 };
+const FR: VbFrame = { o: [100, 50, 0], ex: [1, 0, 0], ey: [0, 1, 0], n: [0, 0, 1] };
 
 describe("추가 비드 입력 검사·요청 만들기", () => {
   it("설정 기본: θ 15~60, 기본 45, 한도 30, 최대 4개(설정이 없으면 숨김 = enabled false)", () => {
     expect(CFG).toMatchObject({ enabled: true, thetaRange: [15, 60], thetaDefault: 45, dMaxLimit: 30, maxCount: 4 });
     expect(vbCfg(null).enabled).toBe(false);
     expect(vbCfg(null).thetaRange).toEqual([15, 60]);
+  });
+  it("INT-5: 절 표시 = 설정 enabled ∧ 스터디 스냅샷 블록 — 옛 스터디(null)는 숨김, θ 기본·범위 = 블록 값", () => {
+    expect(vbCfg(ST, null).enabled).toBe(false);
+    expect(vbCfg(ST, undefined).enabled).toBe(false);
+    expect(vbCfg({ virtual_bead: { ...ST.virtual_bead!, enabled: false } } as DoeSettingsOut, BLK).enabled).toBe(false);
+    expect(vbCfg(ST, { schema: 1, theta_default_deg: 30, theta_range_deg: [20, 40] })).toMatchObject({ enabled: true, thetaDefault: 30, thetaRange: [20, 40] });
+  });
+  it("INT-4: 입력 칸 frame = derive vb_frame 만(대체 없음 — 없으면 null), toModel·toAb 왕복", () => {
+    expect(vbFrameOf(null)).toBeNull();
+    expect(vbFrameOf(undefined)).toBeNull();
+    const fr = vbFrameOf({ origin: [100, 50, 7], e_xi: [1, 0, 0], e_eta: [0, 1, 0], n_h: [0, 0, 1] })!;
+    expect(toModel(fr, 10, 20)).toEqual([110, 70, 7]);
+    expect(toAb(fr, [110, 70, 7])).toEqual([10, 20]);
   });
   it("검사: θ 15~60 경계, 길이 > 0, 각도 (−180, 180], 깊이 한도, 폭, r ≥ 0(비움 = 통과), 점 두 개, 개수", () => {
     const P = (f: Partial<VbForm>, picks: [number, number, number][] = [], n = 0) => vbProblem({ ...okForm(), ...f }, CFG, picks, n);
