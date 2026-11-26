@@ -225,6 +225,21 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       spring_alpha: 0.01              # auto 배율 α(≥ 1e-3). 기본 0.01 — α=1 은 prescribed 와 구분되지 않음(Q-JIGC-1)
       spring_k_value: null            # value 모드에서 필수(N/mm, > 0)
       spring_alpha_scan: []           # 현장 진단용 α 목록(예 [0.01, 0.1, 1]) — 출처 행 아님(해시 밖)
+    jig_grid:                         # v0.24.8 ④ 형상 직접 비교·옛 ③ 격자 지그(계약 esl_jig_grid_map.md §7.1) — Case 지그를 cell_mm 공통 격자로 형상마다 매핑. 새 스냅샷 doe.rank.jig_grid 로 고정(rank.jig 가 켜져 있을 때만). 같은 메시 모드는 무시
+      enabled: true                   # false = 새 스터디 스냅샷에 jig_grid 없음 = ④·옛 ③ 은 지금처럼 지그 ESL 안 계산
+      cell_mm: 3.0                    # 격자 칸 크기(mm, load_transfer.cell_min_mm..200) — 하중 셀 칸과 같은 수식(해시 안)
+      conv_mm: [5.0, 10.0]            # d000 격자 크기 민감도 진단 크기(각 같은 범위, cell_mm 와 다름, ≤ 3개 — 해시 밖. [] = 진단 끔)
+      tie_capture_rel: 0.25           # tie 골격 잡기 띠 반경 = 이 값 × max(h_T, h_S) ((0, 1], 해시 안)
+      tie_snap_rel: 0.75              # 띠에 노드가 없을 때 최근접 1노드 잡기 한도(tie_capture_rel..2, 해시 안)
+      tie_normal_deg: 30.0            # 잡기 법선 허용각(0, 90) — 옆 플랜지·벽 노드 제외(해시 안)
+      tie_miss_frac_max: 0.1          # 못 잡은 클러스터 비 초과 = 그 형상 그 방식 실패 [0, 1](해시 안)
+      sample_nbr: 1                   # 복셀 표본 이웃 반경(칸 수 1..3, 해시 안)
+      sample_normal_deg: 45.0         # 복셀 표본 법선 허용각(0, 90](해시 안)
+      area_ratio_warn: 2.0            # tie 잡힌 면적비가 [1/r, r] 밖 → 정보 JIG_GRID_AREA_RATIO (> 1, 해시 밖)
+      conv_warn: 0.02                 # d000 ΔΠ_5/E_0 초과 → 정보 JIG_GRID_CONV (> 0, 해시 밖)
+      frame_shift_warn: 0.5           # 하중 칸·BC 표본 위치 차 > 이 값 × cell_mm → 정보 JIG_GRID_FRAME_SHIFT (> 0, 해시 밖)
+      load_resid_warn: 1.0e-6         # 하중 전달 후 합력·모멘트 상대 오차 초과 → 경고 JIG_GRID_LOAD_RESID (> 0, 해시 밖)
+      noise_floor_min: 0.01           # 격자 순위 불확실 구간(noise_floor) 하한 [0, 0.2] — 표시 판정만, 정렬 불변(해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   load_source_default: null           # v0.24.4 P3 스터디 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). null = 지금 동작(순위 지표 기준)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요

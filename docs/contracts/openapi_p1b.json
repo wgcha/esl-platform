@@ -3651,6 +3651,293 @@
         "title": "DoeJigEntryOut",
         "type": "object"
       },
+      "DoeJigGridConvOut": {
+        "description": "v0.24.8 격자 크기 수렴 진단 1크기(esl_jig_grid_map.md §4.2·§6 — d000, 방식·엔트리 최악).",
+        "properties": {
+          "cell_mm": {
+            "title": "Cell Mm",
+            "type": "number"
+          },
+          "dpi_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dpi Max"
+          },
+          "dumax_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dumax Max"
+          },
+          "mac_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mac Min"
+          }
+        },
+        "required": [
+          "cell_mm"
+        ],
+        "title": "DoeJigGridConvOut",
+        "type": "object"
+      },
+      "DoeJigGridMethodOut": {
+        "description": "v0.24.8 방식별 격자 진단(esl_jig_grid_map.md §6 — result.json jig.methods{src}.grid 값 그대로, types.ts 와 check:api 대조).",
+        "properties": {
+          "alpha": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alpha"
+          },
+          "case_recon_mac_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Recon Mac Min"
+          },
+          "conv": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DoeJigGridConvOut"
+            },
+            "title": "Conv",
+            "type": "array"
+          },
+          "n_failed": {
+            "title": "N Failed",
+            "type": "integer"
+          },
+          "n_ok": {
+            "title": "N Ok",
+            "type": "integer"
+          },
+          "recon_mac_d000": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recon Mac D000"
+          },
+          "recon_umax_err_d000": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recon Umax Err D000"
+          }
+        },
+        "required": [
+          "n_ok",
+          "n_failed"
+        ],
+        "title": "DoeJigGridMethodOut",
+        "type": "object"
+      },
+      "DoeJigGridOut": {
+        "description": "v0.24.8 스터디 격자 지그 요약(esl_jig_grid_map.md §1.5·§6 — result.json jig.grid 값 그대로, 최악값).",
+        "properties": {
+          "cell_mm": {
+            "title": "Cell Mm",
+            "type": "number"
+          },
+          "corr_rel_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corr Rel Max"
+          },
+          "frame_shift_max_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frame Shift Max Mm"
+          },
+          "k_scale_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K Scale Max"
+          },
+          "k_scale_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "K Scale Min"
+          },
+          "load_dF_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Df Max"
+          },
+          "load_dM_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load Dm Max"
+          },
+          "n_groups": {
+            "title": "N Groups",
+            "type": "integer"
+          },
+          "n_shapes": {
+            "title": "N Shapes",
+            "type": "integer"
+          },
+          "n_shapes_failed": {
+            "title": "N Shapes Failed",
+            "type": "integer"
+          },
+          "noise_floor": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Noise Floor"
+          },
+          "sample_outside_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Outside Max"
+          },
+          "small_frac_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Small Frac Max"
+          },
+          "tie_area_ratio_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Area Ratio Max"
+          },
+          "tie_area_ratio_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Area Ratio Min"
+          },
+          "tie_miss_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Miss Max"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cell_mm",
+          "n_groups",
+          "n_shapes",
+          "n_shapes_failed"
+        ],
+        "title": "DoeJigGridOut",
+        "type": "object"
+      },
       "DoeJigMethodOut": {
         "description": "v0.24.6 지그 방식 한 개의 상태(esl_viewer_hv.md §9.2 — 코어 result.json jig.methods{src} 값 그대로, types.ts 와 check:api 대조).\nstatus = 코어 문자열(ok·poor·fallback·unsupported 등 — 좁히지 않고 통과), 실패 = code·detail.",
         "properties": {
@@ -3709,6 +3996,16 @@
               }
             ],
             "title": "Fit Umax Err Max"
+          },
+          "grid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeJigGridMethodOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "limits": {
             "default": [],
@@ -3884,6 +4181,16 @@
             ],
             "title": "Fit Work Eff Min"
           },
+          "grid": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeJigGridOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "hz_321": {
             "anyOf": [
               {
@@ -4017,6 +4324,21 @@
               }
             ],
             "title": "Tie Spread"
+          },
+          "transfer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "base",
+                  "grid"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transfer"
           }
         },
         "required": [
@@ -4771,6 +5093,7 @@
               {
                 "enum": [
                   "base",
+                  "grid",
                   "none"
                 ],
                 "type": "string"
