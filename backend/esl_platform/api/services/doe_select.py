@@ -237,6 +237,14 @@ def depth_of(s: dict[str, Any]) -> dict[str, Any]:
     return {"depth_section": ds, "section_rules": r if isinstance(r, dict) else None}
 
 
+def pos_u_of(s: dict[str, Any]) -> dict[str, Any]:
+    """v0.24.9 PU §3: 스터디 inputs.pos_u·load_follow(새 스냅샷만 — 키 없음 = None = U 행 없음·load_follow node). 코어 derive_v2 키 이름 그대로
+    (pos_u·load_follow). 복제 = 원 블록(없던 스터디에 주입 없음 — 여기서도 읽기만)."""
+    i = s.get("inputs") or {}
+    pu, lf = i.get("pos_u"), i.get("load_follow")
+    return {"pos_u": pu if isinstance(pu, dict) else None, "load_follow": lf if isinstance(lf, dict) else None}
+
+
 def shape_sha(sr: dict[str, Any] | None) -> str | None:
     """derive 캐시 키용 shape_rules 해시(None = None)."""
     if sr is None:
@@ -285,7 +293,7 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
         hit = _GRAPH_CACHE.get(key)
         if hit is not None and (hit["labels"] is not None or not labels or lst is None):
             _GRAPH_CACHE.move_to_end(key)
-            return {**hit, "shape_rules": sr, **depth_of(s)}
+            return {**hit, "shape_rules": sr, **depth_of(s), **pos_u_of(s)}
     if st.st_size > _svc()._max_mb(c) * 1024 * 1024:
         return None
     try:
@@ -329,7 +337,7 @@ def load_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], *, labels:
         _GRAPH_CACHE[key] = out
         while len(_GRAPH_CACHE) > _LOAD_N:
             _GRAPH_CACHE.popitem(last=False)
-    return {**out, "shape_rules": sr, **depth_of(s)}
+    return {**out, "shape_rules": sr, **depth_of(s), **pos_u_of(s)}
 
 
 def check_schema(s: dict[str, Any], sel: dict[str, Any]) -> None:
@@ -450,7 +458,8 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
            (inputs.get("graph") or {}).get("w_clamp_sha256"), (inputs.get("graph") or {}).get("range_guard_sha256"),
            shape_sha((inputs.get("graph") or {}).get("shape_rules")),     # v0.21.0: 표·규칙이 다르면 다른 derive
            (inputs.get("graph") or {}).get("depth_section"),             # v0.24.7 DM: 깊이 단면 동작·규칙이 다르면 다른 derive
-           shape_sha((inputs.get("graph") or {}).get("section_rules")))
+           shape_sha((inputs.get("graph") or {}).get("section_rules")),
+           shape_sha((inputs.get("graph") or {}).get("pos_u")))          # v0.24.9 PU: 위치 변수 설정이 다르면 다른 derive(U 행·u_reason)
     if n > 0:
         with _DERIVE_LOCK:
             hit = _DERIVE_CACHE.get(key)
@@ -462,7 +471,8 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
         fut = _POOL.submit(_graph_call, "derive_v2", inputs["mesh"], norm, c, g.get("graph"), g.get("labels"),
                            frame=inputs["frame"], fixed_scan=inputs["fixed_scan"], bead=bead, w_clamp=g.get("w_clamp"),
                            range_guard=g.get("range_guard"), shape_rules=g.get("shape_rules"),
-                           depth_section=g.get("depth_section"), section_rules=g.get("section_rules"))   # 새 키 = 코어가 받을 때만(_graph_call)
+                           depth_section=g.get("depth_section"), section_rules=g.get("section_rules"),
+                           pos_u=g.get("pos_u"))   # 새 키 = 코어가 받을 때만(_graph_call)
     else:
         bs = _bs()
         fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],
@@ -497,6 +507,19 @@ def w_reason_doc(v: Any) -> dict[str, str] | None:
     return {"code": code, "text": up_svc.doe_text(code)}
 
 
+def u_reason_doc(v: Any) -> dict[str, str] | None:
+    """코어의 U 사유(코드 문자열 또는 {code[, text]}) → 응답 {code, text}(문구 = doe_messages.json, 코어가 text 를 주면 그대로). 없음·U_OFF(옛 스터디 —
+    표시 없음) = None. §1.2."""
+    code = v.get("code") if isinstance(v, dict) else v
+    if not isinstance(code, str) or not code or code == "U_OFF":
+        return None
+    if isinstance(v, dict) and isinstance(v.get("text"), str) and v["text"]:
+        return {"code": code, "text": v["text"]}
+    from . import uploads as up_svc
+
+    return {"code": code, "text": up_svc.doe_text(code)}
+
+
 _INFO_TAIL = re.compile(r"\s*\(Info[^)]*\)\s*$")
 DS_TEXT_CODES = ("DS_FALLBACK", "DS_THETA_SPREAD", "DS_ONE_SIDE", "DS_HOLD_PINCH", "DS_ENGINE_NATIVE")
 
@@ -520,9 +543,9 @@ def with_ds_text(warns: Any) -> Any:
     return out
 
 
-def with_w_reason(beads: list[Any], fresh: dict[str, Any] | None = None) -> list[Any]:
+def with_w_reason(beads: list[Any], fresh: dict[str, Any] | None = None, fresh_u: dict[str, Any] | None = None) -> list[Any]:
     """그래프 비드(src graph) 행에 w_reason{code, text}|null 을 붙인 새 목록(응답 때만 — DB 요약·파일에는 쓰지 않음, §4.3).
-    비드에 값이 없으면 fresh(같은 선택의 지금 derive 비드 id → 값)에서 — 옛 스터디도 응답 때 계산."""
+    비드에 값이 없으면 fresh(같은 선택의 지금 derive 비드 id → 값)에서 — 옛 스터디도 응답 때 계산. v0.24.9: u_reason{code, text}|null 도 같은 자리(fresh_u)."""
     out = []
     for b in beads or []:
         if not isinstance(b, dict) or b.get("src") != "graph" or "id" not in b:
@@ -531,7 +554,10 @@ def with_w_reason(beads: list[Any], fresh: dict[str, Any] | None = None) -> list
         v = b.get("w_reason")
         if v is None and fresh:
             v = fresh.get(str(b["id"]))
-        nb = {**b, "w_reason": w_reason_doc(v)}
+        u = b.get("u_reason")
+        if u is None and fresh_u:
+            u = fresh_u.get(str(b["id"]))
+        nb = {**b, "w_reason": w_reason_doc(v), "u_reason": u_reason_doc(u)}     # v0.24.9 PU §1.2: U 사유(없음·옛 스터디 = null)
         if "warnings" in nb:
             nb["warnings"] = with_ds_text(nb["warnings"])        # DS_* message(bead·var 포함 — D 배지 툴팁)
         out.append(nb)
@@ -868,14 +894,17 @@ def params_w_reason(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: 
     응답 때만 계산, 저장 안 함. derive 가 실패하면 있는 값만."""
     if sel_schema(doc.get("input")) != 2 or not isinstance(table.get("beads"), list):
         return table
-    fresh = None
-    if any(isinstance(b, dict) and b.get("src") == "graph" and b.get("w_reason") is None for b in table["beads"]):
+    fresh = fresh_u = None
+    has_pu = pos_u_of(s)["pos_u"] is not None            # v0.24.9: U 사유 때문에 다시 derive 하는 것은 pos_u 블록이 있는 새 스터디만
+    if any(isinstance(b, dict) and b.get("src") == "graph" and (b.get("w_reason") is None or (has_pu and b.get("u_reason") is None))
+           for b in table["beads"]):
         try:
             full = full_derived(ctx, s, c, doc)
             fresh = {str(b["id"]): b.get("w_reason") for b in full.get("beads") or [] if isinstance(b, dict) and "id" in b}
+            fresh_u = {str(b["id"]): b.get("u_reason") for b in full.get("beads") or [] if isinstance(b, dict) and "id" in b}
         except DomainError:
-            fresh = None
-    return {**table, "beads": with_w_reason(table["beads"], fresh), **({"warnings": with_ds_text(table["warnings"])} if "warnings" in table else {})}
+            fresh = fresh_u = None
+    return {**table, "beads": with_w_reason(table["beads"], fresh, fresh_u), **({"warnings": with_ds_text(table["warnings"])} if "warnings" in table else {})}
 
 
 def job_selection(doc: dict[str, Any], c: dict[str, Any] | None = None) -> dict[str, Any]:

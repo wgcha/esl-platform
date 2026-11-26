@@ -376,6 +376,15 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     one_side_min_nodes: 3             # 한쪽 입구 판정 최소 입구 노드 수(1..20)
     entry_smooth_rel: 3.0             # DF 입구 평활 반경 = 값 × 비드 높이(0..10, 0 = 평활 없음)
     entry_gap_rel: 0.5                # DF 이웃 간격 κ_o 계수((0,1])
+  pos_u:                             # v0.24.9 PU 비드 위치 변수 U(계약 esl_bead_pos_u.md §3) — 새 select 스터디 스냅샷 doe.pos_u 로 복사(옛 스터디 = 키 없음 = U 행 없음)
+    enabled: true                     # false = 새 스터디도 pos_u 블록 없음
+    range_rel: 0.25                   # 기본 범위 = ±range_rel × W_ref(0 초과 1 이하)
+    max_rel: 0.5                      # feasible 상한 = max_rel × W_ref(range_rel 이상)
+    gap_rel: 0.5                      # 이웃 형상까지 평면 거리 5% 분위 × gap_rel 이 feasible 상한
+    hold_frac_max: 0.2                # 입구 노드 중 hold(ψ<1) 비율이 이를 넘으면 U_HELD(0..1)
+  load_follow:                        # v0.24.9 PU 하중 공간 고정(§2.2) — pos_u 블록이 있는 새 스냅샷에만
+    cell_mm: 3.0                      # 전달 셀(mm) — load_transfer.cell_min_mm..cell_max
+    noise_floor_min: 0.01             # 순위 noise 하한(해시 밖)
   shape_rules:                        # v0.21.0 BEAD_SHAPE(계약 esl_bead_shape_v021.md §6) — 새 스터디 스냅샷 doe.shape_rules 원본(옛 스터디 = 키 없음 = v0.20.0 동작). 섹션 없으면 아래 기본
     enabled: true                     # false = 새 스터디도 스냅샷을 쓰지 않음
     w_partial: true                   # 항목 1 — 그래프 비드 W 를 폭 정보 있는 구간(S_W)에만

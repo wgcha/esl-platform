@@ -360,6 +360,24 @@ def shape_snapshot(c: dict[str, Any]) -> dict[str, Any] | None:
         raise unprocessable(exc.code, str(exc)) from None
 
 
+POS_U_SCHEMA = 1          # 스냅샷 pos_u.schema(esl_bead_pos_u.md §3)
+LOAD_FOLLOW_SCHEMA = 1    # 스냅샷 load_follow.schema
+
+
+def pos_u_snapshot(c: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """v0.24.9 PU §3: 새 select 스터디의 위치 변수·하중 공간 고정 블록 (pos_u, load_follow) — 설정 bead_doe.pos_u·load_follow 사본(+schema).
+    pos_u.enabled false = None = 스냅샷에 두 키 다 쓰지 않음(옛 동작 = U 행 없음·node). noise_floor_min 은 해시 밖이라 스냅샷에 넣지 않음."""
+    pu, lf = c["pos_u"], c["load_follow"]
+    if not pu.get("enabled", True):
+        return None
+    cmin = float((c.get("load_transfer") or {}).get("cell_min_mm", 0.0))      # §3: cell_mm ≥ load_transfer.cell_min_mm(설정 검사는 직접 적은 경우만 — config.py)
+    if float(lf["cell_mm"]) < cmin:
+        raise unprocessable("CONFIG_INVALID", f"bead_doe.load_follow.cell_mm {float(lf['cell_mm']):g} 는 load_transfer.cell_min_mm "
+                                              f"{cmin:g} 이상이어야 합니다 — 설정 bead_doe.load_follow.cell_mm 을 맞추세요")
+    return ({"schema": POS_U_SCHEMA, **{k: float(pu[k]) for k in ("range_rel", "max_rel", "gap_rel", "hold_frac_max")}},
+            {"schema": LOAD_FOLLOW_SCHEMA, "cell_mm": float(lf["cell_mm"])})
+
+
 LT_SCHEMA = 1       # 작업 spec params.doe.load_transfer.schema(esl_load_transfer.md §4.2)
 RANK_SCHEMA_JIG = 2
 RANK_JIG_GRID_SCHEMA = 1   # 스냅샷 rank.jig_grid.schema(esl_jig_grid_map.md §6)
@@ -462,6 +480,16 @@ def _compare_settings(ctx: AppContext, c: dict[str, Any], st: dict[str, Any]) ->
 DEPTH_NOTE_KEYS = ("DS_CLONE_NOTE", "DS_CLONE_NOTE_ENTRY", "DS_CLONE_NOTE_ENTRY_NONE")
 
 
+def _pos_u_settings(c: dict[str, Any]) -> dict[str, Any]:
+    pu = c["pos_u"]
+    return {"enabled": bool(pu["enabled"]), **{k: float(pu[k]) for k in ("range_rel", "max_rel", "gap_rel", "hold_frac_max")}}
+
+
+def _load_follow_settings(c: dict[str, Any]) -> dict[str, Any]:
+    lf = c["load_follow"]
+    return {"cell_mm": float(lf["cell_mm"]), "noise_floor_min": float(lf["noise_floor_min"])}
+
+
 def _depth_section_notes() -> dict[str, str]:
     """복제 창 안내 문구 원본 = doe_messages.json(자리 {n}·{names} 는 화면이 채움). 영문 "(Info: …)" 꼬리는 뺀다."""
     from . import doe_select as sel_svc
@@ -488,6 +516,8 @@ def settings_out(ctx: AppContext, principal: Principal | None = None) -> dict[st
             "rank": _rank_settings(c),
             "shape_rules": _shape_settings(c),
             "depth_section": str(c["depth_section"]),        # v0.24.7 DM §5.2 새 select 스터디 기본(복제 창 라디오·새 스터디 라디오 기본)
+            "pos_u": _pos_u_settings(c),                     # v0.24.9 PU 새 스터디 기본(표시용 — 스냅샷에 고정되는 값)
+            "load_follow": _load_follow_settings(c),
             "depth_section_notes": _depth_section_notes(),   # v0.24.7 복제 창 안내 문구(resources/doe_messages.json — 영문 꼬리 없이, 화면에 문구 거울 없음)
             "select": {"enabled": st["scenarios"]["select"], "reason": st["select_reason"],
                        "feature_angle_deg": float(sc["feature_angle_deg"]), "max_beads": int(sc["max_beads"]),
@@ -1145,6 +1175,8 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
         prep["load_transfer"] = p0_lt       # v0.20.0 §13.6 준비 요약 {plan, placement, fast_path}(새 스냅샷만)
     if s["scenario"] == "select":       # v0.16.2 §3.1: bead_source 기본 manual(v0.16.1 이전 select 스터디), select_base 는 있을 때만
         inputs.setdefault("bead_source", "manual")
+        inputs.setdefault("pos_u", None)              # v0.24.9 PU: 옛 스터디 = null(U 행 없음) — DB 에는 키를 쓰지 않음
+        inputs.setdefault("load_follow", None)        # v0.24.9 PU: 옛 스터디 = null(node 경로)
         inputs.setdefault("depth_section", None)      # v0.24.7 DM §6: 옛·입구 고정 = null(화면 "입구 고정(이전)") — DB 에는 키를 쓰지 않음
         inputs.setdefault("spec_prefill", None)       # 복제만 값(원 doe.spec)
     out = {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],
@@ -1422,6 +1454,9 @@ def create_study(ctx: AppContext, principal: Principal, body) -> dict[str, Any]:
     if ds_val is not None:                                          # v0.24.7 DM: floor_fixed 만 키(스냅샷 = inputs 같은 값 — §5·§6)
         doe["depth_section"], doe["depth_section_rules"] = ds_val, copy.deepcopy(ds_rules)
         inputs["depth_section"], inputs["depth_section_rules"] = ds_val, copy.deepcopy(ds_rules)
+    if body.scenario == "select" and (pu_snap := pos_u_snapshot(c)) is not None:    # v0.24.9 PU §3: 새 select 스터디만(스냅샷 = inputs 같은 블록)
+        doe["pos_u"], doe["load_follow"] = copy.deepcopy(pu_snap[0]), copy.deepcopy(pu_snap[1])
+        inputs["pos_u"], inputs["load_follow"] = copy.deepcopy(pu_snap[0]), copy.deepcopy(pu_snap[1])
     params = {"bead_doe_id": sid, "kind": "PREP", "out_rel": f"{DOE_DIR}/{sid}", "doe": doe,
               "warnings": list(out["warnings"])}
     return _insert_study_job(ctx, principal, sid=sid, project_id=body.project_id, scenario=body.scenario, title=title,
@@ -1576,6 +1611,20 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------- 행렬·미리보기·실행
+def _check_pos_u_range(spec: dict[str, Any], tab: list[dict[str, Any]]) -> None:
+    """v0.24.9 PU §1.3-5: type U 변수는 범위가 공칭(변수 표 nominal)을 포함해야 한다(lo ≤ 공칭 ≤ hi — 기준 d000 = 지금 형상) — 아니면 422
+    DOE_RANGE_INVALID. 코어 matrix.normalize_spec 과 같은 판정(코어가 먼저 막으면 같은 코드). D·W 는 건드리지 않음(\"> 0\" 검사도 D·W 만 — 코어)."""
+    nom = {str(r.get("name")): r for r in tab if isinstance(r, dict) and r.get("type") == "U"}
+    for p in spec.get("params") or []:
+        r = nom.get(str(p.get("name")))
+        if r is None:
+            continue
+        v0 = float(r.get("nominal") or 0.0)
+        lo, hi = p.get("lo"), p.get("hi")
+        if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and not (lo <= v0 <= hi):
+            raise unprocessable("DOE_RANGE_INVALID", f"{p['name']}: 위치 범위는 {v0:g} 을 포함해야 합니다 (lo {lo:g}, hi {hi:g})")
+
+
 def _generate(ctx: AppContext, s: dict[str, Any], spec: dict[str, Any], c: dict[str, Any]) -> dict[str, Any]:
     from ...core.opt_core import EslError
     from ...core.opt_core import doe_matrix
@@ -1584,6 +1633,7 @@ def _generate(ctx: AppContext, s: dict[str, Any], spec: dict[str, Any], c: dict[
         tab = _select().params_table(_select().require_selection(ctx, s, cfg(ctx)), c)["params"]
     else:
         tab = _params_doc(ctx, s, c)["params"]
+    _check_pos_u_range(spec, tab)
     try:
         return doe_matrix.generate(spec, tab, c)
     except EslError as exc:
@@ -1609,6 +1659,15 @@ def _study_cfg(conn, s: dict[str, Any], current: dict[str, Any]) -> dict[str, An
     return bd if isinstance(bd, dict) and bd.get("doe") else current
 
 
+def _matrix_load_follow(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], spec: dict[str, Any]) -> str | None:
+    """pos_u 블록이 있는 새 select 스터디만 "node"|"spatial"(계획 load_follow 열 var — select 3행 모두). 없으면 None."""
+    if s.get("scenario") != "select" or not isinstance((s.get("inputs") or {}).get("pos_u"), dict):
+        return None
+    tab = _select().params_table(_select().require_selection(ctx, s, c), c)["params"]
+    types = {str(r.get("name")): r.get("type") for r in tab if isinstance(r, dict)}
+    return "spatial" if any(types.get(str(p.get("name"))) == "U" for p in spec.get("params") or []) else "node"
+
+
 def matrix(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]:
     """행렬 생성만(저장 안 함) — 화면 안 수·경고 즉시 표시. 같은 함수를 미리보기·워커 BD_MATRIX 가 쓴다(같은 sha)."""
     c = cfg(ctx)
@@ -1617,7 +1676,11 @@ def matrix(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, A
     _require_prep(s, job)
     with ctx.engine.connect() as conn:
         mc = _study_cfg(conn, s, c)
-    return _jsonable(_generate(ctx, s, _spec_dict(body), mc))
+    spec = _spec_dict(body)
+    out = _jsonable(_generate(ctx, s, spec, mc))
+    if "load_follow" not in out:      # v0.24.9 PU §4: 코어가 안 주면 계약 규칙(pos_u 스냅샷 ∧ 행렬에 U 변수 ≥ 1 = spatial) — 옛 스터디 = null
+        out["load_follow"] = _matrix_load_follow(ctx, s, c, spec)
+    return out
 
 
 def _prep_params(conn, s: dict[str, Any]) -> dict[str, Any]:
@@ -2109,6 +2172,8 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     for k in ("load_source", "metric_default"):      # v0.24.4 P3: 고른 하중 출처·그 출처가 없을 때의 기본 지표(새 스냅샷만 — 코어 값 그대로)
         if isinstance(r.get(k), str):
             out[k] = r[k]
+    if isinstance(r.get("load_follow"), dict):       # v0.24.9 PU §2.3: 하중 공간 고정 진단(spatial 스터디만 — 코어 값 그대로, 옛·node = null)
+        out["load_follow"] = r["load_follow"]
     out["rank"] = _rank_snapshot_out(ctx, sid)       # 스터디 스냅샷 doe.rank(경고 문턱 — 화면이 상수 대신 사용), 옛 스터디 = null
     # 결정 A(2026-11-13): 순위에 실제로 쓴 지표 metric_effective(다른 메시 비교 = solve)·cross_mesh(경고 SM_CROSS_MESH) — 코어 값
     if isinstance(r.get("metric_effective"), str):
