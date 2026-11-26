@@ -173,6 +173,8 @@ def jig_kind(plan: dict, grid_snap: bool) -> str:
     grid = 계획 jig_fix grid ∧ grid_snap(스냅샷 rank.jig enabled ∧ rank.jig_grid enabled), 그 밖 none(옛 스냅샷·설정 끔)."""
     if plan["sm_jig"] == "base":
         return "base"
+    if isinstance(grid_snap, dict):              # 백엔드 = 스냅샷 rank.jig_grid 블록(dict) | None — 블록 enabled 거짓 = none
+        grid_snap = grid_snap.get("enabled", True) is not False
     if plan["jig_fix"] == "grid" and bool(grid_snap):
         return "grid"
     return "none"

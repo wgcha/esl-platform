@@ -1170,6 +1170,8 @@ def bd_post(spec: dict, echo=print) -> dict:
     report_doe.write(c.writer.guard(c.p("report.html")), ctx)
     freed = _cleanup(c, {BASELINE, NOISE} | set(x["id"] for x in R["ranking"][:keep_k]))
     out["cleanup_bytes"] = freed
+    if _jg_kind(c) == "grid":                    # v0.24.8: JIG_GRID_* 결과 경고 = {code, message(+ 필드)}
+        out["warnings"] = _jg_warn_rows(c, out["warnings"])
     c.write_json(os.path.join("post", "result.json"), out)
     echo(f"[bd_post] 성공 {R['n_ok']} · 최적 {best_ids[0] if best_ids else '-'}"
          + (f" score {R['ranking'][0]['score']:.4f}" if R["ranking"] else "") + f" · 정리 {freed} B")
@@ -6127,14 +6129,18 @@ def _jg_prep(c: Ctx, t, echo=None) -> list:
     ok_any = any(mdoc[jig_bc.METHODS[m]["src"]]["status"] == "ok" for m in ms) and bool(gdocs)
     nxt = next((jig_bc.METHODS[m]["name"] for m in ok_m), None)
     note = f"순위는 지그 {nxt} 로 매깁니다" if nxt else "지금은 재풀이(solve) 순위입니다"
+    rows_w = []
     for eid, m, why in miss:
-        warns.append(_jg_text("JIG_GRID_SOURCE_MISSING", entry=labels.get(eid, eid), method=jig_bc.METHODS[m]["name"],
-                              rank_note=note, reason=why))
+        txt = _jg_text("JIG_GRID_SOURCE_MISSING", entry=labels.get(eid, eid), method=jig_bc.METHODS[m]["name"],
+                       rank_note=note, reason=why)
+        warns.append(txt)
+        rows_w.append({"code": "JIG_GRID_SOURCE_MISSING", "message": txt, "entry": labels.get(eid, eid), "entry_id": eid,
+                       "method": m, "reason": why})
     doc = {"schema": gm.SCHEMA, "status": "ok" if ok_any else "fallback",
            "code": None if ok_any else "JIG_GRID_SOURCE_MISSING", "cell_mm": s,
            "placement": {"kind": _lt_placement(c, plan).get("kind")},
            "frame_sha": ev.config_hash(ents[0].meta.get("frame")) if ents else None, "methods": mdoc, "groups": gdocs,
-           "warnings": warns, "info": info, "seconds": round(time.monotonic() - t0, 3)}
+           "warnings": warns, "warning_rows": rows_w, "info": info, "seconds": round(time.monotonic() - t0, 3)}
     c.write_json(os.path.join("prep", JG_JSON), U.jsonable(doc))
     if echo is not None:
         echo(f"[bd_loads] 격자 지그 {s:g} mm · 묶음 {len(gdocs)} · 방식 "
@@ -6154,6 +6160,8 @@ def _jg_prep_safe(c: Ctx, t, echo=None) -> list:
         ms = _jg_methods(c)
         w = [_jg_text("JIG_GRID_SOURCE_MISSING", entry="*", method=jig_bc.METHODS[m]["name"],
                       rank_note="지금은 재풀이(solve) 순위입니다", reason=err) for m in ms]
+        rows_w = [{"code": "JIG_GRID_SOURCE_MISSING", "message": t_, "entry": "*", "entry_id": None, "method": m, "reason": err}
+                  for t_, m in zip(w, ms)]
         c.writer.makedirs(c.p("prep"))
         c.write_json(os.path.join("prep", JG_JSON), {"schema": gm.SCHEMA, "status": "fallback", "code": "JIG_GRID_SOURCE_MISSING",
                                                      "cell_mm": None, "placement": None, "frame_sha": None,
@@ -6161,7 +6169,8 @@ def _jg_prep_safe(c: Ctx, t, echo=None) -> list:
                                                          "status": "fallback", "code": "JIG_GRID_SOURCE_MISSING", "reason": err,
                                                          "method": m, "tie_dofs": None, "spring": None, "entries": []}
                                                          for m in ms},
-                                                     "groups": [], "warnings": w, "info": [], "seconds": 0.0})
+                                                     "groups": [], "warnings": w, "warning_rows": rows_w, "info": [],
+                                                     "seconds": 0.0})
         return w
 
 
@@ -6538,8 +6547,11 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
                               "conv": [{"cell_mm": x["cell_mm"], "dpi_max": x["dpi_max"], "dumax_max": x["dumax_max"],
                                         "mac_min": x["mac_min"]} for x in (d0.get("conv") or {}).get(src) or []]}}
         if pm.get("status") == "ok" and not ready and ((d0.get("methods") or {}).get(src) or {}).get("status") != "ok":
-            warns.append(_jg_text("JIG_GRID_NO_REF", method=jig_bc.METHODS[m]["name"],
-                                  err=((d0.get("methods") or {}).get(src) or {}).get("code") or "d000 없음"))
+            er_ = ((d0.get("methods") or {}).get(src) or {}).get("code") or "d000 없음"
+            txt = _jg_text("JIG_GRID_NO_REF", method=jig_bc.METHODS[m]["name"], err=er_)
+            warns.append(txt)
+            c._jg_rows = {**(getattr(c, "_jg_rows", None) or {}),
+                          txt: {"code": "JIG_GRID_NO_REF", "message": txt, "method": m, "reason": er_}}
     vals = lambda f: [v for rd in runs.values() for v in f(rd) if v is not None]      # noqa: E731
     tie = lambda rd: [((rd.get("map") or {}).get("tie") or {})]                        # noqa: E731
     ld = lambda rd: [e.get("load") or {} for md in (rd.get("methods") or {}).values() for e in md.get("entries") or []]  # noqa: E731
@@ -6549,8 +6561,12 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
         s5 = min(cfg["conv_mm"])
         dp5 = [x["dpi_max"] for x in conv_rows if x["cell_mm"] == s5 and x.get("dpi_max") is not None]
         if dp5 and max(dp5) > float(cfg["conv_warn"]):
-            warns.append(_jg_text("JIG_GRID_CONV", cell_mm=f"{float(cfg['cell_mm']):g}", mm=f"{s5:g}", dpi=f"{max(dp5):.3g}",
-                                  tol=f"{float(cfg['conv_warn']):g}"))
+            txt = _jg_text("JIG_GRID_CONV", cell_mm=f"{float(cfg['cell_mm']):g}", mm=f"{s5:g}", dpi=f"{max(dp5):.3g}",
+                           tol=f"{float(cfg['conv_warn']):g}")
+            warns.append(txt)
+            c._jg_rows = {**(getattr(c, "_jg_rows", None) or {}),
+                          txt: {"code": "JIG_GRID_CONV", "message": txt, "cell_mm": float(s5), "dpi_max": float(max(dp5)),
+                                "tol": float(cfg["conv_warn"])}}
     mn = lambda xs: min(xs) if xs else None      # noqa: E731
     mx_ = lambda xs: max(xs) if xs else None     # noqa: E731
     grid = {"cell_mm": doc.get("cell_mm"), "n_groups": len(doc.get("groups") or []), "n_shapes": len(runs),
@@ -6581,6 +6597,20 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
                                                                            if v.get("tie_dofs")), None),
            "methods": meth}
     return blk, warns
+
+
+def _jg_warn_rows(c: Ctx, warns: list) -> list:
+    """result.json warnings(grid 만): JIG_GRID_* 문자열 → {code, message(+ 필드)} — prep 의 SOURCE_MISSING 행은 entry·entry_id·
+    method·reason 를 더함. 그 밖 경고는 그대로(옛·base 결과 바이트 불변 — 호출부가 grid 일 때만 부름)."""
+    rows = {r_["message"]: r_ for r_ in (_jg_doc(c) or {}).get("warning_rows") or []}
+    rows.update(getattr(c, "_jg_rows", None) or {})
+    out = []
+    for w in warns:
+        if isinstance(w, str) and w.startswith("JIG_GRID_"):
+            out.append(dict(rows.get(w) or {"code": w.split(":", 1)[0], "message": w}))
+        else:
+            out.append(w)
+    return out
 
 
 def _jg_mesh_of(c: Ctx, t, did: str) -> tuple[dict, list, object]:
@@ -7076,6 +7106,8 @@ def _cmp_post(c: Ctx, echo) -> dict:
     out["cleanup_bytes"] = 0
     if bias:
         out["refine_bias"] = bias
+    if _jg_kind(c) == "grid":                    # v0.24.8: JIG_GRID_* 결과 경고 = {code, message(+ 필드)}
+        out["warnings"] = _jg_warn_rows(c, out["warnings"])
     c.write_json(os.path.join("post", "result.json"), out)
     echo(f"[bd_post] ④ 성공 {R['n_ok']} · 최적 {best_id or '-'}"
          + (f" ({_cmp_name(c, best_id)}) score {R['ranking'][0]['score']:.4f}" if best_id else ""))

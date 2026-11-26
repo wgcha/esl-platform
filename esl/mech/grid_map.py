@@ -37,6 +37,8 @@ VIA_NAMES = {VIA_MISS: "miss", VIA_BAND: "band", VIA_SNAP: "snap"}
 ELEM_PT, ELEM_SEG, ELEM_TRI = 0, 1, 2
 # 해시 밖 키(경고 임계·수렴 진단 크기·표시 판정 — 계산 결과(per_esl)를 바꾸지 않음, 계약 §7.1)
 HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min")
+# 해시에서 빼는 고정 키(백엔드 rank_snapshot 이 블록 안에 넣는 schema: 1 — 값 고정, 키 유무로 해시가 갈리지 않게)
+HASH_FIXED = ("schema", "enabled")
 # 격자 npz 키(§1.2 — stages 가 g<k>.npz 로 저장). 접미 <frame>·<src> 는 METHODS.frame·src 열 값
 NPZ_FIELD = ("vox_key", "vox_x", "vox_n", "vox_a")
 NPZ_SKEL = ("tie_idx", "tie_x", "tie_seg", "tie_tri", "tie_q", "tie_area", "tie_dir", "tie_rank", "h_T", "sup_x")
@@ -872,4 +874,4 @@ def mac(u, v) -> float | None:
 
 def hash_view(grid_cfg_raw: dict | None) -> dict:
     """이어하기 해시 보기: 스냅샷 원본 rank.jig_grid 사본에서 HASH_EXCLUDE 키를 뺌(설정 병합 전 — D-0.24.5-VT-16)."""
-    return {k: grid_cfg_raw[k] for k in sorted(grid_cfg_raw or {}) if k not in HASH_EXCLUDE}
+    return {k: grid_cfg_raw[k] for k in sorted(grid_cfg_raw or {}) if k not in HASH_EXCLUDE and k not in HASH_FIXED}

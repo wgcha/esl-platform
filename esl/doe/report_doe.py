@@ -378,6 +378,15 @@ def _jig_line(j: dict) -> str:
     """지그 순위 한 줄(esl_jig_rank.md §5.3): 정의 + 기준 재현 MAC·umax 오차·영역 출처."""
     if j.get("status") in ("fallback", "unsupported"):
         return f"지그 순위 불가({j.get('code')}) — 재풀이 C 로 순위"
+    if j.get("transfer") == "grid":              # v0.24.8 JG §2.3: 격자 지그(다른 메시) 1줄
+        g = j.get("grid") or {}
+        ms = j.get("methods") or {}
+        rec = [m.get("grid", {}).get("recon_mac_d000") for m in ms.values() if (m.get("grid") or {}).get("recon_mac_d000") is not None]
+        miss = g.get("tie_miss_max")
+        nf = g.get("noise_floor")
+        return (f"형상마다 Case 지그를 {g.get('cell_mm')} mm 격자로 매핑(기준 d000) · d000 재현 MAC "
+                f"{'—' if not rec else format(min(rec), '.3f')} · 잡기 miss 최대 {'—' if miss is None else format(miss * 100, '.0f') + ' %'}"
+                + (f" · 차이 {nf * 100:.1f} % 이내는 매핑 오차 범위" if nf is not None else ""))
     mac, err = j.get("fit_mac_min"), j.get("fit_umax_err_max")
     mnm = j.get("fit_mac_min_nomodes")
     nm = f" (모드 제외 {float(mnm):.3f})" if int(j.get("n_modes") or 0) > 0 and mnm is not None else ""
