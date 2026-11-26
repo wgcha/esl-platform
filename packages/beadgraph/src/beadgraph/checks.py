@@ -55,11 +55,12 @@ def allowed_elements(graph, labels, nodes, elems, segs, zones=(), kind: str = "D
     W: S elements + junction zones + owned / straddling islands + the parent floor and its non-straddling islands (blend
     band R_w, BG-D-30) — children stay (not allowed).
     DF (depth, floor width kept — esl_bead_depth_mode §1.2.1): the D set ∪ the parent floor and its non-straddling
-    islands (A_DF). W1 (one-sided width, §1.6.3): the W set."""
+    islands (A_DF). W1 (one-sided width, §1.6.3): the W set. U (bead position, esl_bead_pos_u §1.1): the DF set (children
+    rigid with the bead, parent-floor band both sides)."""
     lab = {k: np.asarray(v, np.int64) for k, v in labels.items()}
     cls, seg, jz, tr, isl, fl = (lab[k] for k in ("cls", "segment", "junction_zone", "transition", "island", "floor"))
     K = conn or _Conn(graph, nodes, elems)
-    base = {"DF": "D", "W1": "W"}.get(kind, kind)
+    base = {"DF": "D", "W1": "W", "U": "D"}.get(kind, kind)
     S = sorted({int(s) for s in segs})
     sg = {s["id"]: s for s in graph["segments"]}
     F = sg[S[0]]["floor"]
@@ -115,7 +116,7 @@ def allowed_elements(graph, labels, nodes, elems, segs, zones=(), kind: str = "D
             A |= e
         elif i["straddle"] and touchS[K.C[e][K.C[e] >= 0]].any():
             A |= e
-    if base == "W" or kind == "DF":
+    if base == "W" or kind in ("DF", "U"):
         if p is not None and p >= 0:
             A |= floor_el & (fl == p)
             A |= np.isin(isl, [i["id"] for i in graph["islands"] if i["parent"] == p and not i["straddle"]]) & (isl >= 0)
@@ -174,7 +175,8 @@ def basis_leak(basis, graph=None, labels=None, nodes=None, elems=None) -> list[d
 
 def achieved(graph, labels, nodes, x, basis, values, elems=None) -> dict:
     """D / DF: max |Δh − s·Δv| over the achieved nodes; W: |ΔW_measured − Δv| (entry nodes at full ramp, both sides ->
-    2 × the median skeleton-distance change); W1: one side -> 1 × the change."""
+    2 × the median skeleton-distance change); W1: one side -> 1 × the change; U: per side |median plan displacement
+    along t⊥ − Δv| (max of the two sides — the width change is their difference)."""
     x0 = np.asarray(nodes, np.float64)
     x = np.asarray(x, np.float64)
     n0 = np.asarray(graph["frame"]["n0"], float)
@@ -189,6 +191,22 @@ def achieved(graph, labels, nodes, x, basis, values, elems=None) -> dict:
         if v["kind"] in ("D", "DF"):
             dh = (x[idx] - x0[idx]) @ n0
             out[v["name"]] = float(np.abs(dh - v["info"]["sign"] * dv).max())
+        elif v["kind"] == "U":
+            from .absorb import polyline_dist as _pd
+            from .morph import _u_skel
+            if M is None:
+                M = _PlanOnly(graph, x0)
+            P0 = M.plan(x0[idx])
+            _d, tp, _i, sid = _u_skel(M, v["segs"], P0, v["info"].get("orient"))
+            side = np.zeros(idx.size)
+            for s in set(int(q) for q in sid if q >= 0):
+                m = sid == s
+                side[m] = _pd(P0[m], np.asarray(M.segs[s]["skeleton"], float))[1]
+            for s in set(int(q) for q in sid if q >= 0):            # side relative to the oriented travel direction
+                side[sid == s] *= float((v["info"].get("orient") or {}).get(s, 1))
+            dpl = np.einsum("ij,ij->i", M.plan(x[idx]) - P0, tp)
+            errs = [abs(float(np.median(dpl[side == sg])) - dv) for sg in (1.0, -1.0) if (side == sg).any()]
+            out[v["name"]] = max(errs) if errs else None
         else:
             if M is None:
                 M = _PlanOnly(graph, x0)

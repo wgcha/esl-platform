@@ -229,8 +229,9 @@ def test_df_network_and_area_v29():
 def test_version_cli_v23():
     out = subprocess.run([sys.executable, "-m", "beadgraph", "version"], capture_output=True, text=True, check=True)
     v = json.loads(out.stdout)
-    assert {k: v[k] for k in ("version", "output_version", "rules", "morph_rules", "df_rules", "w1_rules")} == \
-        {"version": "1.2.0", "output_version": "1.1.0", "rules": 1, "morph_rules": 2, "df_rules": 1, "w1_rules": 1}
+    assert {k: v[k] for k in ("version", "output_version", "rules", "morph_rules", "df_rules", "w1_rules", "u_rules")} == \
+        {"version": "1.3.0", "output_version": "1.1.0", "rules": 1, "morph_rules": 2, "df_rules": 1, "w1_rules": 1,
+         "u_rules": 1}
     g, _lab = bg.classify(*(lambda c: (c["nodes"], c["conn"], c["fixed"]))(so.channel()))
     assert g["version"] == bg.OUTPUT_VERSION == "1.1.0"
 
