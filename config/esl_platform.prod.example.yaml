@@ -248,10 +248,10 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       sample_nbr: 1                   # 복셀 표본 이웃 반경(칸 수 1..3, 해시 안)
       sample_normal_deg: 45.0         # 복셀 표본 법선 허용각(0, 90](해시 안)
       area_ratio_warn: 2.0            # tie 잡힌 면적비가 [1/r, r] 밖 → 정보 JIG_GRID_AREA_RATIO (> 1, 해시 밖)
-      conv_warn: 0.02                 # d000 ΔΠ_5/E_0 초과 → 정보 JIG_GRID_CONV (> 0, 해시 밖)
+      conv_warn: 0.05                 # d000 ΔΠ_5/E_0 초과 → 정보 JIG_GRID_CONV (> 0, 해시 밖)
       frame_shift_warn: 0.5           # 하중 칸·BC 표본 위치 차 > 이 값 × cell_mm → 정보 JIG_GRID_FRAME_SHIFT (> 0, 해시 밖)
       load_resid_warn: 1.0e-6         # 하중 전달 후 합력·모멘트 상대 오차 초과 → 경고 JIG_GRID_LOAD_RESID (> 0, 해시 밖)
-      noise_floor_min: 0.01           # 격자 순위 불확실 구간(noise_floor) 하한 [0, 0.2] — 표시 판정만, 정렬 불변(해시 밖)
+      noise_floor_min: 0.03           # 격자 순위 불확실 구간(noise_floor) 하한 [0, 0.2] — 표시 판정만, 정렬 불변(해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   load_source_default: null           # v0.24.4 P3 스터디 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). null = 지금 동작(순위 지표 기준)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요

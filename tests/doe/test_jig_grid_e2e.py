@@ -408,3 +408,18 @@ def test_remesh_only_within_noise_floor(tmp_path, capsys):
     with capsys.disabled():
         print(f"\nJG remesh-only(h3 vs h3): nf {nf:.4f} · improvement {x['improvement']:.4f} · noise {x['noise']}")
     assert abs(x["improvement"]) < nf and x["noise"] is True
+
+
+# ---------------------------------------------------------------- D-0.24.8-JG-20 기준 = Case 메시(h 5) ↔ 형상 h 3, 메시만 다른 경우
+def test_case_mesh_ref_vs_h3_remesh_gets_noise_mark(tmp_path, capsys):
+    """기준 h 5(Case 메시) ↔ 같은 형상 h 3: 개선율 ≈ 2 % 는 noise_floor_min(0.03) 하한 안 — 행 noise 표식."""
+    doe, out, _A = G.cmp_world(str(tmp_path), hA=5.0, rank=G.rank_snap(grid=True),
+                               shapes=(("d001", {"h": 3.0, "tri_cols": 6, "node_base": 100001}),))
+    res = G.run_cmp(doe, out)["result"]
+    assert res["metric_effective"] == "jd"
+    nf = res["noise_floor"]
+    x = next(r for r in res["ranking"] if r["id"] == "d001")
+    with capsys.disabled():
+        print(f"\nJG case-mesh(h5) vs h3 remesh: nf {nf:.4f} · improvement {x['improvement']:.4f} · noise {x['noise']}")
+    assert nf >= DEFAULTS["rank"]["jig_grid"]["noise_floor_min"] == 0.03
+    assert abs(x["improvement"]) < nf and x["noise"] is True

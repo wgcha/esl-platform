@@ -264,7 +264,7 @@
 | conv_warn | 0.05(D-0.24.8-JG-17 측정 후 확정) | > 0 | 밖 |
 | frame_shift_warn | 0.5 | > 0(× cell_mm) | 밖 |
 | load_resid_warn | 1.0e-6 | > 0 | 밖 |
-| noise_floor_min | 0.01 | [0, 0.2] | 밖(표시 판정 — 정렬 불변, §3) |
+| noise_floor_min | 0.03(D-0.24.8-JG-20) | [0, 0.2] | 밖(표시 판정 — 정렬 불변, §3) |
 - 방식 = 스냅샷 rank.jig.methods, kink·dup = rank.jig.normal_kink_deg·aux321_dup_deg, tie_dofs = **Case 값**(`prep/jig_grid.json` 기록, 스냅샷 rank.jig.tie_dofs 와 다르면 정보 문구 1줄 — 코드 없이 jig.grid.warnings). 스프링 k = Case sp_k(§1.3-6) — 스냅샷·설정의 spring_k_mode·spring_alpha·spring_k_value 는 격자 경로에서 읽지 않는다(Case 값은 기록만).
 
 ### 7.2 해시
@@ -368,7 +368,7 @@
 
 ## 14. 개정 1 — 본문 반영됨 (2026-11-25, 결정 D-0.24.8-JG-14·15 참조)
 - 스프링 k = Case sp_k 의 골격 면적 밀도 κ·클러스터 합 K_q 보존(설계·메시 무관), `spring_k` 미사용 — §1.2·§1.3-6·§2.1·§4.1·§9-21, Q-JG-1 닫음.
-- 격자 순위 noise_floor = max(ΔΠ_5, noise_floor_min 0.01) → 기존 rank noise 표식 — §3·§4.2·§5·§6·§7.1·§9-22.
+- 격자 순위 noise_floor = max(ΔΠ_5, noise_floor_min 0.03) → 기존 rank noise 표식 — §3·§4.2·§5·§6·§7.1·§9-22.
 - `JIG_GRID_SOURCE_MISSING` 조치 문구, 순위 출처 = ok 인 첫 방식 — §1.4·§3.
 - 앞뒤 버전 접점 — §10.2(v0.24.7)·§10.3(v0.24.9).
 

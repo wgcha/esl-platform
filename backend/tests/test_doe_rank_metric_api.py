@@ -40,8 +40,8 @@ NEW_JIG = ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reac
 # v0.24.8 격자 지그(esl_jig_grid_map.md §7.1) — rank.jig_grid 기본
 JIG_GRID_DEFAULT = {"enabled": True, "cell_mm": 3.0, "conv_mm": [5.0, 10.0], "tie_capture_rel": 0.25, "tie_snap_rel": 0.75,
                     "tie_normal_deg": 30.0, "tie_miss_frac_max": 0.1, "sample_nbr": 1, "sample_normal_deg": 45.0,
-                    "area_ratio_warn": 2.0, "conv_warn": 0.02, "frame_shift_warn": 0.5, "load_resid_warn": 1e-6,
-                    "noise_floor_min": 0.01}
+                    "area_ratio_warn": 2.0, "conv_warn": 0.05, "frame_shift_warn": 0.5, "load_resid_warn": 1e-6,
+                    "noise_floor_min": 0.03}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02, "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [], "jig": JIG_DEFAULT, "jig_grid": JIG_GRID_DEFAULT}
 # v0.24.0 보완(esl_fint.md §6.2): 새 스냅샷에 평가 영역 고정

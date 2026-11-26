@@ -646,10 +646,10 @@ class BeadDoeRankJigGridCfg(_M):
     sample_nbr: int = Field(default=1, ge=1, le=3)
     sample_normal_deg: float = Field(default=45.0, gt=0, le=90)
     area_ratio_warn: float = Field(default=2.0, gt=1)
-    conv_warn: float = Field(default=0.02, gt=0)
+    conv_warn: float = Field(default=0.05, gt=0)
     frame_shift_warn: float = Field(default=0.5, gt=0)          # × cell_mm
     load_resid_warn: float = Field(default=1.0e-6, gt=0)
-    noise_floor_min: float = Field(default=0.01, ge=0, le=0.2)  # 격자 순위 불확실 구간 하한(표시 판정 — 정렬 불변)
+    noise_floor_min: float = Field(default=0.03, ge=0, le=0.2)  # 격자 순위 불확실 구간 하한(표시 판정 — 정렬 불변)
 
     @field_validator("conv_mm")
     @classmethod
