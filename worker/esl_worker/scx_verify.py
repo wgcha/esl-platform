@@ -365,7 +365,8 @@ class _Verify:
                 vd_t.c.project_id == self.d["project_id"], vd_t.c.created_at <= self.d["created_at"]))).scalar_one()
         name = f"VD{int(no)}_{_now().strftime('%Y%m%dT%H%M%S')}"
         got = self.call("드라이브 폴더 이름", lambda: self.gw.ensure_new_dir(parent, name))
-        rel = scx_paths.check_drive_rel(f"{parent}/{got}", self.health, write=True)   # 쓰기(B) — SPDM 상위 폴더 규칙 포함
+        rel = scx_paths.check_drive_rel(f"{parent}/{got}", self.health, write=True,
+                                        new_from=scx_paths.job_new_from(self.s))   # 쓰기(B) — SPDM 상위 폴더 규칙 포함
         self.drop(drive_dir_rel=rel, phase="STAGING")
         self.echo(f"[esl-worker] VD_STAGE: 드라이브 폴더 {scx_paths.display(self.s, rel)}")
         return rel

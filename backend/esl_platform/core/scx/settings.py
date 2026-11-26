@@ -48,7 +48,7 @@ def _adapter_problems(cfg) -> list[str]:
 
 
 def drive_problems(settings) -> list[str]:
-    """scx_drive.* 검사(키 형식·유일, rel = 어댑터 rel_problem, 범위)."""
+    """scx_drive.* 검사(키 형식·유일, rel = 어댑터 rel_problem 기본 안전 검사만, 범위)."""
     from simdash_adapters.hpc.scx_naming import rel_problem
 
     sd = settings.scx_drive
@@ -62,7 +62,10 @@ def drive_problems(settings) -> list[str]:
         seen.add(r.key)
         if not (r.label or "").strip() or len(r.label) > 100:
             out.append(f"scx_drive.roots[{i}].label: 1~100자")
-        why = rel_problem(r.rel or "")
+        rel = r.rel or ""
+        why = rel_problem(rel, segment_check_from=rel.count("/") + 1)       # 읽기 규칙 — 기존 폴더 이름(한글 등)은 SEGMENT_RE 제외(#92)
+        if not why and any(g.startswith(".") for g in rel.split("/")):
+            why = "숨김 이름('.' 시작) 구간"
         if why:
             out.append(f"scx_drive.roots[{i}].rel: {why}")
     if not 1 <= int(sd.list_max_entries) <= 50000:
