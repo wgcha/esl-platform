@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { MsgFold, type FoldItem } from "./MsgFold";
 import { BEAD_SOURCE_NAME, BG_STALE_TEXT, GRAPH_FAILED_TEXT, doe, isInfoWarn, seedHasFixed, warnText } from "../api/doe";
 import { ApiError, errorText } from "../api/client";
-import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut, DoeShapeRules } from "../api/types";
+import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut, DoeShapeRules, DoeVirtualBeadDerived, VirtualBeadIn } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
 import { DIVERGING_GRADIENT } from "../view3d/colors";
@@ -15,12 +15,13 @@ import { History, type Patch } from "../view3d/select/history";
 import { centroidsInMask, idsInMask, inCircle, pointInPolygon, polyBounds, rectOf, type Pt } from "../view3d/select/lasso";
 import {
   addBead, addTier, applyPatch, clearLayer, cloneState, deleteBead, deleteLastTier, resetAll, resetAllTo, resetBead, resetBeadTo, effectiveSlope, elemColors, emptyState, enclosedIslands, fromSelectionIn, RING_FRAC, ownerBead, ownerCode, paint, toSelectionAny, toggleLink,
-  addGraphBead, toggleAnchorRef, beadOfSeg, beadSegs, groupNetwork, mergeSegs, removeEdit, reresolve, splitSeg, toggleIsland, toggleSeg, toggleTie,
+  addGraphBead, addVBead, removeVBead, toggleAnchorRef, beadOfSeg, beadSegs, groupNetwork, mergeSegs, removeEdit, reresolve, splitSeg, toggleIsland, toggleSeg, toggleTie,
   type Layer, type LayerName, type SelIslands, type SelState,
 } from "../view3d/select/layers";
 import { editView, graphColors, graphIndex, parseGraphBin, planXY, resolveRef, segsMask, targetMask, targetOfElem, COLOR_MODE_NAME, type EditView, type GraphColorMode, type GraphIndex, type GraphTarget } from "../view3d/select/graph";
 import { elemIndex, fromElemSet, type ElemIndex } from "../view3d/select/ranges";
 import { parseSelectBin, type SelectBin } from "../view3d/select/view";
+import { plateLevelOf, vbCfg, vbFrameOf, vbOverlayLines, type VbCfg, type VbFrame, type VbPicks } from "../view3d/select/vbead";
 import { heightChange, maxAbs, morph, parseBasis, type BasisVar } from "../view3d/select/basis";
 import { elemsBbox } from "../view3d/viewFit";
 import { PartStage, usePartScene } from "../view3d/part/PartStage";
@@ -213,11 +214,45 @@ export interface BeadSelectCtrl {
   symPairs: [number, number][];
   /** 한 줄 안내(못 한 동작 사유) */
   notice: string | null;
+  setNotice: (n: string | null) => void;
   /** BG_GRAPH_STALE 뒤 다시 해석 중·완료(띠) · 해석 실패 앵커 */
   graphStale: boolean;
   staleUnknown: number[];
   /** 저장 오류 처리(409 BG_GRAPH_STALE 이면 그래프 다시 받기) — 처리했으면 true */
   onSaveError: (e: unknown) => boolean;
+  /** v0.25.0 추가 비드(가상 비드) — esl_virtual_bead.md §9 */
+  vb: VbCtrl;
+}
+
+/** v0.25.0 추가 비드 컨트롤러: 목록(상태)·derive 결과·입력 좌표계·3D 두 점 찍기·활성 행 */
+export interface VbCtrl {
+  /** 절을 보임(그래프 모드 ∧ 설정 enabled) */
+  show: boolean;
+  cfg: VbCfg;
+  list: VirtualBeadIn[];
+  derived: DoeVirtualBeadDerived[];
+  frame: VbFrame | null;
+  /** 3D 두 점 찍기(라디오 "3D 에서 두 점") 켬 — 클릭이 그래프 클릭 대신 점 찍기 */
+  pickOn: boolean;
+  setPickOn: (on: boolean) => void;
+  picks: VbPicks;
+  /** 평판 위 한 점 더하기(첫 = p0, 둘째 = p1, 셋째 = 다시 p0) */
+  pick: (p: [number, number, number]) => void;
+  clearPicks: () => void;
+  add: (v: VirtualBeadIn) => void;
+  remove: (id: string) => void;
+  active: string | null;
+  setActive: (id: string | null) => void;
+}
+
+/** 추가 비드를 놓을 수 있는 면(부모 바닥·평탄 영역 floor 요소 — §19.3 host 종류, 접합·섬 제외). 최종 판정은 서버(derive 사유) */
+export function isVbHostElem(gi: GraphIndex, e: number): boolean {
+  const L = gi.labels;
+  if (e < 0 || e >= gi.nElems || L.cls[e] !== 0 || L.island[e] >= 0 || L.junction_zone[e] >= 0) return false;
+  const seg = L.segment[e] >= 0 ? gi.segById.get(L.segment[e]) : null;
+  if (seg) return seg.type === "base" || seg.type === "area" || seg.type === "plateau";
+  const f = L.floor[e] >= 0 ? gi.graph.floors.find((x) => x.id === L.floor[e]) : null;
+  return !!f && (f.kind === "base" || f.kind === "base_fragment" || f.kind === "area");
 }
 
 /** 섬 크기 상한 기본값(설정 select.island.max_mm 거울 — 서버가 settings 에 주면 그 값) */
@@ -307,6 +342,10 @@ export function useBeadSelect(
   const ringFrac = st?.select?.island?.ring_frac ?? RING_FRAC;
   const hold = st?.select?.hold ?? { ring_mm: 3, blend_mm: 8 };
   const [localIslands, setLocalIslands] = useState<SelIslands | null>(null);
+  // v0.25.0 추가 비드: 3D 찍기 모드·찍은 점·활성 행
+  const [vbPickOn, setVbPickOn] = useState(false);
+  const [vbPicks, setVbPicks] = useState<VbPicks>([]);
+  const [vbActive, setVbActive] = useState<string | null>(null);
   /** 편집 뒤 섬 다시 계산(브라우저 — 표시만) */
   const refreshIslands = useCallback(() => {
     const s = stRef.current;
@@ -330,7 +369,7 @@ export function useBeadSelect(
   }, []);
   const doDerive = useCallback(
     (sel: DoeSelectionAny | null) => {
-      if (!sel || !sel.beads.length) return;
+      if (!sel || (!sel.beads.length && !(sel.schema_version === 2 && sel.virtual_beads?.length))) return;
       setDeriving(true);
       setDeriveError(null);
       doe
@@ -391,6 +430,25 @@ export function useBeadSelect(
     bump();
   }, [gd.phase, gd.gi, bump]);
 
+  // v0.25.0 추가 비드 더하기·지우기·실행 취소 → 같은 derive 흐름을 잠깐 뒤(디바운스) 자동으로(미리보기·사유가 바로 보이게)
+  const vbKey = JSON.stringify(stRef.current?.vbeads ?? []);
+  const vbSeen = useRef<string | null>(null);
+  useEffect(() => {
+    if (vbSeen.current === null) {
+      vbSeen.current = vbKey;
+      return;
+    }
+    if (vbSeen.current === vbKey) return;
+    vbSeen.current = vbKey;
+    const t = setTimeout(() => {
+      const sel = input();
+      if (sel && (sel.beads.length || (sel.schema_version === 2 && sel.virtual_beads?.length))) doDerive(sel);
+      else setDerive(null);
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vbKey, tick]);
+
   const curJson = useMemo(() => {
     const x = input();
     return x ? json(x) : null;
@@ -401,7 +459,7 @@ export function useBeadSelect(
   const problem = useMemo((): string | null => {
     const s = stRef.current;
     if (!s) return data ? null : error ? `선택 자료를 불러오지 못했습니다 — ${error}` : "선택 자료 불러오는 중…";
-    if (!s.beads.length) return "[+ 비드] 로 비드를 만들고 바닥을 고르세요";
+    if (!s.beads.length && !s.vbeads?.length) return "[+ 비드] 로 비드를 만들고 바닥을 고르세요";
     const x = input();
     for (const b of x?.beads ?? []) {
       const nm = (b.name ?? "").trim();
@@ -516,6 +574,51 @@ export function useBeadSelect(
   const graphMode = schema === 2 && !!gi;
   const curBead = stRef.current?.beads[active];
   const activeIsGraph = graphMode && curBead?.src === "graph";
+  const vbList = stRef.current?.vbeads ?? [];
+  const vbDerived = derive?.virtual_beads ?? [];
+  const vbPlate = useMemo(() => {
+    const n0 = gi?.graph.frame.n0;
+    return data && n0 ? plateLevelOf(data.glb.positions, n0) : null;
+  }, [data, gi]);
+  const vbFrame = useMemo(() => vbFrameOf(derive?.vb_frame, gi, vbPlate, vbList[0]?.p0 ?? null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [derive?.vb_frame, gi, vbPlate, vbList.length]);
+  const vb: VbCtrl = {
+    show: graphMode && !!st?.virtual_bead?.enabled && !!stRef.current?.vbeads,
+    cfg: vbCfg(st),
+    list: vbList,
+    derived: vbDerived,
+    frame: vbFrame,
+    pickOn: vbPickOn,
+    setPickOn: (on) => {
+      setVbPickOn(on);
+      if (!on) setVbPicks([]);
+    },
+    picks: vbPicks,
+    pick: (p) => setVbPicks((prev) => (prev.length >= 2 ? [p] : [...prev, p])),
+    clearPicks: () => setVbPicks([]),
+    add: (v) => {
+      const s = stRef.current;
+      if (!s) return;
+      const p = addVBead(s, v);
+      if (!p) return;
+      hist.current.push(p);
+      setVbPicks([]);
+      setVbActive(v.id);
+      bump();
+    },
+    remove: (id) => {
+      const s = stRef.current;
+      if (!s) return;
+      const p = removeVBead(s, id);
+      if (!p) return;
+      hist.current.push(p);
+      if (vbActive === id) setVbActive(null);
+      bump();
+    },
+    active: vbActive,
+    setActive: setVbActive,
+  };
   const ctrl: BeadSelectCtrl = {
     data,
     error,
@@ -733,9 +836,11 @@ export function useBeadSelect(
     },
     symPairs: derive?.graph?.sym_pairs ?? [],
     notice,
+    setNotice,
     graphStale,
     staleUnknown,
     onSaveError: (e) => onStale(e),
+    vb,
   };
   return ctrl;
 }
@@ -786,6 +891,25 @@ export function graphClick(
   return t;
 }
 
+/** v0.25.0 3D 두 점 찍기 한 번: host 면이면 점 추가, 아니면 알림 "평판 위를 찍으세요". 찍었으면 true */
+export function vbPick(ctrl: Pick<BeadSelectCtrl, "vb" | "setNotice">, gi: GraphIndex, hit: { elem: number; point: ArrayLike<number> } | null): boolean {
+  if (!hit || !isVbHostElem(gi, hit.elem)) {
+    ctrl.setNotice("평판 위를 찍으세요");
+    return false;
+  }
+  ctrl.setNotice(null);
+  ctrl.vb.pick([hit.point[0], hit.point[1], hit.point[2]]);
+  return true;
+}
+const withVb = (base: Float32Array | null, vb: Float32Array | null): Float32Array | null => {
+  if (!vb) return base;
+  if (!base) return vb;
+  const o = new Float32Array(base.length + vb.length);
+  o.set(base);
+  o.set(vb, base.length);
+  return o;
+};
+
 /** 그래프 클릭 모드: 그래프가 있고 지금 비드가 그래프 비드(또는 비드 없음) */
 const graphClickMode = (ctrl: BeadSelectCtrl) => ctrl.graphMode && (!ctrl.state?.beads[ctrl.active] || ctrl.activeIsGraph);
 
@@ -814,6 +938,16 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
   const s = ctrl.state;
   const gi = ctrl.graph;
   const hlMask = useMemo(() => (gi && ctrl.highlight ? targetMask(gi, ctrl.highlight, ctrl.editV) : null), [gi, ctrl.highlight, ctrl.editV]);
+  // v0.25.0 추가 비드 발자국 윤곽·중심선: 활성 행이 있으면 그 비드만, 없으면 모두
+  const vbLines = useMemo(() => {
+    const ds = ctrl.vb.derived.filter((d) => !ctrl.vb.active || d.id === ctrl.vb.active);
+    const parts = ds.map((d) => vbOverlayLines(d, ctrl.vb.frame)).filter((x): x is Float32Array => !!x);
+    if (!parts.length) return null;
+    const out = new Float32Array(parts.reduce((a, x) => a + x.length, 0));
+    let o = 0;
+    for (const x of parts) (out.set(x, o), (o += x.length));
+    return out;
+  }, [ctrl.vb.derived, ctrl.vb.active, ctrl.vb.frame]);
   useEffect(() => {
     const sc = sceneRef.current;
     if (!sc || !s || !data || phase !== "ready") return;
@@ -833,7 +967,7 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
       const elemsC = (e: number): [number, number, number] | null => (s.owner[e] >= 0 || s.fixed[e] || s.exclude[e] ? [ec[e * 4], ec[e * 4 + 1], ec[e * 4 + 2]] : null);
       sc.setElemColors?.(graphColors(gi, ctrl.editV, ctrl.colorMode, { active, other, highlight: hlMask }, elemsC));
       const am = hlMask ?? (active.size ? segsMask(gi, active) : null);
-      sc.setOverlayLines?.(am ? lines((e) => !!am[e]) : null);
+      sc.setOverlayLines?.(withVb(am ? lines((e) => !!am[e]) : null, vbLines));
       return;
     }
     sc.setElemColors?.(elemColors(s, ctrl.active, ctrl.suggested, ctrl.islandMask));
@@ -843,9 +977,15 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
       const pos = data.glb.positions;
       const segs = new Float32Array(pairs.length * 3);
       for (let i = 0; i < pairs.length; i++) for (let c = 0; c < 3; c++) segs[i * 3 + c] = pos[pairs[i] * 3 + c];
-      sc.setOverlayLines?.(segs);
-    } else sc.setOverlayLines?.(null);
-  }, [ctrl.tick, ctrl.active, ctrl.suggested, ctrl.islandMask, phase, s, data, gi, ctrl.graphMode, ctrl.editV, ctrl.colorMode, hlMask]);
+      sc.setOverlayLines?.(withVb(segs, vbLines));
+    } else sc.setOverlayLines?.(withVb(null, vbLines));
+  }, [ctrl.tick, ctrl.active, ctrl.suggested, ctrl.islandMask, phase, s, data, gi, ctrl.graphMode, ctrl.editV, ctrl.colorMode, hlMask, vbLines]);
+  // v0.25.0 추가 비드: 찍은 점 = 빨강 점(setMarkers)
+  useEffect(() => {
+    const sc = sceneRef.current;
+    if (!sc || phase !== "ready") return;
+    sc.setMarkers?.(ctrl.vb.picks.length ? Float32Array.from(ctrl.vb.picks.flat()) : null);
+  }, [ctrl.vb.picks, phase, sceneRef]);
 
   // ---- 입력: 그리기 도구(왼쪽 끌기) · 클릭+확장 · 더블클릭 중심
   const strokeRef = useRef<{ mode: "add" | "remove"; start: Pt; pts: Pt[]; centroids: Float32Array | null } | null>(null);
@@ -905,7 +1045,7 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
     ctrl.paintElems(elems, ctrl.layer, mode, true);
   };
   const gClick = graphClickMode(ctrl);
-  const canDraw = editable && phase === "ready" && !!ctrl.layer && !gClick;
+  const canDraw = editable && phase === "ready" && !!ctrl.layer && !gClick && !ctrl.vb.pickOn;
   const onDownCapture = (e: RPointerEvent<HTMLDivElement>) => {
     downRef.current = { x: e.clientX, y: e.clientY };
     if (!canDraw || tool === "click" || e.button !== 0 || e.ctrlKey || e.metaKey) return;
@@ -952,6 +1092,12 @@ function Select3D({ ctrl, editable, tool, gtool, brushPx, visibleOnly, eraser }:
       }
       ctrl.endStroke();
       drawOverlay(tool === "brush" ? "brush" : "none", [], p);
+      return;
+    }
+    // v0.25.0 추가 비드 두 점 찍기: 평판(부모 바닥·평탄부) 위만 — 아니면 안내
+    if (ctrl.vb.pickOn && editable && gi && phase === "ready" && e.button === 0 && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) <= 4) {
+      const hit = sceneRef.current?.pickElem?.(e.clientX, e.clientY);
+      vbPick(ctrl, gi, hit ?? null);
       return;
     }
     // v0.17.0 그래프 클릭: 대상 강조(트리와 같이) + 지금 그래프 비드에 세그먼트 더하기/빼기 · 분할 도구 = 그 점에서 끊기
@@ -1206,7 +1352,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepIn
                 </button>
               </>
             )}
-            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || noBead || ctrl.deriving} title={gClick ? "서버가 세그먼트 묶음·공칭 깊이·폭·대칭 제안을 계산합니다(저장 안 함)" : "서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)"}>
+            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || (noBead && !s?.vbeads?.length) || ctrl.deriving} title={gClick ? "서버가 세그먼트 묶음·공칭 깊이·폭·대칭 제안을 계산합니다(저장 안 함)" : "서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)"}>
               {ctrl.deriving ? "계산 중…" : gClick ? "다시 계산" : "사면·경계 자동"}
             </button>
             {painting && (
@@ -1258,8 +1404,6 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepIn
 export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixedViol }: { studyId: string; rev: number; did: string; values: Record<string, number>; vmax: number; onClose: () => void; fixedViol?: DoeFixedViol | null }) {
   const [err, setErr] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ glb: ParsedGlb; vars: BasisVar[]; meta: DoeBasisMeta } | null>(null);
-  const [showDesign, setShowDesign] = useState(true);
-  const [scale, setScale] = useState(1);
 
   useEffect(() => {
     let alive = true;
@@ -1280,6 +1424,22 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixed
     };
   }, [studyId, rev]);
 
+  return (
+    <Card title={`안 ${did} 3D 보기`} right={<button type="button" className="btn small ghost" onClick={onClose}>닫기</button>}>
+      <MorphStage did={did} glb={loaded?.glb ?? null} vars={loaded?.vars ?? null} values={values} vmax={vmax} err={err} fixedViol={fixedViol} />
+    </Card>
+  );
+}
+
+/**
+ * 변형 3D 그리기 부분(v0.25.0 §9 — SelectDesign3D 에서 떼어 냄, DOM·동작 불변): glb + 기저 변수(hinge 포함) + 값 → morph 변위·heightChange 색, [공칭↔안]·배율.
+ * 선택 화면의 추가 비드 미리보기도 같은 컴포넌트(derive preview 를 BasisVar 로 바꿔 넘김 — 워커와 같은 식).
+ */
+export function MorphStage({ did, glb, vars, values, vmax, err, fixedViol, testId = "pv-design", designLabel }: { did: string; glb: ParsedGlb | null; vars: BasisVar[] | null; values: Record<string, number>; vmax: number; err?: string | null; fixedViol?: DoeFixedViol | null; testId?: string; designLabel?: string }) {
+  const [showDesign, setShowDesign] = useState(true);
+  const [scale, setScale] = useState(1);
+  const loaded = useMemo(() => (glb && vars ? { glb, vars } : null), [glb, vars]);
+  const dl = designLabel ?? `안 ${did}`;
   const n = loaded ? loaded.glb.positions.length / 3 : 0;
   const u = useMemo(() => (loaded ? morph(loaded.vars, values, n) : null), [loaded, values, n]);
   const c = useMemo(() => (loaded ? heightChange(loaded.vars, values, n) : null), [loaded, values, n]);
@@ -1318,53 +1478,51 @@ export function SelectDesign3D({ studyId, rev, did, values, vmax, onClose, fixed
   );
 
   return (
-    <Card title={`안 ${did} 3D 보기`} right={<button type="button" className="btn small ghost" onClick={onClose}>닫기</button>}>
-      <div className="v3d">
-        {fixedViol && fixedViol.n > 0 && (
-          <div className="small warn-text" data-testid="design-fixed-viol">
-            <span className="fixed-dot" aria-hidden="true" /> 빨간 점 = 움직인 고정 노드 {fixedViol.n.toLocaleString()}개(최대 {fixedViol.max_mm} mm)
-            <FixedViolNote cells={[{ fixed_viol: fixedViol }]} testId="design-fixed-viol-row" />
+    <div className="v3d">
+      {fixedViol && fixedViol.n > 0 && (
+        <div className="small warn-text" data-testid="design-fixed-viol">
+          <span className="fixed-dot" aria-hidden="true" /> 빨간 점 = 움직인 고정 노드 {fixedViol.n.toLocaleString()}개(최대 {fixedViol.max_mm} mm)
+          <FixedViolNote cells={[{ fixed_viol: fixedViol }]} testId="design-fixed-viol-row" />
+        </div>
+      )}
+      {view ? (
+        <PartView
+          data={view}
+          testId={testId}
+          tools={
+            <>
+              <span className="seg" role="radiogroup" aria-label="형상">
+                <button type="button" role="radio" aria-checked={!showDesign} className={`btn small ghost toggle${!showDesign ? " on" : ""}`} onClick={() => setShowDesign(false)}>
+                  공칭
+                </button>
+                <button type="button" role="radio" aria-checked={showDesign} className={`btn small ghost toggle${showDesign ? " on" : ""}`} onClick={() => setShowDesign(true)}>
+                  {dl}
+                </button>
+              </span>
+              <label className="field-inline" title="화면 표시용 확대(값·판정 영향 없음)">
+                <span>크게 보기</span>
+                <select aria-label="변형 배율" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
+                  {[1, 2, 5].map((k) => (
+                    <option key={k} value={k}>
+                      ×{k}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="small muted mono">{Object.entries(values).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</span>
+            </>
+          }
+        />
+      ) : (
+        <div className="v3d-stage">
+          <div className="v3d-host" data-testid="bs-design-host" data-phase={err ? "error" : "loading"} aria-label={`${dl} 3D`} />
+          <div className={`v3d-msg${err ? "" : " muted"}`} role="status">
+            {err ?? "3D 형상 불러오는 중…"}
           </div>
-        )}
-        {view ? (
-          <PartView
-            data={view}
-            testId="pv-design"
-            tools={
-              <>
-                <span className="seg" role="radiogroup" aria-label="형상">
-                  <button type="button" role="radio" aria-checked={!showDesign} className={`btn small ghost toggle${!showDesign ? " on" : ""}`} onClick={() => setShowDesign(false)}>
-                    공칭
-                  </button>
-                  <button type="button" role="radio" aria-checked={showDesign} className={`btn small ghost toggle${showDesign ? " on" : ""}`} onClick={() => setShowDesign(true)}>
-                    안 {did}
-                  </button>
-                </span>
-                <label className="field-inline" title="화면 표시용 확대(값·판정 영향 없음)">
-                  <span>크게 보기</span>
-                  <select aria-label="변형 배율" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
-                    {[1, 2, 5].map((k) => (
-                      <option key={k} value={k}>
-                        ×{k}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <span className="small muted mono">{Object.entries(values).map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(" · ")}</span>
-              </>
-            }
-          />
-        ) : (
-          <div className="v3d-stage">
-            <div className="v3d-host" data-testid="bs-design-host" data-phase={err ? "error" : "loading"} aria-label={`안 ${did} 3D`} />
-            <div className={`v3d-msg${err ? "" : " muted"}`} role="status">
-              {err ?? "3D 형상 불러오는 중…"}
-            </div>
-          </div>
-        )}
-        <HeightLegend vmax={V} />
-      </div>
-    </Card>
+        </div>
+      )}
+      <HeightLegend vmax={V} />
+    </div>
   );
 }
 

@@ -1412,7 +1412,9 @@ function SelectVarsPlan(p: {
   const chips = Object.fromEntries(
     (pd?.beads ?? []).map((b) => [
       b.id,
-      [b.id.toUpperCase(), ...params.filter((x) => x.bead === b.id).map((x) => `${x.type === "D" ? `D${x.tier ?? ""}` : "W"} ${x.nominal.toFixed(1)}`)].join(" · "),
+      b.kind === "virtual"
+        ? `${b.id.toUpperCase()} ${params.find((x) => x.bead === b.id)?.nominal ?? 0}`
+        : [b.id.toUpperCase(), ...params.filter((x) => x.bead === b.id).map((x) => `${x.type === "D" ? `D${x.tier ?? ""}` : "W"} ${x.nominal.toFixed(1)}`)].join(" · "),
     ]),
   );
   const mesh = useMemo(() => selectMesh(p.ctrl.data), [p.ctrl.data]);
@@ -1425,7 +1427,7 @@ function SelectVarsPlan(p: {
       <Card title="④ 변수" fold={p.fold4} right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
         {!p.ready ? (
           <div className="empty small" data-testid="vars-next">
-            {p.ctrl.state?.beads.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
+            {p.ctrl.state?.beads.length || p.ctrl.state?.vbeads?.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
           </div>
         ) : pd && !pd.params.length ? (
           <BlockErr title="변수가 없습니다" detail={noVarsReason(pd)} testId="vars-empty" />

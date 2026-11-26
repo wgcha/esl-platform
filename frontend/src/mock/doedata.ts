@@ -1863,6 +1863,10 @@ export class DoeMock {
     );
   }
 
+  /** v0.25.0 시연·시험(?demoVBead=1): 설정 bead_doe.virtual_bead 를 켠 새 스터디처럼 — ③ 목록 아래 접힌 절 "추가 비드"(derive 목 = 추가 비드 응답·미리보기 g·c·변수 표 A 행) */
+  demoVBead() {
+    this.settings.virtual_bead = { enabled: true, max_count: 4, theta_default_deg: 45, theta_range_deg: [15, 60], d_max_limit_mm: 30, min_wall_elems: 2, r_default_h_mult: 1 };
+  }
   /** v0.24.9 시연·시험(?demoPosU=1): doe-70 = ① 그래프 select 새 스냅샷(pos_u — 변수 표 U 행·u_reason 툴팁) · doe-71 = ② select 지그 결과 + 하중 공간 고정(spatial 경고 줄·순위 꼬리·민감도 U 행) ·
    *  doe-72 = ④ 형상 비교 지그 3방식 표식(새 스냅샷 pos_u — 고정·변위·스프링 + 꺾인 노드·면내 지지). 옛 스냅샷 대조 = doe-30(U 행 없음)·doe-60(옛 표식 — pos_u 없음) */
   demoPosU() {
