@@ -319,7 +319,8 @@ def _jig_supports(inp: Inputs, node_id: np.ndarray, x0: np.ndarray) -> list[dict
         return []
     bd = getattr(inp.ctx.settings, "bead_doe", None)
     m = int((bd.view3d if bd is not None else BeadDoeView3dCfg()).jig_support_max)
-    return core_adapter.jig_support_rows(bc, x0, m, node_id, str(inp.row.get("key") or "") or None)
+    src = (getattr(inp, "row", None) or {}).get("key")      # 출처 키(계획 행 key = METHODS 열 src) — 없으면 값으로 판정
+    return core_adapter.jig_support_rows(bc, x0, m, node_id, str(src) if src else None)
 
 
 def _supports(inp: Inputs, data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
