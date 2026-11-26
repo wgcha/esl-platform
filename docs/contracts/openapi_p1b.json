@@ -3698,6 +3698,63 @@
         "title": "DoeJigGridConvOut",
         "type": "object"
       },
+      "DoeJigGridMeshOut": {
+        "description": "v0.24.8 fix(D-0.24.8-JG-23): 기준 d000 ↔ 형상 메시 비교(요소 변 길이 중앙값 h mm·삼각형 요소 비율) — mismatch 참 = 격자 순위\nnoise_floor ≥ 설정 noise_floor_mismatch, 정보 JIG_GRID_MESH_MISMATCH. h_min·h_max·tri_max = 기준 밖 형상들(형상 없음 = null).",
+        "properties": {
+          "h_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H Max"
+          },
+          "h_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "H Min"
+          },
+          "h_ref": {
+            "title": "H Ref",
+            "type": "number"
+          },
+          "mismatch": {
+            "title": "Mismatch",
+            "type": "boolean"
+          },
+          "tri_max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tri Max"
+          },
+          "tri_ref": {
+            "title": "Tri Ref",
+            "type": "number"
+          }
+        },
+        "required": [
+          "h_ref",
+          "tri_ref",
+          "mismatch"
+        ],
+        "title": "DoeJigGridMeshOut",
+        "type": "object"
+      },
       "DoeJigGridMethodOut": {
         "description": "v0.24.8 방식별 격자 진단(esl_jig_grid_map.md §6 — result.json jig.methods{src}.grid 값 그대로, types.ts 와 check:api 대조).",
         "properties": {
@@ -3841,6 +3898,16 @@
               }
             ],
             "title": "Load Dm Max"
+          },
+          "mesh": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DoeJigGridMeshOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "n_groups": {
             "title": "N Groups",

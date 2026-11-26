@@ -33,6 +33,68 @@ def plate(h: float = 5.0, *, bead=None, tri_cols: int = 2, node_base: int = 1, o
                               props=PROPS)
 
 
+def delaunay_plate(h: float = 3.0, *, seed: int = 2, ring_n: int = 17, ring_r=(4.5, 9.0, 12.5), node_base: int = 300001) -> dict:
+    """전삼각 Delaunay 판(v0.24.8 fix JG-23 — 독립 검증의 메시만 다른 형상): 흔든 배경 점 + 볼트마다 동심 고리(ring_n 분할), 판 평면 y = 0.
+    같은 설계(평판)라 강성 차이 = 메시 차이뿐."""
+    from scipy.spatial import Delaunay
+    rng = np.random.default_rng(seed)
+    nx, nz = round(LX / h), round(LZ / h)
+    pts = []
+    for i in range(nx + 1):
+        for j in range(nz + 1):
+            x, z = i * LX / nx, j * LZ / nz
+            if 0 < i < nx:
+                x += rng.uniform(-0.25, 0.25) * LX / nx
+            if 0 < j < nz:
+                z += rng.uniform(-0.25, 0.25) * LZ / nz
+            pts.append((x, z))
+    pts = np.array(pts)
+    keep = np.ones(len(pts), bool)
+    rmax = max(ring_r) + 0.6 * h
+    for bx, bz in BOLTS:
+        keep &= np.hypot(pts[:, 0] - bx, pts[:, 1] - bz) > rmax
+    pl = [tuple(p) for p in pts[keep]]
+    for bx, bz in BOLTS:
+        pl.append((bx, bz))
+        for r in ring_r:
+            n = max(6, int(round(ring_n * r / max(ring_r))))
+            ph = rng.uniform(0, 2 * np.pi)
+            for t in np.linspace(0, 2 * np.pi, n, endpoint=False) + ph:
+                pl.append((bx + r * np.cos(t), bz + r * np.sin(t)))
+    pts = np.array(pl)
+    tri = Delaunay(pts).simplices
+    a, b, c = pts[tri[:, 0]], pts[tri[:, 1]], pts[tri[:, 2]]
+    cr = (b - a)[:, 0] * (c - a)[:, 1] - (b - a)[:, 1] * (c - a)[:, 0]
+    tri = tri[np.abs(cr) > 2e-6 * h * h]
+    cr = cr[np.abs(cr) > 2e-6 * h * h]
+    tri[cr < 0] = tri[cr < 0][:, [0, 2, 1]]
+    X = np.stack([pts[:, 0], np.zeros(len(pts)), pts[:, 1]], 1)
+    ne = tri.shape[0]
+    conn = np.concatenate([tri, -np.ones((ne, 1), np.int64)], axis=1).astype(np.int64)
+    return {"node_id": node_base + np.arange(X.shape[0], dtype=np.int64), "x0": X, "elem_id": 1 + np.arange(ne, dtype=np.int64),
+            "elem_type": np.full(ne, 3, dtype=np.int8), "conn": conn, "elem_pid": np.full(ne, 10, dtype=np.int64),
+            "elem_mid": np.full(ne, 1, dtype=np.int64), "thickness": np.full(ne, float(PROPS["t"])),
+            "E": np.full(ne, float(PROPS["E"])), "nu": np.full(ne, float(PROPS["nu"]))}
+
+
+def holes(mesh: dict, which, r: float = 13.0) -> dict:
+    """볼트 which(BOLTS 인덱스)의 중심 r 안 요소를 뺀 메시(와셔 면 없음 — 체결부가 Case 와 다른 형상, v0.24.8 fix JG-24)."""
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    conn = np.asarray(mesh["conn"], dtype=np.int64)
+    cen = np.array([X[[n for n in e if n >= 0]].mean(0) for e in conn])
+    keep = np.ones(len(cen), bool)
+    for bx, bz in [BOLTS[i] for i in which]:
+        keep &= np.hypot(cen[:, 0] - bx, cen[:, 2] - bz) > r
+    used = np.unique(conn[keep][conn[keep] >= 0])
+    remap = -np.ones(X.shape[0], np.int64)
+    remap[used] = np.arange(used.size)
+    cn = conn[keep].copy()
+    cn[cn >= 0] = remap[cn[cn >= 0]]
+    ne = cn.shape[0]
+    out = {k: np.asarray(v)[keep] for k, v in mesh.items() if k in ("elem_type", "elem_pid", "elem_mid", "thickness", "E", "nu")}
+    return {**out, "node_id": np.asarray(mesh["node_id"])[used], "x0": X[used], "conn": cn, "elem_id": 1 + np.arange(ne, dtype=np.int64)}
+
+
 def tie_idx(mesh: dict, bolts=BOLTS, r: float = R_WASHER) -> np.ndarray:
     """와셔 면 tie = 볼트 중심(x, z)에서 r 안 노드(판 평면 거리)."""
     X = np.asarray(mesh["x0"], dtype=np.float64)
@@ -178,7 +240,7 @@ SHAPES_DEFAULT = (("d001", {"h": 4.0, "tri_cols": 6, "node_base": 100001}),
 
 
 def write_shape_rad(root: str, did: str, spec: dict) -> dict:
-    m = plate(**spec)
+    m = spec["mesh"] if "mesh" in spec else plate(**spec)       # v0.24.8 fix: 메시 dict 를 그대로 넣을 수 있음(전삼각 Delaunay 등)
     up = os.path.join(root, "up", did)
     os.makedirs(up, exist_ok=True)
     p = os.path.join(up, f"{did}.rad")

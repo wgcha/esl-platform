@@ -252,6 +252,9 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       frame_shift_warn: 0.5           # 하중 칸·BC 표본 위치 차 > 이 값 × cell_mm → 정보 JIG_GRID_FRAME_SHIFT (> 0, 해시 밖)
       load_resid_warn: 1.0e-6         # 하중 전달 후 합력·모멘트 상대 오차 초과 → 경고 JIG_GRID_LOAD_RESID (> 0, 해시 밖)
       noise_floor_min: 0.03           # 격자 순위 불확실 구간(noise_floor) 하한 [0, 0.2] — 표시 판정만, 정렬 불변(해시 밖)
+      noise_floor_mismatch: 0.05      # 기준 d000 과 형상의 메시가 다르면(아래 두 기준) 격자 순위 noise_floor 를 이 값 이상으로 [0, 0.2] — 정보 JIG_GRID_MESH_MISMATCH(해시 밖)
+      mesh_h_ratio_warn: 1.25         # 요소 변 길이 중앙값 비(형상/기준)가 [1/r, r] 밖 = 메시 크기 다름 (> 1, 해시 밖)
+      mesh_tri_frac_warn: 0.2         # 삼각형 요소 비율 차 초과 = 요소 종류 다름 ((0, 1], 해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   load_source_default: null           # v0.24.4 P3 스터디 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). null = 지금 동작(순위 지표 기준)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요

@@ -423,3 +423,113 @@ def test_case_mesh_ref_vs_h3_remesh_gets_noise_mark(tmp_path, capsys):
         print(f"\nJG case-mesh(h5) vs h3 remesh: nf {nf:.4f} · improvement {x['improvement']:.4f} · noise {x['noise']}")
     assert nf >= DEFAULTS["rank"]["jig_grid"]["noise_floor_min"] == 0.03
     assert abs(x["improvement"]) < nf and x["noise"] is True
+
+
+# ---------------------------------------------------------------- D-0.24.8-JG-23 기준·형상 메시 방식 차이 → noise_floor 상향 + 정보 코드
+def _row(res, code):
+    return [w for w in res["warnings"] if isinstance(w, dict) and w.get("code") == code]
+
+
+def test_mesh_mismatch_case_quad_ref_vs_all_tri_shapes(tmp_path, capsys):
+    """독립 검증 조건: 기준 = Case 메시(h 5 쿼드) ↔ 같은 설계(평판) 전삼각 Delaunay h 3·h 4 — 메시 차이만으로 개선율 수 %.
+    JIG_GRID_MESH_MISMATCH 1건(필드), noise_floor ≥ noise_floor_mismatch(0.05), 메시만 다른 형상 = noise 표식."""
+    shapes = (("d001", {"mesh": G.delaunay_plate(3.0, seed=2, ring_n=17)}),
+              ("d002", {"mesh": G.delaunay_plate(4.0, seed=3, ring_n=11, ring_r=(9.0,), node_base=500001)}))
+    doe, out, _A = G.cmp_world(str(tmp_path), hA=5.0, rank=G.rank_snap(grid=True), shapes=shapes)
+    res = G.run_cmp(doe, out)["result"]
+    g = DEFAULTS["rank"]["jig_grid"]
+    assert res["metric_effective"] == "jd"
+    nf = res["noise_floor"]
+    imp = {r["id"]: r["improvement"] for r in res["ranking"] if r["id"] != "d000"}
+    with capsys.disabled():
+        print(f"\nJG mesh-mismatch(Case h5 quad vs all-tri): nf {nf:.4f} · improvement {imp} · mesh {res['jig']['grid']['mesh']}")
+    assert nf >= g["noise_floor_mismatch"] == 0.05 and res["jig"]["grid"]["noise_floor"] == nf
+    assert max(imp.values()) > g["noise_floor_min"]                  # 이 조건은 하한(0.03)만으로는 noise 밖이었다(검증 4.8 %)
+    assert all(r["noise"] is True for r in res["ranking"] if r["id"] != "d000")
+    m = res["jig"]["grid"]["mesh"]
+    assert m["mismatch"] is True and m["h_ref"] == pytest.approx(5.0) and m["tri_max"] == 1.0 and m["tri_ref"] < 0.2
+    w = _row(res, "JIG_GRID_MESH_MISMATCH")
+    assert len(w) == 1 and w[0]["n_shapes"] == 2 and w[0]["h_ref"] == m["h_ref"] and w[0]["tri_max"] == 1.0
+    assert {"h_min", "h_max", "tri_ref"} <= set(w[0])
+    assert "기준 형상도 같은 방식으로 메시해 넣으세요" in w[0]["message"] and f"차이 {nf * 100:.3g} % 이내는 오차 범위" in w[0]["message"]
+    for did in ("d000", "d001", "d002"):
+        ms = _jgr(out, did)["mesh"]
+        assert set(ms) == {"h", "tri_frac"} and ms["h"] > 0
+
+
+def test_mesh_same_method_no_mismatch(tmp_path):
+    """기준·형상을 같은 방식(같은 크기·같은 요소 종류)으로 메시: 코드 없음, noise_floor = max(ΔΠ_5, noise_floor_min) 그대로, 실제 설계 개선은 noise 아님."""
+    shapes = (("d000", {"h": 3.0, "tri_cols": 6, "node_base": 100001}),
+              ("d001", {"h": 200.0 / 69.0, "tri_cols": 6, "node_base": 200001}),
+              ("d002", {"h": 3.0, "tri_cols": 6, "bead": (35.0, 55.0, 5.0), "node_base": 300001}))
+    doe, out, _A = G.cmp_world(str(tmp_path), rank=G.rank_snap(grid=True), shapes=shapes)
+    doe["shapes"][0]["reference"] = True
+    doe["reference_source"] = "step"
+    doe.pop("base")
+    res = G.run_cmp(doe, out)["result"]
+    assert res["metric_effective"] == "jd" and _row(res, "JIG_GRID_MESH_MISMATCH") == []
+    assert "JIG_GRID_MESH_MISMATCH" not in _codes(res["warnings"])
+    j0 = _jgr(out, "d000")
+    dp5 = max(r_["dpi_max"] for rows in j0["conv"].values() for r_ in rows if r_["cell_mm"] == 5.0)
+    assert res["noise_floor"] == max(dp5, DEFAULTS["rank"]["jig_grid"]["noise_floor_min"])
+    assert res["jig"]["grid"]["mesh"]["mismatch"] is False
+    x = next(r for r in res["ranking"] if r["id"] == "d002")
+    assert x["improvement"] > res["noise_floor"] and x["noise"] is False
+
+
+def test_mesh_mismatch_keys_outside_hash(tmp_path):
+    """새 설정 3키(noise_floor_mismatch·mesh_h_ratio_warn·mesh_tri_frac_warn)는 해시 밖, 범위 밖 = CONFIG_INVALID."""
+    g = copy.deepcopy(DEFAULTS["rank"]["jig_grid"])
+    doe, out, _A = G.cmp_world(str(tmp_path), rank=G.rank_snap(grid=g), shapes=G.SHAPES_DEFAULT[1:])
+    ca = stg.Ctx({"stage": "bd_eval", "out": out, "doe": doe})
+    g2 = dict(g, noise_floor_mismatch=0.1, mesh_h_ratio_warn=1.5, mesh_tri_frac_warn=0.5)
+    cb = stg.Ctx({"stage": "bd_eval", "out": out, "doe": {**doe, "rank": G.rank_snap(grid=g2)}})
+    assert stg._cfg_hash(ca) == stg._cfg_hash(cb)
+    assert {"noise_floor_mismatch", "mesh_h_ratio_warn", "mesh_tri_frac_warn"} <= set(gm.HASH_EXCLUDE)
+    for k, v in (("noise_floor_mismatch", 0.3), ("mesh_h_ratio_warn", 1.0), ("mesh_tri_frac_warn", 0.0), ("mesh_tri_frac_warn", 1.5)):
+        cx = stg.Ctx({"stage": "bd_eval", "out": out, "doe": {**doe, "rank": G.rank_snap(grid=dict(g, **{k: v}))}})
+        with pytest.raises(stg.EslError) as ei:
+            stg._jg_cfg(cx)
+        assert ei.value.code == "CONFIG_INVALID", k
+
+
+# ---------------------------------------------------------------- D-0.24.8-JG-24 체결부 잡기 약함 → 스터디 경고 요약
+def test_tie_snap_miss_area_study_summary(tmp_path):
+    """한 볼트 와셔 면을 뺀 형상(r 11 — 1노드 snap)·같은 볼트 더 큰 구멍(r 13 — miss 1/6 > 0.1 = 그 형상 실패): 스터디 경고에 TIE_SNAP{n_shapes,
+    n_clusters_max}·TIE_MISS(최악 형상 1건)·jig.grid.warnings 에 같은 문구, 형상 경고(순위 행 warnings_n)에 형상별 TIE_SNAP."""
+    shapes = (("d001", {"mesh": G.holes(G.plate(3.0, node_base=600001), [4], r=11.0)}),
+              ("d002", {"mesh": G.holes(G.plate(3.0, node_base=650001), [4], r=13.0)}),
+              ("d003", {"h": 3.0, "tri_cols": 6, "node_base": 700001}))
+    doe, out, _A = G.cmp_world(str(tmp_path), rank=G.rank_snap(grid=True), shapes=shapes)
+    res = G.run_cmp(doe, out)["result"]
+    t1 = _jgr(out, "d001")["map"]["tie"]
+    assert t1["n_snap"] >= 1 and t1["n_miss"] == 0
+    sn = _row(res, "JIG_GRID_TIE_SNAP")
+    assert len(sn) == 1 and sn[0]["n_shapes"] >= 1 and sn[0]["n_clusters_max"] >= 1
+    assert "노드 1개로만 잡았습니다" in sn[0]["message"] and "지그 순위는 참고만" in sn[0]["message"]
+    ms = _row(res, "JIG_GRID_TIE_MISS")
+    assert len(ms) == 1 and ms[0]["did"] == "d002" and ms[0]["n_miss"] >= 1 and "빠집니다" in ms[0]["message"]
+    gw = res["jig"]["grid"]["warnings"]
+    assert sn[0]["message"] in gw and ms[0]["message"] in gw
+    assert sum(1 for w in _codes(res["warnings"]) if w == "JIG_GRID_AREA_RATIO") <= 1
+    d1 = _res(out, "d001")
+    assert any(str(w).startswith("JIG_GRID_TIE_SNAP_SHAPE") and "d001" in str(w) for w in d1["warnings"])
+    row = next(r for r in res["ranking"] if r["id"] == "d001")
+    assert row["warnings_n"] >= 1
+    assert not any(str(w).startswith("JIG_GRID_TIE_SNAP") for w in _res(out, "d003")["warnings"])
+
+
+def test_area_ratio_text_formats_k_scale(tmp_path):
+    """문구: JIG_GRID_AREA_RATIO 스프링 배율 = 유효 3자리(검증: 2.802510402899709 그대로 찍힘), 스프링 없음 = –."""
+    tt = {"area_ratio_min": 0.357, "area_ratio_max": 0.52, "k_scale_min": 2.802510402899709, "k_scale_max": 1.0 / 0.357}
+    s = stg._jg_area_text("d009", tt, 2.0)
+    assert "2.8~2.8" in s and "2.802510402899709" not in s and "0.357~0.52" in s
+    assert "(스프링 배율 –~–)" in stg._jg_area_text("d009", {**tt, "k_scale_min": None, "k_scale_max": None}, 2.0)
+
+
+def test_source_missing_rank_note_particle():
+    """문구: "순위는 지그 스프링 로" 조사 오류 → "스프링 방식으로"(원본 resources/doe_messages.json)."""
+    assert stg._jg_note("스프링") == "순위는 지그 스프링 방식으로 매깁니다"
+    assert stg._jg_note(None) == "지금은 재풀이(solve) 순위입니다"
+    from esl.doe import load_messages
+    assert "{method} 방식으로" in load_messages()["messages"]["JIG_GRID_RANK"]

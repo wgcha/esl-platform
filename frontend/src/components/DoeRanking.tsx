@@ -106,6 +106,8 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
           <li>
             {viewMet
               ? viewMet.def
+              : jigOn && grid
+              ? GRID_TEXT.jigDef
               : jigOn
               ? `score: max(C_jig 안) / max(C_jig 기준) — 기준 낙하 변형을 재현하도록 맞춘 몇 곳의 가압 하중${jig ? `(영역 ${jig.n_regions}개${jig.region_source ? `, ${JIG_SOURCE_NAME[jig.region_source]}` : ""})` : ""}을 같은 지그·같은 하중으로 안마다 재풀이한 컴플라이언스. 작을수록 좋음`
               : lin

@@ -166,7 +166,8 @@ def test_defaults_keys_match_contract():
                                             "tie_snap_rel": 0.75, "tie_normal_deg": 30.0, "tie_miss_frac_max": 0.1,
                                             "sample_nbr": 1, "sample_normal_deg": 45.0, "area_ratio_warn": 2.0,
                                             "conv_warn": 0.05, "frame_shift_warn": 0.5, "load_resid_warn": 1.0e-6,
-                                            "noise_floor_min": 0.03}
+                                            "noise_floor_min": 0.03, "noise_floor_mismatch": 0.05,
+                                            "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2}   # v0.24.8 fix JG-23
     assert set(gm.HASH_EXCLUDE) <= set(DEFAULTS["rank"]["jig_grid"])
     assert stg._jg_cfg(_ctx(grid=True))["cell_mm"] == 3.0
 

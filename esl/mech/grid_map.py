@@ -36,7 +36,8 @@ VIA_MISS, VIA_BAND, VIA_SNAP = 0, 1, 2
 VIA_NAMES = {VIA_MISS: "miss", VIA_BAND: "band", VIA_SNAP: "snap"}
 ELEM_PT, ELEM_SEG, ELEM_TRI = 0, 1, 2
 # 해시 밖 키(경고 임계·수렴 진단 크기·표시 판정 — 계산 결과(per_esl)를 바꾸지 않음, 계약 §7.1)
-HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min")
+HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min",
+                "noise_floor_mismatch", "mesh_h_ratio_warn", "mesh_tri_frac_warn")    # v0.24.8 fix JG-23: 메시 차이 표시 판정(해시 밖)
 # 해시에서 빼는 고정 키(백엔드 rank_snapshot 이 블록 안에 넣는 schema: 1 — 값 고정, 키 유무로 해시가 갈리지 않게)
 HASH_FIXED = ("schema", "enabled")
 # 격자 npz 키(§1.2 — stages 가 g<k>.npz 로 저장). 접미 <frame>·<src> 는 METHODS.frame·src 열 값
@@ -912,6 +913,25 @@ def recon(X_S, u_S, ut_S, omega=None) -> dict:
 def mac(u, v) -> float | None:
     """MAC(같은 노드) — ``bforce.mac``."""
     return bforce.mac(np.asarray(u, dtype=np.float64), np.asarray(v, dtype=np.float64))
+
+
+def mesh_stats(mesh) -> dict:
+    """형상 메시 통계(v0.24.8 fix JG-23 — 기준 d000 과 메시 방식 비교): h = 요소 변(중복 제거) 길이 중앙값(mm, 원 좌표),
+    tri_frac = 삼각형 요소 비율(요소 수 기준). 요소 0 = {h: 0, tri_frac: 0}."""
+    et = np.asarray(mesh["elem_type"]).astype(np.int64)
+    E = _elem_edges(mesh)
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    h = float(np.median(np.linalg.norm(X[E[:, 0]] - X[E[:, 1]], axis=1))) if E.size else 0.0
+    return {"h": h, "tri_frac": float(np.count_nonzero(et != 4) / et.size) if et.size else 0.0}
+
+
+def mesh_mismatch(ref: dict, stats: dict, *, h_ratio_warn: float, tri_frac_warn: float) -> bool:
+    """형상 메시가 기준과 다른 방식인가: h 비(형상/기준)가 [1/r, r] 밖이거나 삼각 비율 차 > tri_frac_warn."""
+    h0, h1 = float(ref["h"]), float(stats["h"])
+    if h0 <= 0.0 or h1 <= 0.0:
+        return False
+    r = float(h_ratio_warn)
+    return h1 * r < h0 or h1 > h0 * r or abs(float(stats["tri_frac"]) - float(ref["tri_frac"])) > float(tri_frac_warn)
 
 
 def hash_view(grid_cfg_raw: dict | None) -> dict:

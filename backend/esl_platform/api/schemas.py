@@ -2098,6 +2098,18 @@ class DoeJigGridMethodOut(_Out):
     conv: list[DoeJigGridConvOut] = []
 
 
+class DoeJigGridMeshOut(_Out):
+    """v0.24.8 fix(D-0.24.8-JG-23): 기준 d000 ↔ 형상 메시 비교(요소 변 길이 중앙값 h mm·삼각형 요소 비율) — mismatch 참 = 격자 순위
+    noise_floor ≥ 설정 noise_floor_mismatch, 정보 JIG_GRID_MESH_MISMATCH. h_min·h_max·tri_max = 기준 밖 형상들(형상 없음 = null)."""
+
+    h_ref: float
+    h_min: float | None = None
+    h_max: float | None = None
+    tri_ref: float
+    tri_max: float | None = None
+    mismatch: bool
+
+
 class DoeJigGridOut(_Out):
     """v0.24.8 스터디 격자 지그 요약(esl_jig_grid_map.md §1.5·§6 — result.json jig.grid 값 그대로, 최악값)."""
 
@@ -2118,6 +2130,7 @@ class DoeJigGridOut(_Out):
     frame_shift_max_mm: float | None = None
     sample_outside_max: float | None = None
     warnings: list[str] = []
+    mesh: DoeJigGridMeshOut | None = None                   # v0.24.8 fix JG-23 — 옛 결과(이 키 없음) = null
 
 
 class DoeJigMethodOut(_Out):

@@ -633,7 +633,8 @@ from .opt_core import LT_CELL_MAX_MM  # noqa: E402  v0.20.0 LT 셀 크기 상한
 
 class BeadDoeRankJigGridCfg(_M):
     """v0.24.8 ④·옛 ③ 격자 지그(esl.doe.DEFAULTS["rank"]["jig_grid"] 거울, 계약 esl_jig_grid_map.md §7.1). 해시 안 키 = cell_mm·tie_*·
-    sample_*(esl.mech.grid_map.HASH_EXCLUDE 밖), 해시 밖 = conv_mm·area_ratio_warn·conv_warn·frame_shift_warn·load_resid_warn·noise_floor_min.
+    sample_*(esl.mech.grid_map.HASH_EXCLUDE 밖), 해시 밖 = conv_mm·area_ratio_warn·conv_warn·frame_shift_warn·load_resid_warn·noise_floor_min·
+    noise_floor_mismatch·mesh_h_ratio_warn·mesh_tri_frac_warn.
     cell_mm·conv_mm 의 하한 load_transfer.cell_min_mm 는 BeadDoeCfg 가 교차 검사(여기서는 절대 하한 1)."""
 
     enabled: bool = True
@@ -650,6 +651,10 @@ class BeadDoeRankJigGridCfg(_M):
     frame_shift_warn: float = Field(default=0.5, gt=0)          # × cell_mm
     load_resid_warn: float = Field(default=1.0e-6, gt=0)
     noise_floor_min: float = Field(default=0.03, ge=0, le=0.2)  # 격자 순위 불확실 구간 하한(표시 판정 — 정렬 불변)
+    # v0.24.8 fix(D-0.24.8-JG-23): 기준 d000 ↔ 형상 메시 차이(변 길이 중앙값 비·삼각 비율 차) → 격자 순위 noise_floor 상향(표시 판정 — 해시 밖)
+    noise_floor_mismatch: float = Field(default=0.05, ge=0, le=0.2)
+    mesh_h_ratio_warn: float = Field(default=1.25, gt=1)
+    mesh_tri_frac_warn: float = Field(default=0.2, gt=0, le=1)
 
     @field_validator("conv_mm")
     @classmethod

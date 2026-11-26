@@ -49,13 +49,14 @@ describe("§1.4 코드 문구·정보 등급·gridOf", () => {
     expect(warnText({ code: "JIG_GRID_TIE_MISS" })).toBe(JIG_CODE_TEXT.JIG_GRID_TIE_MISS);
     expect(warnText({ code: "JIG_GRID_SOURCE_MISSING", entry: "Ch/R 낙하 A", method: "변위" })).toContain("엔트리 Ch/R 낙하 A 의 Case 에 변위 지그 결과가 없습니다");
     expect(warnText({ code: "JIG_GRID_SOURCE_MISSING" })).toContain("스터디를 복제하세요");
-    for (const c of ["SOURCE_MISSING", "TIE_MISS", "OUTSIDE", "LOAD_RESID", "AREA_RATIO", "FRAME_SHIFT", "CONV", "NO_REF", "RANK"]) expect(JIG_CODE_TEXT[`JIG_GRID_${c}`]).toBeTruthy();
+    expect(warnText({ code: "JIG_GRID_TIE_SNAP", n_shapes: 2, n_clusters_max: 1 })).toBe("체결부 1곳을 노드 1개로만 잡았습니다(형상 2개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요");
+    for (const c of ["SOURCE_MISSING", "TIE_MISS", "OUTSIDE", "LOAD_RESID", "AREA_RATIO", "FRAME_SHIFT", "CONV", "NO_REF", "RANK", "MESH_MISMATCH", "TIE_SNAP"]) expect(JIG_CODE_TEXT[`JIG_GRID_${c}`]).toBeTruthy();
   });
 
   it("정보 등급 5개(OUTSIDE·AREA_RATIO·FRAME_SHIFT·CONV·RANK)만 level 없이도 ⓘ, 경고 등급은 ⚠", () => {
-    expect([...JIG_GRID_INFO_CODES].sort()).toEqual(["JIG_GRID_AREA_RATIO", "JIG_GRID_CONV", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_ON_CLONE", "JIG_GRID_OUTSIDE", "JIG_GRID_RANK"]);
+    expect([...JIG_GRID_INFO_CODES].sort()).toEqual(["JIG_GRID_AREA_RATIO", "JIG_GRID_CONV", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_ON_CLONE", "JIG_GRID_OUTSIDE", "JIG_GRID_RANK"]);
     for (const c of JIG_GRID_INFO_CODES) expect(isInfoWarn({ code: c })).toBe(true);
-    for (const c of ["JIG_GRID_SOURCE_MISSING", "JIG_GRID_TIE_MISS", "JIG_GRID_LOAD_RESID", "JIG_GRID_NO_REF"]) expect(isInfoWarn({ code: c })).toBe(false);
+    for (const c of ["JIG_GRID_SOURCE_MISSING", "JIG_GRID_TIE_MISS", "JIG_GRID_LOAD_RESID", "JIG_GRID_NO_REF", "JIG_GRID_TIE_SNAP"]) expect(isInfoWarn({ code: c })).toBe(false);
     expect(isInfoWarn({ code: "JIG_GRID_TIE_MISS", level: "info" })).toBe(true);
   });
 
@@ -94,6 +95,8 @@ describe("V-0248-JG-13·17 ④ 격자 지그 결과 화면(픽스처 doe-60)", (
     // 순위 정의 문구(같은 줄) + noise 배지 title
     const defs = screen.getByTestId("metric-defs").textContent ?? "";
     expect(defs).toContain("형상마다 Case 지그를 3 mm 격자로 매핑(기준 d000) · 차이 3 % 이내는 매핑 오차 범위");
+    expect(defs).not.toContain("영역 0개");                                       // v0.24.8 fix: 격자 모드엔 영역 개념 없음
+    expect(defs).not.toContain("가압 하중");
     const badges = screen.getAllByText("잡음 이내");
     expect(badges.length).toBeGreaterThan(0);
     expect(badges[0].getAttribute("title")).toMatch(/^격자 매핑 오차 범위 .*3.* 이내$/);

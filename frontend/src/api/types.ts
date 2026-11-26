@@ -3496,6 +3496,17 @@ export interface DoeJigGridOut {
   frame_shift_max_mm: number | null;
   sample_outside_max: number | null;
   warnings: string[];
+  /** v0.24.8 fix 기준 d000 ↔ 형상 메시 비교(옛 결과 null·키 없음) */
+  mesh?: DoeJigGridMeshOut | null;
+}
+/** v0.24.8 fix 기준·형상 메시 통계 — h = 요소 변 길이 중앙값(mm), tri = 삼각형 요소 비율. mismatch = 격자 순위 noise_floor 상향 */
+export interface DoeJigGridMeshOut {
+  h_ref: number;
+  h_min: number | null;
+  h_max: number | null;
+  tri_ref: number;
+  tri_max: number | null;
+  mismatch: boolean;
 }
 export interface DoeJigOut {
   /** v0.24.8 지그 전달 방식 — "grid" = 다른 메시 스터디의 격자 매핑 지그, "base" = 같은 메시. 옛 결과 null·키 없음 */

@@ -492,9 +492,11 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_GRID_NO_REF: "기준(d000) 격자 지그 계산이 실패해 그 방식의 기준값이 없습니다 — 안 결과는 비어 있습니다",
   JIG_GRID_RANK: "순위 = 격자 지그(형상마다 Case 지그를 격자로 매핑 — 다른 메시라 매핑 오차 참고)",
   JIG_GRID_ON_CLONE: "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다",
+  JIG_GRID_MESH_MISMATCH: "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요",
+  JIG_GRID_TIE_SNAP: "체결부 {n_clusters_max}곳을 노드 1개로만 잡았습니다(형상 {n_shapes}개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요",
 };
 /** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */
-export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE"]);
+export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE", "JIG_GRID_MESH_MISMATCH"]);
 /** JIG_GRID_* 대체 문구의 {필드} 채움(경고에 없으면 "–") */
 const fillJigTpl = (tpl: string, w: Record<string, unknown>): string => tpl.replace(/\{(\w+)\}/g, (_, k: string) => (w[k] != null && w[k] !== "" ? String(w[k]) : "–"));
 /** 격자 지그 스터디(jig.transfer === "grid") — 화면 문구가 격자 뜻으로 바뀌는 열 값 */
@@ -504,6 +506,8 @@ export const gridOf = (r: { jig?: { transfer?: string | null; grid?: { cell_mm: 
 export const GRID_TEXT = {
   support: (cellMm: number) => ` · 격자 ${cellMm} mm`,
   rankDef: (cellMm: number) => `형상마다 Case 지그를 ${cellMm} mm 격자로 매핑(기준 d000)`,
+  /** v0.24.8 fix: 격자 모드 지그 순위 정의(영역 개념 없음 — 옛 "가압 하중(영역 0개)" 문구 대신) */
+  jigDef: "score: max(C_jig 안) / max(C_jig 기준) — Case 지그의 맞춤 하중과 체결부 경계를 형상마다 옮겨 같은 조건으로 재풀이한 컴플라이언스. 작을수록 좋음",
   rankNoise: (nf: number) => ` · 차이 ${+(nf * 100).toFixed(2)} % 이내는 매핑 오차 범위`,
   noiseTip: (pct: string) => `격자 매핑 오차 범위 ${pct} 이내`,
 };

@@ -35,7 +35,8 @@ from test_doe_v0246_b1_api import M_OK, M_SPR
 GRID = {"cell_mm": 3.0, "n_groups": 1, "n_shapes": 3, "n_shapes_failed": 1, "tie_miss_max": 0.05, "tie_area_ratio_min": 0.8,
         "tie_area_ratio_max": 1.3, "k_scale_min": 0.9, "k_scale_max": 1.2, "noise_floor": 0.034, "load_dF_max": 1e-12,
         "load_dM_max": 2e-12, "corr_rel_max": 0.02, "small_frac_max": 0.6, "frame_shift_max_mm": 0.0, "sample_outside_max": 0,
-        "warnings": ["스냅샷 tie_dofs normal 과 Case 값 translation 이 다름"]}
+        "warnings": ["스냅샷 tie_dofs normal 과 Case 값 translation 이 다름"],
+        "mesh": {"h_ref": 5.0, "h_min": 3.4, "h_max": 4.5, "tri_ref": 0.095, "tri_max": 1.0, "mismatch": True}}   # v0.24.8 fix JG-23
 GRID_M = {"n_ok": 2, "n_failed": 1, "case_recon_mac_min": 0.998, "recon_mac_d000": 0.996, "recon_umax_err_d000": 0.01, "alpha": 0.01,
           "conv": [{"cell_mm": 5.0, "dpi_max": 0.008, "dumax_max": 0.01, "mac_min": 0.999},
                    {"cell_mm": 10.0, "dpi_max": 0.03, "dumax_max": 0.04, "mac_min": 0.997}]}
@@ -92,6 +93,8 @@ def test_jig_grid_defaults_mirror():
     {"tie_miss_frac_max": -0.1}, {"tie_miss_frac_max": 1.1}, {"sample_nbr": 0}, {"sample_nbr": 4},
     {"sample_normal_deg": 0}, {"sample_normal_deg": 90.1}, {"area_ratio_warn": 1}, {"conv_warn": 0},
     {"frame_shift_warn": 0}, {"load_resid_warn": 0}, {"noise_floor_min": -0.01}, {"noise_floor_min": 0.21}, {"unknown": 1},
+    {"noise_floor_mismatch": -0.01}, {"noise_floor_mismatch": 0.21}, {"mesh_h_ratio_warn": 1}, {"mesh_tri_frac_warn": 0},
+    {"mesh_tri_frac_warn": 1.01},
 ])
 def test_jig_grid_rejects(bad):
     from pydantic import ValidationError
@@ -322,6 +325,7 @@ def test_grid_result_minimal_nullable_fields(client, world, engine, esl_root):
     jig = {**GRID_JIG, "grid": g, "methods": {"jig_disp": {**M_OK, "grid": {"n_ok": 4, "n_failed": 0}}}}
     o = _res(client, _grid_study(client, world, engine, esl_root, jig=jig, side=None))
     assert o["jig"]["grid"]["noise_floor"] is None and o["jig"]["grid"]["k_scale_min"] is None and o["jig"]["grid"]["warnings"] == []
+    assert o["jig"]["grid"]["mesh"] is None                                            # 메시 비교 없는 결과(fix 전 v0.24.8) = null
     mg = o["jig"]["methods"]["jig_disp"]["grid"]
     assert mg["conv"] == [] and mg["recon_mac_d000"] is None and mg["alpha"] is None
 

@@ -5880,7 +5880,8 @@ JG_DIR = "jig_grid"                                # prep/jig_grid/g<k>.npz
 JG_LOAD_KEYS = ("dF_rel_before", "dM_rel_before", "dF_rel", "dM_rel", "corr_rel", "small_frac", "n_cells_loaded")
 JG_RANGES = {"tie_capture_rel": (0.0, 1.0, True, False), "tie_normal_deg": (0.0, 90.0, True, True),
              "tie_miss_frac_max": (0.0, 1.0, False, False), "sample_normal_deg": (0.0, 90.0, True, False),
-             "noise_floor_min": (0.0, 0.2, False, False)}
+             "noise_floor_min": (0.0, 0.2, False, False), "noise_floor_mismatch": (0.0, 0.2, False, False),
+             "mesh_tri_frac_warn": (0.0, 1.0, True, False)}
 
 
 def _jg_raw(c: Ctx) -> dict | None:
@@ -5927,7 +5928,7 @@ def _jg_cfg(c: Ctx) -> dict:
     nb = g.get("sample_nbr")
     if isinstance(nb, bool) or not isinstance(nb, int) or not 1 <= nb <= 3:
         raise EslError("CONFIG_INVALID", f"rank.jig_grid.sample_nbr {nb!r} ∉ 1..3")
-    for k in ("area_ratio_warn",):
+    for k in ("area_ratio_warn", "mesh_h_ratio_warn"):
         if num(k) <= 1.0:
             raise EslError("CONFIG_INVALID", f"rank.jig_grid.{k} ≤ 1")
     for k in ("conv_warn", "frame_shift_warn", "load_resid_warn"):
@@ -5982,6 +5983,12 @@ def _jg_sup_x(raw: dict) -> np.ndarray | None:
 
 def _jg_text(code: str, **kw) -> str:
     return _cmp_text(code, **kw)
+
+
+def _jg_note(method_name: str | None) -> str:
+    """SOURCE_MISSING {rank_note}: 다음 ok 방식이 있으면 "순위는 지그 {방식} 방식으로 매깁니다", 없으면 "지금은 재풀이(solve) 순위입니다"."""
+    from esl.doe import message
+    return message("JG_RANK_NOTE_NEXT").format(method=method_name) if method_name else message("JG_RANK_NOTE_SOLVE")
 
 
 def _jg_prep(c: Ctx, t, echo=None) -> list:
@@ -6128,7 +6135,7 @@ def _jg_prep(c: Ctx, t, echo=None) -> list:
             info.append(f"tie 구속 성분 = Case 값 {g['tie_dofs']}(스냅샷 rank.jig.tie_dofs {td_snap} 와 다름)")
     ok_any = any(mdoc[jig_bc.METHODS[m]["src"]]["status"] == "ok" for m in ms) and bool(gdocs)
     nxt = next((jig_bc.METHODS[m]["name"] for m in ok_m), None)
-    note = f"순위는 지그 {nxt} 로 매깁니다" if nxt else "지금은 재풀이(solve) 순위입니다"
+    note = _jg_note(nxt)                          # v0.24.8 fix: 문구 원본 resources/doe_messages.json(조사 "방식으로" — "스프링 로" 오류 수정)
     rows_w = []
     for eid, m, why in miss:
         txt = _jg_text("JIG_GRID_SOURCE_MISSING", entry=labels.get(eid, eid), method=jig_bc.METHODS[m]["name"],
@@ -6159,7 +6166,7 @@ def _jg_prep_safe(c: Ctx, t, echo=None) -> list:
         err = exc.code if isinstance(exc, EslError) else f"{type(exc).__name__}: {exc}"[:300]
         ms = _jg_methods(c)
         w = [_jg_text("JIG_GRID_SOURCE_MISSING", entry="*", method=jig_bc.METHODS[m]["name"],
-                      rank_note="지금은 재풀이(solve) 순위입니다", reason=err) for m in ms]
+                      rank_note=_jg_note(None), reason=err) for m in ms]
         rows_w = [{"code": "JIG_GRID_SOURCE_MISSING", "message": t_, "entry": "*", "entry_id": None, "method": m, "reason": err}
                   for t_, m in zip(w, ms)]
         c.writer.makedirs(c.p("prep"))
@@ -6351,6 +6358,10 @@ def _jg_apply(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list, region, r
     doc = _jg_doc(c)
     res = None
     err = None
+    try:                                                        # v0.24.8 fix JG-23: 형상 메시 통계(기준 d000 과 메시 방식 비교 — BD_POST)
+        mstat = gm.mesh_stats(mesh)
+    except Exception:                                           # noqa: BLE001 — 진단 때문에 형상 평가 실패 금지
+        mstat = None
     if doc is None or doc.get("status") != "ok":
         err = "JIG_GRID_SOURCE_MISSING"
     else:
@@ -6414,11 +6425,10 @@ def _jg_apply(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list, region, r
             fail = tt["n_clusters"] and tt["n_miss"] / tt["n_clusters"] > float(cfg["tie_miss_frac_max"])
             warns.append(_jg_text("JIG_GRID_TIE_MISS", did=did, n_miss=tt["n_miss"], n_clusters=tt["n_clusters"],
                                   fail=" — 이 형상은 격자 지그 순위에서 빠집니다" if fail else ""))
-        rw = float(cfg["area_ratio_warn"])
-        if (tt.get("area_ratio_min") is not None and tt["area_ratio_min"] < 1.0 / rw) or \
-                (tt.get("area_ratio_max") is not None and tt["area_ratio_max"] > rw):
-            infos.append(_jg_text("JIG_GRID_AREA_RATIO", did=did, lo=f"{tt['area_ratio_min']:.3g}", hi=f"{tt['area_ratio_max']:.3g}",
-                                  rmin=f"{1.0 / rw:.3g}", rmax=f"{rw:g}", kmin=tt.get("k_scale_min"), kmax=tt.get("k_scale_max")))
+        if tt.get("n_snap"):                                    # v0.24.8 fix JG-24: 1노드 snap 클러스터 = 형상 경고(순위 행 경고 수에 보임)
+            warns.append(_jg_text("JIG_GRID_TIE_SNAP_SHAPE", did=did, n=int(tt["n_snap"])))
+        if _jg_area_out(tt, float(cfg["area_ratio_warn"])):
+            infos.append(_jg_area_text(did, tt, float(cfg["area_ratio_warn"])))
         if smp.get("n_outside"):
             infos.append(_jg_text("JIG_GRID_OUTSIDE", did=did, n=smp["n_outside"]))
         tol = float(cfg["frame_shift_warn"]) * float(cfg["cell_mm"])
@@ -6428,7 +6438,7 @@ def _jg_apply(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list, region, r
         v.get("status") == "ok" for v in mdoc.values()) else "failed", "code": err, "methods": mdoc,
         "map": None if not mp else {"tie": mp["tie"], "sample": mp["sample"], "frame_shift_mm": mp.get("frame_shift_mm"),
                                     "sup_shift_mm": mp.get("sup_shift_mm")},
-        "factor": (res or {}).get("factor") or {"n": 0, "seconds": 0.0}, "warnings": warns, "info": infos}
+        "factor": (res or {}).get("factor") or {"n": 0, "seconds": 0.0}, "warnings": warns, "info": infos, "mesh": mstat}
     if did == BASELINE and res is not None:
         rec = {}
         for src, rr in res["recon"].items():
@@ -6449,6 +6459,52 @@ def _jg_apply(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list, region, r
     c.writer.makedirs(design_dir(c, did))
     U.write_json(c.writer.guard(os.path.join(design_dir(c, did), JG_JSON)), U.jsonable(out))
     return warns
+
+
+def _jg_fmt(v, f: str = ".3g") -> str:
+    return "–" if v is None else format(float(v), f)
+
+
+def _jg_area_out(tt: dict, rw: float) -> bool:
+    return (tt.get("area_ratio_min") is not None and tt["area_ratio_min"] < 1.0 / rw) or \
+        (tt.get("area_ratio_max") is not None and tt["area_ratio_max"] > rw)
+
+
+def _jg_area_text(did: str, tt: dict, rw: float) -> str:
+    """JIG_GRID_AREA_RATIO 문구(배율 숫자 서식 = 유효 3자리, 스프링 없음 = –)."""
+    return _jg_text("JIG_GRID_AREA_RATIO", did=did, lo=_jg_fmt(tt.get("area_ratio_min")), hi=_jg_fmt(tt.get("area_ratio_max")),
+                    rmin=_jg_fmt(1.0 / rw), rmax=f"{rw:g}", kmin=_jg_fmt(tt.get("k_scale_min")), kmax=_jg_fmt(tt.get("k_scale_max")))
+
+
+def _jg_runs(c: Ctx) -> dict:
+    """run/designs/<did>/jig_grid.json 모두(안 id 순)."""
+    runs = {}
+    dd = c.p("run", "designs")
+    for did in sorted(os.listdir(dd)) if os.path.isdir(dd) else []:
+        rd = _jg_run_doc(c, did)
+        if rd is not None:
+            runs[did] = rd
+    return runs
+
+
+def _jg_mesh_sum(runs: dict, cfg: dict) -> dict | None:
+    """v0.24.8 fix JG-23: 기준 d000 ↔ 형상 메시 비교 요약 {h_ref, h_min, h_max, tri_ref, tri_max, mismatch, n_shapes(다른 형상 수)}.
+    d000 메시 통계가 없으면(옛 run 문서) None."""
+    from esl.mech import grid_map as gm
+    m0 = (runs.get(BASELINE) or {}).get("mesh")
+    if not isinstance(m0, dict) or not m0.get("h"):
+        return None
+    hs, tris, bad = [], [], []
+    for did, rd in runs.items():
+        m = rd.get("mesh")
+        if did == BASELINE or not isinstance(m, dict) or not m.get("h"):
+            continue
+        hs.append(float(m["h"]))
+        tris.append(float(m["tri_frac"]))
+        if gm.mesh_mismatch(m0, m, h_ratio_warn=float(cfg["mesh_h_ratio_warn"]), tri_frac_warn=float(cfg["mesh_tri_frac_warn"])):
+            bad.append(did)
+    return {"h_ref": float(m0["h"]), "h_min": min(hs) if hs else None, "h_max": max(hs) if hs else None,
+            "tri_ref": float(m0["tri_frac"]), "tri_max": max(tris) if tris else None, "mismatch": bool(bad), "n_shapes": len(bad)}
 
 
 def _jg_ready(c: Ctx, src: str) -> bool:
@@ -6485,9 +6541,13 @@ def _jg_any_ready(c: Ctx) -> bool:
 
 
 def _jg_nf(c: Ctx, mesh_noise) -> float:
-    """격자 순위 noise_floor(§3) = max(방식·엔트리 최악 ΔΠ_5(conv_mm 중 가장 작은 크기 — 없으면 뺌), noise_floor_min, 옛 ③ 메시 잡음 바닥)."""
+    """격자 순위 noise_floor(§3) = max(방식·엔트리 최악 ΔΠ_5(conv_mm 중 가장 작은 크기 — 없으면 뺌), noise_floor_min, 옛 ③ 메시 잡음 바닥,
+    기준 d000 과 메시 방식이 다른 형상이 있으면 noise_floor_mismatch(v0.24.8 fix JG-23))."""
     cfg = _jg_cfg(c)
     vals = [float(cfg["noise_floor_min"])]
+    ms_ = _jg_mesh_sum(_jg_runs(c), cfg)
+    if ms_ is not None and ms_["mismatch"]:
+        vals.append(float(cfg["noise_floor_mismatch"]))
     if mesh_noise is not None:
         vals.append(float(mesh_noise))
     conv = (_jg_run_doc(c, BASELINE) or {}).get("conv") or {}
@@ -6510,12 +6570,7 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
     doc = _jg_doc(c) or {}
     ms = _jg_methods(c)
     warns: list = list(doc.get("warnings") or [])
-    runs = {}
-    dd = c.p("run", "designs")
-    for did in sorted(os.listdir(dd)) if os.path.isdir(dd) else []:
-        rd = _jg_run_doc(c, did)
-        if rd is not None:
-            runs[did] = rd
+    runs = _jg_runs(c)
     d0 = runs.get(BASELINE) or {}
     meth: dict = {}
     macs, errs, n_jig = [], [], 0
@@ -6583,6 +6638,11 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
             "frame_shift_max_mm": mx_(vals(lambda rd: [(rd.get("map") or {}).get("frame_shift_mm")])),
             "sample_outside_max": mx_(vals(lambda rd: [((rd.get("map") or {}).get("sample") or {}).get("n_outside")])),
             "warnings": list(doc.get("info") or [])}
+    sw = _jg_study_warns(c, runs, cfg)                     # v0.24.8 fix JG-23·24: 메시 차이·체결부 잡기 요약(스터디 경고 + grid.warnings)
+    ms_ = _jg_mesh_sum(runs, cfg)
+    grid["mesh"] = None if ms_ is None else {k: ms_[k] for k in ("h_ref", "h_min", "h_max", "tri_ref", "tri_max", "mismatch")}
+    warns += sw
+    grid["warnings"] += sw
     any_ok = any(v["status"] == "ok" for v in meth.values())
     poor = any_ok and ((macs and min(macs) < th.get("mac_min", 0.0)) or (errs and max(errs) > th.get("umax_err_max", 1e9)))
     if poor:
@@ -6597,6 +6657,47 @@ def _jg_post(c: Ctx, S_: dict | None, labels: dict) -> tuple[dict, list]:
                                                                            if v.get("tie_dofs")), None),
            "methods": meth}
     return blk, warns
+
+
+def _jg_study_warns(c: Ctx, runs: dict, cfg: dict) -> list:
+    """스터디 요약 경고(v0.24.8 fix JG-23·24 — 형상별 jig_grid.json 에만 있던 것을 올림): 정보 JIG_GRID_MESH_MISMATCH(기준과 메시 방식이 다른
+    형상 있음), 경고 JIG_GRID_TIE_SNAP(1노드 snap 클러스터가 있는 형상 수·형상당 최대), JIG_GRID_TIE_MISS·JIG_GRID_AREA_RATIO(최악 형상 1건씩 —
+    형상별 문구 그대로). 구조화 행(필드)은 c._jg_rows 로 _jg_warn_rows 가 붙임."""
+    out: list = []
+
+    def put(txt: str, row: dict):
+        out.append(txt)
+        c._jg_rows = {**(getattr(c, "_jg_rows", None) or {}), txt: {"code": txt.split(":", 1)[0], "message": txt, **row}}
+    ms_ = _jg_mesh_sum(runs, cfg)
+    if ms_ is not None and ms_["mismatch"]:
+        nf = getattr(c, "_jg_nf", None)
+        nf = float(nf) if nf is not None else max(float(cfg["noise_floor_min"]), float(cfg["noise_floor_mismatch"]))
+        f = {k: ms_[k] for k in ("n_shapes", "h_ref", "h_min", "h_max", "tri_ref", "tri_max")}
+        put(_jg_text("JIG_GRID_MESH_MISMATCH", nf=f"{nf * 100:.3g}", **{k: _jg_fmt(v) for k, v in f.items() if k != "n_shapes"},
+                     n_shapes=ms_["n_shapes"]), f)
+    tie = {did: ((rd.get("map") or {}).get("tie") or {}) for did, rd in runs.items()}
+    snap = {did: int(t_.get("n_snap") or 0) for did, t_ in tie.items() if t_.get("n_snap")}
+    if snap:
+        f = {"n_shapes": len(snap), "n_clusters_max": max(snap.values())}
+        put(_jg_text("JIG_GRID_TIE_SNAP", **f), f)
+    miss = {did: (int(t_["n_miss"]) / int(t_["n_clusters"]), t_) for did, t_ in tie.items() if t_.get("n_miss") and t_.get("n_clusters")}
+    if miss:
+        did, (fr, t_) = max(miss.items(), key=lambda kv: (kv[1][0], kv[0]))
+        fail = fr > float(cfg["tie_miss_frac_max"])
+        put(_jg_text("JIG_GRID_TIE_MISS", did=did, n_miss=t_["n_miss"], n_clusters=t_["n_clusters"],
+                     fail=" — 이 형상은 격자 지그 순위에서 빠집니다" if fail else ""),
+            {"did": did, "n_miss": int(t_["n_miss"]), "n_clusters": int(t_["n_clusters"]), "n_shapes": len(miss)})
+    rw = float(cfg["area_ratio_warn"])
+
+    def bad_area(t_):
+        lo, hi = t_.get("area_ratio_min"), t_.get("area_ratio_max")
+        return max(1.0 / lo if lo else 0.0, float(hi) if hi is not None else 0.0)
+    area = {did: t_ for did, t_ in tie.items() if _jg_area_out(t_, rw)}
+    if area:
+        did, t_ = max(area.items(), key=lambda kv: (bad_area(kv[1]), kv[0]))
+        put(_jg_area_text(did, t_, rw), {"did": did, "lo": t_.get("area_ratio_min"), "hi": t_.get("area_ratio_max"),
+                                         "n_shapes": len(area)})
+    return out
 
 
 def _jg_warn_rows(c: Ctx, warns: list) -> list:
