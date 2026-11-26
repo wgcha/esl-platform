@@ -29,6 +29,7 @@ from .zones import Mesh, bead_zones, movable_nodes
 # DF·W1 parent-band mix (part of the DF_RULES / W1_RULES 1 definition, esl contract esl_bead_depth_mode §1.2.1·§1.6.3 —
 # DM-C1-2): nearest sources mixed, weight 1/(d² + (BAND_MIX_EPS_H·h)²)
 BAND_MIX_K = 8
+BAND_MIX_K_U = 64                               # U band mix: nearest sources considered (gaussian weights — U_RULES 1)
 BAND_MIX_EPS_H = 0.1
 # DF entry smoothing / neighbour-gap limit (DM-30·31): gaussian support cut at ENTRY_SMOOTH_CUT·ρ
 ENTRY_SMOOTH_CUT = 3.0
@@ -195,17 +196,19 @@ def _corner_guard(M: Mesh, el: np.ndarray, U: np.ndarray, moved: np.ndarray, ext
     return c
 
 
-def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict) -> np.ndarray:
+def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict, vals=None) -> np.ndarray:
     """elements (rows of C) that turn newly bad at ±ext: quad Gauss Jacobian ≥ jac_min at rest and < at ±ext, triangle
-    min angle ≥ tri_angle_min_deg at rest and < at ±ext (esl range guard criteria — values given by the caller)."""
+    min angle ≥ tri_angle_min_deg at rest and < at ±ext (esl range guard criteria — values given by the caller).
+    ``vals`` (U): the variable values to check instead of ±ext (None = ±ext — as before)."""
+    ends = (ext, -ext) if vals is None else tuple(float(v) for v in vals)
     from .checks import _quad_jacobian
     bad = np.zeros(len(C), bool)
     q = C[:, 3] >= 0
     jm, tm = qual.get("jac_min"), qual.get("tri_angle_min_deg")
     if jm is not None and q.any():
         j0 = _quad_jacobian(M.X, C[q])
-        for sgn in (1.0, -1.0):
-            bad[q] |= (j0 >= jm) & (_quad_jacobian(M.X + sgn * ext * Ud, C[q]) < jm)
+        for v in ends:
+            bad[q] |= (j0 >= jm) & (_quad_jacobian(M.X + v * Ud, C[q]) < jm)
     if tm is not None and (~q).any():
         T = C[~q][:, :3]
 
@@ -219,8 +222,8 @@ def _qual_new_bad(M: Mesh, C: np.ndarray, Ud: np.ndarray, ext: float, qual: dict
                 out = np.minimum(out, np.degrees(np.arccos(np.clip(cs_, -1.0, 1.0))))
             return out
         a0 = mina(M.X)
-        for sgn in (1.0, -1.0):
-            bad[~q] |= (a0 >= tm) & (mina(M.X + sgn * ext * Ud) < tm)
+        for v in ends:
+            bad[~q] |= (a0 >= tm) & (mina(M.X + v * Ud) < tm)
     return bad
 
 
@@ -306,9 +309,10 @@ def _var_ext(rng, nominal):
 
 def basis(graph, labels, nodes, beads, ranges, cfg=None, fixed=None, elems=None) -> list[dict]:
     """-> [{name, kind, nominal, idx (int64), vec (float64 (k,3)), zone (int64 allowed nodes), info{…}}].
-    beads = [{name, kind 'D'|'W'|'DF'|'W1', segs [segment id…], zones? [junction-zone id…], hold 0|1}] (DF = depth with
-    the floor width kept and the flank angle kept — the entry widens; W1 = one-sided entry width — esl contract
-    esl_bead_depth_mode.md §1.2.1·§1.6.3; W1 items may carry ``ramp: "end"`` and ``min_nodes``);
+    beads = [{name, kind 'D'|'W'|'DF'|'W1'|'U', segs [segment id…], zones? [junction-zone id…], hold 0|1}] (DF = depth
+    with the floor width kept and the flank angle kept — the entry widens; W1 = one-sided entry width — esl contract
+    esl_bead_depth_mode.md §1.2.1·§1.6.3; W1 items may carry ``ramp: "end"`` and ``min_nodes``; U = bead position
+    perpendicular to the path, nominal 0 — esl contract esl_bead_pos_u.md §1.1, item keys in ``_one_u``);
     ranges = {name: [lo, hi]} default ranges (fix the ramp / corner guard — BG-D-24·26). elems is required
     (connectivity; same array given to ``classify``)."""
     if elems is None:
@@ -330,6 +334,11 @@ def basis(graph, labels, nodes, beads, ranges, cfg=None, fixed=None, elems=None)
                 from .oneside import outer_edge_nodes
                 edge_n = outer_edge_nodes(M)
             out.append(_one_w1(M, b, ranges, cfg, fixed_mask, edge_n))
+        elif k == "U":
+            if edge_n is None:
+                from .oneside import outer_edge_nodes
+                edge_n = outer_edge_nodes(M)
+            out.append(_one_u(M, b, ranges, cfg, fixed_mask, edge_n))
         elif k in ("D", "W"):
             out.append(_one(M, b, ranges, cfg, fixed_mask))
         else:
@@ -878,13 +887,20 @@ def _others_el(M: Mesh, Z: dict, isl_obstacle: bool) -> np.ndarray:
 
 
 def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info: dict, mix_h: float | None = None,
-          isl_obstacle: bool = False):
+          isl_obstacle: bool = False, extra_oth: np.ndarray | None = None, gap_clip: bool = False,
+          mix_rho: float | None = None):
     """parent-floor blend band (W·DF·W1 — one internal function, contract esl_bead_depth_mode §9): parent-floor nodes
     within R_w of the source entry nodes ``src_idx`` copy the nearest source displacement × (1 − smoothstep(d/R_w)),
     or — ``mix_h`` given (DF·W1, DM-C1-2) — the distance-weighted mix of the up to ``BAND_MIX_K`` nearest sources
     within R_w, w_k = 1/(d_k² + (0.1h)²) (continuous between facing entry lines; W keeps the nearest copy),
     clipped near other zones (SELECT_BLEND_CLIPPED); parent-floor islands touched by the band move rigidly with it (W) or
     — ``isl_obstacle`` (DF·W1, DM-33) — are other zones (stay, the band fades next to them; no ``band_islands``).
+    ``extra_oth`` (U — node mask, e.g. the plate's outer edge): more obstacles of the same kind (None = as before).
+    ``gap_clip`` (U): the clip next to other zones is the gap fraction d_o/(d_o + d_e) (1 at the entry, 0 at the
+    obstacle — the motion fades linearly across the gap, so with the entry gap factor κ ≤ gap_rel·d_o/ext the band
+    gradient stays ≤ gap_rel) instead of smoothstep(d_o/R_w) (False = as before). ``mix_rho`` (U): the mix weights are
+    exp(−((d_k − d_min)/ρ)²) over up to BAND_MIX_K_U nearest sources (smooth at the motion scale ρ where sources of
+    different directions meet — outside of bends) instead of 1/(d² + (0.1h)²).
     -> (band node mask, ids of the parent's non-straddling islands). Uv / info updated in place."""
     lab = M.lab
     p = Z["parent"]
@@ -894,6 +910,8 @@ def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info
     isl = lab["island"]
     on_par = [i["id"] for i in M.graph["islands"] if i["parent"] == p and not i["straddle"]]
     n_oth = M.nmask(_others_el(M, Z, isl_obstacle))
+    if extra_oth is not None:
+        n_oth = n_oth | (np.asarray(extra_oth, bool) & ~E)
     pf &= ~n_oth
     info["blend_mm"] = Rw
     if src_idx.size and pf.any():
@@ -903,7 +921,14 @@ def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info
         sel = de < Rw
         bidx = cand[sel]
         w = 1.0 - U.smoothstep(de[sel] / Rw)
-        if mix_h is not None and bidx.size:
+        if mix_rho is not None and bidx.size:
+            kk = min(BAND_MIX_K_U, int(src_idx.size))
+            dk, jk = tree.query(M.P[bidx], k=kk)
+            dk = dk.reshape(bidx.size, kk)
+            jk = jk.reshape(bidx.size, kk)
+            wk = np.exp(-((dk - dk[:, :1]) / mix_rho) ** 2)
+            umix = np.einsum("ik,ikj->ij", wk, Uv[src_idx[np.minimum(jk, src_idx.size - 1)]]) / wk.sum(axis=1)[:, None]
+        elif mix_h is not None and bidx.size:
             kk = min(BAND_MIX_K, int(src_idx.size))
             dk, jk = tree.query(M.P[bidx], k=kk)
             dk = dk.reshape(bidx.size, kk)
@@ -916,8 +941,11 @@ def _band(M: Mesh, Z: dict, Rw: float, src_idx: np.ndarray, Uv: np.ndarray, info
             if clip.any():
                 info["warnings"].append({"code": "SELECT_BLEND_CLIPPED", "R_mm": U.f3(Rw),
                                          "d_other_mm": U.f3(float(do.min()))})
-            w = w * U.smoothstep(do / Rw)
-        if mix_h is not None and bidx.size:
+            if gap_clip:
+                w = w * np.where(do < Rw, do / np.maximum(do + de[sel], 1e-300), 1.0)
+            else:
+                w = w * U.smoothstep(do / Rw)
+        if (mix_h is not None or mix_rho is not None) and bidx.size:
             Uv[bidx] = umix * w[:, None]
         else:
             Uv[bidx] = Uv[src_idx[je[sel]]] * w[:, None]
@@ -1016,3 +1044,533 @@ def morph(nodes, basis, values) -> np.ndarray:
             continue
         X[v["idx"]] += dv * v["vec"]
     return X
+
+
+# ====================================================================== kind U (bead position — esl_bead_pos_u.md §1.1)
+U_RANGE_REL = 0.25                              # ext without a range = U_RANGE_REL·W_ref (esl passes pos_u.range_rel)
+U_GAP_REL = 0.5                                 # neighbour-gap limit (esl passes pos_u.gap_rel — same value as feasible)
+U_DIR_RHO_H = 3.0                               # t⊥ gaussian smoothing radius ρ = max(U_DIR_RHO_H·h, ext) (U_RULES 1)
+U_ACH_RAD = 0.005                               # achieved sample: motion within 0.005 rad of t⊥ (ext·(1 − cos) ≤ 2.5e-4 mm at 20 mm)
+U_GAP_K = 64                                    # obstacle candidates per entry node (gap factor)
+U_GAP_CONE_DEG = 45.0                           # obstacles within ±45° of the motion direction limit it
+U_GUARD_CUT = 2.0                               # guard bump support = U_GUARD_CUT·ρ (exp(−4) step ≈ 0.4 % of the shrink)
+U_SKEL_RHO_EXT = 4.0                            # skeleton-normal smoothing radius ρ_s = max(U_DIR_RHO_H·h, 4·ext) (U_RULES 1)
+
+
+def _u_field(M, S, orient: dict, Q: np.ndarray, rho_s: float) -> np.ndarray:
+    """t⊥ field from the bead's skeleton vertices (all segments of S, chain orientation σ): vertex left normals (central
+    tangent; end vertices = end segment) smoothed by a plan gaussian of radius ρ_s over every vertex of S (cross-segment:
+    kinks / channel–flare joins turn over ~ρ_s instead of one element), the query points take the smoothed normal of
+    their nearest vertex. Straight stretches keep the exact perpendicular; a circular arc keeps the radial direction."""
+    V, T = [], []
+    for s in S:
+        P = np.asarray(M.segs[s].get("skeleton") or [], float).reshape(-1, 2)
+        if P.shape[0] < 2:
+            continue
+        t = np.empty_like(P)
+        t[1:-1] = P[2:] - P[:-2]
+        t[0], t[-1] = P[1] - P[0], P[-1] - P[-2]
+        t *= float(orient.get(int(s), 1))
+        n = np.c_[-t[:, 1], t[:, 0]]
+        nn = np.linalg.norm(n, axis=1)
+        ok = nn > 1e-12
+        V.append(P[ok])
+        T.append(n[ok] / nn[ok, None])
+    if not V:
+        return np.zeros((len(Q), 2))
+    V, T = np.concatenate(V), np.concatenate(T)
+    tv = cKDTree(V)
+    if rho_s > 0 and V.shape[0] > 1:
+        pr = tv.sparse_distance_matrix(tv, ENTRY_SMOOTH_CUT * rho_s, output_type="coo_matrix")
+        W = sparse.coo_matrix((np.exp(-(pr.data / rho_s) ** 2), (pr.row, pr.col)), shape=(V.shape[0],) * 2).tocsr()
+        W = W + sparse.identity(V.shape[0], format="csr") - sparse.diags(W.diagonal())
+        Ts = np.asarray(W @ T)
+        ns = np.linalg.norm(Ts, axis=1)
+        same = np.linalg.norm(Ts / np.maximum(ns, 1e-12)[:, None] - T, axis=1) < 1e-12
+        T = np.where(((ns > 1e-12) & ~same)[:, None], Ts / np.maximum(ns, 1e-12)[:, None], T)
+    _d, j = tv.query(Q)
+    return T[j]
+
+
+def _u_smooth(M, idx: np.ndarray, t: np.ndarray, rho: float) -> np.ndarray:
+    """t⊥ of the moving nodes relaxed by a plan gaussian (weights exp(−(d/ρ)²), support ENTRY_SMOOTH_CUT·ρ, self weight
+    1) over the moving nodes, renormalised: continuous across skeleton kinks / segment joins at the motion scale; a
+    straight stretch (all t⊥ equal) keeps the exact perpendicular."""
+    n = idx.size
+    if n < 2 or rho <= 0:
+        return t
+    tree = cKDTree(M.P[idx])
+    pr = tree.sparse_distance_matrix(tree, ENTRY_SMOOTH_CUT * rho, output_type="coo_matrix")
+    W = sparse.coo_matrix((np.exp(-(pr.data / rho) ** 2), (pr.row, pr.col)), shape=(n, n)).tocsr()
+    W = W + sparse.identity(n, format="csr") - sparse.diags(W.diagonal())
+    v = np.asarray(W @ t)
+    nn = np.linalg.norm(v, axis=1)
+    v = np.where(nn[:, None] > 1e-12, v / np.maximum(nn, 1e-12)[:, None], t)
+    same = np.linalg.norm(v - t, axis=1) < 1e-12              # exact where the neighbourhood is uniform
+    v[same] = t[same]
+    return v
+
+
+U_CLOSED_H = 2.0                                # closed skeleton: no junctions and |end − start| ≤ U_CLOSED_H·h
+
+
+def u_closed(seg: dict, h: float) -> bool:
+    """closed (loop) skeleton — graph.json segments carry no ``closed`` flag: no junction nodes and the skeleton's last
+    point within U_CLOSED_H·h of its first (U_CLOSED — moving a loop sideways changes its size)."""
+    P = np.asarray(seg.get("skeleton") or [], float).reshape(-1, 2)
+    if P.shape[0] < 3 or seg.get("junctions"):
+        return False
+    return float(np.linalg.norm(P[-1] - P[0])) <= U_CLOSED_H * float(h)
+
+
+def u_orient(segs_by_id: dict, S) -> dict:
+    """one travel direction for the bead's skeleton chain: σ_s = ±1 per segment (+1 = as stored). Reference = the longest
+    segment (ties: smallest id); the next segment is always the unassigned one with the nearest skeleton end to an assigned
+    one, end→start / start→end = same direction, end→end / start→start = reversed (a straight ring side split into
+    segments stored in opposite directions moves one way)."""
+    ends = {}
+    for s in S:
+        P = np.asarray(segs_by_id[s].get("skeleton") or [], float).reshape(-1, 2)
+        if P.shape[0] >= 2:
+            ends[s] = (P[0], P[-1])
+    if not ends:
+        return {int(s): 1 for s in S}
+    ref = sorted(ends, key=lambda s: (-float(segs_by_id[s].get("length") or 0.0), int(s)))[0]
+    sig = {ref: 1}
+    while len(sig) < len(ends):
+        best = None
+        for a, sa in sig.items():
+            a0, a1 = ends[a] if sa > 0 else ends[a][::-1]
+            for b in ends:
+                if b in sig:
+                    continue
+                b0, b1 = ends[b]
+                for d, sb in ((np.linalg.norm(a1 - b0), 1), (np.linalg.norm(a0 - b1), 1), (np.linalg.norm(a1 - b1), -1),
+                              (np.linalg.norm(a0 - b0), -1)):
+                    key = (float(d), int(b))
+                    if best is None or key < best[0]:
+                        best = (key, b, sb)
+        sig[best[1]] = best[2]
+    return {int(s): int(sig.get(s, 1)) for s in S}
+
+
+def _u_skel(M, S: list[int], Q: np.ndarray, orient: dict | None = None):
+    """U direction (U only — ``_skeleton_dist`` keeps its W bytes): nearest skeleton over S -> (distance, t⊥ (k,2) = the
+    nearest skeleton segment's left normal × its chain orientation σ (``u_orient``), interior, segment id). Interior
+    nodes: n_out × side (``polyline_dist``); end nodes (closest point = an open polyline's end vertex): the left normal of
+    the end segment (not the radial n_out)."""
+    best = np.full(len(Q), np.inf)
+    tp = np.zeros((len(Q), 2))
+    inner = np.zeros(len(Q), bool)
+    sid = -np.ones(len(Q), np.int64)
+    for s in S:
+        sk = M.segs[s].get("skeleton")
+        if not sk or len(sk) < 2:
+            continue
+        pts = np.asarray(sk, float)
+        d, sd, cp, n = polyline_dist(Q, pts)
+        im = interior_mask(cp, pts)
+        t = n * sd[:, None]
+        if (~im).any():
+            for a, b, e in ((pts[0], pts[1], pts[0]), (pts[-2], pts[-1], pts[-1])):
+                tt = b - a
+                ln = float(np.linalg.norm(tt))
+                if ln <= 1e-12:
+                    continue
+                left = np.array([-tt[1], tt[0]]) / ln
+                at = (~im) & (np.linalg.norm(cp - e, axis=1) < 1e-9)
+                t[at] = left
+        if orient is not None and int(orient.get(int(s), 1)) < 0:
+            t = -t
+        m = d < best
+        best[m], tp[m], inner[m], sid[m] = d[m], t[m], im[m], s
+    nn = np.linalg.norm(tp, axis=1)
+    tp = np.where(nn[:, None] > 1e-12, tp / np.maximum(nn, 1e-12)[:, None], tp)
+    return best, tp, inner, sid
+
+
+def u_dir(graph, segs, orient: dict | None = None) -> list[float] | None:
+    """mean t⊥ of the segments' skeletons (length-weighted left normals × chain orientation, plan e1·e2 unit) — None for
+    none / a loop."""
+    num, tot = np.zeros(2), 0.0
+    sg = {s["id"]: s for s in graph["segments"]}
+    for s in segs:
+        P = np.asarray(sg[s].get("skeleton") or [], float).reshape(-1, 2)
+        if P.shape[0] < 2:
+            continue
+        t = np.diff(P, axis=0) * float((orient or {}).get(int(s), 1))
+        num += np.c_[-t[:, 1], t[:, 0]].sum(axis=0)
+        tot += float(np.linalg.norm(t, axis=1).sum())
+    nv = float(np.linalg.norm(num))
+    if tot <= 0.0 or nv <= 1e-9 * tot:
+        return None
+    return [float(x) for x in num / nv]
+
+
+def _u_gap(M: Mesh, eI: np.ndarray, mI: np.ndarray, oth: np.ndarray, ends, tE: np.ndarray, gap: float, rho: float,
+           phiE: np.ndarray | None = None):
+    """neighbour-gap factor (DF ``_entry_fix`` κ_o rule, U motion = ext along t⊥): raw κ_e = min(1, gap·d_o/ext) at the
+    entry nodes eI, d_o = plan distance to the other shapes ``oth`` (node mask); eroded (min over entries within
+    U_GUARD_CUT·ρ) then the moving nodes mI get the gaussian mean of it (weights exp(−(d/ρ)²), same support — nearest
+    entry where none in range): one smooth factor for the whole cross-section (walls / floor edge / entry move together),
+    never above the raw factor of an entry within the support. -> (κ over mI, n raw κ < 1)."""
+    n = mI.size
+    lo, hi = (float(v) for v in ends)
+    if eI.size == 0 or not oth.any() or max(abs(lo), abs(hi)) <= 0:
+        return np.ones(n), 0
+    oi = np.flatnonzero(oth)
+    kk = min(U_GAP_K, oi.size)
+    dk, jk = cKDTree(M.P[oi]).query(M.P[eI], k=kk)
+    dk, jk = dk.reshape(eI.size, kk), jk.reshape(eI.size, kk)
+    vec = M.P[oi[jk]] - M.P[eI][:, None, :]
+    cs = np.einsum("ikj,ij->ik", vec, tE) / np.maximum(dk, 1e-12)
+    cone = float(np.cos(np.radians(U_GAP_CONE_DEG)))
+    d_p = np.where(cs >= cone, dk, np.inf).min(axis=1)       # obstacle ahead of the + motion
+    d_m = np.where(cs <= -cone, dk, np.inf).min(axis=1)      # … of the − motion
+    ph = np.ones(eI.size) if phiE is None else np.maximum(np.asarray(phiE, float), 1e-300)
+    raw = np.minimum.reduce([np.ones(eI.size), gap * d_p / (max(abs(hi), 1e-300) * ph),
+                             gap * d_m / (max(abs(lo), 1e-300) * ph)])
+    n_clip = int((raw < 1.0).sum())
+    if not n_clip:
+        return np.ones(n), 0
+    te = cKDTree(M.P[eI])
+    R = U_GUARD_CUT * rho
+    pe = te.sparse_distance_matrix(te, R, output_type="coo_matrix")
+    ero = raw.copy()                                    # erosion (min over entries within R) — the smoothed factor
+    np.minimum.at(ero, pe.row, raw[pe.col])              # below stays ≤ the raw factor of every entry within R
+    pr = cKDTree(M.P[mI]).sparse_distance_matrix(te, R, output_type="coo_matrix")
+    W = sparse.coo_matrix((np.exp(-(pr.data / rho) ** 2), (pr.row, pr.col)), shape=(n, eI.size)).tocsr()
+    den = np.asarray(W.sum(axis=1)).ravel()
+    kap = np.asarray(W @ ero).ravel() / np.maximum(den, 1e-300)
+    none = den <= 1e-300
+    if none.any():
+        _dn, jn = te.query(M.P[mI[none]])
+        kap[none] = ero[jn]
+    return np.minimum(kap, 1.0), n_clip
+
+
+def u_gaps(graph, labels, nodes, elems, segs, zones=(), fixed=None, hold_nodes=(), q: float = 0.05,
+           range_rel: float = U_RANGE_REL, cfg=None) -> dict:
+    """U feasible inputs (esl contract esl_bead_pos_u.md §1.3): for the S_U segments -> {w_ref, dir [e1, e2], orient,
+    g_plus, g_minus (mm | None — the q-quantile of the plan distance from that side's straight entry nodes to the nearest
+    "other shape" node: other zones, the plate's outer edge, fixed / held nodes, held islands — the same obstacle set as
+    the basis gap factor), n_plus, n_minus}. + side = left of the oriented travel direction. Straight sample = interior
+    entry nodes (skeleton perpendicular) at least the full ramp L = ramp_k·max(h, range_rel·W_ref) from the junction
+    nodes J (the default-range ramp)."""
+    from .oneside import outer_edge_nodes
+    M = Mesh(graph, labels, np.asarray(nodes, np.float64), elems)
+    Z = bead_zones(M, list(segs), zones or (), "D")
+    S = Z["S"]
+    lens = np.array([float(M.segs[x]["length"] or 1.0) for x in S])
+    ws = [M.segs[x]["entry_width"] for x in S]
+    w_ref = None if any(w is None for w in ws) else float(np.sum(lens * np.array(ws, float)) / lens.sum())
+    orient = u_orient(M.segs, S)
+    fx = np.zeros(M.n, bool)
+    for arr in (fixed, hold_nodes):
+        a = np.asarray(arr if arr is not None else [], np.int64)
+        fx[a[(a >= 0) & (a < M.n)]] = True
+    isl = M.lab["island"]
+    held = [i for i in Z["islands"] if fx[M.nmask(isl == i)].any()]
+    E = Z["E"]
+    obst = outer_edge_nodes(M) | fx | (M.nmask(np.isin(isl, held)) if held else np.zeros(M.n, bool))
+    oth = (M.nmask(_others_el(M, Z, True) & ~Z["ZC"]) | obst) & ~E
+    out = {"w_ref": w_ref, "orient": {int(k): int(v) for k, v in orient.items()}, "dir": u_dir(graph, S, orient),
+           "g_plus": None, "g_minus": None, "n_plus": 0, "n_minus": 0}
+    ei = np.flatnonzero(E)
+    if ei.size == 0 or not oth.any():
+        return out
+    _d, tp, inner, sid = _u_skel(M, S, M.P[ei], orient)
+    ok = inner & (sid >= 0)
+    if Z["J"].any() and w_ref is not None:
+        c = _cfg(cfg)
+        L0 = float(c["morph"]["ramp_k"]) * max(M.h_mm, float(range_rel) * w_ref)
+        dj, _ = cKDTree(M.P[Z["J"]]).query(M.P[ei])
+        ok &= dj >= L0
+    ei, tp = ei[ok], tp[ok]
+    if ei.size == 0:
+        return out
+    cp = np.zeros((ei.size, 2))
+    for s in set(int(x) for x in sid[ok]):
+        m = sid[ok] == s
+        cp[m] = polyline_dist(M.P[ei[m]], np.asarray(M.segs[s]["skeleton"], float))[2]
+    side = np.sign(np.einsum("ij,ij->i", M.P[ei] - cp, tp))
+    d_o, _ = cKDTree(M.P[oth]).query(M.P[ei])
+    for sg, k in ((1.0, "plus"), (-1.0, "minus")):
+        m = side == sg
+        out[f"n_{k}"] = int(m.sum())
+        if m.any():
+            out[f"g_{k}"] = float(np.quantile(d_o[m], q))
+    return out
+
+
+def _u_flags(M: Mesh, eidx: np.ndarray, Ud: np.ndarray, ends, cg: dict, flip_deg: float, qual: dict | None):
+    """elements (rows eidx) bad at the range ends (values ``ends`` — the default range, asymmetric) under Ud — the DF entry guard criteria (``_df_entry_guard``): floor plan triangle
+    area ratio < area_ratio_min, normal turned > flip_deg, quad Gauss Jacobian ≤ 0 (> 0 at rest), concave quad corner
+    (``quad_corner_min`` on the element plane or about its rest normal, > 0 at rest), ``qual`` newly bad. -> (bad,
+    concave-or-inverted only)."""
+    from .checks import _quad_jacobian, quad_corner_min
+    C = M.C[eidx]
+    q = C[:, 3] >= 0
+    isfloor = M.lab["cls"][eidx] == CLS["floor"]
+    T = np.r_[C[:, :3], C[q][:, [0, 2, 3]]]
+    Tow = np.r_[np.arange(eidx.size), np.flatnonzero(q)]
+
+    def parea(P):
+        a, b, d = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+        return 0.5 * ((b[:, 0] - a[:, 0]) * (d[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (d[:, 0] - a[:, 0]))
+
+    def normals(X):
+        a, b, d = X[C[:, 0]], X[C[:, 1]], X[C[:, 2]]
+        n = np.cross(b - a, d - a)
+        e = X[np.where(q, C[:, 3], C[:, 2])]
+        n[q] = np.cross(d[q] - a[q], e[q] - b[q])
+        return n / np.maximum(np.linalg.norm(n, axis=1), 1e-300)[:, None]
+    a0 = parea(M.P)
+    ok0 = np.abs(a0) > 1e-9
+    n0 = normals(M.X)
+    Cq = C[q]
+    if q.any():
+        j0 = _quad_jacobian(M.X, Cq)
+        nq0 = np.cross(M.X[Cq[:, 2]] - M.X[Cq[:, 0]], M.X[Cq[:, 3]] - M.X[Cq[:, 1]])
+        cq0 = (quad_corner_min(M.X, Cq) > 0.0) & (quad_corner_min(M.X, Cq, nq0) > 0.0)
+    bad = np.zeros(eidx.size, bool)
+    hard = np.zeros(eidx.size, bool)
+    for v in ends:
+        X1 = M.X + float(v) * Ud
+        P1 = np.c_[X1 @ M.e1, X1 @ M.e2] - M.origin
+        r = parea(P1) / np.where(ok0, a0, 1.0)
+        bt = np.zeros(eidx.size, bool)
+        np.logical_or.at(bt, Tow[ok0 & (r < float(cg["area_ratio_min"]))], True)
+        bad |= bt & isfloor
+        inv = np.degrees(np.arccos(np.clip(np.einsum("ij,ij->i", n0, normals(X1)), -1, 1))) > flip_deg
+        if q.any():
+            inv[q] |= (_quad_jacobian(X1, Cq) <= 0.0) & (j0 > 0.0)
+            inv[q] |= cq0 & (np.minimum(quad_corner_min(X1, Cq), quad_corner_min(X1, Cq, nq0)) <= 0.0)
+        hard |= inv
+    bad |= hard
+    if qual:
+        bad |= _qual_new_bad(M, C, Ud, 1.0, qual, vals=ends)
+    return bad, hard
+
+
+def _u_guard(M: Mesh, Uv: np.ndarray, ends, cg: dict, flip_deg: float, qual: dict | None, rho: float):
+    """U quality guard: the DF entry guard criteria (``_u_flags``) on every element the variable moves; a flagged
+    element shrinks the plan motion by a smooth bump c ×= 1 − (1 − shrink)·exp(−(d/ρ)²) around its centroid (d = plan
+    distance, support U_GUARD_CUT·ρ) — per-node shrinking (DF) cascades under the U motion (a 20 % step between
+    neighbours of 1 mm under 9 mm of motion folds the next element). Up to ``cg["iters"]`` passes; the factor is frozen
+    in the basis (linear). -> (factor c, flagged elements left, of which inverted / concave)."""
+    c = np.ones(M.n)
+    shrink = float(cg["shrink"])
+    left = (0, 0)
+    for _ in range(int(cg["iters"])):
+        Ud = Uv * c[:, None]
+        mvd = np.any(Ud != 0.0, axis=1)
+        eidx = np.flatnonzero(M.emask_of_nodes(mvd))
+        if eidx.size == 0:
+            return c, (0, 0)
+        bad, hard = _u_flags(M, eidx, Ud, ends, cg, flip_deg, qual)
+        left = (int(bad.sum()), int(hard.sum()))
+        if not bad.any():
+            return c, (0, 0)
+        ctr = M.Pc[eidx[bad]]
+        nd = np.flatnonzero(mvd)
+        pr = cKDTree(M.P[nd]).sparse_distance_matrix(cKDTree(ctr), U_GUARD_CUT * rho, output_type="coo_matrix")
+        bump = np.zeros(nd.size)
+        np.maximum.at(bump, pr.row, np.exp(-(pr.data / rho) ** 2))
+        # nodes of a flagged element itself get the full step (a bump of 1 at their element centroid ~ 1)
+        own = np.unique(M.C[eidx[bad]][M.C[eidx[bad]] >= 0])
+        pos = -np.ones(M.n, np.int64)
+        pos[nd] = np.arange(nd.size)
+        po = pos[own]
+        bump[po[po >= 0]] = 1.0
+        c[nd] *= 1.0 - (1.0 - shrink) * bump
+    return c, left
+
+
+def _one_u(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, edge_n: np.ndarray) -> dict:
+    """kind U (esl contract esl_bead_pos_u.md §1.1, PU-1·14): the whole bead moves along t⊥ (left normal of the nearest
+    skeleton segment — end segments' normal at the ends). Item keys: name, kind "U", segs (S_U — every segment needs
+    entry lines on both sides), zones?, hold_nodes? (extra held nodes — jig tie), range_rel?, gap_rel?, guard_jac_min?,
+    guard_tri_angle_min_deg?. Nominal 0, ext = range end max |ΔU| (else range_rel·W_ref).
+    Entry ∪ walls ∪ floor edge = t⊥ (both sides the same way — ``_smooth_dirs`` relaxed), floor interior = in-plane
+    harmonic extension, exclusive children (+ their islands) and the bead's owned islands = rigid with the bead (Dirichlet
+    value = t⊥ at their centroid, PU-A0), shared-child walls / J / other beads = 0 (ramp φ, L = ramp_k·max(ext, h)), parent
+    floor band both sides = distance-weighted mix of the entry values × (1 − smoothstep(d/R_w)), R_w = max(min_mm, k·ext,
+    3h), parent-floor islands + the plate's outer edge = obstacles; hold ψ always on (fixed ∪ hold_nodes); neighbour-gap
+    factor κ (gap_rel); quality guard (``_df_entry_guard`` — inversion · area ratio · concave quads · range-guard
+    criteria) on every element the variable moves. Normal component 0."""
+    Z = bead_zones(M, b["segs"], b.get("zones") or (), "D")
+    lab = M.lab
+    S = Z["S"]
+    ws = [M.segs[x]["entry_width"] for x in S]
+    if any(w is None for w in ws):
+        raise ValueError(f"bead {b['name']}: U needs entry lines on both sides for every segment")
+    bad = [x for x in S if len(M.segs[x].get("skeleton") or []) < 2 or u_closed(M.segs[x], M.h_mm)]
+    if bad:
+        raise ValueError(f"bead {b['name']}: U needs an open skeleton with a direction ({bad}: closed / one point)")
+    lens = np.array([float(M.segs[x]["length"] or 1.0) for x in S])
+    w_ref = float(np.sum(lens * np.array(ws, float)) / lens.sum())
+    mc = cfg["morph"]
+    h = max(M.h_mm, 1e-6)
+    rng = ranges.get(b["name"]) if ranges else None
+    ends = (float(rng[0]), float(rng[1])) if rng else (-float(b.get("range_rel", U_RANGE_REL)) * w_ref,
+                                                         float(b.get("range_rel", U_RANGE_REL)) * w_ref)
+    ext = max(abs(ends[0]), abs(ends[1]))
+    L = max(float(mc["ramp_k"]) * ext, float(mc["ramp_k"]) * h)
+    info = {"ramp_mm": L, "ext": ext, "ends": [ends[0], ends[1]], "sign": 1.0, "warnings": [], "shared_children": Z["shared"],
+            "children": Z["exclusive"], "islands": Z["islands"], "straddle": list(Z["straddle"]),
+            "zones_in": Z["zones_in"], "w_ref": w_ref, "u_segs": list(S)}
+    orient = u_orient(M.segs, S)
+    info["orient"] = {int(k): int(v) for k, v in orient.items()}
+    info["dir"] = u_dir(M.graph, S, orient)
+    nF, nW, E, J = Z["nF"], Z["nW"], Z["E"], Z["J"]
+    ZF, ZW, ZC, ZSC, ZI = Z["ZF"], Z["ZW"], Z["ZC"], Z["ZSC"], Z["ZI"]
+    nC, nSC = M.nmask(ZC), M.nmask(ZSC)
+    isl = lab["island"]
+    hold_n = np.asarray(b.get("hold_nodes") or [], np.int64)
+    fx_u = fixed_mask.copy()                            # U hold set = fixed ∪ hold_nodes (jig tie — PU-14)
+    if hold_n.size:
+        fx_u[hold_n[(hold_n >= 0) & (hold_n < M.n)]] = True
+    held_isl = [i for i in Z["islands"] if fx_u[M.nmask(isl == i)].any()]       # stay (BG_ISLAND_HELD)
+    # the bead's islands (owned and straddling — U moves the whole bead, flanks included) are rigid with the bead unless
+    # held; they are band sources too (the parent floor next to them follows them)
+    own_isl = [i for i in Z["islands"] if i not in held_isl and not M.islands[i]["straddle"]]
+    st_isl = [i for i in Z["islands"] if i not in held_isl and M.islands[i]["straddle"]]
+    Uv = np.zeros((M.n, 3))
+    edge = nF & nW & ~E
+    walln = nW & ~E & ~nF
+    hm = edge | walln
+    mv = E | hm
+    idx = np.flatnonzero(mv)
+    _d, traw, inner_mv, _sid = _u_skel(M, S, M.P[idx], orient)
+    tref = _u_field(M, S, orient, M.P[idx], max(U_DIR_RHO_H * h, U_SKEL_RHO_EXT * ext))
+    tref = np.where((np.linalg.norm(tref - traw, axis=1) < 1e-9)[:, None], traw, tref)   # exact where straight
+    tsm = _u_smooth(M, idx, tref, max(U_DIR_RHO_H * h, ext))     # ρ = max(3h, ext)
+    Uv[idx] = _plan3(M, tsm)
+    straight = np.zeros(M.n, bool)
+    # straight sample: the motion direction within U_ACH_RAD of the skeleton perpendicular (projection error at ext ≤
+    # ext·(1 − cos) ≤ the achieved tolerance share)
+    straight[idx[np.einsum("ij,ij->i", tsm, traw) >= np.cos(U_ACH_RAD)]] = True
+    # rigid followers: exclusive children (each subtree) and owned islands — t⊥ at their plan centroid (Dirichlet value)
+    val = np.zeros(M.n, bool)
+    groups = []
+    for c in Z["exclusive"]:
+        sub = [c] + M.descendants(c)
+        ge = ZC & (np.isin(lab["floor"], sub) | M.emask_of_nodes(M.nmask(np.isin(lab["floor"], sub) & ZC)))
+        groups.append(M.nmask(ge) & nC & ~mv)
+    rest = nC & ~mv
+    for g_ in groups:
+        rest &= ~g_
+    if rest.any():
+        groups.append(rest)
+    isl_n = np.zeros(M.n, bool)
+    for i_ in own_isl:
+        gi = M.nmask(isl == i_) & ~mv
+        groups.append(gi)
+        isl_n |= gi
+    rho = max(U_DIR_RHO_H * h, ext)
+    fol = np.zeros(M.n, bool)
+    for g_ in groups:
+        fol |= g_
+    if fol.any():                                       # followers take the smoothed t⊥ field at their own position
+        fi = np.flatnonzero(fol)
+        tm_ = cKDTree(M.P[idx])
+        kk = min(BAND_MIX_K_U, idx.size)
+        dk, jk = tm_.query(M.P[fi], k=kk)
+        dk, jk = dk.reshape(fi.size, kk), jk.reshape(fi.size, kk)
+        wk = np.exp(-((dk - dk[:, :1]) / rho) ** 2)
+        tf = np.einsum("ik,ikj->ij", wk, tsm[jk]) / wk.sum(axis=1)[:, None]
+        tf /= np.maximum(np.linalg.norm(tf, axis=1), 1e-12)[:, None]
+        Uv[fi] = _plan3(M, tf)
+        val |= fol
+    # neighbour-gap factor κ (entry, same value along each column: walls / floor edge follow their nearest entry node)
+    ent_idx = np.flatnonzero(E)
+    gap = float(b.get("gap_rel", U_GAP_REL))
+    # obstacles: other zones (not the bead's own children), the plate's outer edge, held nodes and held islands
+    obst = edge_n | fx_u | (M.nmask(np.isin(isl, held_isl)) if held_isl else np.zeros(M.n, bool))
+    oth = M.nmask(_others_el(M, Z, True) & ~ZC) | (obst & ~E)
+    kap = np.ones(M.n)
+    info["gap_clip_n"] = 0
+    if ent_idx.size:
+        pe = -np.ones(M.n, np.int64)
+        pe[idx] = np.arange(idx.size)
+        phiE = _ramp(M, J, ent_idx, L)[ent_idx] if J.any() else None
+        kap[idx], info["gap_clip_n"] = _u_gap(M, ent_idx, idx, oth, ends, tsm[pe[ent_idx]], gap, rho, phiE)
+        Uv[idx] *= kap[idx, None]
+    # parent blend band (both sides, distance-weighted mix, islands + outer edge = obstacles)
+    bl = cfg["blend"]
+    Rw = max(float(bl["min_mm"]), float(bl["k"]) * ext, 3.0 * h)
+    pre = Uv[isl_n].copy()
+    band, _on_par = _band(M, Z, Rw, np.flatnonzero(E | isl_n), Uv, info, mix_h=h, isl_obstacle=True, extra_oth=obst,
+                          gap_clip=True, mix_rho=rho)
+    Uv[isl_n] = pre
+    band &= ~isl_n
+    info["clipped"] = any(w.get("code") == "SELECT_BLEND_CLIPPED" for w in info["warnings"])
+    info["band_mm"] = Rw
+    # in-plane harmonic extension over the floor: Dirichlet 0 (shared-child walls, J, outside) / values (edges, children,
+    # owned islands)
+    Lf = M.laplacian(ZF)
+    # J is not a Dirichlet 0 here (the ramp φ takes the motion to 0 at J smoothly — a harmonic 0 at J plus φ doubles the
+    # gradient next to junctions)
+    zero = (nSC | M.nmask(~(ZF | ZW)) & ~E) & ~val & ~(J & nF)
+    free = nF & ~hm & ~E & ~zero & ~val
+    Up = np.c_[Uv @ M.e1, Uv @ M.e2, np.zeros(M.n)]
+    Up[zero & ~mv] = 0.0
+    Up[free] = 0.0
+    Up = _harmonic(Lf, free, Up, cols=(0, 1))
+    Uv[free] = _plan3(M, Up[free, :2])
+    Uv[zero & ~mv & ~band] = 0.0
+    A_el = _allowed_wide(M, Z)
+    allowed_n = M.nmask(A_el) | band
+    mov = movable_nodes(M, A_el)
+    psi, n_hold = _hold(M, allowed_n, fx_u, cfg)        # U: hold always on (PU-14)
+    phi = _ramp(M, J, np.flatnonzero(allowed_n), L)
+    Uv *= (phi * psi)[:, None]
+    Uv[J] = 0.0
+    # straddling islands (bead flank ↔ foreign floor / step): the island rule BG-D-27·47 (rigid core, contact band to 0);
+    # held islands: BG_ISLAND_HELD (they stay — obstacles above)
+    _islands(M, dict(Z, islands=sorted(st_isl + held_isl)), dict(b, hold=1), Uv, info, nF | band | mv, nW, mov, fx_u)
+    Uv[~(allowed_n & mov)] = 0.0
+    Uv -= (Uv @ M.n0)[:, None] * M.n0[None, :]          # normal component 0 (depth unchanged)
+    # quality guard (DF entry guard device, every element the variable moves)
+    gmov = np.any(Uv != 0.0, axis=1)
+    info["guard_n"] = info["guard_left"] = info["guard_qual_left"] = 0
+    info["guard_frac"] = 0.0
+    cE = np.ones(M.n)
+    if gmov.any() and ext > 0:
+        qual = {"jac_min": b.get("guard_jac_min"), "tri_angle_min_deg": b.get("guard_tri_angle_min_deg")}
+        qual = {k: float(v) for k, v in qual.items() if v is not None} or None
+        cE, (n_left, n_hard) = _u_guard(M, Uv, ends, mc["corner"], float(cfg["quality"]["flip_deg"]), qual, rho)
+        info["guard_left"], info["guard_qual_left"] = n_hard, n_left - n_hard
+        if (cE < 1.0).any():
+            Uv *= cE[:, None]
+            info["guard_n"] = int((cE < 1.0).sum())
+            info["guard_frac"] = float(info["guard_n"] / max(int(gmov.sum()), 1))
+            info["warnings"].append({"code": "PU_GUARD", "level": "info", "n_nodes": info["guard_n"],
+                                     "frac": U.f3(info["guard_frac"])})
+    # achieved: entry nodes on straight interior stretches at full ramp / hold / κ / guard (both sides)
+    ai = np.flatnonzero(E & straight & (phi >= 1.0) & (psi >= 1.0) & (kap >= 1.0) & (cE >= 1.0))
+    mid = np.zeros(M.n, bool)
+    if ai.size:
+        _da, _ta, inn, _sa = _u_skel(M, S, M.P[ai], orient)
+        mid[ai[inn]] = True
+    info["achieved_idx"] = np.flatnonzero(mid)
+    if not mid.any():
+        info["warnings"].append({"code": "BG_SEGMENT_SHORT", "length_mm": U.f3(lens.sum()), "ramp_mm": U.f3(L)})
+        info["short"] = True
+        info["straight_resid_mm"] = None
+    else:
+        mi = np.flatnonzero(mid)
+        _dm, tm, _im, _sm = _u_skel(M, S, M.P[mi], orient)
+        info["straight_resid_mm"] = U.f3(float(np.linalg.norm(Uv[mi] - _plan3(M, tm), axis=1).max()) * ext)
+    info["hold_n_fixed"] = n_hold
+    ne = int(E.sum())
+    info["hold_frac"] = float(((E & (psi < 1.0)).sum()) / max(ne, 1))
+    info["tie_max"] = float(np.linalg.norm(Uv[hold_n[(hold_n >= 0) & (hold_n < M.n)]], axis=1).max()) \
+        if hold_n.size else 0.0
+    info["band_n"] = int(band.sum())
+    info["corner_n"] = 0
+    nz = np.flatnonzero(np.any(Uv != 0.0, axis=1))
+    return {"name": b["name"], "kind": "U", "nominal": 0.0, "idx": nz.astype(np.int64), "vec": Uv[nz],
+            "zone": np.flatnonzero(allowed_n).astype(np.int64), "info": info, "segs": list(S),
+            "zones": sorted(int(z) for z in (b.get("zones") or ()))}

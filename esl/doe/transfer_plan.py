@@ -38,31 +38,36 @@ PLANS = {
                   "truth": "self_direct", "alt_designs": False,
                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric",
                   "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none",
-                 "sm_jig": "base", "jig_fix": "fixed", "jig_ctx": "case", "bf": "base"},
+                 "sm_jig": "base", "jig_fix": "fixed", "jig_ctx": "case", "bf": "base", "load_follow": "var"},
     "bmesh_once": {"redrop": "none", "dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "none",
                    "truth": "a_direct", "alt_designs": False,
                    "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "all", "sm_rank": "metric",
                    "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "none", "bs_mq": "none",
-                  "sm_jig": "base", "jig_fix": "fixed", "jig_ctx": "mesh", "bf": "base"},
+                  "sm_jig": "base", "jig_fix": "fixed", "jig_ctx": "mesh", "bf": "base", "load_follow": "var"},
     "step_once": {"redrop": "none", "dst": "baseline", "reuse": "once", "identity": "none", "placement": "auto", "mask": "step_region",
                   "truth": "a_direct", "alt_designs": False,
                   "sm_ref": "base", "sm_disp": ("I", "I"), "sm_omega": "step_region", "sm_rank": "metric",
                   "bs_wpart": "graph", "bs_guard": "basis", "bs_route": "base", "bs_mq": "base",
-                 "sm_jig": "base", "jig_fix": "xfer", "jig_ctx": "none", "bf": "base"},
+                 "sm_jig": "base", "jig_fix": "xfer", "jig_ctx": "none", "bf": "base", "load_follow": "var"},
     "step_per_design": {"redrop": "none", "dst": "design", "reuse": "per_target", "identity": "none", "placement": "auto", "mask": "none",
                         "truth": "a_direct", "alt_designs": False,
                         "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "all", "sm_rank": "solve",
                         "bs_wpart": "none", "bs_guard": "none", "bs_route": "none", "bs_mq": "none",
-                       "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none"},
+                       "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none", "load_follow": "na"},
     "compare_per_shape": {"redrop": "none", "dst": "shape", "reuse": "per_target", "identity": "topo+coords", "placement": "global",
                           "mask": "compare_region", "truth": "compare", "alt_designs": True,
                           "sm_ref": "none", "sm_disp": ("none", "none"), "sm_omega": "compare_region",
                           "sm_rank": "solve",
                           "bs_wpart": "none", "bs_guard": "none", "bs_route": "shapes", "bs_mq": "shapes",
-                         "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none"},
+                         "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none", "load_follow": "na"},
 }
 PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega",
             "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq", "sm_jig", "jig_fix", "jig_ctx", "bf")
+PLAN_COLS_ALL = PLAN_COLS + ("load_follow",)      # v0.24.9 PU 열(PLAN_COLS 위치 그대로 — 기존 위치 단언 불변)
+# v0.24.9 PU §2.2(esl_bead_pos_u.md): load_follow = var(행렬에 U 변수가 있으면 하중을 공간에 고정 — spatial, 없으면 node) |
+# na(이미 대상마다 전달 — 변수 없음·형상별). PLAN_VERSION·hash_view 불변(옛 스냅샷은 U 변수가 없어 항상 node).
+LOAD_FOLLOW = ("var", "na")
+LOAD_FOLLOW_MODES = ("node", "spatial")
 PLAN_OF = {("same", None): "case_once", ("select", "case"): "case_once", ("mesh", None): "bmesh_once",
            ("select", "mesh"): "bmesh_once", ("select", "step"): "step_once", ("step", None): "step_per_design",
            ("compare", None): "compare_per_shape"}
@@ -75,7 +80,7 @@ def plan_for(scenario: str, select_base: str | None = None) -> dict:
     if pid is None:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 없음: {key}")
     row = PLANS[pid]
-    miss = [k for k in PLAN_COLS if row.get(k) in (None, "", ())]
+    miss = [k for k in PLAN_COLS_ALL if row.get(k) in (None, "", ())]
     if miss:                                     # 새 계획 행은 모든 열을 채움(빈 칸 = CONFIG_INVALID)
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} 빈 열: {miss}")
     badv = [k for k, vs in BS_VALUES.items() if row[k] not in vs]
@@ -89,7 +94,18 @@ def plan_for(scenario: str, select_base: str | None = None) -> dict:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} bf 열 값 오류: {row['bf']}")
     if row["redrop"] not in RD_VALUES:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} redrop 열 값 오류: {row['redrop']}")
+    if row["load_follow"] not in LOAD_FOLLOW:
+        raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} load_follow 열 값 오류: {row['load_follow']}")
     return {"id": pid, **row}
+
+
+def load_follow_effective(plan: dict, has_pos_var: bool) -> str:
+    """§2.2 판정 한 곳(순수): 계획 열 load_follow = var ∧ 행렬에 type U 변수 ≥ 1 → spatial(기준 포함 모든 안의 하중을 기준 좌표
+    노드 하중에서 셀 전달), 그 밖 node(지금 경로 — 바이트 동일). 모르는 열 값 = CONFIG_INVALID."""
+    v = plan.get("load_follow")
+    if v not in LOAD_FOLLOW:
+        raise EslError("CONFIG_INVALID", f"load_follow 열 값 오류: {v!r}")
+    return "spatial" if v == "var" and bool(has_pos_var) else "node"
 
 
 def _merge(base: dict, over: dict) -> dict:
@@ -268,10 +284,13 @@ def shape_hash_view(rules: dict | None) -> dict | None:
     return {"schema": rules.get("schema"), "w_partial": rules.get("w_partial"), "range_guard": rg}
 
 
-def metric_effective(plan: dict, metric: str, jig_ok: bool = True, kind: str | None = None) -> str:
+def metric_effective(plan: dict, metric: str, jig_ok: bool = True, kind: str | None = None, spatial: bool = False) -> str:
     """순위에 실제로 쓰는 지표(결정 A): 계획 열 sm_rank = metric 이면 스냅샷 metric 그대로, solve 면 solve(다른 메시 비교).
     metric = jig 는 계획 sm_jig = base ∧ sm_rank = metric ∧ jig_ok(베이스라인 지그 status ok) 일 때만 jig, 아니면 solve(D-JIG-8).
-    v0.24.8 kind(``jig_kind`` 값): None = 위 식 그대로(기존 호출 바이트 동일), "grid" ∧ metric jig ∧ jig_ok → jig(격자 지그 순위)."""
+    v0.24.8 kind(``jig_kind`` 값): None = 위 식 그대로(기존 호출 바이트 동일), "grid" ∧ metric jig ∧ jig_ok → jig(격자 지그 순위).
+    v0.24.9 PU-15 spatial(하중 공간 고정 스터디): metric lin → solve(선형 보조 열이 무효 — 기존 호출 = 인수 없음 = 바이트 동일)."""
+    if spatial and str(metric) == "lin":
+        return "solve"
     if kind == "grid" and str(metric) == "jig" and jig_ok:
         return "jig"
     if str(metric) == "jig":

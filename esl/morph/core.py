@@ -252,12 +252,16 @@ def range_combo(ends: list, inverted_fn, m: int, steps: int) -> dict | None:
 
 
 # ====================================================================== 안 판정 보조(SR-D-37·38·40)
+CROSS_TYPES = ("W", "U")                    # SR-D-38 교차 점검 대상 변수 종류(v0.24.9 PU — U 추가)
+
+
 def cross_footprint(vars_: list[dict], regions: dict) -> list[dict]:
-    """SR-D-38 W 변수(vars_[{name, type, bead, nominal, idx, vec}])의 기저가 다른 피처 regions[bead](경계·바닥 노드)에 주는
-    ‖B‖ > 0 노드·크기 → [{var, bead, other, nominal, idx, mag}] (자기 영역 노드 제외)."""
+    """SR-D-38 W·U 변수(vars_[{name, type, bead, nominal, idx, vec}])의 기저가 다른 피처 regions[bead](경계·바닥 노드)에 주는
+    ‖B‖ > 0 노드·크기 → [{var, bead, other, nominal, idx, mag}] (자기 영역 노드 제외). v0.24.9 PU §1.3-7: U 띠도 이웃 비드
+    경계를 건드림 — U 추가(D·W 출력 불변)."""
     cross = []
     for v in vars_:
-        if v["type"] != "W":
+        if v["type"] not in CROSS_TYPES:
             continue
         idx = np.asarray(v["idx"]).astype(np.int64)
         mag = np.linalg.norm(v["vec"], axis=1)

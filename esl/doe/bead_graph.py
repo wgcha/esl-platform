@@ -795,7 +795,7 @@ def sym_pairs(graph, tol):
 def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *, frame=None,
               fixed_scan=(), bead: str | None = None, index=None, w_clamp: dict | None = None,
               range_guard: dict | None = None, shape_rules: dict | None = None, depth_section: str | None = None,
-              section_rules: dict | None = None) -> dict:
+              section_rules: dict | None = None, pos_u: dict | None = None, tie_node_ids=()) -> dict:
     """(Backend API) normalized schema 2 selection -> SelectionDerived dict: beads, fixed, warnings, graph block
     (§6.1), graph_algo, slope_suggested, islands_suggested, fixed_ab, params (DoeParamsOut rows) + param_beads.
     ``bead`` is accepted for signature parity (the whole selection is derived — graph beads are cheap).
@@ -803,6 +803,8 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     v0.24.7 DM: depth_section·section_rules(스냅샷 값) → ``derive_obj_v2``, beads[].w_reason{code, text}(옛 스터디도 계산)."""
     from esl.doe import bead_select as bs
     dskw = {"depth_section": depth_section, "section_rules": section_rules} if depth_section is not None else {}
+    if pos_u is not None:                                  # v0.24.9 PU: 스냅샷 pos_u 블록(없음 = 호출 불변)
+        dskw.update(pos_u=pos_u, tie_node_ids=tie_node_ids)
     D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_scan, index=index, w_clamp=w_clamp,
                       range_guard=range_guard, shape_rules=shape_rules, **dskw)
     doc = D.summary(frame)
@@ -815,7 +817,23 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     doc["param_beads"] = param_beads(D)
     _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-46 그래프 비드 평면도·단면 자료
     w_reason_rows(D, doc["beads"])
+    u_reason_rows(D, doc["beads"])
     return doc
+
+
+def u_reason_rows(D, rows: list[dict]) -> None:
+    """v0.24.9 PU §1.2·§4: 비드 행에 u_reason{code, text}(U 행 없을 때만 — U_OFF·pos_u 없음 = 키 없음)."""
+    from esl.doe import load_messages
+    from esl.morph import section as sec
+    msgs = load_messages()["messages"]
+    by = {b.id: b for b in D.beads}
+    for r in rows:
+        b = by.get(r.get("id"))
+        if b is None:
+            continue
+        doc = sec.u_reason_doc(getattr(b, "u_reason", None), msgs, point=bool(getattr(b, "u_point", False)))
+        if doc is not None:
+            r["u_reason"] = doc
 
 
 def w_reason_rows(D, rows: list[dict]) -> None:
@@ -1026,7 +1044,7 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
                   fixed_node_ids=(), index=None, mesh_sha256: str | None = None,
                   w_clamp: dict | None = None, range_guard: dict | None = None,
                   shape_rules: dict | None = None, depth_section: str | None = None,
-                  section_rules: dict | None = None) -> GraphDerived:
+                  section_rules: dict | None = None, pos_u: dict | None = None, tie_node_ids=()) -> GraphDerived:
     """normalized schema 2 selection -> GraphDerived (arrays — worker basis / tests).
     v0.24.7 DM: depth_section(스냅샷 값, None = 옛 = entry_fixed)·section_rules(스냅샷 depth_section_rules) — floor_fixed 면
     계획 표 graph 행(esl.morph.section) 열로 D = 패키지 kind DF(입구 노드 없으면 D + DS_FALLBACK), W 없는 한쪽 입구 비드 = W1.
@@ -1091,6 +1109,7 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
         ids, zones, net = _resolve_segs(g2, l2, b["segs"], b["id"])
         gb = GraphBead(b["id"], b["name"])
         gb.seg_ids, gb.zone_ids, gb.network = ids, zones, int(g2["segments"][ids[0]]["network"])
+        gb.is_net = bool(net)
         gb.tier = int(g2["segments"][ids[0]]["tier"])
         gb.vars = b.get("vars") or (["D"] if net else _possible_vars(g2, ids, wp))
         gb.hold_fixed = int(b.get("hold_fixed", 1))
@@ -1150,9 +1169,124 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
     D.section_plan = spl
     if spl["one_side"] != "none":
         _tie_mixed(D, sc)
+    # v0.24.9 PU §1: 위치 변수 U(스냅샷 pos_u 블록 + 계획 표 pos 열 = pkg_u 일 때만 — 블록 없음 = 속성 없음·바이트 불변)
+    D.pos_u = _pos_u_block(pos_u)
+    D.tie_idx = np.zeros(0, np.int64)
+    if pos_u is not None:
+        for gb in beads:
+            if getattr(gb, "src", "graph") == "graph" and hasattr(gb, "seg_ids"):
+                gb.u_ok, gb.u_reason = False, "U_OFF"
+    if D.pos_u is not None and sec.pos_plan("graph") == "pkg_u" and graph is not None:
+        tids = np.asarray(tie_node_ids if tie_node_ids is not None else (), np.int64).reshape(-1)
+        D.tie_idx = np.flatnonzero(np.isin(ix.node_id, tids)) if tids.size else np.zeros(0, np.int64)
+        _pos_u_beads(D, mesh, sc, cfg)
     if _guard_rules(shape_rules) is not None:          # v0.21.0 SH-14·15: 준비 표 적용(맞지 않는 변수 = unchecked)
         apply_range_guard(D, range_guard, cfg)
     return D
+
+
+def _pos_u_block(pos_u) -> dict | None:
+    """스냅샷 pos_u 블록 → 해석값(enabled 거짓·블록 없음 = None). 빠진 키 = 지금 설정(DEFAULTS 거울)."""
+    if not isinstance(pos_u, dict) or pos_u.get("enabled") is False:
+        return None
+    from esl.doe import DEFAULTS
+    return {**DEFAULTS["pos_u"], **{k: v for k, v in pos_u.items() if k != "schema"}}
+
+
+def _nom(b, typ: str) -> float:
+    """v0.24.9 PU §1.3-1: 변수 공칭 — D → D_nom, W → W_nom, U → 0.0(위치 — 지금 형상)."""
+    if typ == "U":
+        return 0.0
+    return b.D_nom if typ == "D" else b.W_nom
+
+
+def _types(b) -> list[str]:
+    """비드의 변수 종류: 선택 vars(D·W) + U(행 있을 때 — 선택 vars 로 켜고 끄지 않음, PU-10)."""
+    return list(b.vars or []) + (["U"] if getattr(b, "u_ok", False) else [])
+
+
+def _pos_u_beads(D, mesh, sc, cfg) -> None:
+    """§1.2·§1.3 그래프 비드마다 U 사유(첫 일치)·W_ref·feasible(부호별)·기본 범위·dir·dir_text 코드·도심 → 대칭 묶기 거울(PU-11)."""
+    from beadgraph.morph import u_closed, u_gaps, u_orient
+    from beadgraph.zones import Mesh, bead_zones
+    from scipy.spatial import cKDTree
+
+    from esl.morph import section as sec
+    pu = D.pos_u
+    g2, l2 = D.graph, D.labels
+    X = np.asarray(mesh["x0"], np.float64)
+    C = _conn(mesh)
+    h = float(g2["frame"]["h_mm"])
+    M = Mesh(g2, l2, X, C)
+    fx_idx = np.flatnonzero(D.fixed_mask)
+    held_set = np.union1d(fx_idx, D.tie_idx)
+    rng = float(sc["hold"]["ring_mm"]) + float(sc["hold"]["blend_mm"])
+    segs = g2["segments"]
+    for gb in D.beads:
+        if getattr(gb, "src", "graph") != "graph" or not hasattr(gb, "seg_ids"):
+            continue
+        ids = gb.seg_ids
+        net = bool(getattr(gb, "is_net", False))
+        sk_n = {s_: len(segs[s_].get("skeleton") or []) for s_ in ids}
+        area_t = all(segs[s_]["type"] in ("area", "plateau") for s_ in ids)
+        point = not area_t and all(sk_n[s_] < 2 for s_ in ids)
+        s2 = [s_ for s_ in ids if segs[s_]["entry_width"] is not None and sk_n[s_] >= 2]
+        facts = {"network": net, "area": area_t or point, "s2": len(s2),
+                 "closed": any(u_closed(segs[s_], h) for s_ in s2)}
+        if not s2 and not facts["network"] and not facts["area"]:
+            osd = _bg().one_side(g2, l2, X, C, ids, min_nodes=3)
+            facts["s1"] = sum(1 for s_ in ids if osd[s_]["ok"])
+        if s2 and not facts["closed"] and held_set.size:
+            E = bead_zones(M, s2, gb.zone_ids, "D")["E"]
+            if E.any():
+                d_, _ = cKDTree(M.P[held_set]).query(M.P[E])
+                facts["held"] = float((d_ < rng).mean()) > float(pu["hold_frac_max"])
+        code = sec.u_reason(facts)
+        gb.u_ok, gb.u_reason, gb.u_point = code is None, code, bool(point)
+        if code is not None:
+            continue
+        gp = u_gaps(g2, l2, X, C, s2, gb.zone_ids, fixed=fx_idx, hold_nodes=D.tie_idx,
+                    range_rel=float(pu["range_rel"]), cfg=morph_cfg(cfg))
+        W_ref = float(gp["w_ref"])
+        fe = sec.u_feasible(W_ref, gp["g_plus"], gp["g_minus"], float(pu["max_rel"]), float(pu["gap_rel"]))
+        de = sec.u_default(W_ref, fe, float(pu["range_rel"]))
+        gb.range_default["U"] = [_r(de[0]), _r(de[1])]
+        gb.range_feasible["U"] = [_r(fe[0]), _r(fe[1])]
+        gb.range_basis["U"] = [_r(de[0]), _r(de[1])]
+        orient = u_orient({s_["id"]: s_ for s_ in segs}, s2)
+        turn = sum(float(orient.get(s_, 1)) * sec.skeleton_turn_deg(segs[s_]["skeleton"]) for s_ in s2)
+        gb.u_seg_ids, gb.u_w_ref, gb.u_dir = list(s2), W_ref, gp["dir"]
+        gb.u_dir_code = sec.u_dir_code(gp["dir"] or [1.0, 0.0], turn)
+        gb.u_c = sec.u_centroid([segs[s_]["skeleton"] for s_ in s2])
+        gb.u_gaps = {"g_plus": gp["g_plus"], "g_minus": gp["g_minus"]}
+        if len(s2) < len(ids):
+            ln = {s_: float(segs[s_]["length"] or 1.0) for s_ in ids}
+            gb.warnings.append({"code": "PU_PARTIAL", "level": "info", "bead": gb.id,
+                                "cover": _r(sum(ln[s_] for s_ in s2) / sum(ln.values()))})
+    _tie_u(D, h)
+
+
+def _tie_u(D, h: float) -> None:
+    """PU-11 대칭 묶음 U: 구성원 모두 U 가능 ∧ 쌍별 거울 |내적| ≥ cos 30° ∧ 도심 거리 ≥ h → 대표 비드 u_signs, 아니면 묶음 전체 U 없음 +
+    대표 비드 u_reason U_TIE_MIXED."""
+    from esl.morph import section as sec
+    by = {b.id: b for b in D.beads}
+    for grp in D.norm.get("ties") or []:
+        bs_ = [by[x] for x in grp if x in by]
+        if not bs_ or not any(getattr(b, "u_ok", False) for b in bs_):
+            continue
+        ok = all(getattr(b, "u_ok", False) for b in bs_)
+        signs = sec.u_mirror_signs([(getattr(b, "u_c", None), getattr(b, "u_dir", None)) for b in bs_], h) if ok else None
+        if signs is None:
+            for b in bs_:
+                b.u_ok = False
+                b.u_reason = None if b is not bs_[0] else "U_TIE_MIXED"
+                for k in ("range_default", "range_feasible", "range_basis"):
+                    getattr(b, k).pop("U", None)
+            if bs_[0].u_reason is None:
+                bs_[0].u_reason = "U_TIE_MIXED"
+            continue
+        bs_[0].u_signs = {var_name(b.id, "U"): int(sg) for b, sg in zip(bs_, signs)}
 
 
 def _entry_any(g2, l2, mesh, ids, zones) -> bool:
@@ -1326,7 +1460,7 @@ def params_rows_v2(derived: GraphDerived, cfg: dict | None = None) -> list[dict]
         if grp and grp[0] != b.id:
             continue                                   # tied: the smallest id carries the variable
         for typ in b.vars:
-            nom = b.D_nom if typ == "D" else b.W_nom
+            nom = _nom(b, typ)
             out.append({"name": var_name(b.id, typ), "type": typ, "bead": b.id, "tier": b.tier, "nominal": _r(nom),
                         "feasible": list(b.range_feasible[typ]), "feasible_source": "estimate",
                         "default_range": list(b.range_default[typ]),
@@ -1345,8 +1479,28 @@ def params_rows_v2(derived: GraphDerived, cfg: dict | None = None) -> list[dict]
                 out[-1]["section"] = copy.deepcopy(b.section)
             if typ == "W" and getattr(b, "w_side", None) == "one":
                 out[-1]["w_side"] = "one"
+        if getattr(b, "u_ok", False):                  # v0.24.9 PU §1.3·§4: U 행(공칭 0, 기본 꺼짐)
+            out.append(u_row(b, grp))
     out.sort(key=lambda r: r["name"])
     return out
+
+
+def u_row(b, grp) -> dict:
+    """params[] U 행 {name, type U, bead, tier, nominal 0, unit mm, feasible, feasible_source, default_range, use_default false,
+    group_members, dir{xi, eta}, dir_text, w_ref, (group_signs), (guard)}."""
+    from esl.doe import message
+    d = list(getattr(b, "u_dir", None) or [0.0, 0.0])
+    r = {"name": var_name(b.id, "U"), "type": "U", "bead": b.id, "tier": b.tier, "nominal": 0.0, "unit": "mm",
+         "feasible": list(b.range_feasible["U"]), "feasible_source": "estimate",
+         "default_range": list(b.range_default["U"]), "use_default": False,
+         "group_members": [var_name(x, "U") for x in (grp or [b.id])],
+         "dir": {"xi": _r(d[0]), "eta": _r(d[1])}, "dir_text": message(b.u_dir_code), "w_ref": _r(b.u_w_ref)}
+    if getattr(b, "u_signs", None):
+        r["group_signs"] = dict(b.u_signs)
+    gd = (getattr(b, "guard", None) or {}).get("U")
+    if gd is not None:
+        r["guard"] = copy.deepcopy(gd)
+    return r
 
 
 def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
@@ -1374,7 +1528,7 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
     for b in derived.beads:
         if b.src != "graph":
             continue
-        for typ in b.vars:
+        for typ in _types(b):
             pk = _pkg_item(derived, b, typ)                                   # v0.24.7 DM: DF·W1(floor_fixed)
             pk["typ"] = typ
             pk_list.append(pk)
@@ -1383,9 +1537,12 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         b0 = by[p["bead"]]
         carrier = (tie.get(b0.id) or [b0.id])[0]
         r = rows[var_name(carrier, p["typ"])]
-        nom = b0.D_nom if p["typ"] == "D" else b0.W_nom
+        nom = _nom(b0, p["typ"])
         rb = (getattr(by.get(carrier), "range_basis", None) or {}).get(p["typ"])
         lo, hi = (float(v) for v in (rb or r["default_range"]))   # original default range (BD_LOADS clamp keeps L)
+        if p["typ"] == "U":                            # PU §1.3-3: 공칭 0, 부호별(비대칭) 범위 그대로 — 간격 κ·가드가 끝을 봄
+            ranges[p["name"]] = [lo, hi]
+            continue
         ext = max(abs(hi - float(r["nominal"])), abs(lo - float(r["nominal"])))
         ranges[p["name"]] = [nom - ext, nom + ext]
     gB = bg.basis(g, lx, X, [{k: v for k, v in p.items() if k != "typ"} for p in pk_list], ranges, cfg=mc,
@@ -1418,10 +1575,16 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
                 if hp not in b0.warnings:
                     b0.warnings.append(hp)
         if v["info"].get("short"):
-            b0.warnings.append({"code": "BG_SEGMENT_SHORT", "bead": b0.id, "var": v["name"],
-                                "length_mm": _r(sum(float(g["segments"][s]["length"] or 0.0)
-                                                    for s in _var_segs(b0, "W" if v["kind"] in ("W", "W1") else "D"))),
-                                "ramp_mm": _r(v["info"]["ramp_mm"])})
+            ws_ = {"code": "BG_SEGMENT_SHORT", "bead": b0.id, "var": v["name"],
+                   "length_mm": _r(sum(float(g["segments"][s]["length"] or 0.0)
+                                       for s in _var_segs(b0, {"W1": "W", "DF": "D"}.get(v["kind"], v["kind"])))),
+                   "ramp_mm": _r(v["info"]["ramp_mm"])}
+            b0.warnings.append(ws_)
+            from esl.morph import section as _sec
+            if v["kind"] == "U" and _sec.u_short_seg(True, ws_["length_mm"], ws_["ramp_mm"]):   # v0.24.9 INT-8: U 행에도
+                b0.warnings.append({"code": "U_SHORT_SEG", "level": "info", "bead": b0.id, "var": v["name"],
+                                    "length_mm": ws_["length_mm"], "ramp_mm": ws_["ramp_mm"],
+                                    "ratio": _r(_sec.u_motion_ratio(v["vec"]))})
             continue
         lo, hi = ranges[v["name"]]
         for end in (lo, hi):
@@ -1430,6 +1593,9 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
             lim = tol if v["kind"] in ("D", "DF") else 1e-3
             if err is not None and err > lim:
                 _bad("BG_ACHIEVED_MISMATCH", f"{v['name']}: 달성 오차 {err:.3g} mm", var=v["name"], err_mm=err)
+        if v["kind"] == "U" and float(v["info"].get("tie_max") or 0.0) > 1e-6:   # PU-14: 강제 hold 뒤에도 tie 이동
+            _bad("BG_ACHIEVED_MISMATCH", f"{v['name']}: 지그 tie 노드 이동 {v['info']['tie_max']:.3g}", var=v["name"],
+                 err_mm=float(v["info"]["tie_max"]))
     derived.graph_basis = gB
     # wrap: ties -> one variable = sum of the tied beads' bases (same delta)
     n = X.shape[0]
@@ -1438,6 +1604,7 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
         if row["bead"] not in by or by[row["bead"]].src != "graph":
             continue
         members = row["group_members"]
+        sgn = row.get("group_signs") or {}                 # PU-11 대칭 U 묶음: 구성원 부호 합(거울 대칭 이동)
         full = np.zeros((n, 3))
         zone = np.zeros(n, bool)
         allowed = np.zeros(n, bool)
@@ -1445,7 +1612,7 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
             v = by_name.get(m)
             if v is None:
                 continue
-            full[v["idx"]] += v["vec"]
+            full[v["idx"]] += float(sgn.get(m, 1)) * v["vec"]
             zone[v["zone"]] = True
             allowed |= strict[m]
         idx = np.flatnonzero(np.any(full != 0.0, axis=1))
@@ -1465,6 +1632,8 @@ def _var_segs(b, typ: str) -> list:
     """기저에 넘길 세그먼트: W = S_W(SH-6 — v0.20.0 규칙에서는 S 전체와 같음), D = S."""
     if typ == "W" and getattr(b, "w_seg_ids", None):
         return b.w_seg_ids
+    if typ == "U" and getattr(b, "u_seg_ids", None):              # v0.24.9 PU: S_U(양쪽 입구 구간)
+        return b.u_seg_ids
     return b.seg_ids
 
 
@@ -1790,9 +1959,11 @@ def _var_key(g: dict, b, typ: str) -> dict:
     """표 항목 key{kind, segs[[앵커, 요소 수]…], w_segs(W 만), hold}. v0.24.7 DM: floor_fixed 비드(section 있음) = + ds,
     한쪽 입구 W = kind W1."""
     kind = "W1" if typ == "W" and getattr(b, "w_side", None) == "one" else typ
-    k = {"kind": kind, "segs": _seg_keys(g, b.seg_ids), "hold": int(b.hold_fixed)}
+    k = {"kind": kind, "segs": _seg_keys(g, b.seg_ids), "hold": int(b.hold_fixed) if typ != "U" else 1}
     if typ == "W":
         k["w_segs"] = _seg_keys(g, _var_segs(b, "W"))
+    if typ == "U":                                      # v0.24.9 PU §1.3-4: U 후보 key(+ u_segs)
+        k["u_segs"] = _seg_keys(g, _var_segs(b, "U"))
     if getattr(b, "section", None) is not None:
         k["ds"] = "floor_fixed"
     return k
@@ -1807,6 +1978,14 @@ def _pkg_item(D, b, typ: str) -> dict:
         kind = "W1"
     pk = {"name": var_name(b.id, typ), "kind": kind, "segs": _var_segs(b, typ), "zones": b.zone_ids,
           "hold": b.hold_fixed, "bead": b.id}
+    if kind == "U":                                     # v0.24.9 PU §1.1·PU-14: hold 강제 + 지그 tie(hold_nodes)·간격·가드 기준
+        pu = getattr(D, "pos_u", None) or {}
+        pk.update(hold=1, hold_nodes=[int(i) for i in np.asarray(getattr(D, "tie_idx", ()), np.int64)],
+                  range_rel=float(pu["range_rel"]), gap_rel=float(pu["gap_rel"]))
+        q = getattr(D, "df_guard_q", None)              # 품질 기준 = range guard 기준(켬일 때만 — DF 와 같은 장치)
+        if q:
+            pk.update(q)
+        return pk
     if kind == "W1":
         pk.update(ramp="end", min_nodes=int(D.section_rules["one_side_min_nodes"]))
     if kind == "DF":                                    # DM-30·31 입구 평활·이웃 간격(스냅샷 depth_section_rules)
@@ -1933,7 +2112,7 @@ def _candidate_bases(mesh: dict, D, cfg) -> dict:
         for typ in b.vars:
             name = var_name(b.id, typ)
             pk_list.append(_pkg_item(D, b, typ))
-            nom = b.D_nom if typ == "D" else b.W_nom
+            nom = _nom(b, typ)
             lo, hi = (float(v) for v in b.range_basis[typ])
             ext = max(abs(hi - float(_r(nom))), abs(lo - float(_r(nom))))
             ranges[name] = [nom - ext, nom + ext]
@@ -2085,7 +2264,7 @@ def range_guard_table(mesh: dict, graph: dict, labels: dict, fixed_ids, cfg: dic
             skipped.append({"key": key, "reason": r["error"], "detail": r.get("detail")})
             continue
         v = r["v"]
-        nom = float(_r(b.D_nom if typ == "D" else b.W_nom))
+        nom = float(_r(_nom(b, typ)))
         lo, hi = (float(x) for x in b.range_basis[typ])
         L = P.local([(v["idx"], v["vec"])])
         res = rgm.single(name, nom, lo, hi, lambda val, L=L, nom=nom: P.ok(L, [val - nom]), steps=steps, budget=bud,
@@ -2148,6 +2327,11 @@ def _apply_single(b, typ: str, e: dict, nom: float) -> None:
          "value": bad[0]["value"] if bad else None, "combo_scale": None}
     b.guard[typ] = g
     b.warnings[:] = [w for w in b.warnings if not (w.get("code") == "RG_UNCHECKED" and w.get("var") == name)]
+    b.warnings[:] = [w for w in b.warnings if not (w.get("code") == U_SAT_CODE and w.get("var") == name)]
+    us = e.get("u_sat")
+    if us is not None:                                  # v0.24.9 INT-7: 정보만(guard 상태·usable 불변 — 변수 표 회색 꼬리표)
+        b.warnings.append({"code": U_SAT_CODE, "level": "info", "bead": b.id, "var": name, "ratio": us["ratio"],
+                           "from": frm, "move_mm": list(us["move_mm"]), "lo_mm": us["move_mm"][0], "hi_mm": us["move_mm"][1]})
     if e["state"] == "ok":
         return
     sides = [x["side"] for x in bad]
@@ -2201,7 +2385,7 @@ def apply_range_guard(D, table: dict | None, cfg) -> None:
     own = {}
     for b in by.values():
         b.guard = {}
-        for typ in b.vars:
+        for typ in _types(b):
             e = ents.get(_kj(_var_key(D.graph, b, typ)))
             if e is not None and [float(x) for x in e["from"]] == [float(x) for x in b.range_basis[typ]]:
                 own[(b.id, typ)] = e
@@ -2210,12 +2394,14 @@ def apply_range_guard(D, table: dict | None, cfg) -> None:
         grp = tie.get(b.id)
         if grp and grp[0] != b.id:
             continue
-        for typ in b.vars:
+        for typ in _types(b):
             members = [by[x] for x in (grp or [b.id]) if x in by]
-            nom = float(_r(b.D_nom if typ == "D" else b.W_nom))
+            nom = float(_r(_nom(b, typ)))
             if any((m.id, typ) not in own for m in members):
                 b.guard[typ] = _unchecked(b.range_basis[typ])
-                b.warnings.append({"code": "RG_UNCHECKED", "level": "info", "bead": b.id, "var": var_name(b.id, typ)})
+                if typ != "U":                              # PU §1.3-4: U 는 준비 표에 없음 — BD_MATRIX 가 켜진 U 만 점검
+                    b.warnings.append({"code": "RG_UNCHECKED", "level": "info", "bead": b.id,
+                                       "var": var_name(b.id, typ)})
                 continue
             e = own[(b.id, typ)] if len(members) == 1 else _tie_entry(members, own, typ, nom)
             _apply_single(b, typ, e, nom)
@@ -2233,7 +2419,7 @@ def _apply_combo(targets, c: dict) -> None:
     names = []
     for (b, typ), vn in zip(targets, c["vars"]):
         u = [float(x) for x in c["usable"][vn]]
-        nom = float(_r(b.D_nom if typ == "D" else b.W_nom))
+        nom = float(_r(_nom(b, typ)))
         g = b.guard.get(typ) or {}
         if u[0] < nom < u[1]:
             b.range_default[typ] = [_r(u[0]), _r(u[1])]
@@ -2243,6 +2429,25 @@ def _apply_combo(targets, c: dict) -> None:
     b0 = targets[0][0]
     b0.warnings.append({"code": "RG_COMBO_LIMITED", "level": "info", "vars": names, "corners": c["corners"],
                         "bad_n": c["bad_n"], "scale": c["scale"], "reason": c["reason"]})
+
+
+U_SAT_CODE = "U_SATURATED"      # v0.24.9 INT-7 정보 코드(range guard U 포화 — 정보만, guard 상태 불변)
+
+
+def _u_sat_min(cfg) -> float:
+    """포화 판정 비율 = 설정 pos_u.sat_ratio_min(해시 밖 — 빠지면 DEFAULTS 거울)."""
+    from esl.doe import DEFAULTS
+    return float({**DEFAULTS["pos_u"], **(((cfg or {}).get("pos_u")) or {})}["sat_ratio_min"])
+
+
+def _u_sat_entry(e: dict, v: dict, lo: float, hi: float, ratio_min: float) -> None:
+    """range guard U 항목 e 에 포화(실제/요청 이동 비 < ratio_min — ``section.u_saturation``)를 정보로만 붙임(제자리): u_sat{ratio,
+    move_mm[lo·ratio, hi·ratio]}(이동 mm — 변수 단위 아님). state·usable·ends(변수 단위 품질 점검 결과)는 그대로 — RG_OUTSIDE_GUARD·
+    기본 범위·기저·결과 불변(INT-7 재검증 보정)."""
+    from esl.morph import section as sec
+    sat = sec.u_saturation(v["vec"], lo, hi, ratio_min)
+    if sat is not None:
+        e["u_sat"] = {"ratio": _r(sat["ratio"]), "move_mm": [_r(sat["usable"][0]), _r(sat["usable"][1])]}
 
 
 def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None) -> dict | None:
@@ -2270,7 +2475,7 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
             continue
         if not hasattr(b, "guard"):
             b.guard = {}
-        for typ in b.vars:
+        for typ in _types(b):
             if var_name(b.id, typ) in bv:
                 carriers.append((var_name(b.id, typ), b, typ, grp))
     carriers.sort(key=lambda t: t[0])
@@ -2298,6 +2503,8 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
         done += 1
         e = {"key": key, "var": name, "src": "selection", "nominal": res["nominal"], "from": res["from"],
              "usable": res["usable"], "state": res["state"], "ends": res["ends"]}
+        if typ == "U":                                  # v0.24.9 INT-7: 실제/요청 이동 비 → 포화면 정보 u_sat(보고만)
+            _u_sat_entry(e, v, lo, hi, _u_sat_min(cfg))
         entries.append(e)
         _apply_single(b, typ, e, nom)
     combos = []

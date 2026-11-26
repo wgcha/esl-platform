@@ -23,6 +23,7 @@ from esl.doe import METHODS, PARAM_TYPES
 from esl.errors import EslError
 
 _POSITIVE = ("D", "W")              # 물리 하한(> 0)이 있는 변수 종류
+_NOMINAL_IN = ("U",)                # v0.24.9 PU §1.3-5: 범위가 공칭(0)을 포함해야 하는 종류(기준 d000 = 지금 형상)
 _FEAS_TOL = 1e-9
 
 
@@ -106,6 +107,11 @@ def normalize_spec(spec: dict, params_table, cfg: dict) -> tuple[dict, list[dict
         typ = tab[name].get("type")
         if typ in _POSITIVE and lo <= 0:
             raise EslError("DOE_RANGE_INVALID", f"{name}: 깊이·폭 하한은 0 보다 커야 함 (lo {lo})")
+        if typ in _NOMINAL_IN:
+            from esl.doe import message
+            from esl.morph import section as sec
+            if not sec.u_range_ok(lo, hi, float(tab[name].get("nominal") or 0.0)):
+                raise EslError("DOE_RANGE_INVALID", f"{name}: {message('U_RANGE_INVALID')} (lo {lo}, hi {hi})")
         fe = tab[name].get("feasible")
         if fe and (lo < float(fe[0]) - _FEAS_TOL or hi > float(fe[1]) + _FEAS_TOL):
             warns.append({"code": "RANGE_OUTSIDE_FEASIBLE", "name": name, "feasible": [float(fe[0]), float(fe[1])]})
@@ -236,7 +242,7 @@ def thumb_options(cfg: dict, frame: dict, spec: dict, params_table) -> dict:
         m = float(cfg["limits"]["min_disp_range_mm"])
         for p in spec["params"]:
             r = tab.get(p["name"]) or {}
-            if r.get("type") == "D":
+            if r.get("type") in ("D", "U"):                     # v0.24.9 PU §1.3-6: U 도 |ΔU|(U 없는 행렬 = 불변)
                 nomv = float(r["nominal"])
                 m = max(m, abs(p["hi"] - nomv), abs(p["lo"] - nomv))
         dr = [0.0, float(m)]

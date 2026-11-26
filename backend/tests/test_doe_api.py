@@ -331,7 +331,8 @@ def test_matrix_same_as_core_and_errors(client, world, engine, esl_root):
              ({"params": []}, "DOE_NO_PARAMS"),
              ({"n": 200}, "DOE_TOO_LARGE"),
              ({"method": "fullfact", "levels": 9, "n": None,
-               "params": [{"name": n, "lo": 1, "hi": 2} for n in ("CHR_BEAD_D_1", "CHR_BEAD_W_1", "CHR_BEAD_U_1")]},
+               "params": [{"name": n, "lo": -1 if n.endswith("U_1") else 1, "hi": 2}     # v0.24.9 PU §1.3-5: type U 범위는 공칭 0 포함
+                          for n in ("CHR_BEAD_D_1", "CHR_BEAD_W_1", "CHR_BEAD_U_1")]},
               "DOE_TOO_LARGE")]
     for over, code in cases:
         r = api(client, "POST", f"/doe/studies/{sid}/matrix", json={"version": 1, "spec": {**SPEC, **over}})

@@ -1249,6 +1249,33 @@ class BeadDoeDepthSectionRulesCfg(_M):
     entry_gap_rel: float = Field(0.5, gt=0.0, le=1.0)          # DM-31 이웃 간격 κ_o 계수
 
 
+class BeadDoePosUCfg(_M):
+    """v0.24.9 PU(esl_bead_pos_u.md §3) — 비드 위치 변수 U. 새 select 스냅샷 doe.pos_u 로 복사(옛 스터디 = 키 없음 = U 행 없음).
+    range_rel = 기본 범위 ±range_rel·W_ref, max_rel = feasible 상한, gap_rel = 이웃 간격 계수, hold_frac_max = U_HELD 판정 비율,
+    sat_ratio_min = range guard U 포화 판정 — 실제/요청 이동 비가 이보다 작으면 limited + 정보 U_SATURATED(해시 밖, 보고만 — INT-7)."""
+
+    enabled: bool = True
+    range_rel: float = Field(0.25, gt=0.0, le=1.0)
+    max_rel: float = Field(0.5, gt=0.0, le=1.0)
+    gap_rel: float = Field(0.5, gt=0.0, le=1.0)
+    hold_frac_max: float = Field(0.2, ge=0.0, le=1.0)
+    sat_ratio_min: float = Field(0.9, gt=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _max_rel(self) -> "BeadDoePosUCfg":
+        if self.max_rel < self.range_rel:
+            raise ValueError(f"bead_doe.pos_u.max_rel {self.max_rel:g} 는 range_rel {self.range_rel:g} 이상이어야 합니다")
+        return self
+
+
+class BeadDoeLoadFollowCfg(_M):
+    """v0.24.9 PU(esl_bead_pos_u.md §2.2·§3) — 하중 공간 고정. cell_mm 범위 = load_transfer.cell_min_mm..LT_CELL_MAX_MM(BeadDoeCfg 가 확인),
+    noise_floor_min 은 해시 밖(순위 noise 하한)."""
+
+    cell_mm: float = Field(3.0, gt=0.0)
+    noise_floor_min: float = Field(0.01, ge=0.0, le=1.0)
+
+
 class BeadDoeShapeRulesCfg(_M):
     """v0.21.0 BEAD_SHAPE 형상 규칙(esl_bead_shape_v021.md §6). 새 스터디 스냅샷(doe.shape_rules)에만 쓰임 — 옛 스터디 = 키 없음 =
     v0.20.0 동작. enabled false = 새 스터디도 스냅샷을 쓰지 않음."""
@@ -1570,6 +1597,8 @@ class BeadDoeCfg(_M):
     shape_rules: BeadDoeShapeRulesCfg = BeadDoeShapeRulesCfg()         # v0.21.0 BEAD_SHAPE(esl_bead_shape_v021.md §6)
     depth_section: Literal["entry_fixed", "floor_fixed"] = "floor_fixed"   # v0.24.7 DM 새 select 스터디 깊이 단면 동작
     depth_section_rules: BeadDoeDepthSectionRulesCfg = BeadDoeDepthSectionRulesCfg()
+    pos_u: BeadDoePosUCfg = BeadDoePosUCfg()                 # v0.24.9 PU 비드 위치 변수 U(esl_bead_pos_u.md §3)
+    load_follow: BeadDoeLoadFollowCfg = BeadDoeLoadFollowCfg()   # v0.24.9 PU 하중 공간 고정
     select: BeadDoeSelectCfg = BeadDoeSelectCfg()            # v0.15.0 select(esl_bead_select.md §10)
     limits: BeadDoeLimitsCfg = BeadDoeLimitsCfg()
 
@@ -1588,6 +1617,12 @@ class BeadDoeCfg(_M):
             if not cmin <= x <= LT_CELL_MAX_MM:
                 raise ValueError(f"bead_doe.rank.jig_grid.{name} {x:g} 는 load_transfer.cell_min_mm..{LT_CELL_MAX_MM:g} "
                                  f"({cmin:g}..{LT_CELL_MAX_MM:g}) 안이어야 합니다")
+        lf = self.load_follow.cell_mm                      # v0.24.9 PU §3: cell_mm 범위 = load_transfer.cell_min_mm..CELL_MAX_MM
+        if lf > LT_CELL_MAX_MM or ("load_follow" in self.model_fields_set and lf < cmin):
+            # 상한은 항상, 하한(cell_min_mm)은 관리자가 load_follow 를 직접 적었을 때만 — 기본값 3.0 이 cell_min_mm 을 올린 기존 설정(v0.24.8)을 깨지 않게.
+            # 기본값이 하한 아래인 채 새 스터디를 만들면 스냅샷 단계(doe.pos_u_snapshot)가 422 CONFIG_INVALID 로 알린다.
+            raise ValueError(f"bead_doe.load_follow.cell_mm {lf:g} 는 load_transfer.cell_min_mm..{LT_CELL_MAX_MM:g} "
+                             f"({cmin:g}..{LT_CELL_MAX_MM:g}) 안이어야 합니다")
         return self
 
 
@@ -2046,6 +2081,8 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     _fill_missing(d.setdefault("redrop", {}), BeadDoeRedropCfg().model_dump())             # v0.22.0
     _fill_missing(d.setdefault("depth_section_rules", {}), BeadDoeDepthSectionRulesCfg().model_dump())   # v0.24.7
     d.setdefault("depth_section", BeadDoeCfg.model_fields["depth_section"].default)
+    _fill_missing(d.setdefault("pos_u", {}), BeadDoePosUCfg().model_dump())                # v0.24.9 PU(코어 DEFAULTS 병합 전에도)
+    _fill_missing(d.setdefault("load_follow", {}), BeadDoeLoadFollowCfg().model_dump())    # v0.24.9 PU
     _fill_missing(d.setdefault("rank", {}), BeadDoeRankCfg().model_dump())     # v0.20.0 SM 강성 지표 키(코어 병합 전에도)
     _fill_missing(d.setdefault("case_jig", {}), BeadDoeCaseJigCfg().model_dump())   # v0.24.4(코어 DEFAULTS 병합 전에도)
     return d

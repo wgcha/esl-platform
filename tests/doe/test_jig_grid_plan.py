@@ -131,7 +131,9 @@ def test_v0248_added_lines_have_no_scenario_branch():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if shutil.which("git") is None:
         pytest.skip("git 없음")
-    files = ["esl/doe/stages.py", "esl/doe/transfer_plan.py", "esl/mech/grid_map.py"]
+    # v0.24.9 PU(계약 esl_bead_pos_u.md §5-10): 같은 정적 시험이 v0.24.9 추가 줄도 봄 — 위치 변수·하중 공간 고정·지그 표식 파일 추가
+    files = ["esl/doe/stages.py", "esl/doe/transfer_plan.py", "esl/mech/grid_map.py", "esl/doe/bead_graph.py",
+             "esl/morph/section.py", "esl/doe/matrix.py", "esl/morph/core.py", "esl/mech/jig_bc.py", "esl/view3d.py"]
     r = subprocess.run(["git", "-C", root, "diff", "-U0", "6030b213", "--", *files], capture_output=True, text=True)
     if r.returncode != 0:
         pytest.skip("기준 커밋 6030b213 없음(얕은 복제·배포본)")

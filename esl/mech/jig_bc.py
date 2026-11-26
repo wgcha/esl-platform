@@ -667,12 +667,9 @@ def flags(method: str, rep: dict, *, aux_rel: float, th: dict) -> dict:
 
 
 # ====================================================================== (7b) 3D 지지 표식(표시만 — 계산 불변, esl_viewer_hv.md §8.1)
-def support_marks(bc_node, bc_kind, sp_node, x0, smax: int) -> list[tuple[int, str]]:
-    """지그 3D 지지 표식(D-0.24.6-VW-13): tie = 구속 행 중 bc_kind = KIND_TIE 노드 ∪ 스프링 행 노드(sp_node — 스프링 방식은 tie 가
-    구속이 아니라 스프링이라 bc_node 에 없음) → ``jig.support_sample`` 최원점 샘플 ≤ smax 개 = MARK_TIE, 3-2-1 면내(bc_kind = KIND_AUX)
-    노드 전부 = MARK_AUX — 샘플된 tie 노드와 겹치면 tie 만. 노드 인덱스 범위 밖(< 0 · ≥ len(x0)) 은 무시.
-    백엔드 Case ``api/services/view3d._jig_supports`` 와 같은 규칙(백엔드 위임 통일은 R-VW-3). 반환 [(노드 인덱스, dof)] — tie 샘플
-    순서 뒤 면내 오름차순. 순수·결정적(같은 입력 → 같은 출력)."""
+def _mark_nodes(bc_node, bc_kind, sp_node, x0, smax: int) -> tuple[list[int], list[int]]:
+    """표식 노드(v0.24.6 규칙 — 일반형·옛 2튜플 공용): tie = KIND_TIE 구속 행 노드 ∪ 스프링 행 노드 → ``jig.support_sample`` 최원점
+    샘플 ≤ smax 개, 면내 = KIND_AUX 노드 전부(샘플된 tie 와 겹치면 tie 만). 범위 밖 노드 무시. 반환 (tie 샘플 순서, 면내 오름차순)."""
     n = int(np.asarray(x0).shape[0])
     bn = np.asarray(bc_node, dtype=np.int64).reshape(-1)
     bk = np.asarray(bc_kind).astype(np.int64).reshape(-1)
@@ -683,7 +680,108 @@ def support_marks(bc_node, bc_kind, sp_node, x0, smax: int) -> list[tuple[int, s
     tie = jig.support_sample(x0, np.unique(np.r_[bn[ok & (bk == KIND_TIE)], sp[(sp >= 0) & (sp < n)]]), int(smax))
     shown = set(int(i) for i in tie.tolist())
     aux = [int(i) for i in np.unique(bn[ok & (bk == KIND_AUX)]).tolist() if int(i) not in shown]
-    return [(int(i), MARK_TIE) for i in tie.tolist()] + [(i, MARK_AUX) for i in aux]
+    return [int(i) for i in tie.tolist()], aux
+
+
+def support_marks(bc_node, bc_kind, sp_node, x0, smax: int, *, bc_dir=None, bc_val=None, sp_dir=None, sp_k=None,
+                  sp_g=None, method_row: dict | None = None) -> list[tuple]:
+    """지그 3D 지지 표식(D-0.24.6-VW-13 · v0.24.9 BM §10.2 — 백엔드 Case 3D 와 같은 함수). 키워드(bc_dir·bc_val·sp_dir·sp_k·
+    sp_g) 없음 = 옛 2튜플 [(노드 인덱스, dof)](tie 샘플 = MARK_TIE, 3-2-1 면내 = MARK_AUX — 바이트 불변), 있으면 일반형
+    [(노드 인덱스, kind, dirs, val)](``support_marks_full`` — 노드·순서 같음; method_row 없음 = 구속 값 0 이면 tie_fixed).
+    tie 샘플 순서 뒤 면내 오름차순. 순수·결정적."""
+    if all(v is None for v in (bc_dir, bc_val, sp_dir, sp_k, sp_g)):
+        tie, aux = _mark_nodes(bc_node, bc_kind, sp_node, x0, smax)
+        return [(i, MARK_TIE) for i in tie] + [(i, MARK_AUX) for i in aux]
+    nb = np.asarray(bc_node).reshape(-1).size
+    ns = np.asarray(sp_node).reshape(-1).size
+    z3 = np.zeros((0, 3))
+    BC = {"bc_node": bc_node, "bc_kind": bc_kind, "sp_node": sp_node,
+          "bc_dir": z3 if bc_dir is None and nb == 0 else bc_dir, "bc_val": np.zeros(nb) if bc_val is None else bc_val,
+          "sp_dir": z3 if sp_dir is None and ns == 0 else sp_dir, "sp_k": np.zeros(ns) if sp_k is None else sp_k,
+          "sp_g": np.zeros(ns) if sp_g is None else sp_g}
+    return support_marks_full(BC, x0, smax, method_row)
+
+
+# v0.24.9 BM(계약 esl_bead_pos_u.md §10.2): 표식 종류. 지그 아닌 출처(전 노드 ESL 등)의 3-2-1 = support321(기존 dof 그대로)
+MARK_KINDS = ("tie_fixed", "tie_disp", "tie_spring", "aux_inplane", "support321")
+
+
+def mark_kind_of(method_row: dict | None, hard_vals=None) -> str:
+    """tie 구속(hard) 행의 표식 종류 — METHODS 열만 읽음: tie_stiff spring = tie_spring, tie_value zero = tie_fixed, target =
+    tie_disp. method_row 없음(옛 지그 고정 npz) = 값이 모두 0 이면 tie_fixed, 아니면 tie_disp."""
+    if method_row is not None:
+        if method_row["tie_stiff"] != "hard":                    # 열 값(hard|그 밖 = 스프링 행) — 방식 이름 비교 없음
+            return "tie_spring"
+        return "tie_fixed" if method_row["tie_value"] == "zero" else "tie_disp"
+    v = np.asarray(hard_vals if hard_vals is not None else [], dtype=np.float64)
+    return "tie_fixed" if not np.any(v != 0.0) else "tie_disp"
+
+
+def mark_dof(kind: str) -> str:
+    """일반형 kind → 옛 dof 문자열(사이드카 dof 필드 — 옛 뷰어 호환): aux_inplane = MARK_AUX, 그 밖 tie = MARK_TIE."""
+    return MARK_AUX if kind == "aux_inplane" else MARK_TIE
+
+
+def _r6(v) -> float:
+    return float(round(float(v), 6)) + 0.0
+
+
+def support_marks_full(BC: dict, x0, smax: int, method_row: dict | None = None) -> list[tuple[int, str, list, object]]:
+    """지그 3D 지지 표식 일반형(§10.2): [(노드 인덱스, kind, dirs, val)] — 노드·순서 = ``support_marks``(같은 ``_mark_nodes``).
+    dirs = 그 노드의 행 방향(단위 3 벡터 목록 — 법선 1개, 꺾임 2개), val = tie_fixed 0.0 · tie_disp 행마다 g(mm) ·
+    tie_spring {k: [N/mm…], g: [mm…]}(스프링 행) · aux_inplane 행마다 지정값. 값은 BC 배열(bc_*·sp_*)에서 그대로(새 계산 없음).
+    method_row = METHODS 행(tie 종류 판정 — ``mark_kind_of``)."""
+    B = save_bc(BC)
+    tie, aux = _mark_nodes(B["bc_node"], B["bc_kind"], B["sp_node"], x0, smax)
+    bn, bk = B["bc_node"], B["bc_kind"].astype(np.int64)
+    sp = B["sp_node"]
+    out = []
+    for i in tie:
+        rs = np.flatnonzero(sp == i)
+        if rs.size:
+            out.append((i, "tie_spring", [[_r6(x) for x in B["sp_dir"][r]] for r in rs],
+                        {"k": [_r6(B["sp_k"][r]) for r in rs], "g": [_r6(B["sp_g"][r]) for r in rs]}))
+            continue
+        rh = np.flatnonzero((bn == i) & (bk == KIND_TIE))
+        kind = mark_kind_of(method_row, B["bc_val"][rh])
+        if kind == "tie_spring":                        # 스프링 방식인데 구속 행만 있음(있을 수 없음) — 값 그대로 변위로
+            kind = "tie_disp"
+        out.append((i, kind, [[_r6(x) for x in B["bc_dir"][r]] for r in rh],
+                    0.0 if kind == "tie_fixed" else [_r6(B["bc_val"][r]) for r in rh]))
+    for i in aux:
+        ra = np.flatnonzero((bn == i) & (bk == KIND_AUX))
+        out.append((i, "aux_inplane", [[_r6(x) for x in B["bc_dir"][r]] for r in ra], [_r6(B["bc_val"][r]) for r in ra]))
+    return out
+
+
+def support321_rows(rows) -> list[dict]:
+    """지그 아닌 출처(전 노드 ESL 등)의 3-2-1 지지 행 [{node_id, dof}] → + kind support321·dirs None·val None(기존 dof 그대로)."""
+    return [{**r, "kind": "support321", "dirs": None, "val": None} for r in rows]
+
+
+def mark_rows(marks, node_id) -> list[dict]:
+    """일반형 표식 → 사이드카·3D 행 [{node_id, dof, kind, dirs, val}] (dof = 옛 문자열 — 옛 뷰어 호환)."""
+    nid = np.asarray(node_id, dtype=np.int64)
+    return [{"node_id": int(nid[i]), "dof": mark_dof(k), "kind": k, "dirs": d, "val": v} for i, k, d, v in marks]
+
+
+def method_row_of(src: str | None) -> dict | None:
+    """출처 키(jig·jig_disp·jig_spring — METHODS 열 src) → METHODS 행(표식 kind 판정). 모르는 키·None = None(값으로 판정)."""
+    return next((r for r in METHODS.values() if r["src"] == src), None) if src else None
+
+
+MARK_BC_KEYS = ("bc_dir", "bc_val")   # 일반형에 필요한 배열 — 없는 옛 npz(v0.24.6 이전)는 옛 2튜플 규칙(kind 없음)
+
+
+def support_rows(bc: dict, x0, smax: int, node_id, src: str | None = None) -> list[dict]:
+    """지그 지지 표식 행(백엔드 Case 3D·스터디 사이드카 공통 — v0.24.9 통합 INT-1): bc = BC 배열 매핑(npz 키 그대로),
+    src = 출처 키(METHODS 열 src). 일반형 배열(MARK_BC_KEYS)이 있으면 [{node_id, dof, kind, dirs, val}](``support_marks_full`` +
+    ``mark_rows``), 없으면 옛 [{node_id, dof}](``support_marks`` 2튜플 — 바이트 불변). 순수."""
+    nid = np.asarray(node_id, dtype=np.int64)
+    if not all(k in bc for k in MARK_BC_KEYS):
+        sp = bc.get("sp_node", np.zeros(0, np.int64))
+        return [{"node_id": int(nid[i]), "dof": d} for i, d in support_marks(bc["bc_node"], bc["bc_kind"], sp, x0, smax)]
+    return mark_rows(support_marks_full(load_bc(bc), x0, smax, method_row_of(src)), nid)
 
 
 # ====================================================================== (8) 저장 형식(배열 — 파일 IO 는 호출자)

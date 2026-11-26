@@ -485,9 +485,9 @@ def test_beadgraph_lock_pin_matches_package_and_is_local():
     assert "beadgraph" in (ROOT / "requirements-platform.txt").read_text(encoding="utf-8")
 
 
-def test_beadgraph_v0247_edition_table():
-    """v0.24.7 DM §5.1 판 대조: 휠 1.2.0(MINOR — kind DF·W1·one_side), 출력 판 OUTPUT_VERSION 1.1.0·RULES 1·MORPH_RULES 2 그대로,
-    새 판 DF_RULES·W1_RULES 1 — lock·루트 pyproject·패키지 소스가 같은 값."""
+def test_beadgraph_v0249_edition_table():
+    """v0.24.9 PU §1.1 판 대조(v0.24.7 DM §5.1 표 이어서): 휠 1.3.0(MINOR — kind U), 출력 판 OUTPUT_VERSION 1.1.0·RULES 1·
+    MORPH_RULES 2·DF_RULES·W1_RULES 1 그대로, 새 판 U_RULES 1 — lock·루트 pyproject·패키지 소스가 같은 값."""
     import ast
 
     src = (ROOT / "packages" / "beadgraph" / "src" / "beadgraph" / "__init__.py").read_text(encoding="utf-8")
@@ -496,10 +496,10 @@ def test_beadgraph_v0247_edition_table():
         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant):
             for t in n.targets:
                 vals[getattr(t, "id", None)] = n.value.value
-    assert vals["__version__"] == "1.2.0" and vals["OUTPUT_VERSION"] == "1.1.0"
-    assert (vals["RULES"], vals["MORPH_RULES"], vals["DF_RULES"], vals["W1_RULES"]) == (1, 2, 1, 1)
-    assert _lock_split(_text(REQ))["Local"] == ["beadgraph==1.2.0"]
-    assert '"beadgraph==1.2.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert vals["__version__"] == "1.3.0" and vals["OUTPUT_VERSION"] == "1.1.0"
+    assert (vals["RULES"], vals["MORPH_RULES"], vals["DF_RULES"], vals["W1_RULES"], vals["U_RULES"]) == (1, 2, 1, 1, 1)
+    assert _lock_split(_text(REQ))["Local"] == ["beadgraph==1.3.0"]
+    assert '"beadgraph==1.3.0"' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_install_beadgraph_function():

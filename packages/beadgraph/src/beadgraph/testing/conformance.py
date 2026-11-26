@@ -499,6 +499,37 @@ def depth_section_checks() -> dict:
     return out
 
 
+def pos_u_checks() -> dict:
+    """V-0249-PU-1·2·4 (package part, 1.3.0): kind U on the straight channel (±10: bead = ΔU·t⊥ ±1e-3, normal 0,
+    achieved ≤ 1e-3), the R 150 arc (±5: no inversion, outside 0) and the T junction branch (J = 0, no inversion)."""
+    from .. import basis as _basis
+    from .. import check as _check
+    from .. import classify as _classify
+    from .. import morph as _morph
+    from . import synth_oneside as so
+    from . import synth_pos as sp
+    bad, out = [], {}
+    for name, c, ext in (("straight", so.channel(), 10.0), ("arc", sp.arc(), 5.0), ("tee", sp.tee(), 5.0)):
+        X, C, F = c["nodes"], c["conn"], c["fixed"]
+        g, lab = _classify(X, C, F)
+        sid = [s["id"] for s in g["segments"] if s["type"] != "base"]
+        if name == "tee":
+            sid = [s["id"] for s in g["segments"] if s["type"] != "base" and
+                   np.ptp(np.asarray(s["skeleton"])[:, 1]) > np.ptp(np.asarray(s["skeleton"])[:, 0])]
+        B = _basis(g, lab, X, [{"name": "u", "kind": "U", "segs": sid, "hold": 1}], {"u": [-ext, ext]}, fixed=F, elems=C)
+        rec = {}
+        for v in (ext, -ext):
+            x = _morph(X, B, {"u": v})
+            r = _check(g, lab, X, x, B, {"u": v}, elems=C)
+            rec[str(v)] = {"achieved": r["achieved"]["u"], "inverted": r["inverted"], "outside": r["outside"]["max_mm"]}
+            if r["inverted"] or r["outside"]["max_mm"] > 1e-9 or \
+                    (name == "straight" and (r["achieved"]["u"] is None or r["achieved"]["u"] > 1e-3)):
+                bad.append(f"U {name} {v}: {rec[str(v)]}")
+        out[name] = rec
+    out["bad"] = bad
+    return out
+
+
 def purity() -> list[str]:
     """package modules (testing generators excepted) import only stdlib / numpy / scipy."""
     root = os.path.dirname(HERE)
@@ -574,6 +605,8 @@ def selftest(full: bool = True) -> dict:
         put("V-BG-19 step-straddling bosses (BG-D-47)", sb.pop("bad"), metrics=sb)
         ds = depth_section_checks()
         put("V-0247-DM DF·W1 (1.2.0)", ds.pop("bad"), metrics=ds)
+        pu = pos_u_checks()
+        put("V-0249-PU U (1.3.0)", pu.pop("bad"), metrics=pu)
         bad = purity()
         try:
             validate(g)

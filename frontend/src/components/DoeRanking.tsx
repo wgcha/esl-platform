@@ -11,7 +11,7 @@ import type { DoeParam, DoeResultOut, DoeShapeRules, EntryOut } from "../api/typ
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { GRID_TEXT, JIG_CODE_TEXT, JIG_SOURCE_NAME, SM_CODE_TEXT, VIEW_METRIC_TEXT, evalRegionText, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
+import { GRID_TEXT, loadFollowTail, JIG_CODE_TEXT, JIG_SOURCE_NAME, SM_CODE_TEXT, VIEW_METRIC_TEXT, evalRegionText, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
 /** v0.21.0 메시 품질 미달 행(mq 키 또는 warn 코드 — 새 스냅샷 ④ 만) */
@@ -118,6 +118,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                   ? "score: max(C_안) / max(C_베이스라인) — C = 안마다 재풀이한 컴플라이언스(기본, 작을수록 좋음). 1차 강성 지표(ritz·taylor)는 보조 열"
                   : "score: max(C_안) / max(C_베이스라인) — 최악 ESL 절대 컴플라이언스(작을수록 좋음)"}
             {grid && ` · ${GRID_TEXT.rankDef(grid.cell_mm)}${grid.noise_floor != null ? GRID_TEXT.rankNoise(grid.noise_floor, Object.values(grid.nf_by ?? {})) : ""}`}
+            {loadFollowTail(result)}
           </li>
           {evOn && (
             <li data-testid="metric-eval">

@@ -2158,7 +2158,7 @@ function StatusBand({ studyId, result, src = null, lead = null }: { studyId: str
   // v0.21.0 ③ 기준 메시 품질 미달(모든 안이 같은 메시 — 행 표시 없음). 목록에서는 뺌
   const mqBase = result.warnings.find((w) => w.code === "MESH_QUALITY_RANK" && w.scope === "base");
   const rest = result.warnings.filter((w) => w.code !== "SENSITIVITY_TOO_FEW" && w.code !== "SM_CROSS_MESH" && w !== mqBase);
-  const items = [...(!isLinResult(result) && isCrossMesh(result) ? [{ text: SM_CROSS_NOTE }] : []), ...rest.map((w) => ({ text: warnText(w) }))];
+  const items = [...(!isLinResult(result) && isCrossMesh(result) ? [{ text: SM_CROSS_NOTE }] : []), ...rest.map((w) => ({ text: warnText(w), info: isInfoWarn(w) }))];
   const jig = result.jig ?? null;
   // v0.23.3 출처 표(LOAD_SOURCES.chips)의 칩만 그림 — 출처 이름 분기 없음. src 없음(④·탭 없음) = 기존 전부
   const kinds: readonly ChipKind[] = src ? src.chips : ["jig", "lt", "mq", "best_clean_mq", "best_clean"];   // 탭 없음(④) = 기존 칩만

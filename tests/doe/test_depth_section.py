@@ -44,7 +44,7 @@ def test_floor_fixed_matrix_outputs(tmp_path):
     bj = json.load(open(os.path.join(d, "basis.json"), encoding="utf-8"))
     import beadgraph as bg
     assert bj["depth_section"] == "floor_fixed" and bj["section_rules"] == rules and bj["df_rules"] == bg.DF_RULES
-    assert bj["beadgraph_package"] == "1.2.0" and bj["beadgraph_version"] == "1.1.0" and bj["morph_rules"] == 2
+    assert bj["beadgraph_package"] == "1.3.0" and bj["beadgraph_version"] == "1.1.0" and bj["morph_rules"] == 2
     dv = [v for v in bj["graph_vars"] if v["name"].endswith("_D")]
     assert dv and all(v["kind"] == "D" and v["section"]["mode"] == "floor_fixed" for v in dv)
     assert all(v["section"]["floor_plan_max_mm"] == 0.0 for v in dv)

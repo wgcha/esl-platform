@@ -524,6 +524,9 @@ def _p99(v: np.ndarray) -> float | None:
 
 
 # ====================================================================== 전체 생성
+SUPPORT_EXTRA_KEYS = ("kind", "dirs", "val")   # 지지 표식 일반형 필드(esl.mech.jig_bc.support_marks_full — 계약 esl_bead_pos_u.md §10.2)
+
+
 def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports=(), cfg: dict[str, Any] | None = None,
                key: str = "", esl_run_id: str = "", units: dict[str, str] | None = None,
                created_at: str | None = None) -> dict[str, Any]:
@@ -576,7 +579,11 @@ def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports
             continue
         v = int(order[pos])
         sup_ids.append(int(nid[v]))
-        sup_rows.append({"node_id": int(nid[v]), "vertex": v, "dof": str(s["dof"]), "x0": x0[v].tolist()})
+        row = {"node_id": int(nid[v]), "vertex": v, "dof": str(s["dof"]), "x0": x0[v].tolist()}
+        for k in SUPPORT_EXTRA_KEYS:                  # v0.24.9 BM §10.2: kind·dirs·val(있을 때만 — 옛 행·옛 파일 바이트 불변)
+            if k in s:
+                row[k] = s[k]
+        sup_rows.append(row)
 
     loaded = mag > 0
     mc = x0.mean(axis=0)                           # 코어 esl_summary moment_center 와 같은 정의(X0 평균)
