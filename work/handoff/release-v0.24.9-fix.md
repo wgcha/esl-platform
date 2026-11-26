@@ -9,4 +9,5 @@
   설정 pos_u.sat_ratio_min 0.9(DEFAULTS·pydantic·yaml 2, 해시·스냅샷·settings API 밖). 실측 H6 B3 0.102·B4 0.100 → limited ±1.5.
 - [x] 4: U_SHORT_SEG(short ∧ 길이 < 2·램프) — H6 B3·B4 만(36 mm < 44·45). 문구 doe_messages, 백엔드 DS_TEXT_CODES, 프런트 posUTags 회색 꼬리표.
   시험 tests/doe/test_pos_u_sat.py(+slow H6), frontend pos_u.test.tsx, backend b1_api 거울. 골든 test_pos_u_golden 7 통과.
-- [ ] 5 문서 · [ ] 전체 시험
+- [x] 5 문서: CHANGELOG·field_check §②⑥·계약 §1.2·§1.3·§10.6 INT-5·§11 INT-5~8·decisions INT-5~8.
+- [ ] 전체 시험(tests/ + beadgraph, backend 관련, frontend typecheck·build·check:api·vitest)
