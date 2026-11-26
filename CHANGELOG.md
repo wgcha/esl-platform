@@ -9,7 +9,7 @@
 - 결과의 **격자 진단**: 형상별 tie 못 잡음 비·잡힌 면적비·d000 재현 MAC·격자 크기(5·10 mm) 수렴 ΔΠ·noise_floor. 정보 코드 `JIG_GRID_AREA_RATIO`·`JIG_GRID_FRAME_SHIFT`·`JIG_GRID_CONV`·`JIG_GRID_OUTSIDE`·`JIG_GRID_RANK`, 경고 `JIG_GRID_SOURCE_MISSING`(엔트리 Case 에 지그 결과 없음 — 그 Case 에서 ③ ESL 을 v0.24.4 이후로 다시 실행한 뒤 복제)·`JIG_GRID_TIE_MISS`·`JIG_GRID_LOAD_RESID`·`JIG_GRID_NO_REF`.
 - **옛 ④·옛 ③ 스터디 안내 1줄** `JIG_GRID_ON_CLONE`: "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다"(경고 줄에 정보로 표시, 저장 없음).
 - 설정 `bead_doe.rank.jig_grid`(`enabled`·`cell_mm` 3.0·`conv_mm` [5, 10]·tie 잡기 4키·`sample_nbr`·`sample_normal_deg`·`area_ratio_warn`·`conv_warn` 0.05·`frame_shift_warn`·`load_resid_warn`·`noise_floor_min` 0.03·`noise_floor_mismatch` 0.05·`mesh_h_ratio_warn` 1.25·`mesh_tri_frac_warn` 0.2). 없으면 기본값.
-- API: `jig_plan` 값 `grid`, `DoeJigOut.transfer`·`grid`(`grid.mesh` — 기준·형상 메시 비교), `DoeJigMethodOut.grid`, 결과 경고 `JIG_GRID_*` 의 `message`.
+- API: `jig_plan` 값 `grid`, `DoeJigOut.transfer`·`grid`(`grid.mesh` — 기준·형상 메시 비교, `grid.noise_floor_mismatch_applied` — 형상별 오차 범위), `DoeJigMethodOut.grid`, 결과 경고 `JIG_GRID_*` 의 `message`.
 ### 변경
 - 새 ④·옛 ③ 스터디의 순위 지표가 재풀이(solve) 대신 격자 지그 변위(jd)다(Case 지그 결과가 없으면 지금처럼 재풀이 순위 + `JIG_GRID_SOURCE_MISSING`). 같은 메시 모드(①②·새 ③)는 그대로다.
 ### 수정
@@ -20,8 +20,10 @@
 - **엔트리의 Case 에 지그 변위·스프링 결과가 있어야 한다**(Case ③ ESL 을 v0.24.4 이후로 실행한 것). 없으면 `JIG_GRID_SOURCE_MISSING` 이 뜨고 순위는 재풀이로 나온다.
 - **격자 순위는 약 3 % 이내 차이를 오차 범위로 표시한다**(메시가 다른 형상 비교의 한계). 기준 형상도 형상들과 같은 방식으로 메시하면(기준 STEP 지정) 오차 범위가 줄어든다. 합성 측정: 같은 형상을 Case 메시(5 mm)와 3 mm 로 메시하면 개선율 약 2 % 가 나온다.
 - 형상당 평가 시간이 늘어난다(지그 분해 2회 추가 — 현장 확인표 `docs/manual/field_check_v0248.md` 에서 실측).
-- **기준 형상도 형상들과 같은 방식(같은 요소 크기·같은 요소 종류)으로 메시해 넣는다.** 기준이 Case 메시(5 mm 쿼드)이고 형상이 3 mm 삼각형 메시이면 메시 차이만으로 개선율 3~5 % 가 나온다(합성 측정 4.2·4.8 %). 이때 정보 `JIG_GRID_MESH_MISMATCH` 가 뜨고 오차 범위가 5 % 로 넓어진다(설정 `noise_floor_mismatch`·`mesh_h_ratio_warn`·`mesh_tri_frac_warn`, 해시 밖).
-- **체결부(와셔 면·구멍 위치)가 Case 와 다른 형상은 지그 순위를 참고만 한다.** 체결부를 노드 1개로만 잡은 형상이 있으면 경고 `JIG_GRID_TIE_SNAP`(형상 행에도 경고 수), 체결부를 못 잡거나 잡힌 면적비가 크게 다르면 `JIG_GRID_TIE_MISS`·`JIG_GRID_AREA_RATIO` 가 스터디 경고 줄에도 1건씩 뜬다.
+- **기준 형상도 형상들과 같은 방식(같은 요소 크기·같은 요소 종류)으로 메시해 넣는다.** 기준이 Case 메시(5 mm 쿼드)이고 형상이 3 mm 삼각형 메시이면 메시 차이만으로 개선율 3~5 % 가 나온다(합성 측정 4.2·4.8 %). 이때 정보 `JIG_GRID_MESH_MISMATCH` 가 뜨고 **기준과 메시가 다른 그 형상만** 오차 범위가 5 % 로 넓어진다(설정 `noise_floor_mismatch`·`mesh_h_ratio_warn`·`mesh_tri_frac_warn`, 해시 밖).
+- **오차 범위 표시는 형상별이다.** 기준과 같은 메시의 형상은 기본 오차 범위(약 3 %)로 판정하고, 메시가 다른 형상만 5 % 로 넓힌다 — 순위 정의 문구 끝이 "차이 3 % 이내는 매핑 오차 범위(메시가 다른 형상은 5 %)"가 되고, 그 형상 행에 정보 `JIG_GRID_MESH_MISMATCH_SHAPE`(행 경고 수)가 붙는다. 결과 `jig.grid.noise_floor_mismatch_applied`(형상 id·값). 합성 측정: 같은 메시의 실제 4.15 % 개선 형상은 오차 범위 밖, 같은 스터디의 전삼각 형상(메시 차이만 4.21 %)은 오차 범위.
+- **기준 형상을 전부 삼각형으로 메시하면 격자 크기 민감도 때문에 오차 범위가 커진다(측정 8 %) — 기준·형상 모두 쿼드 위주로 메시하기를 권장한다.**
+- **체결부(와셔 면·구멍 위치)가 Case 와 다른 형상은 지그 순위를 참고만 한다.** 체결부를 노드 1개로만 잡은 형상이 있으면 경고 `JIG_GRID_TIE_SNAP`(형상 행에도 경고 수 — 그 체결부 스프링이 한 노드에 몰리므로 그 형상의 순위는 참고만), 체결부를 못 잡거나 잡힌 면적비가 크게 다르면 `JIG_GRID_TIE_MISS`·`JIG_GRID_AREA_RATIO` 가 스터디 경고 줄에도 1건씩 뜬다.
 - 옛 ④·옛 ③ 스터디의 안내 줄 `JIG_GRID_ON_CLONE` 과 [하중 정의] 탭 사유("복제하면 Case 지그를 격자 매핑해 계산합니다")가 실제 결과에서도 나온다(통합 판 결함 수정).
 
 ## [0.24.7] - 2026-11-25
