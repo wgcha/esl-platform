@@ -123,7 +123,11 @@ export const JIG_STATE_TEXT = {
   /** 옛 단일 경로(고정만)·방식 목록에 없음 = 현재 설정으로 복제 / 모드가 지그 ESL 을 계산하지 않음(계획 열 jig_plan = none — 복제해도 같음, v0.24.5 #88 후속) */
   not_planned: {
     why: (label: string) => `이 스터디에서 계산하지 않은 방식입니다: ${label} — 복제(현재 설정 rank.jig.methods)로 다시 계산`,
-    whyMode: (label: string) => `이 모드는 지그 ESL 을 계산하지 않습니다: ${label} — 안·형상마다 다른 메시를 비교하는 모드라 복제해도 같습니다`,
+    /** jig_plan none: onClone 없음(null — 옛 서버) = 옛 문구 / v0.24.8 응답 jig_on_clone 참 = 복제하면 격자 매핑 계산 · 거짓 = 설정 rank.jig_grid 꺼짐(esl_jig_grid_map.md §5) */
+    whyMode: (label: string, onClone?: boolean | null) =>
+      onClone == null
+        ? `이 모드는 지그 ESL 을 계산하지 않습니다: ${label} — 안·형상마다 다른 메시를 비교하는 모드라 복제해도 같습니다`
+        : `이 스터디는 이 모드에서 지그 ESL 을 계산하지 않았습니다(v0.24.8 이전 스냅샷): ${label} — ${onClone ? "복제하면 Case 지그를 격자 매핑해 계산합니다" : "설정 bead_doe.rank.jig_grid 가 꺼져 있어 복제해도 계산하지 않습니다"}`,
   },
   /** 계산했지만 실패(methods[key].status ≠ ok) — 마우스 없이 보이는 줄에 다음 행동을 덧붙임 */
   failed: {
@@ -152,7 +156,7 @@ export function jigMethodState(r: DoeResultOut, key: string): JigMethodState {
   const label = SR(key).label;
   const plain = (state: JigMethodStateKind, why: string): JigMethodState => ({ state, why, title: why, note: null });
   const T = JIG_STATE_TEXT;
-  if (r.jig_plan === "none") return plain("not_planned", T.not_planned.whyMode(label));
+  if (r.jig_plan === "none") return plain("not_planned", T.not_planned.whyMode(label, r.jig_on_clone));
   if (!r.jig) return plain("no_jig", T.no_jig.why + (r.jig_on_clone ? T.no_jig.clone : ""));
   const m = r.jig.methods?.[key] ?? null;
   if (!m) return plain("not_planned", T.not_planned.why(label));

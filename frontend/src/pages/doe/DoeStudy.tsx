@@ -18,7 +18,7 @@ import {
   LEGACY_STEP_LABEL, STEP_PREP_CODES, meshMethodName, radioBase, stepPrepGroups,
   isCrossMesh, isLinResult, ltChoiceLabel, ltKey, ltRequest, ltSummaryLine, ltVariantLabel,
   type NewRadio,
-  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn, LEGACY_DEPTH_SECTION, droppedOneSide } from "../../api/doe";
+  type ParamRow, type SpecForm, RULES_OUTDATED_TEXT, BG_STALE_TEXT, isInfoWarn, LEGACY_DEPTH_SECTION, droppedOneSide, GRID_TEXT, gridOf } from "../../api/doe";
 import { BeadSelectCards, SelectDesign3D, autoNoticeText, selectMesh, useBeadSelect, type AutoSeedView, type StepInfoView } from "../../components/BeadSelectCard";
 import { PartView } from "../../view3d/part/PartView";
 import { legacyViewData, sceneLayers, selectScene, selectViewData } from "../../view3d/part/adapters";
@@ -1077,7 +1077,7 @@ const euro = (w: string): string => {
   return c >= 0 && c < 11172 && c % 28 !== 0 && c % 28 !== 8 ? "으로" : "로";
 };
 
-function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, tie = null, onRegen, noView = false }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; onRegen?: () => void; noView?: boolean }) {
+function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, tie = null, gridMm = null, onRegen, noView = false }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; gridMm?: number | null; onRegen?: () => void; noView?: boolean }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
@@ -1129,7 +1129,7 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
   );
   if (!others.length && !pairTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
   const names = [labelOf(base?.manifest?.esl_run_id), labelOf(cand?.manifest?.esl_run_id)];
-  const cond = bfMode ? v3dPairCondText(pk?.load ?? "", (nodal ? result[nodal.block]?.grade_min : null) ?? null, names, supportText(pk?.support ?? "3-2-1", tie ?? result.jig?.tie_dofs)) : v3dCondText(jigMode, result.jig?.n_jig ?? null, names);
+  const cond = bfMode ? v3dPairCondText(pk?.load ?? "", (nodal ? result[nodal.block]?.grade_min : null) ?? null, names, supportText(pk?.support ?? "3-2-1", tie ?? result.jig?.tie_dofs) + (gridMm != null ? GRID_TEXT.support(gridMm) : "")) : v3dCondText(jigMode, result.jig?.n_jig ?? null, names);
   // v0.24.1 재현 진단(§6.2): 행 recon.kind — jigdiag = 지그 진단(JigDiag), sidecar = 범용 ReconDiag, null = 세그먼트 없음
   const reconCol = src?.recon ?? null;
   const sideRecon = reconCol?.kind === "sidecar" ? reconCol : null;
@@ -1547,7 +1547,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   // v0.24.5: 설정 ui.hidden_sources 가 거른 출처만(숨긴 출처의 탭·사유 줄·칩 없음 — 계산·저장은 그대로)
   const hidSig = hiddenSourcesSig();
   const loadSources = useMemo(() => LOAD_SOURCES.filter((x) => !isHiddenSource(x.key)), [hidSig]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tabs = useMemo(() => (result.data && !isCompare ? tabState(result.data, loadSources) : null), [result.data, isCompare, loadSources]);
+  // v0.24.8: ④ 는 지그 계산 계획 열 jig_plan = grid(격자 지그 — 응답 값)일 때만 하중 정의 탭을 그린다(옛 스냅샷 ④ = 지금처럼 탭 없음)
+  const tabs = useMemo(() => (result.data && (!isCompare || result.data.jig_plan === "grid") ? tabState(result.data, loadSources) : null), [result.data, isCompare, loadSources]);
   const [ltab, setLtab] = useState<LoadTab | null>(null);
   const curTab: LoadTab = tabs ? (ltab && (tabs.ok[ltab] || tabs.add[ltab]) ? ltab : tabs.def ?? "") : "";
   /** v0.24.1: 보기 없음 ∧ 자료 만들기 가능한 탭 = 본문이 사유 + 버튼 1개 */
@@ -2072,7 +2073,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} gridMm={gridOf(result.data)?.cell_mm ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} />
                     </div>
                     <div className="doe-row-tables" data-testid="doe-row-tables">
                       <div className="doe-col-rank">
@@ -2088,6 +2089,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                           shapeRules={s?.inputs.shape_rules ?? null}
                           perEslNote={perEslNote(r, pick)}
                           resultNote={isCompare ? COMPARE_NOTE : null}
+                          grid={gridOf(result.data)}
                         />
                       </div>
                       <div className="doe-col-pe">
