@@ -8,6 +8,7 @@ import { segColor, segLabel, repOf } from "../view3d/select/graph";
 import { counts, islandCount, type BeadMeta } from "../view3d/select/layers";
 import { RO_TIP, unknownRefs, type BeadSelectCtrl } from "./BeadSelectCard";
 import { SegmentTree } from "./SegmentTree";
+import { VirtualBeadPanel } from "./VirtualBeadPanel";
 
 const FIXED_SRC: Record<string, string> = { scan: "fixed-scan", user: "사용자 칠함", "scan+user": "fixed-scan + 사용자", none: "없음" };
 const f1 = (v: number | null | undefined) => (v == null ? "–" : v.toFixed(1));
@@ -234,6 +235,7 @@ export function BeadList({ ctrl, editable, st, hideDirty, shapeRules }: { ctrl: 
           전체 초기화
         </button>
       </div>
+      {graphOn && ctrl.vb.show && <VirtualBeadPanel ctrl={ctrl} editable={editable} />}
       {d && (
         <div className="small muted" data-testid="bs-fixed">
           고정: {FIXED_SRC[d.fixed.source] ?? d.fixed.source} · 스캔 {d.fixed.scan_n} · 사용자 {d.fixed.user_n} 노드

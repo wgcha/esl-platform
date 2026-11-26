@@ -4474,3 +4474,55 @@ details.card.fold > .fold-body {
 .doe-w-na td {
   color: var(--muted, #6b7280);
 }
+
+/* v0.25.0 추가 비드(가상 비드) 절 — esl_virtual_bead.md §9: 접힌 절, 칸 ≤ 6em, 한 줄(2560)·접힘(1920) */
+.bs-vb {
+  margin: 0.3rem 0;
+}
+.bs-vb > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.bs-vb-body {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.3rem 0 0.2rem;
+}
+.bs-vb-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.7rem;
+}
+.bs-vb-line .seg {
+  display: inline-flex;
+  gap: 0.6rem;
+}
+.bs-vb-line .doe-num.short {
+  width: 5.5em;
+  max-width: 6em;
+}
+.bs-vb-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.bs-vb-row.on {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.bs-vb-preview {
+  display: grid;
+  gap: 0.3rem;
+}
+/* 변수 표 A 행 회색 정보 꼬리표(뒤틀림 n — 경고색 금지) */
+.doe-tag-info {
+  color: var(--muted, #6b7280);
+  background: transparent;
+  border: 1px solid var(--line);
+}

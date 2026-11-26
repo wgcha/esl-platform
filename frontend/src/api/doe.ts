@@ -888,6 +888,19 @@ export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules |
   if (g.state === "blocked") return { label: "막힘", kind: "warn", tip: `양쪽 모두 거의 움직일 수 없어 기본 체크를 해제했습니다${range ? `\n안전 범위 ${range}` : ""}${why ? `\n${why}` : ""}` };
   return { label: g.state === "ok" || (g.combo_scale != null && g.combo_scale < 1) ? "조합 축소" : "축소", kind: "info", tip: `품질 점검으로 기본 범위를 줄였습니다${range ? `\n${range}` : ""}${why ? `\n${why}` : ""}${combo}` };
 }
+/** v0.25.0 A 행 회색 정보 꼬리표 "뒤틀림 n"(§19.2-5 — n > 0 일 때만, 경고색 아님). 툴팁 = guard.warp.text(서버 VB_WARP_INFO), 없으면 수치 */
+export function warpTag(g: DoeGuard | null | undefined): { label: string; tip: string } | null {
+  const w = g?.warp;
+  if (!w || !(w.n > 0)) return null;
+  return { label: VB_TEXT.warpTag(w.n), tip: w.text || `깊이 ${w.at} mm 에서 뒤틀린 사각 요소 ${w.n} 개(최대 ${w.max_deg}°) — 범위는 줄이지 않음` };
+}
+/** v0.25.0 A 행 툴팁: 사면 요소 수 · 정확도 표 칸의 C 차(표 밖 = "측정 범위 밖") */
+export function vbRowTip(p: Pick<DoeParam, "wall_elems" | "acc_hint">): string {
+  const n = p.wall_elems != null ? `사면 요소 ${p.wall_elems.toFixed(1)}개` : "";
+  const a = p.acc_hint?.c_err_pct;
+  const acc = a != null ? `예상 오차 ±${Math.abs(a).toFixed(1)} %` : "예상 오차: 측정 범위 밖";
+  return [n, acc].filter(Boolean).join(" · ");
+}
 /** W 부분 꼬리표 툴팁: 구간 앵커·길이 비율 % */
 export function wPartialTip(anchors: number[] | null | undefined, cover: number | null | undefined): string {
   const a = (anchors ?? []).map((x) => `#${x}`).join(" · ");

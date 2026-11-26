@@ -1352,7 +1352,7 @@ export function BeadSelectCards({ ctrl, editable, st, fixedMissing, auto, stepIn
                 </button>
               </>
             )}
-            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || noBead || ctrl.deriving} title={gClick ? "서버가 세그먼트 묶음·공칭 깊이·폭·대칭 제안을 계산합니다(저장 안 함)" : "서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)"}>
+            <button type="button" className="btn small" onClick={ctrl.runDerive} disabled={ro || (noBead && !s?.vbeads?.length) || ctrl.deriving} title={gClick ? "서버가 세그먼트 묶음·공칭 깊이·폭·대칭 제안을 계산합니다(저장 안 함)" : "서버가 사면 요소·경계선·공칭 깊이·폭을 계산합니다(저장 안 함)"}>
               {ctrl.deriving ? "계산 중…" : gClick ? "다시 계산" : "사면·경계 자동"}
             </button>
             {painting && (
