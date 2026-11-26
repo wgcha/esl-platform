@@ -2001,6 +2001,18 @@ def _plan_sm_jig(s: dict[str, Any], grid_snap: dict[str, Any] | None = None) -> 
     return None if plan is None else _jig_kind(plan, grid_snap)
 
 
+_JG_HEAD = re.compile(r"^JIG_GRID_[A-Z_]+:\s*")
+_JG_TAIL = re.compile(r"\s*\([^()가-힣]*\)\s*$")
+
+
+def _jig_grid_msg(w: dict[str, Any]) -> dict[str, Any]:
+    """코어 JIG_GRID_* 경고 {code, message, …} 의 message 에서 "CODE: " 머리와 영문 "(Info: …)" 꼬리를 뺀 사본(화면 = message 우선 표시)."""
+    m = w.get("message")
+    if str(w.get("code", "")).startswith("JIG_GRID_") and isinstance(m, str):
+        return {**w, "message": _JG_TAIL.sub("", _JG_HEAD.sub("", m))}
+    return w
+
+
 def _jig_on_clone(c: dict[str, Any], s: dict[str, Any], rank_out: dict[str, Any] | None, kind: str | None) -> bool:
     """지그 블록이 없는 결과에서 "복제하면 지그 계산" 여부(esl_jig_grid_map.md §6): 지금 규칙(계획 base) + jig_plan none ∧ 계획 jig_fix grid
     이면 설정 rank.jig.enabled ∧ rank.jig_grid.enabled(옛 ④·옛 ③ 스냅샷 — 복제하면 새 스냅샷이 격자를 켬)."""
@@ -2065,6 +2077,7 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
              for w in r.get("warnings") or []]
     if r.get("sensitivity") is None and r.get("sensitivity_reason") and r.get("sensitivity_reason") != "COMPARE_NO_PARAMS":
         warns.append({"code": "SENSITIVITY_TOO_FEW", "message": str(r.get("sensitivity_reason"))})
+    warns = [_jig_grid_msg(w) for w in warns]               # v0.24.8 INT: 코어 JIG_GRID_* message 의 "CODE: " 머리·영문 꼬리 제거(응답 때만)
     keep_b = ("id", "score", "umax", "epsmax") + (("shape",) if s["scenario"] == "compare" else ()) \
         + (("umax_def",) if "umax_def" in b else ())        # v0.20.0 강체 제거 umax(새 스냅샷만 — 옛 결과 키 불변)
     out = {"scenario": s["scenario"], "reference_source": r.get("reference_source"),
@@ -2116,6 +2129,9 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     else:                                                     # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가(v0.24.8: 격자 포함)
         out["jig_on_clone"] = _jig_on_clone(c, s, out["rank"], kind)
     out["jig_plan"] = kind                                    # v0.24.5 #88 후속·v0.24.8: base | grid | none — 탭 사유 문구를 이 값으로 고름
+    if kind == "none" and out.get("jig_on_clone") is True and _plan_col(s, "jig_fix") == "grid":
+        # v0.24.8 INT 4: 옛 ④·옛 ③ 스터디(jig_plan none ∧ 복제하면 격자 지그) — 정보 안내 1줄을 응답 때만 덧붙임(DB·산출물 불변, 옛 산출물 바이트 동일)
+        out["warnings"] = [*out["warnings"], {"code": "JIG_GRID_ON_CLONE", "level": "info", "message": up_svc.doe_text("JIG_GRID_ON_CLONE")}]
     for k in ("view3d_ref", "view3d_esl", *RANK_V3D["jig"]):
         if isinstance(r.get(k), dict):
             out[k] = {str(a): str(b) for a, b in r[k].items() if a and b}

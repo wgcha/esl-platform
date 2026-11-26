@@ -182,9 +182,15 @@ def test_clone_refreshes_old_snapshot_adds_grid(client, world, engine):
 # ================================================================ 응답 jig_plan·jig_on_clone·새 키 (§6·§7.3)
 def test_old_snapshot_and_results_keep_old_values(client, world, engine, esl_root):
     """§7.3-1: 옛 스냅샷 ④ = jig_plan none(기존 값 그대로), 기존 jig 블록의 새 키 transfer·grid·methods.grid = null."""
-    sid4 = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz"})          # 새 스냅샷이어도 현재 코어 계획 jig_fix none
+    sid4 = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz"})          # 새 스냅샷 ④(코어 계획 jig_fix grid) = grid
     o = _res(client, sid4)
-    assert o["jig_plan"] == "none" and o["jig_on_clone"] is False and o["jig"] is None
+    assert o["jig_plan"] == "grid" and o["jig_on_clone"] is False and o["jig"] is None
+    for jid, params in _jobs(engine, sid4):                                                          # 옛 스냅샷(jig_grid 없음) = none
+        p = copy.deepcopy(params)
+        p["doe"]["rank"].pop("jig_grid")
+        _set_params(engine, jid, p)
+    o = _res(client, sid4)
+    assert o["jig_plan"] == "none" and o["jig"] is None
     same = body([world["a"], world["b"]], upload_step(client))
     sid1 = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz"}, req=same)
     o1 = _res(client, sid1)

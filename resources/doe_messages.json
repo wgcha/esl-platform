@@ -315,6 +315,7 @@
   "JIG_GRID_CONV": "격자 크기 민감도: {cell_mm} mm 대비 {mm} mm 의 Π 차 {dpi}(기준 {tol}) — 이 차이 안의 순위 차이는 매핑 오차 범위입니다. (Info: grid-size sensitivity above threshold.)",
   "JIG_GRID_NO_REF": "기준 형상(d000)의 {method} 격자 지그가 없거나 실패해({err}) 그 방식의 순위 기준이 없습니다. (Grid jig reference missing.)",
   "JIG_GRID_RANK": "다른 메시 비교 — 형상마다 Case 지그를 {cell_mm} mm 격자로 매핑해 지그 {method} 로 순위를 매겼습니다(기준 d000 · 매핑 진단 참고). (Info: ranked by the grid-mapped jig.)",
+  "JIG_GRID_ON_CLONE": "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다",
   "W_USER_OFF": "사용자가 W 를 뺌",
   "W_NETWORK": "네트워크 묶기는 깊이만",
   "W_AREA": "면형 바닥 — 입구 선 없음",

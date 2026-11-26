@@ -491,9 +491,10 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_GRID_CONV: "격자 크기를 바꾸면 기준 형상 결과가 허용 이상 달라집니다 — 순위는 매핑 오차 범위 안에서 참고하세요",
   JIG_GRID_NO_REF: "기준(d000) 격자 지그 계산이 실패해 그 방식의 기준값이 없습니다 — 안 결과는 비어 있습니다",
   JIG_GRID_RANK: "순위 = 격자 지그(형상마다 Case 지그를 격자로 매핑 — 다른 메시라 매핑 오차 참고)",
+  JIG_GRID_ON_CLONE: "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다",
 };
 /** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */
-export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK"]);
+export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE"]);
 /** JIG_GRID_* 대체 문구의 {필드} 채움(경고에 없으면 "–") */
 const fillJigTpl = (tpl: string, w: Record<string, unknown>): string => tpl.replace(/\{(\w+)\}/g, (_, k: string) => (w[k] != null && w[k] !== "" ? String(w[k]) : "–"));
 /** 격자 지그 스터디(jig.transfer === "grid") — 화면 문구가 격자 뜻으로 바뀌는 열 값 */
