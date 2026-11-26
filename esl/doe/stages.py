@@ -665,7 +665,7 @@ def bd_eval(spec: dict, echo=print) -> dict:
                 rkw["region"] = reg
         reg_e = (getattr(c, "_lt_last", None) or {}).get("region") if _lt_plan(c)["mask"] == "compare_region" \
             else rkw.get("region")                # 평가 영역: 계획 열 mask(④ = LT-8 영역, 그 밖 = ③ 영역 또는 없음)
-        lf_on = c.scn != "compare" and _lf_mode(c) == "spatial"     # v0.24.9 PU §2: 하중 공간 고정(계획 열 판정 값만 읽음)
+        lf_on = _lf_mode(c) == "spatial"         # v0.24.9 PU §2: 하중 공간 고정(계획 열 load_follow 판정 값만 읽음)
         if lf_on:
             c._lf_ctx = _lf_prepare(c, t, bmeta, did, mesh, loads, reg_e)
             if did != BASELINE:
@@ -2816,7 +2816,8 @@ def _lt_decide_placement(c: Ctx, plan: dict, t, region, h: float, fc: dict | Non
 
 
 def _lt_method(c: Ctx, variant=None) -> dict:
-    return tp.method_of(_lt(c), variant, c.mapping_opts())
+    """v0.24.9 PU: 하중 전달 스냅샷이 없는 스터디의 하중 공간 고정(셀 전달)은 설정 load_transfer(기본값)로 — 기존 호출 불변."""
+    return tp.method_of(_lt(c) or settings(c.cfg)["load_transfer"], variant, c.mapping_opts())
 
 
 def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None,
@@ -4676,8 +4677,10 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
         return {}, []
     row = next(s_ for s_ in RANK_SOURCES if s_["v3d_store"] == "result")
 
-    def marks(x0, jidx, _rmap, smax):
-        return [(int(i), MARK_TIE) for i in jg.support_sample(x0, jidx, smax)]
+    def marks(x0, jidx, _rmap, smax):                           # v0.24.9 BM: 옛 지그 고정(병진 123) = tie_fixed·xyz·0
+        return [(int(i), "tie_fixed", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], 0.0)
+                for i in jg.support_sample(x0, jidx, smax)]
+    _ = MARK_TIE
     return _jig_v3d_build(c, t, results, shown, U.load_npz(pz), row, marks)
 
 
@@ -4696,9 +4699,18 @@ def _jig_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[d
     z = rd[1]
     bc = jig_bc.load_bc({n: z[n] for n in JIG_BC_PATTERN if n in z})
 
-    def marks(x0, _jidx, rmap, smax):
-        return jig_bc.support_marks(rmap(bc["bc_node"]), bc["bc_kind"], rmap(bc["sp_node"]), x0, smax)
+    mrow = _jig_method_row(str(row["key"]))
+
+    def marks(x0, _jidx, rmap, smax):                           # v0.24.9 BM §10.2: [(노드, kind, dirs, val)] — 값은 BC 배열에서
+        return jig_bc.support_marks_full({**bc, "bc_node": rmap(bc["bc_node"]), "sp_node": rmap(bc["sp_node"])}, x0, smax,
+                                         mrow)
     return _jig_v3d_build(c, t, results, shown, z, row, marks)
+
+
+def _jig_method_row(src: str) -> dict | None:
+    """출처 키(jig_disp·jig_spring·…) → jig_bc.METHODS 행(표식 kind 판정 — 열 값만 읽음). 없으면 None."""
+    from esl.mech import jig_bc
+    return next((r for r in jig_bc.METHODS.values() if r["src"] == src), None)
 
 
 def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -> tuple[dict, list]:
@@ -4745,7 +4757,8 @@ def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -
         jidx = rmap(z["jig_idx"])
         ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
         rows = _jig_resp_rows(c, mesh, z, jidx, ld)
-        sup = [{"node_id": int(nid[i]), "dof": d} for i, d in marks(mesh["x0"], jidx, rmap, smax)]
+        from esl.mech import jig_bc as _jb
+        sup = _jb.mark_rows(marks(mesh["x0"], jidx, rmap, smax), nid)      # v0.24.9 BM: dof(옛) + kind·dirs·val
         names = {}
         for (e, F), rr in zip(ld, rows):
             nm = name if name else f"{BASELINE}_{tag}_e{order.index(e):02d}"
@@ -6808,11 +6821,11 @@ def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[di
         names = {}
         for e in ents_:
             BC = res["bc"][src][e]
-            marks = jig_bc.support_marks(BC["bc_node"], BC["bc_kind"], BC["sp_node"], mesh["x0"], smax)
+            marks = jig_bc.support_marks_full(BC, mesh["x0"], smax, _jig_method_row(src))     # v0.24.9 BM §10.2 일반형
             nm = name or f"{BASELINE}_{tag}_e{order.index(e):02d}"
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
             build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=res["loads"][src][e],
-                       u_rel=res["u"][src][e], supports=[{"node_id": int(nid[i]), "dof": d} for i, d in marks],
+                       u_rel=res["u"][src][e], supports=jig_bc.mark_rows(marks, nid),
                        key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
         return names
@@ -7994,20 +8007,12 @@ def _lf_mode(c: Ctx) -> str | None:
         return "node"
 
 
-def _lf_method(c: Ctx) -> dict:
-    L = _lt(c) or settings(c.cfg if isinstance(c.cfg, dict) else None)["load_transfer"]
-    return tp.method_of(L, ("cell", _lf(c)["cell_mm"]), c.mapping_opts())
-
-
 def _lf_run(c: Ctx, lfc: dict, items: list) -> tuple[list, dict]:
     """원본 = 기준 메시 공칭 좌표 X0 위 노드 하중 [(key, F (기준 노드 순서))] → 안 메시 X_d(같은 위상) 셀 전달(배치 global — PU-12,
-    양쪽 frame = 기준 frame). 하중 전달 스냅샷이면 ``_plan_loads(srcs=, placement=)`` 경로, 아니면 같은 실행기 직접."""
+    양쪽 frame = 기준 frame) — ``_plan_loads(srcs=, placement=)`` 한 경로."""
     srcs = [ltm.src_load(k, lfc["base"], F, frame=lfc["frame"]) for k, F in items]
-    if _lt(c) is not None:
-        return _plan_loads(c, lfc["plan"], lfc["did"], lfc["dst"], ("cell", _lf(c)["cell_mm"]), lfc["cache"], srcs=srcs,
-                           placement={"kind": "global"})
-    rp = {"identity": {"key": lfc["plan"]["identity"], "coord_tol_rel": c.coord_tol()}, "placement": {"kind": "global"}}
-    return ltm.run_transfer_plan(rp, srcs, lfc["dst"], _lf_method(c), lfc["cache"])
+    return _plan_loads(c, lfc["plan"], lfc["did"], lfc["dst"], ("cell", _lf(c)["cell_mm"]), lfc["cache"], srcs=srcs,
+                       placement={"kind": "global"})
 
 
 def _lf_prepare(c: Ctx, t, bmeta: dict, did: str, mesh: dict, loads_node: list, region) -> dict:
@@ -8131,7 +8136,7 @@ def _lf_baseline(c: Ctx, t, bmeta: dict, did: str, mesh: dict, sup: list, loads_
 def _lf_post(c: Ctx, m: dict) -> dict | None:
     """BD_POST result.json load_follow{mode, cell_mm, n_pos_vars, dF_max, dM_max, corr_rel_max, small_frac_max, d000_shift_rel}
     — 행렬 load_follow = spatial 일 때만(prep/load_follow.json 에서)."""
-    if c.scn == "compare" or m.get("load_follow") != "spatial":
+    if m.get("load_follow") != "spatial":
         return None
     p = c.p("prep", LF_JSON)
     d = U.read_json(p) if os.path.isfile(p) else {}

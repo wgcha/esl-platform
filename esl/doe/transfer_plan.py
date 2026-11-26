@@ -62,8 +62,8 @@ PLANS = {
                          "sm_jig": "none", "jig_fix": "grid", "jig_ctx": "shape", "bf": "none", "load_follow": "na"},
 }
 PLAN_COLS = ("dst", "reuse", "identity", "placement", "mask", "truth", "alt_designs", "sm_ref", "sm_disp", "sm_omega",
-            "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq", "sm_jig", "jig_fix", "jig_ctx", "bf",
-            "load_follow")
+            "sm_rank", "redrop", "bs_wpart", "bs_guard", "bs_route", "bs_mq", "sm_jig", "jig_fix", "jig_ctx", "bf")
+PLAN_COLS_ALL = PLAN_COLS + ("load_follow",)      # v0.24.9 PU 열(PLAN_COLS 위치 그대로 — 기존 위치 단언 불변)
 # v0.24.9 PU §2.2(esl_bead_pos_u.md): load_follow = var(행렬에 U 변수가 있으면 하중을 공간에 고정 — spatial, 없으면 node) |
 # na(이미 대상마다 전달 — 변수 없음·형상별). PLAN_VERSION·hash_view 불변(옛 스냅샷은 U 변수가 없어 항상 node).
 LOAD_FOLLOW = ("var", "na")
@@ -80,7 +80,7 @@ def plan_for(scenario: str, select_base: str | None = None) -> dict:
     if pid is None:
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 없음: {key}")
     row = PLANS[pid]
-    miss = [k for k in PLAN_COLS if row.get(k) in (None, "", ())]
+    miss = [k for k in PLAN_COLS_ALL if row.get(k) in (None, "", ())]
     if miss:                                     # 새 계획 행은 모든 열을 채움(빈 칸 = CONFIG_INVALID)
         raise EslError("CONFIG_INVALID", f"하중 전달 계획 {pid} 빈 열: {miss}")
     badv = [k for k, vs in BS_VALUES.items() if row[k] not in vs]
