@@ -25,7 +25,7 @@ Case 에 지그 결과가 있는 엔트리로 ④ 새 스터디(기준 형상 + 
 ```
 읽기 전용 진단 — 파일 쓰기·수정 금지, 계산이 필요하면 임시 폴더에서만.
 esl-platform 서버의 ④ 형상 직접 비교 스터디 #<번호> 에 대해 GET /doe/studies/<번호>/results 응답의 jig.grid 와 jig.methods.*.grid 를 표로 정리하세요.
-- jig.grid: cell_mm, n_shapes, n_shapes_failed, tie_miss_max, tie_area_ratio_min·max, k_scale_min·max, noise_floor, corr_rel_max, sample_outside_max, warnings.
+- jig.grid: cell_mm, n_shapes, n_shapes_failed, tie_miss_max, tie_area_ratio_min·max, k_scale_min·max, noise_floor, corr_rel_max, sample_outside_max, mesh(h_ref·h_min·h_max·tri_ref·tri_max·mismatch), warnings.
 - 방식별 grid: n_ok, n_failed, recon_mac_d000, recon_umax_err_d000, conv[{cell_mm, dpi_max, dumax_max, mac_min}], alpha.
 - 응답 warnings 중 code 가 JIG_GRID_ 로 시작하는 항목의 code 와 message 를 모두 적으세요.
 - 기존 스터디 데이터·설정·DB 는 바꾸지 마세요.
@@ -39,6 +39,8 @@ esl-platform 서버의 ④ 형상 직접 비교 스터디 #<번호> 에 대해 G
 | 수렴 ΔΠ(5 mm·10 mm, `conv`) | ΔΠ_5 ≤ 0.05(초과 시 `JIG_GRID_CONV` 정보) — 값을 적음 | |
 | `noise_floor` | 0.03 이상(= max(ΔΠ_5, 0.03)) — 순위 오차 범위 % 와 같음 | |
 | 합성 감각 점검 | 기준과 같은 형상을 다른 크기로 메시한 형상은 "오차 범위" 표식 | |
+| 메시 방식(`jig.grid.mesh`) | **기준 형상도 형상들과 같은 방식(같은 크기·같은 요소 종류)으로 메시해 넣었는가.** h_ref·h_min·h_max·tri_ref·tri_max 를 적음. mismatch 참이면 정보 `JIG_GRID_MESH_MISMATCH` 1줄·`noise_floor` ≥ 0.05 | |
+| 체결부 잡기 | **체결부(와셔 면·구멍 위치)가 Case 와 다른 형상은 지그 순위를 참고만.** 경고 `JIG_GRID_TIE_SNAP`(형상 수·최대 곳 수)·`JIG_GRID_TIE_MISS`·`JIG_GRID_AREA_RATIO` 가 있으면 문구와 형상을 적음(그 형상 행 경고 수 ≥ 1) | |
 
 ## ④ F-JG-3 — Case 에 지그 결과가 없을 때
 지그 변위·스프링 결과가 없는 Case(③ ESL 을 v0.24.4 이전에 실행했거나 지그 꺼짐)의 엔트리로 ④ 스터디를 실행한다.

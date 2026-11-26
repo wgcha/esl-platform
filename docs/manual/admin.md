@@ -655,7 +655,7 @@ $env:PGPASSWORD = $null
 - **설정 `bead_doe.rank.jig_grid`**(새 스터디 스냅샷 `doe.rank.jig_grid` 에 고정 — 진행 중·옛 스터디 불변, `rank.jig` 가 켜져 있을 때만):
   - `enabled`(true — false 면 새 ④·옛 ③ 스터디도 지그 ESL 을 계산하지 않음)·`cell_mm`(3.0 — 격자 칸, 해시 안)·`conv_mm`([5.0, 10.0] — d000 격자 크기 민감도 진단, 해시 밖, [] = 끔)
   - tie 잡기: `tie_capture_rel`(0.25)·`tie_snap_rel`(0.75)·`tie_normal_deg`(30)·`tie_miss_frac_max`(0.1 — 못 잡은 비 초과 = 그 형상 실패)·`sample_nbr`(1)·`sample_normal_deg`(45)
-  - 경고 문턱(해시 밖): `area_ratio_warn`(2.0)·`conv_warn`(0.05)·`frame_shift_warn`(0.5)·`load_resid_warn`(1e-6)·`noise_floor_min`(0.03 — 순위 "오차 범위" 하한)
+  - 경고 문턱(해시 밖): `area_ratio_warn`(2.0)·`conv_warn`(0.05)·`frame_shift_warn`(0.5)·`load_resid_warn`(1e-6)·`noise_floor_min`(0.03 — 순위 "오차 범위" 하한)·`noise_floor_mismatch`(0.05 — 기준 d000 과 메시 방식이 다른 형상이 있을 때 "오차 범위" 하한)·`mesh_h_ratio_warn`(1.25 — 요소 변 길이 중앙값 비)·`mesh_tri_frac_warn`(0.2 — 삼각형 요소 비율 차)
   - 같은 이름이 `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml` 에 있고, 코어 DEFAULTS·pydantic 과 시험으로 같음을 확인한다.
 - **비용**: 형상마다 분해 2회·해 2K개가 추가된다(계약 §8 — 50k/100k/150k 노드 약 50/120/220 s 외삽). 피크 메모리는 분해 1개분. 실제 시간은 현장 확인표에서 잰다.
 - **전제**: 엔트리 Case 의 `04_esl` 에 지그 변위·스프링 결과(v0.24.4 이후 ③ ESL)가 있어야 한다. 없으면 `JIG_GRID_SOURCE_MISSING` 경고와 함께 재풀이 순위. 서버는 Case 폴더·입력을 읽기만 한다.

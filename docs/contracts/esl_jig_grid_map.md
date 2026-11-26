@@ -126,6 +126,9 @@
 | `JIG_GRID_NO_REF` | 경고 | 형상·post | d000 격자 지그 실패·없음 → 그 방식 C_<pe> 기준 없음(안 null) |
 | (재사용) `JIG_SUPPORT_DEGENERATE`·`JIG_DESIGN_FAILED`·`JIG_FIT_POOR`(Case fit 값으로)·`JIG_LOAD_CANCEL` | 기존 | | 기존 뜻(실행기 예외 = `JIG_DESIGN_FAILED{did, err}`, 그 형상만) |
 | `JIG_GRID_RANK` | 정보 | post | 순위 = 격자 지그(다른 메시 — 매핑 진단 참고). 이때 `SM_CROSS_MESH`(solve 문구) 대신 |
+| `JIG_GRID_MESH_MISMATCH` | 정보 | post | (§17, JG-23) 기준 d000 과 메시 방식이 다른 형상 있음 — 요소 변 길이 중앙값 비 ∉ [1/`mesh_h_ratio_warn`, `mesh_h_ratio_warn`] 또는 삼각 비율 차 > `mesh_tri_frac_warn` → 격자 순위 noise_floor ≥ `noise_floor_mismatch`. 필드 {n_shapes, h_ref, h_min, h_max, tri_ref, tri_max}. 문구 "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요(차이 {noise_floor·100} % 이내는 오차 범위)" |
+| `JIG_GRID_TIE_SNAP` | 경고 | post | (§17, JG-24) 체결부 클러스터를 노드 1개로만 잡은(snap) 형상이 있음 — 필드 {n_shapes, n_clusters_max}. 문구 "… 체결부를 노드 1개로만 잡았습니다 — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요". 형상별은 `JIG_GRID_TIE_SNAP_SHAPE`{did, n}(안 result.json warnings — 순위 행 warnings_n) |
+| (스터디 요약) `JIG_GRID_TIE_MISS`·`JIG_GRID_AREA_RATIO` | 같음 | post | (§17, JG-24) 형상 코드를 최악 형상 1건씩 스터디 경고·`jig.grid.warnings` 에도(형상 문구 그대로 + did) |
 
 ### 1.5 매핑 오차 진단 (결과에 둠 — 실패 아님)
 형상마다 `run/designs/<did>/jig_grid.json map{…}`, 스터디 요약 = result.json `jig.grid`(최악값):
@@ -140,7 +143,7 @@
 
 ### 2.1 순수 모듈 `esl/mech/grid_map.py` (신규, 모드 무관)
 - import 허용: numpy · scipy.spatial(cKDTree) · scipy.sparse.csgraph · `esl.errors` · `esl.library.normalize`(frame·local_coords — numpy·esl.errors 만) · `esl.mech.{jig, jig_bc, kabsch, shell, bforce}`(bforce = recon_report 만). **금지**: `esl.doe.*`(load_transfer 포함), 파일 IO, 설정 해석(값은 키워드 인수), 시나리오·계획 이름. 정적 import 그래프 시험(V-0248-JG-19).
-- 상수: `SCHEMA = "esl/doe_jig_grid/1"`, `RUN_SCHEMA = "esl/doe_jig_grid_run/1"`, `VIA_BAND, VIA_SNAP = 1, 2`, `HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min")`.
+- 상수: `SCHEMA = "esl/doe_jig_grid/1"`, `RUN_SCHEMA = "esl/doe_jig_grid_run/1"`, `VIA_BAND, VIA_SNAP = 1, 2`, `HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min", "noise_floor_mismatch", "mesh_h_ratio_warn", "mesh_tri_frac_warn")`(뒤 3개 §17).
 
 | 함수 | 시그니처 · 뜻 |
 |---|---|
@@ -190,7 +193,7 @@
 - 순위 = 기존 BD-D-6(`stiffness_metric.score` 최악 엔트리 비) 그대로. 단조성 정리(같은 이산화)는 다른 메시에서 근사 — 수렴·매핑 진단으로 보임(§4).
 - **순위 출처 = ok 인 첫 방식**(D-0.24.8-JG-15): 지금 `_jig_rank_src(c)`(`stages.py:4202-4208`)는 스냅샷 방식 목록의 첫 방식 출처를 상태와 무관하게 돌려준다 — base 모드는 그대로 둔다(바이트 불변). grid 일 때만 출처 = 스냅샷 방식 순서에서 `_jg_ready(c, src)` 가 참인 첫 방식(기본 [prescribed, spring] → jig_disp, 없으면 jig_spring), 하나도 없으면 None → solve. 같은 값을 `_sm_post`(`:3405`)와 출처 행 need 조회(`:4977`)가 함께 쓴다(분기 = `_jg_kind` 값).
 - `_sm_post`: metric jig ∧ kind grid → jsrc = 위 출처, jig_ok = jsrc is not None, `metric_effective(plan, metric, jig_ok, kind="grid")` → "jig" → 출처 행 metric(jd 또는 js). 실패 = solve(지금 규칙).
-- **불확실 구간 표식**(D-0.24.8-JG-15): 격자 순위(metric_effective = jig ∧ kind grid)일 때 `rk.rank(noise_floor=nf)`, nf = max(방식·엔트리 최악 ΔΠ_5(§4.2 — conv_mm 중 가장 작은 크기, 기본 5 mm), `noise_floor_min`, 옛 ③ 의 기존 메시 잡음 바닥(NOISE 안 C_max 비 `stages.py:998-1004` — 있을 때만)). d000 수렴 진단이 없으면(conv_mm 빈 값·실패) ΔΠ_5 항을 뺀다. 이 값이 n_improved·all_improved 판정 tol 도 바꾸는 것은 의도(정렬 불변). 기존 장치 그대로: 행 `noise = |improvement| < nf`(`rank.py:224`), ESL별 개선 판정 tol = max(ratio_tol, nf)(`rank.py:102-105`·`:177` — n_improved·all_improved 도 같은 tol), 최상위 `noise_floor`·`ratio_tol`(`:253`). 정렬(score)은 불변. 같은 nf 를 격자 출처 보기(jd·js `_rank_view_one` `:4997`)에도 넘긴다. solve 대체 순위·base 모드·옛 스냅샷 = 지금 인수 그대로(④ `noise_floor=None` `:6055`, 옛 ③ 메시 잡음 바닥 `:998-1004`).
+- **불확실 구간 표식**(D-0.24.8-JG-15): 격자 순위(metric_effective = jig ∧ kind grid)일 때 `rk.rank(noise_floor=nf)`, nf = max(방식·엔트리 최악 ΔΠ_5(§4.2 — conv_mm 중 가장 작은 크기, 기본 5 mm), `noise_floor_min`, 옛 ③ 의 기존 메시 잡음 바닥(NOISE 안 C_max 비 `stages.py:998-1004` — 있을 때만), **기준 d000 과 메시 방식이 다른 형상이 있으면 `noise_floor_mismatch`**(§17, JG-23 — 메시 통계가 없는 옛 run 문서 = 항 없음)). d000 수렴 진단이 없으면(conv_mm 빈 값·실패) ΔΠ_5 항을 뺀다. 이 값이 n_improved·all_improved 판정 tol 도 바꾸는 것은 의도(정렬 불변). 기존 장치 그대로: 행 `noise = |improvement| < nf`(`rank.py:224`), ESL별 개선 판정 tol = max(ratio_tol, nf)(`rank.py:102-105`·`:177` — n_improved·all_improved 도 같은 tol), 최상위 `noise_floor`·`ratio_tol`(`:253`). 정렬(score)은 불변. 같은 nf 를 격자 출처 보기(jd·js `_rank_view_one` `:4997`)에도 넘긴다. solve 대체 순위·base 모드·옛 스냅샷 = 지금 인수 그대로(④ `noise_floor=None` `:6055`, 옛 ③ 메시 잡음 바닥 `:998-1004`).
 - 경고: grid 순위면 `SM_CROSS_MESH` 대신 정보 `JIG_GRID_RANK`, solve 면 `SM_CROSS_MESH` 그대로(옛 스냅샷 바이트 동일). 기존 solve 지표(per_esl C·score_solve·전 노드 탭)는 그대로 산출·표시(**함께 표시**).
 - 방식끼리 분해 공유 = 형상 안 pattern_sha 묶음(fixed·prescribed 1, spring 1 — 묶음 안 sp_k 는 같으므로(§1.2) 엔트리 수와 무관; 형상 tie 는 묶음 골격마다 잡으므로 묶음이 여럿이면 묶음마다 분해). ShellModel 조립·잡기·표본·하중 W 는 형상 안 모든 방식·엔트리 공유.
 - d000 지그 실패 → 그 방식 안 전부 null + `JIG_GRID_NO_REF` 1건, 첫 방식이면 순위 = solve.
@@ -240,10 +243,10 @@
 
 ## 6. 파일 · 스키마 · API (고정 필드명 — schemas.py ↔ types.ts `check:api`)
 - `prep/jig_grid.json`(`esl/doe_jig_grid/1`): {schema, status ok|fallback, code, cell_mm, placement{kind}, frame_sha, methods{src: {status, code, reason, method, tie_dofs, spring{k_mode, alpha, k_value}|null(Case 기록), entries[{entry_id, source, npz_sha256, fit_mac, fit_umax_err, recon_mac, C_mix, E, k_sum(스프링 출처 = Σ sp_k, 그 밖 null)}]}}, groups[{g, mesh_sha, spring{k_mode, alpha, k_value}|null, entry_ids, n_tie, n_clusters, h_T, n_vox, npz, sha256}], warnings, info, seconds}. `prep/jig_grid/g<k>.npz` = §1.2 키(`mg.save_npz_det`).
-- `run/designs/<did>/jig_grid.json`(`esl/doe_jig_grid_run/1`): {did, status, methods{src: {status, code, pattern_sha, shared_factor, entries[{entry_id, C_mix, E, W_F, W_g, R_sum, umax, umax_ev?, aux_reaction_rel, load{…}}]}}, map{tie(§1.5 — k_scale_min/max 포함), sample, frame_shift_mm, sup_shift_mm}, recon?(d000), conv?(d000), factor{n, seconds}, seconds}.
-- result.json `jig`(grid 만 — base 결과 바이트 불변): 기존 DoeJigOut 필드(status ok|poor|fallback, code, n_jig = A tie 점 수, fit_mac_min·fit_umax_err_max = Case fit 최악, region_source null …) + **`transfer: "grid"`** + **`grid`**{cell_mm, n_groups, n_shapes, n_shapes_failed, tie_miss_max, tie_area_ratio_min, tie_area_ratio_max, k_scale_min, k_scale_max(스프링 없으면 null), noise_floor(격자 순위에 넘긴 nf — solve 대체면 null), load_dF_max, load_dM_max, corr_rel_max, small_frac_max, frame_shift_max_mm, sample_outside_max, warnings[]} + `tie_dofs` + `methods{src: {기존 DoeJigMethodOut 필드, grid{n_ok, n_failed, case_recon_mac_min, recon_mac_d000, recon_umax_err_d000, alpha, conv[{cell_mm, dpi_max, dumax_max, mac_min}]}}}`. status poor = Case fit 이 JIG_FIT_POOR 기준 미달(기존 기준).
-- 스키마(B1): `DoeJigOut += transfer: Literal["base","grid"] | None = None`, `grid: DoeJigGridOut | None = None`; `DoeJigMethodOut += grid: DoeJigGridMethodOut | None = None`; `DoeResultOut.jig_plan: Literal["base","grid","none"] | None`. types.ts 같은 이름. openapi 재생성.
-- `jig_plan` = `tp.jig_kind(plan, grid_snap)`(스냅샷 doe.rank 의 jig·jig_grid enabled) — **옛 스냅샷 = "none" 그대로**. `jig_on_clone`: 지금 규칙 + jig_plan none ∧ 계획 jig_fix grid 이면 = 설정 rank.jig.enabled ∧ rank.jig_grid.enabled(옛 ④·옛 ③ 응답에서 null → 참/거짓 — 의도된 API 변경, 산출물 불변).
+- `run/designs/<did>/jig_grid.json`(`esl/doe_jig_grid_run/1`): {did, status, methods{src: {status, code, pattern_sha, shared_factor, entries[{entry_id, C_mix, E, W_F, W_g, R_sum, umax, umax_ev?, aux_reaction_rel, load{…}}]}}, map{tie(§1.5 — k_scale_min/max 포함), sample, frame_shift_mm, sup_shift_mm}, recon?(d000), conv?(d000), factor{n, seconds}, **mesh{h, tri_frac}**(§17 — `grid_map.mesh_stats`: 요소 변 길이 중앙값 mm·삼각형 요소 비율), seconds}.
+- result.json `jig`(grid 만 — base 결과 바이트 불변): 기존 DoeJigOut 필드(status ok|poor|fallback, code, n_jig = A tie 점 수, fit_mac_min·fit_umax_err_max = Case fit 최악, region_source null …) + **`transfer: "grid"`** + **`grid`**{cell_mm, n_groups, n_shapes, n_shapes_failed, tie_miss_max, tie_area_ratio_min, tie_area_ratio_max, k_scale_min, k_scale_max(스프링 없으면 null), noise_floor(격자 순위에 넘긴 nf — solve 대체면 null), load_dF_max, load_dM_max, corr_rel_max, small_frac_max, frame_shift_max_mm, sample_outside_max, warnings[](prep 정보 + §17 스터디 요약 문구), **mesh**{h_ref, h_min, h_max, tri_ref, tri_max, mismatch} | null(§17 — d000 메시 통계 없음 = null)} + `tie_dofs` + `methods{src: {기존 DoeJigMethodOut 필드, grid{n_ok, n_failed, case_recon_mac_min, recon_mac_d000, recon_umax_err_d000, alpha, conv[{cell_mm, dpi_max, dumax_max, mac_min}]}}}`. status poor = Case fit 이 JIG_FIT_POOR 기준 미달(기존 기준).
+- 스키마(B1): `DoeJigOut += transfer: Literal["base","grid"] | None = None`, `grid: DoeJigGridOut | None = None`(§17: `DoeJigGridOut.mesh: DoeJigGridMeshOut | None`); `DoeJigMethodOut += grid: DoeJigGridMethodOut | None = None`; `DoeResultOut.jig_plan: Literal["base","grid","none"] | None`. types.ts 같은 이름. openapi 재생성.
+- `jig_plan` = `tp.jig_kind(plan, grid_snap)`(스냅샷 doe.rank 의 jig·jig_grid enabled) — **옛 스냅샷 = "none" 그대로**. `jig_on_clone`: 지금 규칙 + jig_plan none ∧ 계획 jig_fix grid 이면 = 설정 rank.jig.enabled ∧ rank.jig_grid.enabled(옛 ④·옛 ③ 응답에서 null → 참/거짓 — 의도된 API 변경, 산출물 불변). **결과에 코어 지그 블록이 있어도**(옛 ④·옛 ③ 의 `jig{status: unsupported}`) 같은 규칙으로 낸다(§17, JG-21).
 - `rank_snapshot(c)`: rank.jig 가 있고 설정 `rank.jig_grid.enabled` 면 `jig_grid` = 설정 블록 사본(schema 값 불변 — 블록 안 `schema: 1`). 모든 시나리오에 넣고 코어가 계획으로 무시(base 모드 해시 불변).
 
 ---
@@ -267,6 +270,9 @@
 | frame_shift_warn | 0.5 | > 0(× cell_mm) | 밖 |
 | load_resid_warn | 1.0e-6 | > 0 | 밖 |
 | noise_floor_min | 0.03(D-0.24.8-JG-20) | [0, 0.2] | 밖(표시 판정 — 정렬 불변, §3) |
+| noise_floor_mismatch | 0.05(§17, JG-23) | [0, 0.2] | 밖(표시 판정) |
+| mesh_h_ratio_warn | 1.25 | > 1 | 밖 |
+| mesh_tri_frac_warn | 0.2 | (0, 1] | 밖 |
 - 방식 = 스냅샷 rank.jig.methods, kink·dup = rank.jig.normal_kink_deg·aux321_dup_deg, tie_dofs = **Case 값**(`prep/jig_grid.json` 기록, 스냅샷 rank.jig.tie_dofs 와 다르면 정보 문구 1줄 — 코드 없이 jig.grid.warnings). 스프링 k = Case sp_k(§1.3-6) — 스냅샷·설정의 spring_k_mode·spring_alpha·spring_k_value 는 격자 경로에서 읽지 않는다(Case 값은 기록만).
 
 ### 7.2 해시
@@ -387,3 +393,10 @@
 - 합성 측정(코어, 기준 Case h 5 ↔ 형상 h 3 메시만 다름): 개선율 ≈ 2.0 % < noise_floor 3 % → noise 표식(시험 `test_case_mesh_ref_vs_h3_remesh_gets_noise_mark`). 같은 h 3 ↔ h 3 은 −1.2e-3(JG-18).
 - 시험: 코어 `tests/doe/test_jig_grid_*.py`·`tests/mech/test_grid_map.py`, 백엔드 `test_doe_v0248_b1_api.py`·`test_doe_v0248_core_e2e.py`, 프런트 `jig_grid.test.tsx`.
 
+## 17. 독립 검증 수정 (2026-11-26, D-0.24.8-JG-21~25)
+- **옛 ④·옛 ③ 안내(JG-21, 검증 Fail)**: 코어는 옛 스냅샷(rank.jig 있음)에 `jig{status: unsupported}` 블록을 쓴다 → 백엔드 `jig_on_clone` 은 블록이 없거나 unsupported 이거나 jig_plan none ∧ jig_fix grid 이면 §6 규칙으로 계산, `JIG_GRID_ON_CLONE` 1줄·탭 문구(§5)가 실제 결과에서 나온다. 시험 = 실제 코어 형태 픽스처(백엔드 `test_doe_v0248_core_e2e.py`, 프런트 목 `withOldGridSnapshot` doe-62/63).
+- **이름 분기 제거(JG-22)**: `_post_view3d` 메시 잡음 바닥 = 계획 열 `dst == "design"`. 정적 시험 범위 = stages.py 전체 이름 비교 줄 동결(v0.24.7 머지 헤드) + v0.24.8 추가 줄 전체(git diff).
+- **메시 차이 표식(JG-23)**: §1.4 `JIG_GRID_MESH_MISMATCH`, §3 nf 식 항 추가, §6 `mesh`, §7.1 3키. 구현 = `grid_map.mesh_stats(mesh) -> {h, tri_frac}`(h = 요소 변(중복 제거) 길이 중앙값, tri_frac = 비쿼드 요소 비)·`grid_map.mesh_mismatch(ref, stats, *, h_ratio_warn, tri_frac_warn)`(경계 = 범위 안), `_jg_apply` 가 형상 run 문서에 `mesh`, `_jg_mesh_sum(runs, cfg)`(d000 대비 — d000 통계 없음 = None) 를 `_jg_nf`·`_jg_post` 가 같이 씀. noise_floor 는 격자 순위일 때만 바뀌고(정렬 불변) 코드는 격자 스터디에서 메시 차이가 있으면 낸다(solve 대체여도 — 같은 치우침).
+- **체결부 잡기 요약(JG-24)**: `_jg_study_warns` — `JIG_GRID_TIE_SNAP`{n_shapes, n_clusters_max}, `JIG_GRID_TIE_MISS`·`JIG_GRID_AREA_RATIO` 최악 형상 1건(필드 did …) → result.json warnings(구조화 행)·`jig.grid.warnings`(문자열). 형상별 `JIG_GRID_TIE_SNAP_SHAPE` = 안 result.json warnings(순위 행 warnings_n). 새 열·영역 없음.
+- **문구(JG-25)**: rank_note·JIG_GRID_RANK "{방식} 방식으로", rank_note 원본 = `doe_messages.json` JG_RANK_NOTE_NEXT·JG_RANK_NOTE_SOLVE, AREA_RATIO 배율 3자리, 격자 순위 정의 = `GRID_TEXT.jigDef`(영역 문구 없음).
+- 현장 안내: 기준 형상도 형상들과 같은 방식(같은 크기·같은 요소 종류)으로 메시해 넣는다. 체결부(와셔 면·구멍 위치)가 Case 와 다른 형상은 지그 순위를 참고만 한다.
