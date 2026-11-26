@@ -471,6 +471,11 @@ class View3dSupport(_Out):
     vertex: int
     dof: str
     x0: list[float]
+    # v0.24.9 BM(esl_bead_pos_u.md §10.2): 지그 지지 표식의 방식별 자료 — kind(tie_fixed|tie_disp|tie_spring|aux_inplane|support321)·
+    # dirs(구속 방향 단위벡터 목록)·val(tie_fixed 0 · tie_disp·aux_inplane 방향별 값 목록 · tie_spring {k[], g[]}). 옛 파일 = null(dof 로 그림)
+    kind: str | None = None
+    dirs: list[list[float]] | None = None
+    val: Any | None = None
 
 
 class View3dOut(_Out):
@@ -1954,6 +1959,8 @@ class DoeSettingsOut(_Out):
     select_reason: str | None = None                # v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED), null = 사용 가능
     select: dict[str, Any] | None = None           # v0.15.0 {enabled, reason, feature_angle_deg, max_beads, max_tiers, blend{min_mm, max_mm}}
     depth_section: Literal["entry_fixed", "floor_fixed"] | None = None   # v0.24.7 DM 새 스터디 기본 깊이 단면 동작(설정 bead_doe.depth_section)
+    pos_u: dict[str, Any] | None = None             # v0.24.9 PU 새 스터디 기본(설정 bead_doe.pos_u: {enabled, range_rel, max_rel, gap_rel, hold_frac_max})
+    load_follow: dict[str, Any] | None = None       # v0.24.9 PU 하중 공간 고정 설정 {cell_mm, noise_floor_min}
     depth_section_notes: dict[str, str] | None = None   # v0.24.7 복제 창 안내 문구 {DS_CLONE_NOTE, DS_CLONE_NOTE_ENTRY({n}·{names} 자리), DS_CLONE_NOTE_ENTRY_NONE}
 
 
@@ -2001,6 +2008,8 @@ class DoeStudyOut(_Out):
     #                                                 v0.24.7 DM select: + depth_section("floor_fixed" | null — DB 는 floor_fixed 만 키,
     #                                                 옛·입구 고정 = null → 화면 "입구 고정(이전)"), depth_section_rules?(floor_fixed 만),
     #                                                 spec_prefill(복제만 값 — 원 doe.spec, 없으면 null, §6.1)
+    #                                                 v0.24.9 PU select: + pos_u({schema, range_rel, max_rel, gap_rel, hold_frac_max} | null — 옛 스터디 null =
+    #                                                 U 행 없음), load_follow({schema, cell_mm} | null — 옛 null = node 경로)
     phase: DoePhaseLit
     version: int
     # select: {n_nodes, n_elems, fixed, auto?, select_base?, graph?} + v0.18.0 step 기준(esl_step_graph.md §4.2):
@@ -2022,6 +2031,8 @@ class DoeStudyOut(_Out):
 class DoeParamsOut(_Out):
     # v0.24.7 DM: beads[] += w_reason{code, text}|null(그래프 비드 W 사용 불가 사유 — 옛 스터디도 응답 때 계산, §4.3),
     # params[] D 행 += section{mode, cot_deg, applied, reason?}(floor_fixed 만), W 행 += w_side "one"(W1 만)
+    # v0.24.9 PU(esl_bead_pos_u.md §1.3·§4): params[] U 행 {name B<n>_U, type "U", nominal 0, unit "mm", feasible[lo,hi], feasible_source, default_range,
+    # use_default false, dir{xi,eta}, dir_text, w_ref, guard?, group_signs?}, beads[] += u_reason{code, text}|null(행 없을 때 — 새 스냅샷만 값, 옛 = null)
     beads: list[dict[str, Any]]
     params: list[dict[str, Any]]
     warnings: list[dict[str, Any]] = Field(default_factory=list)
@@ -2047,6 +2058,7 @@ class DoePlanOut(_Out):
 class DoeMatrixOut(_Out):
     spec: dict[str, Any]
     matrix_sha256: str
+    load_follow: Literal["node", "spatial"] | None = None    # v0.24.9 PU §2.2: 이 행렬의 하중 경로(U 변수 있음 = spatial). 코어가 안 주면 null
     designs: list[dict[str, Any]]
     n_designs: int
     dropped_duplicates: int
@@ -2360,7 +2372,9 @@ class DoeResultOut(_Out):
     per_esl_inline: bool = False
     esl: list[dict[str, Any]] = Field(default_factory=list)
     sort: str = "score"
-    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)      # v0.24.9 PU: + LOAD_FOLLOW_SPATIAL{cell_mm, n_pos_vars}·PU_*(PU_PARTIAL·PU_LIN_SKIPPED …) 코어 코드 그대로
+    # v0.24.9 PU §2.3: 하중 공간 고정 진단 {mode, cell_mm, dF_max, dM_max, corr_rel_max, small_frac_max, d000_shift_rel} — node 스터디·옛 결과 = null
+    load_follow: dict[str, Any] | None = None
     # v0.16.1 select(esl_select_relax.md SR-D-11): {best_clean: 경고 없는 최상위 안 id | null}. ranking 행 warn[] 은 행 dict 안
     summary: dict[str, Any] | None = None
     # v0.20.0 하중 전달 진단 요약(esl_load_transfer.md §5·§13.7, 모든 시나리오): {method, cell_size_mm, support?, region_mode?, alt{method, cell_size_mm}|null,
