@@ -2796,12 +2796,17 @@ export class DoeMock {
           const ratio = bfOf && row?.umax ? row.umax / (pp.pk === "bf" ? 1.9 : 2.2) : 1;
           return ok({ ...m, key: `${m.key}-${did}`, ranges: { ...m.ranges, u_max: m.ranges.u_max * 0.05 * ratio }, geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
         }
-        const jigOf = Object.entries(res?.view3d_jig ?? {}).find(([, v]) => v === did)?.[0] ?? null;
-        const jigRefE = Object.entries(res?.view3d_jig_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null;
+        // 지그 응답 3D 키 3종: jig(v0.23.2) · jd·js(v0.24.6 — v0.24.8 격자 ④ 포함). 키 이름만 다르고 만드는 방식 같음
+        const jk = (["jig", "jd", "js"] as const).find((k) => Object.values((res?.[`view3d_${k}`] as Record<string, string> | null | undefined) ?? {}).includes(did) || Object.values((res?.[`view3d_${k}_ref`] as Record<string, string> | null | undefined) ?? {}).includes(did)) ?? "jig";
+        const jigMap = (res?.[`view3d_${jk}`] as Record<string, string> | null | undefined) ?? {};
+        const jigRefMap = (res?.[`view3d_${jk}_ref`] as Record<string, string> | null | undefined) ?? {};
+        const jigEslMap = (res?.[`view3d_${jk}_esl`] as Record<string, string> | null | undefined) ?? {};
+        const jigOf = Object.entries(jigMap).find(([, v]) => v === did)?.[0] ?? null;
+        const jigRefE = Object.entries(jigRefMap).find(([, v]) => v === did)?.[0] ?? null;
         if (!res?.view3d.includes(did) && !isRef && !jigOf && !jigRefE) return err(404, "NOT_FOUND", "3D 자료가 없습니다.");
         const src = jigOf ?? (jigRefE ? "d000" : did);
         const row = res!.ranking.find((x) => x.id === src);
-        const eid = jigOf ? res!.view3d_jig_esl?.[jigOf] ?? null : jigRefE ?? (isRef ? Object.entries(res!.view3d_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null : row?.worst_entry_id ?? res!.esl?.[0]?.entry_id ?? null);
+        const eid = jigOf ? jigEslMap[jigOf] ?? null : jigRefE ?? (isRef ? Object.entries(res!.view3d_ref ?? {}).find(([, v]) => v === did)?.[0] ?? null : row?.worst_entry_id ?? res!.esl?.[0]?.entry_id ?? null);
         const m = mockView3d().manifest(eid ?? `doe-${rec.out.id}-${did}`);
         const jigView = !!(jigOf || jigRefE);
         const ratio = (row ? row.umax / res!.baseline.umax : 1) * (jigView ? 0.12 : 1);
