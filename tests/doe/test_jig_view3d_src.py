@@ -20,7 +20,7 @@ ranking.csv·designs.json·안 result.json·post/jig_view.json(새 키 ``NEW_SID
 |---|---|---|
 | 코어 스터디 jd·js 3D | ``esl.mech.jig_bc.support_marks`` → ``esl.mech.jig.support_sample`` | 최원점, 첫 점 = 가장 작은 인덱스, 동률 = 작은 인덱스 |
 | 백엔드 Case 지그 3D | ``api/services/view3d._jig_supports`` → ``jig_support_sample`` | 같은 정의(백엔드는 scipy 끄는 모듈을 import 하지 않아 사본) |
-| 코어 스터디 고정 3D | ``stages._jig_view3d`` → ``jig.support_sample(jig_idx)`` | 지그 노드 전부 '123'(면내 'ij' 없음 — v0.23.2 그대로, 통일 = R-VW-3) |
+| 코어 스터디 고정 3D | ``stages._jig_view3d`` → ``_jig_support_rows`` → ``jig_bc.support_rows`` | v0.24.9 INT-5: jd·js·Case 와 같은 함수(BC 배열 없는 옛 jig.npz = 지그 노드 전부 '123') |
 """
 from __future__ import annotations
 
@@ -53,6 +53,10 @@ RECORD = os.environ.get("ESL_GOLDEN_RECORD_V0246C1") == "1"
 NEW_SIDE_KEYS = ("view3d_jd", "view3d_jd_esl", "view3d_jd_ref", "view3d_js", "view3d_js_esl", "view3d_js_ref",
                  "view3d_src_seconds")
 POST_FILES = ("post/result.json", "post/per_esl.json", "post/ranking.csv", "post/designs.json")
+# v0.24.9 INT-5(계약 esl_bead_pos_u.md §10.6): BC 배열이 있는 prep/jig.npz(v0244 — normal·지그 고정)의 지그 고정 3D 표식 = 코어 support_rows
+# (tie_fixed 법선 + aux 면내)로 바뀜 — 그 manifest 만 골든 바이트 비교에서 빼고 test_fixed_3d_marks_int5 가 BC 배열 대비로 확인.
+# 옛 단일 경로(v0243 — translation, BC 배열 없음)는 manifest 까지 바이트 동일.
+INT5_MARKS_CHANGED = {"v0244": re.compile(r"^post/view3d/d\d{3}_jig(_e\d+)?/manifest\.json$")}
 
 
 def _jig_v0244():
@@ -137,12 +141,95 @@ def test_golden_bytes_vs_main_8c4f3477(runs):
             got = rec["scenarios"][n][phase]
             assert sorted(got) == sorted(g[phase]), (n, phase, set(got) ^ set(g[phase]))
             if same_env:
-                diff = [k for k in g[phase] if got[k] != g[phase][k]]
+                skip = INT5_MARKS_CHANGED.get(n)
+                diff = [k for k in g[phase] if got[k] != g[phase][k] and not (skip and skip.match(k))]
                 assert not diff, (n, phase, diff)
     old = runs["v0243"]
     for side in (old["side_post"], old["side_regen"]):
         assert not set(NEW_SIDE_KEYS) & set(side)
     assert not [d for d in os.listdir(os.path.join(old["outr"], "post", "view3d")) if d.endswith(("_jd", "_js"))]
+
+
+# ---------------------------------------------------------------- v0.24.9 INT-5: 세 방식 × (스터디 3D·Case 3D) 표식 = npz BC 배열
+def _case_rows(tmp_path, bc: dict, x0, nid, smax, src):
+    """백엔드 Case 3D 표식(services/view3d._jig_supports — load npz 의 BC 배열 = 그 엔트리 값)."""
+    from esl_platform.api.services import view3d as bv
+    p = str(tmp_path / f"case_{src}_{len(os.listdir(tmp_path))}.npz")
+    np.savez(p, **{k: np.asarray(v) for k, v in bc.items()})
+    inp = types.SimpleNamespace(support_npz=p, row={"key": src}, ctx=types.SimpleNamespace(settings=types.SimpleNamespace(
+        bead_doe=types.SimpleNamespace(view3d=types.SimpleNamespace(jig_support_max=smax)))))
+    return bv._jig_supports(inp, nid, np.asarray(x0, np.float64))
+
+
+def _bc_rows_ok(sup, z, k, nid0):
+    """manifest supports 행 하나하나 = prep/<src>.npz 엔트리 k 의 BC 행(방향·값) — 반환 (tie kind 집합, aux 행 수)."""
+    from esl.mech import jig_bc
+    idx = {int(n): i for i, n in enumerate(nid0)}
+    b = stg._jig_bc_of(z, k)
+    bn, bk, bd, bv_ = b["bc_node"], b["bc_kind"], b["bc_dir"], b["bc_val"]
+    sn, sd, sk, sg = b["sp_node"], b["sp_dir"], b["sp_k"], b["sp_g"]
+    kinds, naux = set(), 0
+    for r in sup:
+        i, D = idx[int(r["node_id"])], np.asarray(r["dirs"], float).reshape(-1, 3)
+        if r["kind"] == "aux_inplane":
+            rr = np.flatnonzero((bn == i) & (bk == jig_bc.KIND_AUX))
+            assert r["dof"] == jig_bc.MARK_AUX and np.allclose(bd[rr], D, atol=1e-6) and np.allclose(bv_[rr], r["val"], atol=1e-6)
+            naux += 1
+            continue
+        assert r["dof"] == jig_bc.MARK_TIE
+        kinds.add(r["kind"])
+        if r["kind"] == "tie_spring":
+            rr = np.flatnonzero(sn == i)
+            assert not np.any((bn == i) & (bk == jig_bc.KIND_TIE))
+            assert np.allclose(sd[rr], D, atol=1e-6) and np.allclose(sk[rr], r["val"]["k"], rtol=1e-6)
+            assert np.allclose(sg[rr], r["val"]["g"], atol=1e-6)
+        else:
+            rr = np.flatnonzero((bn == i) & (bk == jig_bc.KIND_TIE))
+            want = np.zeros(rr.size) if r["kind"] == "tie_fixed" else np.asarray(r["val"], float)
+            assert rr.size == len(D) and np.allclose(bd[rr], D, atol=1e-6) and np.allclose(bv_[rr], want, atol=1e-6)
+    return kinds, naux
+
+
+def test_fixed_3d_marks_int5(runs, tmp_path):
+    """INT-5: 지그 고정(src jig, tie_dofs normal)·강제 변위·스프링 × 스터디 3D(BD_POST·다시 만들기)·Case 3D(백엔드 _jig_supports) 표식이
+    같은 코어 support_rows 행 = npz BC 배열(고정 = tie_fixed 법선 1방향 val 0 + aux 면내). 옛 '123'(kind 없음)·"다시 만들기" 안내 조건 없음.
+    옛 단일 경로(v0243 translation — BC 배열 없는 jig.npz) = 옛 {node_id, dof '123'} 그대로."""
+    from esl.mech import jig_bc
+    r = runs["v0244"]
+    want = {"jig": "tie_fixed", "jig_disp": "tie_disp", "jig_spring": "tie_spring"}
+    mesh0 = dict(stg.sc.load_base(os.path.join(r["out"], "prep"))[0].mesh)
+    nid0 = np.asarray(mesh0["node_id"], dtype=np.int64)
+    smax = int(stg.Ctx(_spec(r["out"], r["doe"])).cfg["view3d"]["jig_support_max"])
+    for out, side in ((r["out"], r["side_post"]), (r["outr"], r["side_regen"])):
+        res = U.read_json(os.path.join(out, "post", "result.json"))
+        for key, kind in want.items():
+            row = _row(key) if key != "jig" else next(s_ for s_ in stg.RANK_SOURCES if s_["key"] == key)
+            kd, ke, kr = row["v3d"]
+            store = res if row["v3d_store"] == "result" else side
+            z = U.load_npz(os.path.join(out, "prep", f"{key}.npz"))
+            assert all(n in z for n in stg.JIG_BC_PATTERN + stg.JIG_BC_VALUES), key
+            zeids = [str(e) for e in z["entry_ids"].tolist()]
+            names = [(nm, store[ke][d]) for d, nm in store[kd].items()] + [(nm, e) for e, nm in store[kr].items()]
+            assert names, key
+            for nm, e in names:
+                sup = U.read_json(os.path.join(out, "post", "view3d", nm, "manifest.json"))["supports"]
+                assert sup and all({"kind", "dirs", "val"} <= set(s_) for s_ in sup), (key, nm)
+                kinds, naux = _bc_rows_ok(sup, z, zeids.index(e), nid0)
+                assert kinds == {kind} and naux >= 1, (key, nm, kinds, naux)
+                if kind == "tie_fixed":
+                    assert all(len(s_["dirs"]) == 1 and s_["val"] == 0.0 for s_ in sup if s_["kind"] == kind)   # 법선만
+                if nm.startswith(stg.BASELINE):                     # 기준 = 기준 메시 — Case 3D(같은 엔트리 BC) 와 같은 행
+                    b = stg._jig_bc_of(z, zeids.index(e))
+                    keys = ("node_id", "dof", "kind", "dirs", "val")             # manifest 는 build_view 가 vertex·x0 를 덧붙임
+                    assert _case_rows(tmp_path, b, mesh0["x0"], nid0, smax, key) == [{k_: s_[k_] for k_ in keys} for s_ in sup], \
+                        (key, nm)
+    old = runs["v0243"]
+    zo = U.load_npz(os.path.join(old["out"], "prep", stg.JIG_NPZ))
+    assert "bc_val" not in zo
+    for nm in os.listdir(os.path.join(old["out"], "post", "view3d")):
+        if "_jig" in nm:
+            sup = U.read_json(os.path.join(old["out"], "post", "view3d", nm, "manifest.json"))["supports"]
+            assert sup and all("kind" not in s_ and s_["dof"] == jig_bc.MARK_TIE for s_ in sup)   # 옛 행(바이트는 골든)
 
 
 # ---------------------------------------------------------------- V-17 _jig_view3d_src
@@ -405,7 +492,7 @@ def test_no_source_name_branch_in_src_3d_code():
     names = "|".join(list(jig_bc.METHODS) + list(jig_bc.TIE_DOFS) + list(view3d_src.KEYS) + tags)
     pat = re.compile(rf"""(==|!=|\bin\b)\s*\(?\s*["']({names})["']""")
     for fn in (stg._jig_view3d, stg._jig_view3d_src, stg._jig_v3d_build, stg._jig_v3d_sidecar, stg._jig_src_carry,
-               stg._jig_extras, stg._post_view3d, jig_bc.support_marks):
+               stg._jig_extras, stg._post_view3d, jig_bc.support_marks, stg._jig_support_rows):
         assert not pat.findall(inspect.getsource(fn)), fn.__name__
 
 
