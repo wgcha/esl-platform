@@ -40,7 +40,8 @@ def test_table_shape_and_status():
             assert "depth_mm" not in c                                                         # 개정 3
     for c in t["cells"]:
         if c["c_err_pct"] is not None:
-            assert c["r"] == pytest.approx(min(c["h"], vbm.r_cap(sv.W_TOP, min(c["theta"], 59.99), c["d"])), abs=1e-3)
+            want = min(c["h"], vbm.r_cap(sv.W_TOP, min(c["theta"], 59.99), c["d"]))        # h = 측정 중앙값(격자 짝수 나눔 ≈ h)
+            assert c["r"] == pytest.approx(want, rel=0.01)
             assert c["warp_n"] >= 0 and c["warp_max_deg"] >= 0
 
 
