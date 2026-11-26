@@ -34,7 +34,7 @@ METHOD_SOURCES_PATH = os.path.join(RESOURCES, "doe_method_sources.json")
 
 SCENARIOS = ("same", "mesh", "step", "compare", "select")      # v0.14.0 ④ compare, v0.15.0 select(esl_bead_select.md)
 METHODS = ("lhs", "halton", "fullfact")
-PARAM_TYPES = ("D", "W", "U", "V")
+PARAM_TYPES = ("D", "W", "U", "V", "A")
 SOLVERS = ("linear",)
 
 # 안 상태 (§9.2)
@@ -264,6 +264,13 @@ DEFAULTS: dict = {
     # doe.load_follow{schema, cell_mm}; noise_floor_min 은 해시 밖·설정값으로 읽음)
     "pos_u": {"enabled": True, "range_rel": 0.25, "max_rel": 0.5, "gap_rel": 0.5, "hold_frac_max": 0.2},
     "load_follow": {"cell_mm": 3.0, "noise_floor_min": 0.01},
+    # v0.25.0 VB(esl_virtual_bead.md §7.1 — pydantic BeadDoeVirtualBeadCfg·두 yaml 거울, 같은 이름): 가상 비드("추가 비드", 변수 종류
+    # A — 공칭 0 = 지금 형상). 새 select 그래프 스터디 스냅샷 doe.virtual_bead{schema 1, 해시 안 키}에만 복사(블록 없는 옛 스터디 = VB_SCOPE).
+    # 해시 안: min_wall_elems·margin_mm·theta_default_deg·theta_range_deg·warp_max_deg, 밖: enabled·max_count·d_max_limit_mm·default_on·
+    # preview_max_nodes
+    "virtual_bead": {"enabled": True, "max_count": 4, "min_wall_elems": 2.0, "margin_mm": 3.0, "theta_default_deg": 45.0,
+                     "theta_range_deg": [15.0, 75.0], "d_max_limit_mm": 30.0, "default_on": True, "warp_max_deg": 15.0,
+                     "preview_max_nodes": 50000},
     # v0.22.0 REDROP(esl_redrop_bundle.md §6) — 재낙하 입력 묶음 받기(pydantic BeadDoeRedropCfg·두 yaml 거울 — 같은 이름)
     "redrop": {"enabled": True, "name_max_chars": 40, "tmp_ttl_s": 3600, "base_coord_tol_mm": 0.0},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —

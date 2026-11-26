@@ -1644,7 +1644,8 @@ def _compact(idx: np.ndarray, vec: np.ndarray, n: int) -> dict:
 
 
 def morph(x0, B: Basis, values: dict) -> np.ndarray:
-    """x_d = x0 + Σ (v − v_nom)·B_v. values 에 없는 변수 = 공칭. 같은 값 → 그 변수 건너뜀(바이트 불변)."""
+    """x_d = x0 + Σ 항(v)(linear = (v − v_nom)·B_v, hinge = v0.25.0 가상 비드 — ``esl.morph.core.basis_term``). values 에 없는 변수 =
+    공칭. 같은 값 → 그 변수 건너뜀(바이트 불변)."""
     X = np.array(x0, dtype=np.float64, copy=True)
     for v in B.vars:
         if v["name"] not in values:
@@ -1652,7 +1653,8 @@ def morph(x0, B: Basis, values: dict) -> np.ndarray:
         dv = float(values[v["name"]]) - float(v["nominal"])
         if dv == 0.0 or v["idx"].size == 0:
             continue
-        X[v["idx"]] += dv * v["vec"]
+        idx, du = _mc.basis_term(v, values[v["name"]])
+        X[idx] += du
     return X
 
 
@@ -1687,7 +1689,7 @@ def fixed_violation_detail(x0, x, fixed_mask_or_idx, B: "Basis", values: dict, t
         hit = np.isin(v["idx"], bad)
         if not hit.any():
             continue
-        m = np.linalg.norm(dv * v["vec"][hit], axis=1)
+        m = np.linalg.norm(_mc.basis_term(v, values[v["name"]])[1][hit], axis=1)
         k = m > tol
         if k.any():
             rows.append({"name": v["name"], "bead": v["bead"], "n": int(k.sum()), "max_mm": round(float(m.max()), 4)})
@@ -1894,6 +1896,11 @@ def save_basis(path: str, B: Basis, guard=None) -> str:
            "vec": (np.vstack([v["vec"] for v in B.vars]) if B.vars else np.zeros((0, 3))).astype(np.float64),
            "meta": np.asarray([B.n_nodes], dtype=np.int64),
            "selection_sha256": np.asarray([B.selection_sha256], dtype="U64")}
+    if any(v.get("form") == "hinge" for v in B.vars):  # v0.25.0 VB §4.2: hinge 변수가 있을 때만(없으면 키·바이트 그대로)
+        arr["form"] = np.asarray([v.get("form", "linear") for v in B.vars], dtype="U6")
+        arr["g"] = (np.concatenate([np.asarray(v["g"], np.float64) if v.get("form") == "hinge"
+                                    else np.zeros(v["idx"].size) for v in B.vars])).astype(np.float64)
+        arr["c"] = np.asarray([float(v.get("c") or 0.0) for v in B.vars], dtype=np.float64)
     save_npz_det(g(path), arr)
     return path
 
@@ -1907,17 +1914,22 @@ def load_basis(path: str) -> Basis:
         vars_.append({"name": name, "type": str(a["types"][i]), "bead": str(a["beads"][i]),
                       "nominal": float(a["nominal"][i]), "R": float(a["R"][i]), "n_hat": a["n_hat"][i],
                       "idx": a["idx"][s:e], "vec": a["vec"][s:e]})
+        if "form" in a and str(a["form"][i]) == "hinge":   # v0.25.0 VB: 키 없음 = linear
+            vars_[-1].update(form="hinge", g=a["g"][s:e], c=float(a["c"][i]))
     return Basis(vars_, int(a["meta"][0]), str(a["selection_sha256"][0]))
 
 
 def basis_bin(B: Basis) -> bytes:
-    """브라우저 basis.bin: 변수 순서 = basis.json, 각 [n:u32][idx:u32×n][vec:f32×3n] (리틀 엔디안)."""
+    """브라우저 basis.bin: 변수 순서 = basis.json, 각 [n:u32][idx:u32×n][vec:f32×3n] (리틀 엔디안).
+    v0.25.0 VB §4.2: hinge 변수만 vec 뒤에 [g:f32×n] 꼬리(basis.json 그 변수 form "hinge" — linear·옛 파일 바이트 불변)."""
     out = []
     for v in B.vars:
         n = int(v["idx"].size)
         out.append(struct.pack("<I", n))
         out.append(np.ascontiguousarray(v["idx"], dtype="<u4").tobytes())
         out.append(np.ascontiguousarray(v["vec"], dtype="<f4").tobytes())
+        if v.get("form") == "hinge":
+            out.append(np.ascontiguousarray(v["g"], dtype="<f4").tobytes())
     return b"".join(out)
 
 
@@ -1925,7 +1937,9 @@ def basis_meta(B: Basis, sha_npz: str | None = None) -> dict:
     return {"schema": "esl/bead_select_basis/1", "selection_sha256": B.selection_sha256, "basis_sha256": sha_npz,
             "n_nodes": B.n_nodes, "algo": ALGO,
             "vars": [{"name": v["name"], "type": v["type"], "bead": v["bead"], "nominal": float(v["nominal"]),
-                      "n": int(v["idx"].size), "R_mm": (float(v["R"]) if v.get("R") else None)} for v in B.vars]}
+                      "n": int(v["idx"].size), "R_mm": (float(v["R"]) if v.get("R") else None),
+                      **({"form": "hinge", "c": float(v.get("c") or 0.0)} if v.get("form") == "hinge" else {})}
+                     for v in B.vars]}
 
 
 def node_direction(B: Basis) -> tuple[np.ndarray, np.ndarray]:

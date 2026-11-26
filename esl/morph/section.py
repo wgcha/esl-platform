@@ -19,23 +19,31 @@ from esl.errors import EslError
 DEPTH_SECTIONS = ("entry_fixed", "floor_fixed")
 LEGACY_DEPTH_SECTION = "entry_fixed"        # 키 없는 옛 스냅샷의 동작 — 값 고정이 목적(D-0.24.5-VT-16 선례)
 
-PLAN_COLUMNS = ("compose", "one_side", "theta", "feasible", "fig", "na", "pos")
+PLAN_COLUMNS = ("compose", "one_side", "theta", "feasible", "fig", "na", "pos", "form", "vb_host")
 # 행 = 변수 출처(행을 만드는 쪽이 아는 값). compose: pkg_df(패키지 kind DF)|select_w_f0(elems 조합)|none(= entry_fixed),
 # one_side: pkg_w1(W1 변수·사유 판정)|none, theta: none(DF 가 노드마다)|run_med(elems), feasible: open_cap|none,
 # fig: floor_center|stretch|none(단면 그림 ds_dD), na: none|DS_ENGINE_NATIVE(적용 안 함 정보 코드),
 # pos(v0.24.9 계약 esl_bead_pos_u.md §1.5 — 깊이 동작과 무관, ``pos_plan`` 으로 읽음): pkg_u(패키지 kind U)|native(paicad BEAD_POS_U
 # 그대로)|none(범위 밖)
+# form(v0.25.0 esl_virtual_bead.md §1.2): 그 출처 변수 행의 평가 형식 linear((v − v₀)·B)|hinge(가상 비드 §4.1)|native(paicad 엔진)|none,
+# vb_host: 그 출처의 분류 결과 위에 가상 비드를 놓을 수 있는가 plate(부모 바닥 판 라벨)|none — ``vb_allowed`` 로 읽음(깊이 동작과 무관)
 SECTION_PLANS = {
     "graph": {"compose": "pkg_df", "one_side": "pkg_w1", "theta": "none", "feasible": "open_cap",
-              "fig": "floor_center", "na": "none", "pos": "pkg_u"},
+              "fig": "floor_center", "na": "none", "pos": "pkg_u", "form": "linear", "vb_host": "plate"},
     "elems": {"compose": "select_w_f0", "one_side": "none", "theta": "run_med", "feasible": "open_cap",
-              "fig": "stretch", "na": "none", "pos": "none"},
+              "fig": "stretch", "na": "none", "pos": "none", "form": "linear", "vb_host": "none"},
     "paicad": {"compose": "none", "one_side": "none", "theta": "none", "feasible": "none", "fig": "none",
-               "na": "DS_ENGINE_NATIVE", "pos": "native"},
+               "na": "DS_ENGINE_NATIVE", "pos": "native", "form": "native", "vb_host": "none"},
     "none": {"compose": "none", "one_side": "none", "theta": "none", "feasible": "none", "fig": "none", "na": "none",
-             "pos": "none"},
+             "pos": "none", "form": "none", "vb_host": "none"},
+    "virtual": {"compose": "none", "one_side": "none", "theta": "none", "feasible": "none", "fig": "none", "na": "none",
+                "pos": "none", "form": "hinge", "vb_host": "none"},
 }
 POS_VALUES = ("pkg_u", "native", "none")
+
+FORM_VALUES = ("linear", "hinge", "native", "none")
+VB_HOST_VALUES = ("plate", "none")
+VBEAD_PLAN_VALUES = ("plate", "none")       # transfer_plan.PLANS 열 vbead 값(같은 이름 — 두 표의 곱)
 
 # W 사용 불가 사유(§4.1 — 첫 일치, 순서 고정)
 W_REASON_ORDER = ("W_USER_OFF", "W_NETWORK", "W_AREA", "W_EDIT_MERGED", "W_TIE_MIXED", "W_ONE_SIDE_EDGE",
@@ -90,6 +98,25 @@ def pos_plan(row: str, plans: dict | None = None) -> str:
     if v not in POS_VALUES:
         raise EslError("CONFIG_INVALID", f"SECTION_PLANS[{row}].pos {v!r} ∉ {list(POS_VALUES)}")
     return v
+
+
+def form_plan(row: str, plans: dict | None = None) -> str:
+    """v0.25.0 VB §1.2: 변수 출처 행 → form 열 값(linear|hinge|native|none). 모르는 값 = CONFIG_INVALID."""
+    v = plan(row, plans)["form"]
+    if v not in FORM_VALUES:
+        raise EslError("CONFIG_INVALID", f"SECTION_PLANS[{row}].form {v!r} ∉ {list(FORM_VALUES)}")
+    return v
+
+
+def vb_allowed(plan_vbead: str, host_row: str, plans: dict | None = None) -> bool:
+    """v0.25.0 VB §1.2 판정 한 곳: 계획 열 vbead == plate ∧ SECTION_PLANS[host_row].vb_host == plate. host_row = 선택 문서가
+    그래프 블록을 가지면 "graph", 그 밖 "none"(시나리오 이름 아님). 모르는 값 = CONFIG_INVALID."""
+    if plan_vbead not in VBEAD_PLAN_VALUES:
+        raise EslError("CONFIG_INVALID", f"계획 열 vbead {plan_vbead!r} ∉ {list(VBEAD_PLAN_VALUES)}")
+    v = plan(host_row, plans)["vb_host"]
+    if v not in VB_HOST_VALUES:
+        raise EslError("CONFIG_INVALID", f"SECTION_PLANS[{host_row}].vb_host {v!r} ∉ {list(VB_HOST_VALUES)}")
+    return plan_vbead == "plate" and v == "plate"
 
 
 # ---------------------------------------------------------------- θ
@@ -449,6 +476,16 @@ def u_default(W_ref: float, feasible, range_rel: float) -> list[float]:
 def u_range_ok(lo, hi, nominal: float = 0.0) -> bool:
     """§1.3-5 type U 범위: lo ≤ 공칭 ≤ hi(공칭 0 이 범위 안 — 기준 d000 = 지금 형상)."""
     return float(lo) <= float(nominal) <= float(hi)
+
+
+def nominal_range_ok(rule: str, lo, hi, nominal: float = 0.0) -> bool:
+    """종류별 공칭 범위 규칙(``matrix._NOMINAL_RULES`` 의 규칙 이름): in = ``u_range_ok``(U), lo_nom = lo ≥ 공칭(A — v0.25.0 VB §0.3,
+    추가 비드 깊이 하한 0 이상)."""
+    if rule == "in":
+        return u_range_ok(lo, hi, nominal)
+    if rule == "lo_nom":
+        return float(lo) >= float(nominal)
+    raise ValueError(f"nominal_range_ok: 규칙 {rule!r}")
 
 
 def skeleton_turn_deg(pts) -> float:

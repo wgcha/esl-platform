@@ -55,6 +55,22 @@ def plane_fit(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
     return p, m / np.linalg.norm(m), rms
 
 
+# ====================================================================== 기저 항(v0.25.0 VB §4.2)
+FORMS = ("linear", "hinge")                 # basis 변수 평가 형식(키 없음 = linear)
+
+
+def basis_term(var: dict, value) -> tuple[np.ndarray, np.ndarray]:
+    """변수 1개 항 (idx, du) — 기저 합 x = x0 + Σ du 를 쓰는 모든 곳(bead_select.morph·fixed_violation_detail·
+    bead_graph._Prober)의 한 곳. linear(키 없음) = (v − v₀)·vec(지금 식 — 산술 순서 그대로, 바이트 동일),
+    hinge = vec·[F_c(v − g) − F_c(v₀ − g)] (``esl.morph.virtual_bead.hinge`` — 노드별 g, 스칼라 c)."""
+    if var.get("form", "linear") == "hinge":
+        from esl.morph import virtual_bead as vb
+        m = vb.hinge(var["g"], float(var.get("c") or 0.0), float(value), float(var["nominal"]))
+        return var["idx"], np.asarray(var["vec"], dtype=np.float64) * m[:, None]
+    dv = float(value) - float(var["nominal"])
+    return var["idx"], dv * var["vec"]
+
+
 # ====================================================================== 기준 평면(SR-D-36)
 def plate_refit(ix: MeshIndex, region: np.ndarray, floor: np.ndarray, par: np.ndarray, excl: np.ndarray, n_bar: np.ndarray,
                 loop_nodes: np.ndarray, skip_nodes: np.ndarray, *, plate_tol: float, island_max: float,

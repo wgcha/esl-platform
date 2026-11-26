@@ -249,16 +249,20 @@ def _area(X, C, et) -> np.ndarray:
     return 0.5 * np.linalg.norm(w, axis=1)
 
 
-def guard_probe(x0, x, conn, elem_type, idx, *, flip_deg, jac_min, tria_angle_min_deg, qcfg=None, base=None) -> dict:
+def guard_probe(x0, x, conn, elem_type, idx, *, flip_deg, jac_min, tria_angle_min_deg, qcfg=None, base=None,
+                warp_max_deg=None) -> dict:
     """영향 요소(idx) 품질 탐침 — range guard ``accept`` 의 입력. 뒤집힘 = ``inverted_count``(= ``design_state`` 판정) 그대로,
     "새로 나빠진" 요소만 셈: quad 야코비안 공칭 ≥ jac_min ∧ 안 < jac_min(jac_bad_new), tria 최소 내각 공칭 ≥ tria_angle_min_deg
     ∧ 안 <(tri_bad_new). jac_min·tria_angle_min_deg 가 None 이면 그 수는 0. 넓이 비 최소 = ``core.extremes`` 와 같은 식.
     qcfg(compare.quality)를 주면 새 Fail 비율(``affected_quality`` 와 같은 Fail 규칙), 아니면 None. base = 같은 idx 의
     ``guard_base`` 결과(공칭 지표 재사용 — 값 같음). 반환 {n_affected, inverted, jac_min, jac_bad_new, tri_angle_min,
-    tri_bad_new, area_ratio_min, new_fail_ratio}."""
+    tri_bad_new, area_ratio_min, new_fail_ratio}. v0.25.0 VB §6.1(가상 비드 A 항목만): warp_max_deg 를 주면
+    + warp_bad_new(quad warpage 공칭 ≤ 기준 ∧ 안 > 기준 수)·warp_max(안 최대 °) — 없으면 키 없음(반환 불변)."""
     idx = np.asarray(idx, dtype=np.int64)
     out = {"n_affected": int(idx.size), "inverted": 0, "jac_min": None, "jac_bad_new": 0, "tri_angle_min": None,
            "tri_bad_new": 0, "area_ratio_min": None, "new_fail_ratio": None}
+    if warp_max_deg is not None:
+        out.update(warp_bad_new=0, warp_max=None)
     if idx.size == 0:
         if qcfg is not None:
             out["new_fail_ratio"] = 0.0
@@ -280,6 +284,12 @@ def guard_probe(x0, x, conn, elem_type, idx, *, flip_deg, jac_min, tria_angle_mi
             lim = float(tria_angle_min_deg)
             out["tri_bad_new"] = int(np.sum(t & (m0["min_angle"] >= lim) & (m1["min_angle"] < lim)))
     out["area_ratio_min"] = float(np.min(_area(x, C, et) / np.maximum(b0["area"], 1e-300)))
+    if warp_max_deg is not None and q.any():
+        w0 = m0["warpage"] if "warpage" in m0 else element_metrics(x0, C, et)["warpage"]
+        w1 = m1["warpage"] if "warpage" in m1 else element_metrics(x, C, et)["warpage"]
+        lim = float(warp_max_deg)
+        out["warp_bad_new"] = int(np.sum(q & (w0 <= lim) & (w1 > lim)))
+        out["warp_max"] = float(w1[q].max())
     if qcfg is not None:
         f0 = b0.get("fail")
         if f0 is None:
