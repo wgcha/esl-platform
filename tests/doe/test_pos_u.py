@@ -252,3 +252,15 @@ def test_cfg_hash_spatial_only(SPW):
                                                          | {"rev": 1, "design": "d001"}})
     assert stg._lf_mode(c) == "spatial" and stg._lf_mode(c2) is None
     assert h_sp != stg._cfg_hash(c2)
+
+
+def test_sidecar_marks_kind(SPW):
+    """V-0249-BM-2(스터디 3D): 방식 3D(jd·js) manifest 지지 행 = 기존 dof + kind·dirs·val(방식별 kind)."""
+    import glob
+    vd = os.path.join(SPW["out"], "post", "view3d")
+    seen = set()
+    for p in glob.glob(os.path.join(vd, "*_j[ds]*", "manifest.json")):
+        sup = U.read_json(p)["supports"]
+        assert sup and all(r["dof"] in ("123", "ij") and "kind" in r and "dirs" in r and "val" in r for r in sup)
+        seen |= {r["kind"] for r in sup}
+    assert {"tie_disp", "tie_spring"} <= seen

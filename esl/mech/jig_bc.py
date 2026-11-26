@@ -710,7 +710,7 @@ def mark_kind_of(method_row: dict | None, hard_vals=None) -> str:
     """tie 구속(hard) 행의 표식 종류 — METHODS 열만 읽음: tie_stiff spring = tie_spring, tie_value zero = tie_fixed, target =
     tie_disp. method_row 없음(옛 지그 고정 npz) = 값이 모두 0 이면 tie_fixed, 아니면 tie_disp."""
     if method_row is not None:
-        if method_row["tie_stiff"] == "spring":
+        if method_row["tie_stiff"] != "hard":                    # 열 값(hard|그 밖 = 스프링 행) — 방식 이름 비교 없음
             return "tie_spring"
         return "tie_fixed" if method_row["tie_value"] == "zero" else "tie_disp"
     v = np.asarray(hard_vals if hard_vals is not None else [], dtype=np.float64)

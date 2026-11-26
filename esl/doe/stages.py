@@ -4677,10 +4677,8 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
         return {}, []
     row = next(s_ for s_ in RANK_SOURCES if s_["v3d_store"] == "result")
 
-    def marks(x0, jidx, _rmap, smax):                           # v0.24.9 BM: 옛 지그 고정(병진 123) = tie_fixed·xyz·0
-        return [(int(i), "tie_fixed", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], 0.0)
-                for i in jg.support_sample(x0, jidx, smax)]
-    _ = MARK_TIE
+    def marks(x0, jidx, _rmap, smax, e=None):                   # 옛 지그 고정(병진 123) = 옛 2튜플 그대로(옛 3D 바이트 불변 —
+        return [(int(i), MARK_TIE) for i in jg.support_sample(x0, jidx, smax)]   # 화면은 "이전 형식" 대체 표시, BM §10.3)
     return _jig_v3d_build(c, t, results, shown, U.load_npz(pz), row, marks)
 
 
@@ -4700,9 +4698,13 @@ def _jig_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[d
     bc = jig_bc.load_bc({n: z[n] for n in JIG_BC_PATTERN if n in z})
 
     mrow = _jig_method_row(str(row["key"]))
+    zeids_ = [str(e) for e in z["entry_ids"].tolist()]
 
-    def marks(x0, _jidx, rmap, smax):                           # v0.24.9 BM §10.2: [(노드, kind, dirs, val)] — 값은 BC 배열에서
-        return jig_bc.support_marks_full({**bc, "bc_node": rmap(bc["bc_node"]), "sp_node": rmap(bc["sp_node"])}, x0, smax,
+    def marks(x0, _jidx, rmap, smax, e=None):                   # v0.24.9 BM §10.2: [(노드, kind, dirs, val)] — 값 = 그 엔트리 BC
+        b = _jig_bc_of(z, zeids_.index(e)) if e is not None and e in zeids_ else bc
+        if e is None:                                           # 엔트리 없음 = 옛 2튜플 규칙(노드·dof)만
+            return jig_bc.support_marks(rmap(bc["bc_node"]), bc["bc_kind"], rmap(bc["sp_node"]), x0, smax)
+        return jig_bc.support_marks_full({**b, "bc_node": rmap(b["bc_node"]), "sp_node": rmap(b["sp_node"])}, x0, smax,
                                          mrow)
     return _jig_v3d_build(c, t, results, shown, z, row, marks)
 
@@ -4758,9 +4760,10 @@ def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -
         ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
         rows = _jig_resp_rows(c, mesh, z, jidx, ld)
         from esl.mech import jig_bc as _jb
-        sup = _jb.mark_rows(marks(mesh["x0"], jidx, rmap, smax), nid)      # v0.24.9 BM: dof(옛) + kind·dirs·val
         names = {}
         for (e, F), rr in zip(ld, rows):
+            mk = marks(mesh["x0"], jidx, rmap, smax, e)            # v0.24.9 BM: 일반형 = dof(옛) + kind·dirs·val(엔트리 BC)
+            sup = _jb.mark_rows(mk, nid) if mk and len(mk[0]) == 4 else [{"node_id": int(nid[i]), "dof": d} for i, d in mk]
             nm = name if name else f"{BASELINE}_{tag}_e{order.index(e):02d}"
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
             build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=rr["u"],
