@@ -1857,10 +1857,10 @@ export interface View3dSupport {
   x0: number[];
   /** v0.24.9 지그 표식 방식(esl_bead_pos_u.md §10.2) — 없으면 옛 파일(dof 문자열 기호) */
   kind?: "tie_fixed" | "tie_disp" | "tie_spring" | "aux_inplane" | "support321" | null;
-  /** 구속 방향: 단위 벡터 목록 [[x,y,z],…](법선 1개·꺾임 2개·면내 1~2개) 또는 전역 축 번호 1·2·3 */
-  dirs?: (number[] | number)[] | null;
-  /** 값: tie_fixed 0 · tie_disp g(방향별 배열 가능, mm) · tie_spring {k, g} · aux_inplane 지정값 */
-  val?: number | number[] | { k: number; g: number | number[] } | null;
+  /** 구속 방향(통합 형식 INT-1 — 코어 esl.mech.jig_bc.support_marks_full 그대로): 행 방향 단위 벡터 [[x,y,z],…](법선 1개·꺾임 2개·면내 1~2개). support321 = 없음 */
+  dirs?: number[][] | null;
+  /** 값(INT-1, dirs 와 같은 순서): tie_fixed 0 · tie_disp [g…](mm) · tie_spring {k: [N/mm…], g: [mm…]} · aux_inplane [지정값…](mm) · support321 = 없음 */
+  val?: number | number[] | { k: number[]; g: number[] } | null;
 }
 export interface View3dRange {
   max: number;
@@ -2652,6 +2652,10 @@ export interface DoeSettingsShapeRules {
 export interface DoeSettingsOut {
   /** v0.24.7 설정 bead_doe.depth_section(새 스터디 기본 — 옛 서버면 없음 = 라디오 숨김) */
   depth_section?: DoeDepthSection | null;
+  /** v0.24.9 PU 새 스터디 기본(설정 bead_doe.pos_u — 표시용, 스냅샷에 고정되는 값). 옛 서버 = 없음 */
+  pos_u?: { enabled: boolean; range_rel: number; max_rel: number; gap_rel: number; hold_frac_max: number } | null;
+  /** v0.24.9 PU 하중 공간 고정 설정(bead_doe.load_follow) */
+  load_follow?: { cell_mm: number; noise_floor_min: number } | null;
   /** v0.24.7 복제 창 안내 문구(원본 resources/doe_messages.json — 화면에 문구 거울 없음). DS_CLONE_NOTE(입구→깊이면) · DS_CLONE_NOTE_ENTRY({n}·{names} 치환, 깊이면→입구) · DS_CLONE_NOTE_ENTRY_NONE(깊이면→입구, 빠지는 변수 없음) */
   depth_section_notes?: { DS_CLONE_NOTE?: string | null; DS_CLONE_NOTE_ENTRY?: string | null; DS_CLONE_NOTE_ENTRY_NONE?: string | null } | null;
   /** v0.24.4 P3 설정 bead_doe.load_source_default(기본 null = 순위 지표 기준) */
@@ -3315,6 +3319,8 @@ export interface DoeMatrixIn {
 export interface DoeMatrixOut {
   spec: DoeSpec;
   matrix_sha256: string;
+  /** v0.24.9 PU §2.2: 이 행렬의 하중 경로(코어 load_follow_effective — U 변수 있음 = spatial). 옛 스터디 = null */
+  load_follow?: "node" | "spatial" | null;
   designs: { id: string; values: Record<string, number> }[];
   n_designs: number;
   dropped_duplicates: number;

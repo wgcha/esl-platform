@@ -62,22 +62,21 @@ export function perpOf(d: V3): V3 {
   const ref: V3 = Math.abs(d[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
   return unit(cross(d, ref)) ?? [0, 0, 1];
 }
-const AXES: V3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
 
-/** 자료 dirs → 단위 방향 벡터 목록. 벡터 배열([[x,y,z],…]) 또는 전역 축 번호 1·2·3 배열. 읽을 수 없으면 빈 배열 */
+/** 자료 dirs(통합 형식 INT-1 — 코어 support_marks_full 그대로: 행 방향 단위 벡터 [[x,y,z],…]) → 단위 벡터 목록. 그 밖 원소는 버림 */
 export function dirVectors(dirs: unknown): V3[] {
   if (!Array.isArray(dirs)) return [];
   const out: V3[] = [];
   for (const d of dirs) {
-    if (Array.isArray(d) && d.length === 3 && d.every((x) => Number.isFinite(x))) {
+    if (Array.isArray(d) && d.length === 3 && d.every((x) => typeof x === "number" && Number.isFinite(x))) {
       const u = unit([d[0], d[1], d[2]]);
       if (u) out.push(u);
-    } else if (typeof d === "number" && Number.isInteger(d) && d >= 1 && d <= 3) out.push(AXES[d - 1]);
+    }
   }
   return out;
 }
 
-/** 방향 i 의 값: 숫자 하나 = 모든 방향 공통, 배열 = 방향별(모자라면 마지막 값). 숫자가 아니면 null */
+/** 방향 i 의 값(INT-1): 배열 = 방향별(dirs 와 같은 순서·길이), 숫자 = tie_fixed 의 0(모든 방향). 숫자가 아니면 null */
 export function valAt(v: unknown, i: number): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (Array.isArray(v) && v.length) {
@@ -86,13 +85,14 @@ export function valAt(v: unknown, i: number): number | null {
   }
   return null;
 }
+/** tie_spring val(INT-1) = {k: [방향별 N/mm], g: [방향별 mm]} — 스프링 행마다(dirs 와 같은 순서) */
 interface SpringVal {
-  k: number | null;
+  k: unknown;
   g: unknown;
 }
 const springOf = (v: unknown): SpringVal => {
   const o = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
-  return { k: typeof o.k === "number" && Number.isFinite(o.k) ? o.k : null, g: o.g };
+  return { k: o.k, g: o.g };
 };
 
 type Seg = [V3, V3];
@@ -163,14 +163,23 @@ export function markSegments(kind: MarkKind, p: V3, dirs: V3[], val: unknown, di
   return out;
 }
 
-/** 범례(경계조건 칩 툴팁에 붙는 줄): 이 표식 목록에 있는 kind 의 한 줄 뜻(표 순서) + 옛 파일 표식이 있으면 대체 안내 */
-export function markLegend(supports: Pick<View3dSupport, "kind">[]): string[] {
+/** 옛 지그 파일의 면내 지지 dof 문자열(esl.mech.jig_bc.MARK_AUX — 지그 표식만 쓰는 값, 3-2-1 dof 는 숫자) */
+export const LEGACY_JIG_AUX_DOF = "ij";
+/** 범례(경계조건 칩 툴팁에 붙는 줄): 이 표식 목록에 있는 kind 의 한 줄 뜻(표 순서) + 옛 지그 파일 표식이 있으면 대체 안내.
+ *  옛 지그 파일 판정(INT-3) = kind 없는 행이 있고 (jigView — 출처 표 group jig 인 Case 보기 — 또는 kind 없는 면내 지지 dof "ij" 행이 있음).
+ *  전 노드 ESL 등 지그 아닌 출처의 3-2-1 지지(kind 없음)에는 "다시 만들기" 안내를 붙이지 않는다(다시 만들어도 기호가 같음). */
+export function markLegend(supports: Partial<Pick<View3dSupport, "kind" | "dof">>[], jigView = false): string[] {
   const kinds = new Set<MarkKind>();
-  let legacy = false;
+  let bare = false;
+  let jigBare = false;
   for (const s of supports) {
     if (isMarkKind(s.kind)) kinds.add(s.kind);
-    else legacy = true;
+    else {
+      bare = true;
+      if (s.dof === LEGACY_JIG_AUX_DOF) jigBare = true;
+    }
   }
+  const legacy = bare && (jigView || jigBare);
   const lines = MARK_ORDER.filter((k) => kinds.has(k)).map((k) => MARK_TABLE[k].legend);
   if (legacy) lines.push(LEGACY_MARK_TIP);
   return lines;
@@ -194,7 +203,7 @@ export function markProbe(s: View3dSupport): string | null {
   else if (s.kind === "tie_disp") parts.push(MARK_VAL_TEXT.g(g(s.val)));
   else if (s.kind === "tie_spring") {
     const sv = springOf(s.val);
-    parts.push(MARK_VAL_TEXT.k(sv.k == null ? "–" : num(sv.k)), MARK_VAL_TEXT.g(g(sv.g)));
+    parts.push(MARK_VAL_TEXT.k(g(sv.k)), MARK_VAL_TEXT.g(g(sv.g)));
   } else if (s.kind === "aux_inplane") parts.push(s.val == null ? MARK_VAL_TEXT.dirs(dirs.length) : MARK_VAL_TEXT.value(g(s.val)));
   return parts.join(" · ");
 }

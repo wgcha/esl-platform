@@ -245,6 +245,15 @@ def pos_u_of(s: dict[str, Any]) -> dict[str, Any]:
     return {"pos_u": pu if isinstance(pu, dict) else None, "load_follow": lf if isinstance(lf, dict) else None}
 
 
+def _ids_sha(ids: Any) -> str | None:
+    """derive 캐시 키용 노드 ID 배열 해시(None = None)."""
+    if ids is None:
+        return None
+    import numpy as np
+
+    return hashlib.sha256(np.ascontiguousarray(np.asarray(ids, dtype=np.int64)).tobytes()).hexdigest()
+
+
 def shape_sha(sr: dict[str, Any] | None) -> str | None:
     """derive 캐시 키용 shape_rules 해시(None = None)."""
     if sr is None:
@@ -371,11 +380,60 @@ def check_graph(sel: dict[str, Any], graph: dict[str, Any] | None) -> None:
                        "분류 결과가 없습니다(GRAPH_FAILED) — 요소 비드(src elems)로 선택하세요", saved=saved, current=cur)
 
 
+_TIE_CACHE: "collections.OrderedDict[tuple, Any]" = collections.OrderedDict()
+_TIE_LOCK = threading.Lock()
+
+
+def pos_u_tie_ids(ctx: AppContext, s: dict[str, Any], inputs: dict[str, Any]) -> Any:
+    """v0.24.9 PU-14(통합): pos_u 블록이 있는 스터디의 지그 tie 노드 ID = 코어 ``stages.pos_u_tie_ids_at``(워커 select 기저와 같은 함수 —
+    준비 스냅샷 doe·스터디 폴더 읽기만). 블록 없음 = None(derive 호출 불변). 준비 작업·prep 지그 출처 파일 시각으로 캐시."""
+    import numpy as np
+
+    from ...core.opt_core import EslError
+    from ...core.opt_core import doe_paicad_io as pio
+    from ...core.opt_core import doe_pos_u_tie_ids
+
+    if pos_u_of(s)["pos_u"] is None:
+        return None
+    try:
+        with ctx.engine.connect() as conn:
+            pp = _svc()._prep_params(conn, s)
+    except DomainError:                                     # 준비 스냅샷 없음 = tie 추가 없음(derive 는 load_inputs 가 먼저 409)
+        return np.zeros(0, dtype=np.int64)
+    pd = _prep_dir(ctx, s)
+    stamp = []
+    for rel in (("fixed", pio.SCAN_JSON), ("fixed", pio.FIXED_NPZ), ("select", "fixed_transfer.json"), ("input.json",)):
+        try:
+            st = os.stat(os.path.join(pd, *rel))
+            stamp.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append(None)
+    key = (str(s["id"]), inputs.get("mesh_sha256"), json.dumps(pp.get("doe", {}).get("rank"), sort_keys=True, default=str), tuple(stamp))
+    with _TIE_LOCK:
+        hit = _TIE_CACHE.get(key)
+        if hit is not None:
+            _TIE_CACHE.move_to_end(key)
+            return hit
+    try:
+        ids = np.asarray(doe_pos_u_tie_ids(pp["doe"], _svc().study_dir(ctx, s), inputs["mesh"]), dtype=np.int64)
+    except (EslError, OSError, KeyError, ValueError):
+        ids = np.zeros(0, dtype=np.int64)                  # 지그 노드 못 읽음 = 추가 없음(워커도 JIG_NO_TIE 면 빈 집합)
+    with _TIE_LOCK:
+        _TIE_CACHE[key] = ids
+        while len(_TIE_CACHE) > _LOAD_N:
+            _TIE_CACHE.popitem(last=False)
+    return ids
+
+
 def _with_graph(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
-    """schema 2 스터디면 inputs 에 graph(load_graph) 를 붙인다(사본 — load_inputs 캐시 불변)."""
+    """schema 2 스터디면 inputs 에 graph(load_graph) 를 붙인다(사본 — load_inputs 캐시 불변). v0.24.9: pos_u 블록이 있으면 graph 에
+    tie_node_ids(코어 함수 — 워커와 같은 tie 집합)."""
     if study_schema(s) != 2:
         return inputs
-    return {**inputs, "graph": load_graph(ctx, s, c)}
+    g = load_graph(ctx, s, c)
+    if g is not None and g.get("pos_u") is not None:
+        g = {**g, "tie_node_ids": pos_u_tie_ids(ctx, s, inputs)}
+    return {**inputs, "graph": g}
 
 
 def graph_stale(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], doc: dict[str, Any]) -> dict[str, Any] | None:
@@ -403,6 +461,8 @@ def reset_caches() -> None:
         _LOAD_CACHE.clear()
     with _GRAPH_LOCK:
         _GRAPH_CACHE.clear()
+    with _TIE_LOCK:
+        _TIE_CACHE.clear()
 
 
 def canonical_bytes(doc: Any) -> bytes:
@@ -459,7 +519,8 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
            shape_sha((inputs.get("graph") or {}).get("shape_rules")),     # v0.21.0: 표·규칙이 다르면 다른 derive
            (inputs.get("graph") or {}).get("depth_section"),             # v0.24.7 DM: 깊이 단면 동작·규칙이 다르면 다른 derive
            shape_sha((inputs.get("graph") or {}).get("section_rules")),
-           shape_sha((inputs.get("graph") or {}).get("pos_u")))          # v0.24.9 PU: 위치 변수 설정이 다르면 다른 derive(U 행·u_reason)
+           shape_sha((inputs.get("graph") or {}).get("pos_u")),          # v0.24.9 PU: 위치 변수 설정이 다르면 다른 derive(U 행·u_reason)
+           _ids_sha((inputs.get("graph") or {}).get("tie_node_ids")))    # v0.24.9 PU-14: 지그 tie 집합(U_HELD·hold 비율)
     if n > 0:
         with _DERIVE_LOCK:
             hit = _DERIVE_CACHE.get(key)
@@ -472,7 +533,8 @@ def derive(c: dict[str, Any], inputs: dict[str, Any], norm: dict[str, Any], sha:
                            frame=inputs["frame"], fixed_scan=inputs["fixed_scan"], bead=bead, w_clamp=g.get("w_clamp"),
                            range_guard=g.get("range_guard"), shape_rules=g.get("shape_rules"),
                            depth_section=g.get("depth_section"), section_rules=g.get("section_rules"),
-                           pos_u=g.get("pos_u"))   # 새 키 = 코어가 받을 때만(_graph_call)
+                           pos_u=g.get("pos_u"),
+                           **({"tie_node_ids": g["tie_node_ids"]} if g.get("tie_node_ids") is not None else {}))   # 새 키 = 코어가 받을 때만(_graph_call)
     else:
         bs = _bs()
         fut = _POOL.submit(bs.derive, inputs["mesh"], norm, c, frame=inputs["frame"], fixed_scan=inputs["fixed_scan"],

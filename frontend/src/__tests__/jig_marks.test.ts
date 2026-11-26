@@ -15,13 +15,13 @@ const maxZ = (segs: [number[], number[]][]) => Math.max(...segs.flatMap(([a, b])
 const minZ = (segs: [number[], number[]][]) => Math.min(...segs.flatMap(([a, b]) => [a[2], b[2]]));
 
 describe("자료 읽기", () => {
-  it("dirs: 벡터는 정규화, 정수 1·2·3 = 전역 축, 그 밖은 버림", () => {
+  it("dirs(통합 INT-1): 행 방향 벡터만 읽음(정규화), 축 번호·그 밖은 버림", () => {
     expect(dirVectors([[0, 0, 2]])).toEqual([[0, 0, 1]]);
-    expect(dirVectors([1, 3])).toEqual([[1, 0, 0], [0, 0, 1]]);
+    expect(dirVectors([1, 3])).toEqual([]);
     expect(dirVectors([[0, 0, 0], 7, "x"])).toEqual([]);
     expect(dirVectors(null)).toEqual([]);
   });
-  it("val: 숫자 = 공통, 배열 = 방향별", () => {
+  it("val: 숫자 = tie_fixed 0(공통), 배열 = 방향별", () => {
     expect(valAt(0.5, 3)).toBe(0.5);
     expect(valAt([1, 2], 1)).toBe(2);
     expect(valAt([1, 2], 5)).toBe(2);
@@ -86,13 +86,16 @@ describe("표 한 곳: 색·이름·범례", () => {
     for (const k of MARK_ORDER) for (const c of ["color", "name", "dirName", "legend"] as const) expect(MARK_TABLE[k][c], `${k}.${c}`).toBeTruthy();
     expect(new Set(MARK_ORDER.map((k) => MARK_TABLE[k].color)).size).toBe(MARK_ORDER.length);
   });
-  it("범례: 있는 kind 의 한 줄 뜻만(표 순서) + kind 없는 표식이 있으면 옛 형식 안내", () => {
+  it("범례: 있는 kind 의 한 줄 뜻만(표 순서) + 옛 지그 표식(kind 없음 ∧ (지그 보기 ∨ 면내 dof ij))이면 옛 형식 안내", () => {
     expect(markLegend([{ kind: "tie_spring" }, { kind: "aux_inplane" }, { kind: "tie_spring" }])).toEqual([MARK_TABLE.tie_spring.legend, MARK_TABLE.aux_inplane.legend]);
     expect(MARK_TABLE.tie_spring.legend).toContain("tie 법선만 스프링(면내 자유)");
     expect(MARK_TABLE.tie_spring.legend).toContain("받침 = 낙하 변위 g");
-    expect(markLegend([{}, { kind: "tie_fixed" }])).toEqual([MARK_TABLE.tie_fixed.legend, LEGACY_MARK_TIP]);
+    expect(markLegend([{ dof: "123" }, { kind: "tie_fixed" }], true)).toEqual([MARK_TABLE.tie_fixed.legend, LEGACY_MARK_TIP]);
     expect(LEGACY_MARK_TIP).toBe("이전 형식 — 다시 만들기를 누르면 방식별 기호로 표시");
-    expect(markLegend([{ kind: null }])).toEqual([LEGACY_MARK_TIP]);
+    expect(markLegend([{ kind: null, dof: "123" }], true)).toEqual([LEGACY_MARK_TIP]);
+    // INT-3: 지그 보기 정보가 없어도 옛 지그 면내 지지("ij")가 있으면 안내, 전 노드 ESL 3-2-1(숫자 dof·kind 없음)은 안내 없음
+    expect(markLegend([{ dof: "123" }, { dof: "ij" }])).toEqual([LEGACY_MARK_TIP]);
+    expect(markLegend([{ dof: "123" }, { dof: "23" }, { dof: "3" }])).toEqual([]);
   });
 });
 
@@ -100,10 +103,12 @@ const sup = (over: Partial<View3dSupport>): View3dSupport => ({ node_id: 77, ver
 
 describe("탐침 문구", () => {
   it("노드 번호·방식 이름·방향·값(k·g / g / 고정 0 / 지정값)", () => {
-    expect(markProbe(sup({ kind: "tie_spring", dirs: [[0, 0, 1]], val: { k: 1200, g: 0.6 } }))).toBe("지지 77 · 지그 스프링 · 방향 법선 (0.00, 0.00, 1.00) · k 1200 N/mm · g 0.6 mm");
+    expect(markProbe(sup({ kind: "tie_spring", dirs: [[0, 0, 1]], val: { k: [1200], g: [0.6] } }))).toBe("지지 77 · 지그 스프링 · 방향 법선 (0.00, 0.00, 1.00) · k 1200 N/mm · g 0.6 mm");
+    // 스프링 방향 2개(translation·꺾임) — k·g 방향별
+    expect(markProbe(sup({ kind: "tie_spring", dirs: [[0, 0, 1], [1, 0, 0]], val: { k: [1200, 800], g: [0.6, -0.2] } }))).toContain("k 1200 / 800 N/mm · g 0.6 / -0.2 mm");
     expect(markProbe(sup({ kind: "tie_disp", dirs: [[0, 0, 1], [1, 0, 0]], val: [0.6, 0.4] }))).toBe("지지 77 · 지그 강제 변위 · 방향 법선 (0.00, 0.00, 1.00) · (1.00, 0.00, 0.00) · g 0.6 / 0.4 mm");
-    expect(markProbe(sup({ kind: "tie_fixed", dirs: [3] }))).toContain("고정 0");
-    expect(markProbe(sup({ kind: "aux_inplane", dirs: [[1, 0, 0]], val: 0 }))).toBe("지지 77 · 면내 지지 · 방향 면내 (1.00, 0.00, 0.00) · 지정값 0 mm");
+    expect(markProbe(sup({ kind: "tie_fixed", dirs: [[0, 0, 1]], val: 0 }))).toContain("고정 0");
+    expect(markProbe(sup({ kind: "aux_inplane", dirs: [[1, 0, 0]], val: [0] }))).toBe("지지 77 · 면내 지지 · 방향 면내 (1.00, 0.00, 0.00) · 지정값 0 mm");
     expect(markProbe(sup({}))).toBeNull();
     expect(markProbe(sup({ kind: "support321" }))).toBeNull();
   });

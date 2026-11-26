@@ -777,6 +777,12 @@ def jig_method_of_source(key: str) -> str | None:
     return None
 
 
+def jig_support_rows(bc: dict, x0, smax: int, node_id, src: str | None = None) -> list[dict]:
+    """v0.24.9 BM(계약 esl_bead_pos_u.md §10.2·INT-1): 지그 3D 지지 표식 행 = 코어 ``esl.mech.jig_bc.support_rows`` 그대로(Case 3D 와
+    스터디 사이드카가 같은 함수). 일반형 [{node_id, dof, kind, dirs, val}], 방향·값 배열 없는 옛 npz = [{node_id, dof}]."""
+    return _wrap(_attr("esl.mech.jig_bc", "support_rows"), bc, x0, smax, node_id, src)
+
+
 def jig_method_names() -> tuple[str, ...]:
     """지그 방식 이름(방식 표 순서)."""
     return tuple(str(n) for n in _mod("esl.mech.jig_bc").METHODS)

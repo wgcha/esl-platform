@@ -1611,20 +1611,6 @@ def plan_view(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------- 행렬·미리보기·실행
-def _check_pos_u_range(spec: dict[str, Any], tab: list[dict[str, Any]]) -> None:
-    """v0.24.9 PU §1.3-5: type U 변수는 범위가 공칭(변수 표 nominal)을 포함해야 한다(lo ≤ 공칭 ≤ hi — 기준 d000 = 지금 형상) — 아니면 422
-    DOE_RANGE_INVALID. 코어 matrix.normalize_spec 과 같은 판정(코어가 먼저 막으면 같은 코드). D·W 는 건드리지 않음(\"> 0\" 검사도 D·W 만 — 코어)."""
-    nom = {str(r.get("name")): r for r in tab if isinstance(r, dict) and r.get("type") == "U"}
-    for p in spec.get("params") or []:
-        r = nom.get(str(p.get("name")))
-        if r is None:
-            continue
-        v0 = float(r.get("nominal") or 0.0)
-        lo, hi = p.get("lo"), p.get("hi")
-        if isinstance(lo, (int, float)) and isinstance(hi, (int, float)) and not (lo <= v0 <= hi):
-            raise unprocessable("DOE_RANGE_INVALID", f"{p['name']}: 위치 범위는 {v0:g} 을 포함해야 합니다 (lo {lo:g}, hi {hi:g})")
-
-
 def _generate(ctx: AppContext, s: dict[str, Any], spec: dict[str, Any], c: dict[str, Any]) -> dict[str, Any]:
     from ...core.opt_core import EslError
     from ...core.opt_core import doe_matrix
@@ -1633,8 +1619,7 @@ def _generate(ctx: AppContext, s: dict[str, Any], spec: dict[str, Any], c: dict[
         tab = _select().params_table(_select().require_selection(ctx, s, cfg(ctx)), c)["params"]
     else:
         tab = _params_doc(ctx, s, c)["params"]
-    _check_pos_u_range(spec, tab)
-    try:
+    try:                                 # v0.24.9 PU: type U 범위(공칭 0 포함) 422 = 코어 normalize_spec 한 곳(통합 — 백엔드 중복 검사 제거)
         return doe_matrix.generate(spec, tab, c)
     except EslError as exc:
         code = exc.code if exc.code in ERROR_CODES_422 else "DOE_RANGE_INVALID"
@@ -1660,12 +1645,18 @@ def _study_cfg(conn, s: dict[str, Any], current: dict[str, Any]) -> dict[str, An
 
 
 def _matrix_load_follow(ctx: AppContext, s: dict[str, Any], c: dict[str, Any], spec: dict[str, Any]) -> str | None:
-    """pos_u 블록이 있는 새 select 스터디만 "node"|"spatial"(계획 load_follow 열 var — select 3행 모두). 없으면 None."""
+    """pos_u 블록이 있는 select 스터디만 코어 판정 ``tp.load_follow_effective(계획 행, 행렬에 type U ≥ 1)``(워커 BD_MATRIX 와 같은 함수 —
+    통합: 백엔드 자체 규칙 없음). 블록 없음(옛 스터디)·계획 없음 = None."""
+    from ...core.opt_core import doe_transfer_plan as tp
+
     if s.get("scenario") != "select" or not isinstance((s.get("inputs") or {}).get("pos_u"), dict):
+        return None
+    plan = _study_plan(s)
+    if plan is None:
         return None
     tab = _select().params_table(_select().require_selection(ctx, s, c), c)["params"]
     types = {str(r.get("name")): r.get("type") for r in tab if isinstance(r, dict)}
-    return "spatial" if any(types.get(str(p.get("name"))) == "U" for p in spec.get("params") or []) else "node"
+    return tp.load_follow_effective(plan, any(types.get(str(p.get("name"))) == "U" for p in spec.get("params") or []))
 
 
 def matrix(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, Any]:
@@ -1678,8 +1669,7 @@ def matrix(ctx: AppContext, principal: Principal, sid: str, body) -> dict[str, A
         mc = _study_cfg(conn, s, c)
     spec = _spec_dict(body)
     out = _jsonable(_generate(ctx, s, spec, mc))
-    if "load_follow" not in out:      # v0.24.9 PU §4: 코어가 안 주면 계약 규칙(pos_u 스냅샷 ∧ 행렬에 U 변수 ≥ 1 = spatial) — 옛 스터디 = null
-        out["load_follow"] = _matrix_load_follow(ctx, s, c, spec)
+    out["load_follow"] = _matrix_load_follow(ctx, s, c, spec)    # v0.24.9 PU §4: 코어 판정(워커 matrix.json 과 같은 값) — 옛 스터디 = null
     return out
 
 

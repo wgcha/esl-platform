@@ -301,124 +301,25 @@ def jig_support_sample(x0: np.ndarray, idx: np.ndarray, m: int) -> np.ndarray:
     return J[np.asarray(pick, dtype=np.int64)]
 
 
-JIG_MARK_KINDS = ("tie_fixed", "tie_disp", "tie_spring", "aux_inplane", "support321")   # esl_bead_pos_u.md §10.2 kind 표
-JIG_BC_ARRAYS = ("bc_node", "bc_kind", "bc_dir", "bc_val", "sp_node", "sp_dir", "sp_k", "sp_g")
-
-
-def _round_list(a: Any) -> list[float]:
-    return [float(x) for x in np.asarray(a, dtype=np.float64).reshape(-1)]
-
-
-def jig_marks_general(bc: dict[str, Any], x0: np.ndarray, smax: int) -> list[tuple[int, str, list[list[float]], Any]]:
-    """지그 3D 지지 표식 일반형(계약 esl_bead_pos_u.md §10.2 어댑터 — 코어 ``esl.mech.jig_bc.support_marks`` 일반형이 없을 때) →
-    [(노드 인덱스, kind, dirs, val)]. 값은 BC 배열(bc_*·sp_*)에서 직접(새 계산 없음). 샘플·순서 = 옛 2튜플 규칙 그대로
-    (tie 최원점 샘플 ≤ smax 개 뒤 면내 오름차순, 샘플된 tie 와 겹치는 면내 노드는 tie 만).
-      tie_fixed  : 구속 행(bc_kind tie) 전부 값 0 → dirs = 그 노드 구속 방향 단위벡터(법선 1개·꺾임 2개), val = 0.0
-      tie_disp   : 구속 행 중 값 ≠ 0 이 있음 → dirs 같음, val = 방향별 g(mm) 목록
-      tie_spring : 스프링 행(sp_*) → dirs = 스프링 방향, val = {"k": 방향별 k, "g": 방향별 g}
-      aux_inplane: 3-2-1 면내 구속 행(bc_kind aux) → dirs = 면내 방향(2 또는 1), val = 방향별 지정값 목록
-    """
-    n = int(np.asarray(x0).shape[0])
-    bn = np.asarray(bc["bc_node"], dtype=np.int64).reshape(-1)
-    bk = np.asarray(bc["bc_kind"]).astype(np.int64).reshape(-1)
-    bd = np.asarray(bc["bc_dir"], dtype=np.float64).reshape(-1, 3)
-    bv = np.asarray(bc["bc_val"], dtype=np.float64).reshape(-1)
-    sp = np.asarray(bc.get("sp_node", np.zeros(0, np.int64)), dtype=np.int64).reshape(-1)
-    sd = np.asarray(bc.get("sp_dir", np.zeros((0, 3))), dtype=np.float64).reshape(-1, 3)
-    sk = np.asarray(bc.get("sp_k", np.zeros(0)), dtype=np.float64).reshape(-1)
-    sg = np.asarray(bc.get("sp_g", np.zeros(0)), dtype=np.float64).reshape(-1)
-    ok = (bn >= 0) & (bn < n)
-    spok = (sp >= 0) & (sp < n)
-    tie = jig_support_sample(x0, np.unique(np.r_[bn[ok & (bk == JIG_KIND_TIE)], sp[spok]]), int(smax))
-    shown = {int(i) for i in tie.tolist()}
-    aux = [int(i) for i in np.unique(bn[ok & (bk == JIG_KIND_AUX)]).tolist() if int(i) not in shown]
-    out: list[tuple[int, str, list[list[float]], Any]] = []
-    for i in (int(t) for t in tie.tolist()):
-        rows = np.flatnonzero(ok & (bk == JIG_KIND_TIE) & (bn == i))
-        srows = np.flatnonzero(spok & (sp == i))
-        if srows.size:
-            out.append((i, "tie_spring", [_round_list(sd[r]) for r in srows],
-                        {"k": [float(sk[r]) for r in srows], "g": [float(sg[r]) for r in srows]}))
-        elif rows.size and np.all(bv[rows] == 0.0):
-            out.append((i, "tie_fixed", [_round_list(bd[r]) for r in rows], 0.0))
-        else:
-            out.append((i, "tie_disp", [_round_list(bd[r]) for r in rows], [float(bv[r]) for r in rows]))
-    for i in aux:
-        rows = np.flatnonzero(ok & (bk == JIG_KIND_AUX) & (bn == i))
-        out.append((i, "aux_inplane", [_round_list(bd[r]) for r in rows], [float(bv[r]) for r in rows]))
-    return out
-
-
-def _core_marks_general(bc: dict[str, Any], x0: np.ndarray, smax: int) -> list[tuple[int, str, Any, Any]] | None:
-    """코어 ``esl.mech.jig_bc.support_marks`` 가 일반형(4튜플 [(노드, kind, dirs, val)])을 돌려주면 그 결과, 옛 2튜플·없음·오류면 None(어댑터).
-    코어가 받는 인자 이름만 넘긴다(bc_node·bc_kind·sp_node·x0·smax + 일반형이 더 받는 bc_dir·bc_val·sp_dir·sp_k·sp_g)."""
-    import inspect
-
-    try:
-        from esl_worker import core_adapter
-
-        fn = core_adapter._attr("esl.mech.jig_bc", "support_marks")
-        ps = inspect.signature(fn).parameters
-        have = {**{k: bc[k] for k in JIG_BC_ARRAYS if k in bc}, "x0": x0, "smax": int(smax)}
-        kw = {k: v for k, v in have.items() if k in ps}
-        if not {"bc_node", "bc_kind", "sp_node", "x0", "smax"} <= set(kw):
-            return None
-        r = fn(**kw)
-    except Exception:  # noqa: BLE001 - 코어가 없거나 시그니처·동작이 다르면 어댑터
-        return None
-    r = list(r)
-    if r and any(len(t) != 4 for t in r):
-        return None
-    return [(int(t[0]), str(t[1]), t[2], t[3]) for t in r]
-
-
-def jig_support_marks(bc: dict[str, Any], x0: np.ndarray, smax: int) -> list[tuple[int, str, Any, Any]]:
-    """Case 3D 지그 표식 = 코어 일반형 결과(있으면) 아니면 어댑터(계약 §10.4-3). 반환 [(노드 인덱스, kind, dirs, val)]."""
-    r = _core_marks_general(bc, x0, smax)
-    return r if r is not None else jig_marks_general(bc, x0, smax)
-
-
-def _jsonable_val(v: Any) -> Any:
-    if isinstance(v, dict):
-        return {str(k): _jsonable_val(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple, np.ndarray)):
-        return [_jsonable_val(x) for x in (v.tolist() if isinstance(v, np.ndarray) else v)]
-    if isinstance(v, (np.floating, np.integer)):
-        return v.item()
-    return v
+JIG_BC_ARRAYS = ("bc_node", "bc_kind", "bc_dir", "bc_val", "sp_node", "sp_dir", "sp_k", "sp_g")   # load npz 의 BC 배열(esl.mech.jig_bc.BC_KEYS)
 
 
 def _jig_supports(inp: Inputs, node_id: np.ndarray, x0: np.ndarray) -> list[dict[str, Any]]:
-    """지그 행: load npz 의 BC 배열 → tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드(전부, 최대 3개).
-    각 표식 = 기존 ``dof`` 문자열(옛 뷰어 호환 — 값 불변) + 방식별 ``kind``·``dirs``·``val``(계약 §10.2). 읽지 못하면 빈 목록(표식 없음 — 3D 자체는 계속)."""
+    """지그 행: load npz 의 BC 배열 → 표식 행 = 코어 ``esl.mech.jig_bc.support_rows``(스터디 사이드카와 같은 함수 — 계약 esl_bead_pos_u.md
+    §10.4-3·통합 INT-1): tie 노드(최대 view3d.jig_support_max 개 샘플) + 3-2-1 면내 노드, 각 행 {node_id, dof(옛 문자열 그대로), kind, dirs, val}.
+    방향·값 배열이 없는 옛 npz = 옛 {node_id, dof} 만. kind 판정 = 출처 키(행 key — 방식 표 열 src)의 METHODS 행. 읽지 못하면 빈 목록(3D 는 계속)."""
+    from esl_worker import core_adapter
+
     try:
         with np.load(inp.support_npz or "", allow_pickle=False) as z:
             bc = {k: np.asarray(z[k]) for k in JIG_BC_ARRAYS if k in z.files}
-            bn, bk = bc["bc_node"], bc["bc_kind"]
+        if "bc_node" not in bc or "bc_kind" not in bc:
+            raise KeyError("bc_node")
     except (OSError, ValueError, KeyError):
         return []
-    if "bc_dir" not in bc or "bc_val" not in bc:          # 옛 npz(방향·값 배열 없음) — 옛 규칙 그대로(kind 없음)
-        sp = bc.get("sp_node", np.zeros(0, np.int64))
-        n = int(node_id.size)
-        bn = np.asarray(bn, dtype=np.int64)
-        bk = np.asarray(bk).astype(np.int64)
-        sp = np.asarray(sp, dtype=np.int64)
-        ok = (bn >= 0) & (bn < n)
-        bd = getattr(inp.ctx.settings, "bead_doe", None)
-        m = int((bd.view3d if bd is not None else BeadDoeView3dCfg()).jig_support_max)
-        tie = jig_support_sample(x0, np.unique(np.r_[bn[ok & (bk == JIG_KIND_TIE)], sp[(sp >= 0) & (sp < n)]]), m)
-        aux = np.unique(bn[ok & (bk == JIG_KIND_AUX)])
-        shown = set(tie.tolist())
-        return ([{"node_id": int(node_id[i]), "dof": JIG_TIE_DOF} for i in tie]
-                + [{"node_id": int(node_id[i]), "dof": JIG_AUX_DOF} for i in aux if int(i) not in shown])
     bd = getattr(inp.ctx.settings, "bead_doe", None)
     m = int((bd.view3d if bd is not None else BeadDoeView3dCfg()).jig_support_max)
-    marks = jig_support_marks(bc, x0, m)
-    out = []
-    for i, kind, dirs, val in marks:
-        dof = JIG_AUX_DOF if kind == "aux_inplane" else JIG_TIE_DOF
-        out.append({"node_id": int(node_id[i]), "dof": dof, "kind": kind, "dirs": _jsonable_val(dirs), "val": _jsonable_val(val)})
-    return out
+    return core_adapter.jig_support_rows(bc, x0, m, node_id, str(inp.row.get("key") or "") or None)
 
 
 def _supports(inp: Inputs, data: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -465,38 +366,6 @@ def _publish(tmp: str, dest: str, cdir: str, run_id: str, name: str, valid) -> b
     return True
 
 
-def _enrich_manifest_supports(tmp: str, sup_rows: list[dict[str, Any]], m: dict[str, Any] | None = None) -> None:
-    """코어 build_view 는 표식의 node_id·dof 만 manifest 에 쓴다 → 방식별 ``kind``·``dirs``·``val``(계약 §10.2 — 기존 ``dof`` 는 그대로)을
-    node_id 로 맞춰 manifest.json 파일과 코어 반환 dict ``m`` 양쪽에 덧붙인다(kind 없는 행은 손대지 않음 — 옛 지지 출처 그대로).
-    코어가 이 키를 직접 쓰면 값이 같아 무동작."""
-    extra = {int(r["node_id"]): r for r in sup_rows if isinstance(r, dict) and "kind" in r}
-    if not extra:
-        return
-
-    def _fill(rows: Any) -> bool:
-        changed = False
-        for row in rows or []:
-            e = extra.get(int(row.get("node_id", -1))) if isinstance(row, dict) else None
-            if e is not None:
-                for k in ("kind", "dirs", "val"):
-                    if row.get(k) != e[k]:
-                        row[k] = e[k]
-                        changed = True
-        return changed
-
-    if m is not None:
-        _fill(m.get("supports"))
-    path = os.path.join(tmp, MANIFEST)
-    try:
-        with open(path, encoding="utf-8") as fh:
-            man = json.load(fh)
-    except (OSError, ValueError):
-        return
-    if _fill(man.get("supports")):
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(man, fh, ensure_ascii=False, allow_nan=False)
-
-
 def _build(inp: Inputs) -> dict[str, Any]:
     from esl_worker import core_adapter
 
@@ -515,7 +384,6 @@ def _build(inp: Inputs) -> dict[str, Any]:
             u_rel=data["u_rel"], supports=sup_rows, key=inp.key, esl_run_id=inp.run["id"], units=_units(inp.ctx),
             cfg={k: getattr(cfg, k) for k in ("lod_min_nodes", "lod_target_vertices", "top_max", "cluster_k_max",
                                               "kmeans_max_iter")})
-        _enrich_manifest_supports(tmp, sup_rows, m)
         glb = m["geometry"]["bytes"] + (m["lod"]["bytes"] if m.get("lod") else 0)
         if glb > cfg.max_glb_bytes or m["values"]["bytes"] > cfg.max_glb_bytes:
             raise _too_large(inp.ctx, n_nodes=n, glb_bytes=glb, values_bytes=m["values"]["bytes"])

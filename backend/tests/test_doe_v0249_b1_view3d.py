@@ -1,8 +1,7 @@
 """v0.24.9 B1 — Case 3D 지그 경계조건 표식 방식별 자료(계약 esl_bead_pos_u.md §10.2·§10.4-1~3, V-0249-BM-1~3의 백엔드 부분).
 
-- 어댑터 ``view3d.jig_marks_general`` : 세 방식(fixed·prescribed·spring) × tie_dofs(normal·translation) × 꺾임 노드 → kind·dirs·val 이
-  BC 배열(`esl.mech.jig_bc.build_bc` 결과)과 일치, 샘플·순서 = 옛 2튜플 규칙(코어 `support_marks`) 그대로.
-- 코어 ``support_marks`` 일반형이 생기면(4튜플) 어댑터와 같은 결과 — 옛 2튜플이면 (노드, dof) 가 어댑터와 같음(어댑터가 대체).
+- 표식 행 = 코어 ``esl.mech.jig_bc.support_rows``(어댑터 ``core_adapter.jig_support_rows`` 경유 — 통합 INT-1, 백엔드 자체 계산 없음): 세 방식 ×
+  tie_dofs(normal·translation) × 꺾임 노드 → kind·dirs·val 이 BC 배열(`build_bc` 결과)과 일치, 샘플·순서·dof = 옛 2튜플 규칙 그대로.
 - Case 3D 엔드포인트: manifest.supports 에 kind·dirs·val 실재, 기존 ``dof`` 값·표식 수·샘플 순서 불변, 옛 npz(bc_dir 없음) = kind 없음.
 """
 
@@ -64,130 +63,118 @@ def _bc(method: str, tie_dofs: str):
     return bc, u_tgt
 
 
+def _r6(x):
+    return float(round(float(x), 6)) + 0.0
+
+
+def _rows(bc, x0, smax, src):
+    """백엔드가 부르는 코어 함수(어댑터 경유 — Case 3D·스터디 사이드카 공통, 통합 INT-1)."""
+    from esl_worker import core_adapter
+
+    return core_adapter.jig_support_rows(bc, x0, smax, np.arange(x0.shape[0]), src)
+
+
+SRC = {"fixed": "jig", "prescribed": "jig_disp", "spring": "jig_spring"}
+
+
 @pytest.mark.parametrize("method", ["fixed", "prescribed", "spring"])
 @pytest.mark.parametrize("tie_dofs", ["normal", "translation"])
-def test_marks_general_matches_bc_arrays(method, tie_dofs):
-    from esl_platform.api.services import view3d as v
-
+def test_marks_match_bc_arrays(method, tie_dofs):
+    """V-0249-BM-1·3(통합 INT-1): 표식 행 kind·dirs·val = BC 배열(build_bc) — 방식별. 스프링 방식 tie = 스프링 행 방향만(법선 1, 꺾임 2,
+    translation 3)·{k[], g[]}, 받침점(aux) = 면내 1·2 방향(법선 성분 0) — 옛 "모든 방식 tie = 123 세 방향 고정" 재발 방지."""
     x0 = _plate()
     bc, _ = _bc(method, tie_dofs)
-    marks = v.jig_marks_general(bc, x0, 64)
+    rows = _rows(bc, x0, 64, SRC[method])
     old = _old_marks(bc, x0, 64)
-    assert [(i, "123" if k != "aux_inplane" else "ij") for i, k, _d, _v in marks] == old        # 표식 수·샘플 순서·dof 옛 규칙 그대로
+    assert [(r["node_id"], r["dof"]) for r in rows] == old        # 표식 수·샘플 순서·dof 옛 규칙 그대로
     bn, bd, bv, bk = bc["bc_node"], bc["bc_dir"], bc["bc_val"], bc["bc_kind"]
-    for i, kind, dirs, val in marks:
+    for r in rows:
+        i, kind, dirs, val = r["node_id"], r["kind"], r["dirs"], r["val"]
         if kind == "aux_inplane":
-            rows = np.flatnonzero((bn == i) & (bk == KIND_AUX))
-            assert dirs == [bd[r].tolist() for r in rows] and val == [float(bv[r]) for r in rows]
+            ix = np.flatnonzero((bn == i) & (bk == KIND_AUX))
+            assert dirs == [[_r6(x) for x in bd[j]] for j in ix] and val == [_r6(bv[j]) for j in ix]
+            assert all(abs(d[2]) < 1e-12 for d in dirs)                                   # 면내(판 z = 0 법선 성분 없음)
             continue
         if method == "spring":
-            rows = np.flatnonzero(bc["sp_node"] == i)
-            assert kind == "tie_spring" and dirs == [bc["sp_dir"][r].tolist() for r in rows]
-            assert val == {"k": [float(bc["sp_k"][r]) for r in rows], "g": [float(bc["sp_g"][r]) for r in rows]}
+            ix = np.flatnonzero(bc["sp_node"] == i)
+            assert kind == "tie_spring" and dirs == [[_r6(x) for x in bc["sp_dir"][j]] for j in ix]
+            assert val == {"k": [_r6(bc["sp_k"][j]) for j in ix], "g": [_r6(bc["sp_g"][j]) for j in ix]}
+            assert not np.any((bn == i) & (bk == KIND_TIE))                               # 스프링 tie 는 구속 행 없음(면내 자유)
         else:
-            rows = np.flatnonzero((bn == i) & (bk == KIND_TIE))
-            assert dirs == [bd[r].tolist() for r in rows]
+            ix = np.flatnonzero((bn == i) & (bk == KIND_TIE))
+            assert dirs == [[_r6(x) for x in bd[j]] for j in ix]
             if method == "fixed":
                 assert kind == "tie_fixed" and val == 0.0
             else:
-                assert kind == "tie_disp" and val == [float(bv[r]) for r in rows]
-    # 꺾임 노드(normal) = 법선 2개, translation = 방향 3개
-    by = {i: d for i, k, d, _ in marks if k != "aux_inplane"}
-    if tie_dofs == "normal":
+                assert kind == "tie_disp" and val == [_r6(bv[j]) for j in ix]
+    by = {r["node_id"]: r["dirs"] for r in rows if r["kind"] != "aux_inplane"}
+    if tie_dofs == "normal":                                       # 꺾임 노드 = 법선 2개, 평평한 노드 = 법선 1개(세 방향 아님)
         assert {len(by[i]) for i in (2, 5, 9)} == {2} and {len(by[i]) for i in (0, 1, 3)} == {1}
     else:
         assert {len(d) for d in by.values()} == {3}
-    aux = {i: d for i, k, d, _ in marks if k == "aux_inplane"}
-    assert sorted(aux) == [40, 55, 77] and len(aux[40]) == 2 and len(aux[55]) == 1               # 면내 방향 2 또는 1
+    aux = {r["node_id"]: r["dirs"] for r in rows if r["kind"] == "aux_inplane"}
+    if tie_dofs == "normal":
+        assert sorted(aux) == [40, 55, 77] and len(aux[40]) == 2 and len(aux[55]) == 1        # 면내 방향 2 또는 1
 
 
 def _old_marks(bc, x0, smax):
-    """옛 2튜플 [(노드, dof)] — 코어 함수가 옛 2튜플이면 그 결과, 일반형이면 같은 의미로 환산(표식 수·순서·dof 비교용)."""
+    """옛 2튜플 [(노드, dof)] — 코어 옛 호출(키워드 없음 = v0.24.8 바이트)."""
     from esl.mech import jig_bc as jb
 
-    r = jb.support_marks(bc["bc_node"], bc["bc_kind"], bc["sp_node"], x0, smax)
-    return [(int(t[0]), t[1] if len(t) == 2 else ("ij" if t[1] == "aux_inplane" else "123")) for t in r]
+    return [(int(i), d) for i, d in jb.support_marks(bc["bc_node"], bc["bc_kind"], bc["sp_node"], x0, smax)]
 
 
 @pytest.mark.parametrize("method", ["fixed", "prescribed", "spring"])
 def test_marks_sampling_capped_and_deterministic(method):
+    from esl.mech import jig_bc as jb
     from esl_platform.api.services import view3d as v
 
     x0 = _plate(14)
-    from esl.mech import jig_bc as jb
-
     tn = np.arange(0, 100)
     nz = np.tile([0.0, 0.0, 1.0], (tn.size, 1))
     row = jb.METHODS[method]
     bc = jb.build_bc(row, {"node": tn, "dir": nz}, {"node": np.array([150, 151, 160]), "dir": np.array([[1.0, 0, 0], [0, 1.0, 0], [1.0, 0, 0]])},
                      np.zeros((200, 3)), k=None if row["tie_stiff"] == "hard" else np.full(tn.size, 3.0))
-    a = v.jig_marks_general(bc, x0, 20)
-    assert a == v.jig_marks_general(bc, x0, 20)
-    ties = [m for m in a if m[1] != "aux_inplane"]
-    assert len(ties) == 20 and len([m for m in a if m[1] == "aux_inplane"]) == 3
-    # 최원점 샘플 = 백엔드 샘플 함수(= 코어 support_sample) 결과 순서
-    assert [m[0] for m in ties] == v.jig_support_sample(x0, tn, 20).tolist()
-    # 샘플된 tie 와 겹치는 면내 노드는 tie 만
-    bc2 = dict(bc)
-    bc2["bc_node"] = np.r_[bc["bc_node"], [0]].astype(np.int64)
-    bc2["bc_kind"] = np.r_[bc["bc_kind"], [KIND_AUX]].astype(np.int8)
-    bc2["bc_dir"] = np.r_[bc["bc_dir"], [[1.0, 0.0, 0.0]]]
-    bc2["bc_val"] = np.r_[bc["bc_val"], [0.0]]
-    b = v.jig_marks_general(bc2, x0, 20)
-    assert sum(1 for m in b if m[0] == 0) == 1 and [m for m in b if m[0] == 0][0][1] != "aux_inplane"
-    # 범위 밖 인덱스는 무시
-    bc3 = dict(bc)
-    bc3["bc_node"] = np.r_[bc["bc_node"], [10 ** 9, -1]].astype(np.int64)
-    bc3["bc_kind"] = np.r_[bc["bc_kind"], [KIND_TIE, KIND_AUX]].astype(np.int8)
-    bc3["bc_dir"] = np.r_[bc["bc_dir"], [[0, 0, 1.0], [0, 0, 1.0]]]
-    bc3["bc_val"] = np.r_[bc["bc_val"], [0.0, 0.0]]
-    assert v.jig_marks_general(bc3, x0, 20) == a
+    a = _rows(bc, x0, 20, SRC[method])
+    assert a == _rows(bc, x0, 20, SRC[method])
+    ties = [m for m in a if m["kind"] != "aux_inplane"]
+    assert len(ties) == 20 and len([m for m in a if m["kind"] == "aux_inplane"]) == 3
+    assert [m["node_id"] for m in ties] == v.jig_support_sample(x0, tn, 20).tolist()   # 최원점 샘플 = 백엔드 샘플 함수(= 코어)
+    bc2 = {k: np.asarray(x) for k, x in bc.items()}                # 샘플된 tie 와 겹치는 면내 노드는 tie 만
+    bc2["bc_node"] = np.r_[bc2["bc_node"], [0]].astype(np.int64)
+    bc2["bc_kind"] = np.r_[bc2["bc_kind"], [KIND_AUX]].astype(np.int8)
+    bc2["bc_dir"] = np.r_[bc2["bc_dir"], [[1.0, 0.0, 0.0]]]
+    bc2["bc_val"] = np.r_[bc2["bc_val"], [0.0]]
+    b = _rows(bc2, x0, 20, SRC[method])
+    assert sum(1 for m in b if m["node_id"] == 0) == 1 and [m for m in b if m["node_id"] == 0][0]["kind"] != "aux_inplane"
 
 
-@pytest.mark.parametrize("method", ["fixed", "prescribed", "spring"])
-@pytest.mark.parametrize("tie_dofs", ["normal", "translation"])
-def test_backend_marks_equal_core_function(method, tie_dofs):
-    """V-0249-BM-3: 백엔드 표식 = 코어 ``support_marks`` 결과. 코어가 일반형(4튜플)이면 같은 값, 옛 2튜플이면 (노드, dof) 가 같음."""
-    from esl.mech import jig_bc as jb
+def test_backend_has_no_own_mark_computation(monkeypatch, tmp_path):
+    """V-0249-BM-3(통합 INT-1): Case 3D 표식 = 코어 함수 호출 결과 그대로(백엔드 어댑터 계산 없음 — 출처 키를 src 로 넘김)."""
+    from types import SimpleNamespace
+
     from esl_platform.api.services import view3d as v
+    from esl_worker import core_adapter
 
+    for name in ("jig_marks_general", "_core_marks_general", "jig_support_marks", "_enrich_manifest_supports"):
+        assert not hasattr(v, name), name
     x0 = _plate()
-    bc, _ = _bc(method, tie_dofs)
-    got = v.jig_support_marks(bc, x0, 64)
-    import inspect
+    bc, _ = _bc("spring", "normal")
+    p = tmp_path / "jig_spring.npz"
+    np.savez(p, **{k: np.asarray(x) for k, x in bc.items()})
+    seen = {}
 
-    ps = inspect.signature(jb.support_marks).parameters
-    kw = {k: bc[k] for k in ("bc_node", "bc_kind", "sp_node", "bc_dir", "bc_val", "sp_dir", "sp_k", "sp_g") if k in ps}
-    core = list(jb.support_marks(x0=x0, smax=64, **kw))
-    if core and len(core[0]) == 4:                     # 코어 일반형 — 어댑터 대신 코어 결과를 그대로 부름
-        assert [(i, k) for i, k, _d, _v in got] == [(int(c[0]), str(c[1])) for c in core]
-        assert [np.asarray(d).tolist() for _i, _k, d, _v in got] == [np.asarray(c[2]).tolist() for c in core]
-    else:                                              # 옛 2튜플 — 어댑터가 대체, 표식 노드·dof 는 코어와 같음
-        assert all(len(c) == 2 for c in core)
-        assert [(i, "ij" if k == "aux_inplane" else "123") for i, k, _d, _v in got] == [(int(c[0]), c[1]) for c in core]
-        assert [m[:2] for m in got] == [m[:2] for m in v.jig_marks_general(bc, x0, 64)]
+    def fake(bc_, x0_, smax, node_id, src):
+        seen.update(keys=sorted(bc_), smax=smax, src=src, n=len(node_id))
+        return [{"node_id": 1, "dof": "123", "kind": "tie_spring", "dirs": [[0.0, 0.0, 1.0]], "val": {"k": [1.0], "g": [0.0]}}]
 
-
-def test_core_generalized_function_is_called_when_present(monkeypatch):
-    """코어 함수가 4튜플을 돌려주면 어댑터가 아닌 그 결과를 쓴다(합성 대역)."""
-    from esl.mech import jig_bc as jb
-    from esl_platform.api.services import view3d as v
-
-    x0 = _plate()
-    bc, _ = _bc("fixed", "normal")
-    called = {}
-
-    def fake(bc_node, bc_kind, sp_node, x0, smax, bc_dir=None, bc_val=None, sp_dir=None, sp_k=None, sp_g=None):
-        called["n"] = called.get("n", 0) + 1
-        return [(3, "tie_fixed", [[0.0, 0.0, 1.0]], 0), (7, "aux_inplane", [[1.0, 0.0, 0.0]], [0.25])]
-
-    monkeypatch.setattr(jb, "support_marks", fake)
-    assert v.jig_support_marks(bc, x0, 64) == [(3, "tie_fixed", [[0.0, 0.0, 1.0]], 0), (7, "aux_inplane", [[1.0, 0.0, 0.0]], [0.25])]
-    assert called["n"] == 1
-    monkeypatch.setattr(jb, "support_marks", lambda *a, **k: [(1, "123"), (2, "ij")])             # 옛 2튜플 → 어댑터
-    assert v.jig_support_marks(bc, x0, 64) == v.jig_marks_general(bc, x0, 64)
-    monkeypatch.setattr(jb, "support_marks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))   # 오류 → 어댑터
-    assert v.jig_support_marks(bc, x0, 64) == v.jig_marks_general(bc, x0, 64)
+    monkeypatch.setattr(core_adapter, "jig_support_rows", fake)
+    view3d_cfg = SimpleNamespace(jig_support_max=17)
+    inp = SimpleNamespace(support_npz=str(p), row={"key": "jig_spring"},
+                          ctx=SimpleNamespace(settings=SimpleNamespace(bead_doe=SimpleNamespace(view3d=view3d_cfg))))
+    out = v._jig_supports(inp, np.arange(x0.shape[0]), x0)
+    assert out == fake(bc, x0, 17, np.arange(x0.shape[0]), "jig_spring")
+    assert seen["src"] == "jig_spring" and seen["smax"] == 17 and "sp_k" in seen["keys"] and "bc_dir" in seen["keys"]
 
 
 # ================================================================ 엔드포인트 (V-0249-BM-2)
@@ -243,6 +230,11 @@ def test_case_3d_supports_have_kind_dirs_val_and_dof_unchanged(mk, seed, engine,
         man = json.loads((seed.dir / "runs" / seed.run_id / f"view3d_{k}" / "manifest.json").read_text(encoding="utf-8"))
         assert [{kk: s_[kk] for kk in ("node_id", "dof", "kind", "dirs", "val")} for s_ in man["supports"]] == \
             [{kk: s_[kk] for kk in ("node_id", "dof", "kind", "dirs", "val")} for s_ in sup]
+        # 응답 = 코어 함수 결과 그대로(V-0249-BM-3 — 같은 npz·같은 출처 키)
+        with np.load(_esl(seed) / f"{k}.npz") as z:
+            bcz = {kk: z[kk] for kk in jb.BC_KEYS if kk in z.files}
+        core = jb.support_rows(bcz, np.asarray(seed.m["x0"], dtype=float), 10 ** 6, nid, k)
+        assert [{kk: s_[kk] for kk in ("node_id", "dof", "kind", "dirs", "val")} for s_ in sup] == core
 
 
 def test_case_3d_old_npz_without_bc_dir_has_no_kind(mk, seed, engine, jig_plan):  # noqa: F811

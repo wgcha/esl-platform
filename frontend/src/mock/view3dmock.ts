@@ -361,7 +361,8 @@ export function jigMarkSupports(base: View3dSupport[], method: string, pos: (v: 
   const kind = JIG_MARK_KIND[method];
   if (!kind) return base;
   const g = 0.6;
-  const tieVal = (nd: number) => (kind === "tie_fixed" ? 0 : kind === "tie_disp" ? (nd > 1 ? [g, 0.4] : g) : { k: 1200, g: nd > 1 ? [g, 0.4] : g });
+  // 값 형식 = 통합 INT-1(코어 support_marks_full): 방향별 목록, 스프링 {k: [..], g: [..]}, 고정 0
+  const tieVal = (nd: number) => (kind === "tie_fixed" ? 0 : kind === "tie_disp" ? (nd > 1 ? [g, 0.4] : [g]) : { k: nd > 1 ? [1200, 1200] : [1200], g: nd > 1 ? [g, 0.4] : [g] });
   const mk = (v: number, k: View3dSupport["kind"], dirs: number[][], val: View3dSupport["val"]): View3dSupport => ({ node_id: idOf(v), vertex: v, dof: k === "aux_inplane" ? "ij" : "123", x0: pos(v), kind: k, dirs, val });
   const [a, b, c] = base.map((x) => x.vertex);
   const v4 = Math.floor(n * 0.37);
@@ -371,7 +372,7 @@ export function jigMarkSupports(base: View3dSupport[], method: string, pos: (v: 
     mk(b, kind, BENT, tieVal(2)),
     mk(c, kind, FLAT, tieVal(1)),
     mk(v4, "aux_inplane", [[1, 0, 0], [0, 1, 0]], [0, 0]),
-    mk(v5, "aux_inplane", [[1, 0, 0]], 0),
+    mk(v5, "aux_inplane", [[1, 0, 0]], [0]),
   ];
 }
 

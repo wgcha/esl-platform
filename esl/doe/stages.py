@@ -4713,7 +4713,7 @@ def _jig_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[d
 def _jig_method_row(src: str) -> dict | None:
     """출처 키(jig_disp·jig_spring·…) → jig_bc.METHODS 행(표식 kind 판정 — 열 값만 읽음). 없으면 None."""
     from esl.mech import jig_bc
-    return next((r for r in jig_bc.METHODS.values() if r["src"] == src), None)
+    return jig_bc.method_row_of(src)
 
 
 def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -> tuple[dict, list]:
@@ -8222,6 +8222,31 @@ def _pos_u_tie_ids(c: Ctx, mesh: dict) -> np.ndarray:
         return np.asarray(_jig_nodes(c, plan, mesh, J, [])["node_id"], dtype=np.int64)
     except EslError:
         return np.zeros(0, np.int64)
+
+
+class _ReadCtx:
+    """읽기 전용 최소 Ctx(백엔드 동기 호출용 — 쓰기·진행 없음): 스냅샷 doe·스터디 폴더만. Ctx 의 D·cfg·scn·max_mb·p 를 같은 규칙으로."""
+
+    def __init__(self, doe: dict, out_dir: str):
+        self.D = doe
+        self.out = os.path.abspath(out_dir)
+        self.full_cfg = doe.get("cfg") or {}
+        self.cfg = settings({"bead_doe": self.full_cfg.get("bead_doe") or {}})
+        self.scn = doe["scenario"]
+        self.max_mb = float(self.cfg["limits"]["max_json_mb"])
+
+    def p(self, *parts) -> str:
+        return os.path.join(self.out, *parts)
+
+
+def pos_u_tie_ids_at(doe: dict, out_dir: str, mesh: dict) -> np.ndarray:
+    """(Backend API — 통합 v0.24.9) PU-14 지그 tie 노드 ID — 워커 select 기저(``_pos_u_tie_ids``)와 같은 함수를 스터디 스냅샷 doe·스터디
+    폴더(out_dir — prep/ 의 부모)로 읽기만 해서 부른다(백엔드 derive_v2 의 tie_node_ids — U_HELD·hold 비율이 워커와 같게).
+    pos_u 블록 없음 = 빈 배열."""
+    c = _ReadCtx(doe, out_dir)
+    if _pos_u(c) is None:
+        return np.zeros(0, np.int64)
+    return _pos_u_tie_ids(c, mesh)
 
 
 def _u_reason_key(b) -> dict:

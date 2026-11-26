@@ -637,3 +637,5 @@
 - (0.24.9 D-0.24.9-PU-15, 2026-11-25 메인 결정 — A0 `transfer_plan.py:242-247`) rank.metric = lin 이고 spatial 이면 순위 = solve(`metric_effective(…, spatial=)` 인수, 기존 호출 바이트 불변), 정보 `PU_LIN_SKIPPED` 에 "순위는 재풀이로 대체". jig·solve 그대로.
 - (0.24.9 미결) Q-PU-1 공간 고정 = U 있는 스터디만, Q-PU-2 한쪽 입구 = U 없음, Q-PU-3 U 기본 꺼짐. 후속 R-PU-1~7.
 - (0.24.9 D-0.24.9-BM-1, 2026-11-26 사용자 요청 "스프링 경계조건 표시할때 오해가 없게 … 기호를 다르게", 근거 MARK_TIE "123" 세 방식 공통 `jig_bc.py:47`) 지그 3D 지지 표식을 kind(tie_fixed·tie_disp·tie_spring·aux_inplane·support321)·dirs·val 로 일반화하고 기호를 나눔(고정 = 막대+빗금, 변위 = 화살표 g, 스프링 = 지그재그+받침 g, 면내 지지 = 면내 양방향 화살표). 범례 = [경계조건] 칩 툴팁, 탐침에 k·g. 기존 dof 필드 유지(옛 파일 호환), 높이 ±0.
+- (0.24.9 D-0.24.9-PU-C1-1, 2026-11-26 통합 — C1 findings) 계약 §5-13 보정: pos_u 블록이 있는 스냅샷은 U 변수 0개여도 선택 단위 파일(select/<sha12>/basis·derived — U 기저)·params.json·derived.json·matrix.json `load_follow: "node"` 가 달라짐(안·순위·결과·prep·3D·input_sha256 은 같음).
+- (0.24.9 D-0.24.9-INT-1~3, 2026-11-26 통합) 지그 표식 형식 = 코어 `jig_bc.support_rows`(출처 키로 kind, dirs 단위 벡터 목록, val 방향별 목록·스프링 {k[], g[]}) 한 개 — 백엔드 Case 3D 는 어댑터로 그 함수만, 프런트는 그 형식만. 백엔드 derive tie_node_ids·미리보기 load_follow·U 범위 422 = 코어 함수. 옛 형식 안내는 지그 보기만(계약 §10.6).

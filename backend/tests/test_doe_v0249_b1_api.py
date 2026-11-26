@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import json
 
 import pytest
@@ -47,11 +48,13 @@ KW: list[dict] = []        # 코어(대역) derive_v2 가 받은 pos_u 키
 U_REASONS = {"b2": "U_NETWORK", "b3": {"code": "U_ONE_SIDE"}}     # 코어가 주는 두 모양(코드 문자열 · {code})
 
 
-def _fake_derive_v2(mesh, norm, cfg, graph, labels, *, frame=None, fixed_scan=None, bead=None, pos_u=None):
+def _fake_derive_v2(mesh, norm, cfg, graph, labels, *, frame=None, fixed_scan=None, bead=None, pos_u=None, tie_node_ids=None):
     """test_doe_select_graph_api.fake_derive_v2 + pos_u 기록 + params·param_beads(b1 = U 행, 나머지 = u_reason) — 계약 §1.3 형식 합성."""
     from test_doe_select_graph_api import fake_derive_v2
 
     KW.append({"pos_u": copy.deepcopy(pos_u)})
+    if tie_node_ids is not None:
+        KW[-1]["tie_node_ids"] = [int(x) for x in tie_node_ids]
     d = fake_derive_v2(mesh, norm, cfg, graph, labels, frame=frame, fixed_scan=fixed_scan, bead=bead)
     params, pbeads = [], []
     for b in d["beads"]:
@@ -261,7 +264,28 @@ def test_derive_passes_snapshot_pos_u_to_core(client, world, engine, esl_root): 
     doe_select.reset_caches()
     s = api(client, "GET", f"/doe/studies/{s['id']}").json()
     assert derive(client, s, sel).status_code == 200
-    assert KW[-1] == {"pos_u": None}                                             # 옛 스터디 = None(캐시 공유 없음)
+    assert KW[-1] == {"pos_u": None}                                             # 옛 스터디 = None(캐시 공유 없음·tie 인수 없음)
+
+
+def test_derive_passes_core_tie_node_ids(client, world, engine, esl_root, monkeypatch):  # noqa: F811
+    """PU-14(통합): 백엔드 derive_v2 tie_node_ids = 코어 ``stages.pos_u_tie_ids_at``(준비 스냅샷 doe·스터디 폴더) 결과 그대로."""
+    from esl_platform.api.services import doe_select
+    from esl_platform.core import opt_core
+
+    s, sha = ready2(client, world, engine, esl_root)
+    seen = {}
+
+    def fake(doe, out_dir, mesh):
+        seen.update(doe=doe, out=out_dir, n=int(len(mesh["node_id"])))
+        return [5, 9, 2]
+
+    monkeypatch.setattr(opt_core, "doe_pos_u_tie_ids", fake, raising=False)
+    doe_select.reset_caches()
+    sel = sel2(sha, gbead("b1", 11))
+    assert derive(client, s, sel).status_code == 200
+    assert KW[-1]["tie_node_ids"] == [5, 9, 2]
+    assert seen["doe"] == _doe(engine, s) and seen["doe"]["pos_u"] == s["inputs"]["pos_u"]
+    assert os.path.basename(os.path.normpath(seen["out"])) == s["id"] and os.path.isdir(os.path.join(seen["out"], "prep"))   # 스터디 폴더(prep/ 의 부모)
 
 
 def test_u_reason_in_derive_and_params(client, world, engine, esl_root):  # noqa: F811

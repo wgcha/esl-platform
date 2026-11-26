@@ -27,7 +27,7 @@ import { PartStage } from "./part/PartStage";
 import { buildSupportSpecs } from "./supports";
 import { markLegend } from "./supportMarks";
 import type { LoadView } from "./useLoadView";
-import { fallbackAllowed, type LoadComp } from "./sources";
+import { fallbackAllowed, sourceRow, type LoadComp } from "./sources";
 import { colorField, decodeValues, loadFieldOf, loadRangeTop, maxNorm3, type DecodedValues } from "./values";
 import { hasWebGL } from "./webgl";
 
@@ -368,7 +368,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const legendLabel = fo ? fo.label : unit === "mm" ? options?.dispLabel ?? dov?.label ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : loadComp === "fmag" ? "|F| 하중 크기 (N)" : "|Fn| 면외 하중 (N)";
   const maxMark = markList.find((m) => m.text.startsWith("최대"));
   const maxLine = maxMark ? `최대 ${f3(field?.values[maxMark.vertex])} @N ${data?.glb.nodeIds ? data.glb.nodeIds[maxMark.vertex] : maxMark.vertex}` : null;
-  const bcLegend = manifest && hasBc ? markLegend(manifest.supports) : null;
+  const bcLegend = manifest && hasBc ? markLegend(manifest.supports, sourceRow(view.src)?.group === "jig") : null;
   const controlProps = { store, hasBc, hasLoad, deformOn, compact, bcLegend };
   const hotkeys = {
     b: () => hasBc && planOf(planKey).layers.includes("bc") && store.set({ bc: !st.bc }),
