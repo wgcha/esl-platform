@@ -84,14 +84,15 @@ def scfg(c: dict[str, Any]) -> dict[str, Any]:
 
 def sel_error(exc) -> DomainError:
     """코어 EslError → API 오류(§14): SELECT_TOO_LARGE 413, SELECT_DERIVE_TIMEOUT 503, BG_GRAPH_STALE 409, 그 밖 422.
-    v0.17.0: BG_* 코드(esl_beadgraph.md §6.4)는 그대로 전달, 그 밖 접두어는 SELECT_INVALID."""
+    v0.17.0: BG_* 코드(esl_beadgraph.md §6.4)는 그대로 전달, 그 밖 접두어는 SELECT_INVALID.
+    v0.25.0 VB §3.2: VB_* 코드(VB_INPUT_INVALID·VB_MAX_COUNT — detail vbead·key·r_max 등 코어 extra)도 그대로 전달."""
     code = str(getattr(exc, "code", "") or "SELECT_INVALID")
     extra = getattr(exc, "extra", None)
     extra = dict(extra) if isinstance(extra, dict) else {}
     extra = {k: v for k, v in extra.items() if k not in ("code", "message", "status")}
     status = 413 if code == "SELECT_TOO_LARGE" else 503 if code == "SELECT_DERIVE_TIMEOUT" else \
         409 if code == "BG_GRAPH_STALE" else 422
-    if not code.startswith(("SELECT_", "BG_")):
+    if not code.startswith(("SELECT_", "BG_", "VB_")):
         code = "SELECT_INVALID"
     return DomainError(code, str(getattr(exc, "message", "") or exc), status=status, **_svc()._jsonable(extra))
 

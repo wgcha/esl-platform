@@ -1202,6 +1202,7 @@ def study_out(ctx: AppContext, conn, s: dict[str, Any], job: dict[str, Any] | No
         inputs.setdefault("bead_source", "manual")
         inputs.setdefault("pos_u", None)              # v0.24.9 PU: 옛 스터디 = null(U 행 없음) — DB 에는 키를 쓰지 않음
         inputs.setdefault("load_follow", None)        # v0.24.9 PU: 옛 스터디 = null(node 경로)
+        inputs.setdefault("virtual_bead", None)       # v0.25.0 VB: 옛 스터디 = null(추가 비드 VB_SCOPE) — DB 에는 키를 쓰지 않음
         inputs.setdefault("depth_section", None)      # v0.24.7 DM §6: 옛·입구 고정 = null(화면 "입구 고정(이전)") — DB 에는 키를 쓰지 않음
         inputs.setdefault("spec_prefill", None)       # 복제만 값(원 doe.spec)
     out = {"id": s["id"], "project_id": s["project_id"], "scenario": s["scenario"], "title": s["title"],

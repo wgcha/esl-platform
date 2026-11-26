@@ -2720,6 +2720,15 @@ class SelectionDerived(_Out):
     virtual_beads: list[dict[str, Any]] | None = None
     vb_frame: dict[str, Any] | None = None
 
+    @model_serializer(mode="wrap")
+    def _drop_vb_absent(self, handler):  # type: ignore[no-untyped-def]
+        """가상 비드가 없으면 두 키를 내지 않는다(옛 derive 응답 바이트 불변 — §7.3 "derive 응답 동일")."""
+        d = handler(self)
+        for k in ("virtual_beads", "vb_frame"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
+        return d
+
 
 class DoeSelectAutoOut(_Out):
     """v0.16.2 GET …/select/auto(esl_bead_auto.md §3.3): 자동 탐지 seed = SelectionIn schema 1 + 정규화 sha(수동 저장과 같은 식),
