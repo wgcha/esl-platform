@@ -1126,9 +1126,8 @@ def bd_post(spec: dict, echo=print) -> dict:
         out["load_follow"] = lfp
         warns.append("LOAD_FOLLOW_SPATIAL: " + _msg_fmt("LOAD_FOLLOW_SPATIAL", cell_mm=f"{lfp['cell_mm']:g}"))
         warns.append("PU_LIN_SKIPPED: " + _msg_fmt("PU_LIN_SKIPPED"))
-    if c.scn == "select" and any(_bgr().VB_NAME_RE.match(str(p_.get("name", "")))
-                                 for p_ in ((m.get("spec") or {}).get("params") or [])):
-        warns.append("VB_VERIFY_HINT: " + _msg_fmt("VB_VERIFY_HINT"))   # v0.25.0 VB §10: 가상 비드 변수가 있는 행렬만
+    if any(_bgr().VB_NAME_RE.match(str(p_.get("name", ""))) for p_ in ((m.get("spec") or {}).get("params") or [])):
+        warns.append("VB_VERIFY_HINT: " + _msg_fmt("VB_VERIFY_HINT"))   # v0.25.0 VB §10: 가상 비드 변수(A<n>_A)가 있는 행렬만
     evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만 — 옛 결과 키 없음)
     if evs is not None:
         out["eval_region"] = evs

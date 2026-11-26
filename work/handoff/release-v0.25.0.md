@@ -48,10 +48,18 @@ PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_250_bt -o tmp_p
 - 시험: test_vbead_golden 12(옛·블록 + 가상 비드 0 바이트 동일), tests/morph/test_virtual_bead 12, tests/doe/test_vbead 37,
   test_vbead_e2e 3, test_vbead_h6 4. H6 측정 = work/vbead_h6.md.
 
+- 정확도 표 f238144d: resources/vbead_accuracy.json = tests/doe/vbead_accuracy.md(12칸, 불가 4칸 = VB_MESH_COARSE). 최대 |차|
+  2.17 %(h 5·D 6·θ 45 C 집중), h 3 최대 1.44 %, h 1.5 최대 0.59 % — h 1.5 ≤ h 3(수렴 방향), h 3 ≤ 5 % 통과. 실제 메시 대비 가상 비드가
+  약간 강함(C 음수). 재생성 = python tests/doe/synth_vbead.py OUT.json(h 1.5 칸 superlu ≈ 3.9 GB·135 s — 다른 무거운 작업과 동시 금지).
+- 비용(V-0250-VB-18, 9,801 노드): 가상 비드 1개 derive 17 ms·기저 < 1 ms·guard 0.04 s(7 평가)·morph 0.06 ms·npz 4.6 KB,
+  4개 derive 40 ms·guard 0.22 s(28)·morph 0.19 ms·npz 10.2 KB.
+
+- 전체 시험: tests/ 1837 passed·192 skipped·실패 3(허용: test_large_model_cad_share, test_v0160_bytes_skip_policy[h8]·[h5open]),
+  packages/beadgraph 117 passed·2 skipped. (첫 전체 실행에서 test_jig_grid_plan 정적 시험 2건 = VB_VERIFY_HINT 의 c.scn 비교 →
+  시나리오 조건 없이 A<n>_A 변수 유무만으로 고침.)
+
 ## 남은 일
-- 정확도 표 생성(python tests/doe/synth_vbead.py OUT.json — h 1.5 칸 superlu ≈ 3.9 GB·135 s/칸, 다른 무거운 작업과 동시 실행 금지)
-  → resources/vbead_accuracy.json·tests/doe/vbead_accuracy.md·대조 시험.
-- 전체 시험(tests/·packages/beadgraph).
+- 메인 결정: VB-C1-5(warp 15° → r 0 blocked), VB-C1-6(H6 부모 바닥 = 띠), VB-C1-7(θ > flip 60°).
 - B1: 설정 거울·스냅샷 블록·SelectionInV2·derive 인수·settings 응답. F1: basis.ts hinge·VirtualBeadPanel·DoeParamTable kind virtual.
 
 ## 다음 명령
