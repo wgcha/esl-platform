@@ -8,7 +8,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_validator, model_serializer, model_validator
 
 FOLDER_RE = r"^[A-Za-z0-9][A-Za-z0-9_\-]{0,63}$"
 WIN_RESERVED = re.compile(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])$", re.IGNORECASE)
@@ -473,9 +473,18 @@ class View3dSupport(_Out):
     x0: list[float]
     # v0.24.9 BM(esl_bead_pos_u.md §10.2): 지그 지지 표식의 방식별 자료 — kind(tie_fixed|tie_disp|tie_spring|aux_inplane|support321)·
     # dirs(구속 방향 단위벡터 목록)·val(tie_fixed 0 · tie_disp·aux_inplane 방향별 값 목록 · tie_spring {k[], g[]}). 옛 파일 = null(dof 로 그림)
+    # 값이 없으면 키를 내지 않는다(옛 파일·옛 지지 출처 응답 바이트 불변 — v0.24.0 골든)
     kind: str | None = None
     dirs: list[list[float]] | None = None
     val: Any | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_absent(self, handler):  # type: ignore[no-untyped-def]
+        d = handler(self)
+        for k in ("kind", "dirs", "val"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class View3dOut(_Out):

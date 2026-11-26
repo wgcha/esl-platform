@@ -370,6 +370,10 @@ def pos_u_snapshot(c: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]] |
     pu, lf = c["pos_u"], c["load_follow"]
     if not pu.get("enabled", True):
         return None
+    cmin = float((c.get("load_transfer") or {}).get("cell_min_mm", 0.0))      # §3: cell_mm ≥ load_transfer.cell_min_mm(설정 검사는 직접 적은 경우만 — config.py)
+    if float(lf["cell_mm"]) < cmin:
+        raise unprocessable("CONFIG_INVALID", f"bead_doe.load_follow.cell_mm {float(lf['cell_mm']):g} 는 load_transfer.cell_min_mm "
+                                              f"{cmin:g} 이상이어야 합니다 — 설정 bead_doe.load_follow.cell_mm 을 맞추세요")
     return ({"schema": POS_U_SCHEMA, **{k: float(pu[k]) for k in ("range_rel", "max_rel", "gap_rel", "hold_frac_max")}},
             {"schema": LOAD_FOLLOW_SCHEMA, "cell_mm": float(lf["cell_mm"])})
 

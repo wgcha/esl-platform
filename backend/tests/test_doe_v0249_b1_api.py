@@ -128,10 +128,30 @@ def test_pos_u_settings_mirror():
         assert v["pos_u"] == m["pos_u"] and v["load_follow"] == m["load_follow"]
 
 
+def test_load_follow_cell_min_cross_check_and_snapshot_422():
+    """cell_mm 하한 = load_transfer.cell_min_mm — 직접 적은 값은 설정 검사, 기본값이 하한 아래(v0.24.8 설정이 cell_min 을 올린 경우)는 새 스터디 스냅샷 422."""
+    from esl_platform.api.services import doe as svc
+    from esl_platform.core.config import BeadDoeCfg
+    from esl_platform.core.errors import DomainError
+
+    lt = {"cell_min_mm": 4.0, "cell_choices_mm": [None, 10], "diag": {"alt_cell_size_mm": 5.0, "cell_sweep_mm": []}}
+    jg = {"jig_grid": {"cell_mm": 4.0, "conv_mm": [5.0, 10.0]}}
+    with pytest.raises(Exception, match="cell_min_mm"):
+        BeadDoeCfg.model_validate({"load_transfer": lt, "rank": jg, "load_follow": {"cell_mm": 3.0}})        # 직접 적은 값 < 하한
+    ok = BeadDoeCfg.model_validate({"load_transfer": lt, "rank": jg})                                       # 기본 3.0 < 4 — 설정은 통과
+    c = ok.model_dump()
+    with pytest.raises(DomainError) as ei:
+        svc.pos_u_snapshot(c)
+    assert ei.value.status == 422 and ei.value.code == "CONFIG_INVALID"
+    c["pos_u"]["enabled"] = False
+    assert svc.pos_u_snapshot(c) is None
+    assert BeadDoeCfg.model_validate({"load_transfer": lt, "rank": jg, "load_follow": {"cell_mm": 4.0}}).load_follow.cell_mm == 4.0
+
+
 @pytest.mark.parametrize("bad", [
     {"pos_u": {"range_rel": 0}}, {"pos_u": {"range_rel": 1.5}}, {"pos_u": {"max_rel": 0.1}},          # max_rel ≥ range_rel
     {"pos_u": {"gap_rel": 0}}, {"pos_u": {"hold_frac_max": 1.1}}, {"pos_u": {"hold_frac_max": -0.1}},
-    {"pos_u": {"unknown": 1}}, {"load_follow": {"cell_mm": 0}}, {"load_follow": {"cell_mm": 2.0}},    # < load_transfer.cell_min_mm 3.0
+    {"pos_u": {"unknown": 1}}, {"load_follow": {"cell_mm": 0}}, {"load_follow": {"cell_mm": 2.0}},    # 직접 적은 값 < load_transfer.cell_min_mm 3.0
     {"load_follow": {"cell_mm": 1e6}}, {"load_follow": {"noise_floor_min": -1}}, {"load_follow": {"noise_floor_min": 2}},
 ])
 def test_pos_u_settings_ranges(bad):

@@ -1616,7 +1616,9 @@ class BeadDoeCfg(_M):
                 raise ValueError(f"bead_doe.rank.jig_grid.{name} {x:g} 는 load_transfer.cell_min_mm..{LT_CELL_MAX_MM:g} "
                                  f"({cmin:g}..{LT_CELL_MAX_MM:g}) 안이어야 합니다")
         lf = self.load_follow.cell_mm                      # v0.24.9 PU §3: cell_mm 범위 = load_transfer.cell_min_mm..CELL_MAX_MM
-        if not cmin <= lf <= LT_CELL_MAX_MM:
+        if lf > LT_CELL_MAX_MM or ("load_follow" in self.model_fields_set and lf < cmin):
+            # 상한은 항상, 하한(cell_min_mm)은 관리자가 load_follow 를 직접 적었을 때만 — 기본값 3.0 이 cell_min_mm 을 올린 기존 설정(v0.24.8)을 깨지 않게.
+            # 기본값이 하한 아래인 채 새 스터디를 만들면 스냅샷 단계(doe.pos_u_snapshot)가 422 CONFIG_INVALID 로 알린다.
             raise ValueError(f"bead_doe.load_follow.cell_mm {lf:g} 는 load_transfer.cell_min_mm..{LT_CELL_MAX_MM:g} "
                              f"({cmin:g}..{LT_CELL_MAX_MM:g}) 안이어야 합니다")
         return self

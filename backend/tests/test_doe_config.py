@@ -28,6 +28,9 @@ def test_defaults_mirror_core():
             dump["compare"]["mesh"].pop(k)
     if "jig_grid" not in (DEFAULTS.get("rank") or {}):   # v0.24.8 rank.jig_grid(esl.doe.DEFAULTS) 코어 병합 전에만 — 병합 후에는 전체 대조(이 분기 사라짐)
         dump["rank"].pop("jig_grid")
+    for k in ("pos_u", "load_follow"):       # v0.24.9 PU(esl.doe.DEFAULTS 블록) 코어 병합 전에만 — 병합 후에는 전체 대조(이 분기 사라짐)
+        if k not in DEFAULTS:
+            dump.pop(k)
     from doe_support import core_view_v0161
 
     assert core_view_v0161(dump, DEFAULTS) == DEFAULTS                # 숫자는 한 곳(코어 기본값 거울)과 같게(v0.16.1 키는 코어 병합 후)

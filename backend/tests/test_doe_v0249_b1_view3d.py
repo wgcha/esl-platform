@@ -261,7 +261,7 @@ def test_case_3d_old_npz_without_bc_dir_has_no_kind(mk, seed, engine, jig_plan):
     shutil.rmtree(seed.dir / "runs" / seed.run_id / "view3d_jig")
     old = c.get(seed.url(), params={"src": "jig"}, headers=R).json()["supports"]
     assert [(s["node_id"], s["dof"]) for s in old] == [(s["node_id"], s["dof"]) for s in new]      # 표식 수·샘플 순서·dof 불변
-    assert all(s["kind"] is None and s["dirs"] is None and s["val"] is None for s in old)
+    assert all("kind" not in s and "dirs" not in s and "val" not in s for s in old)      # 값 없으면 키 없음(옛 바이트)
     assert all(s["kind"] for s in new)
 
 
@@ -269,4 +269,4 @@ def test_non_jig_supports_unchanged(mk, seed, jig_plan):  # noqa: F811
     """03_bc/support.json 출처(지그 아님)의 표식 = 지금 그대로(kind 없음 — 코어가 support321 로 줄 때까지 백엔드는 만들지 않음)."""
     c = mk()
     d = c.get(seed.url(), headers=R).json()
-    assert all(s["kind"] is None and s["dirs"] is None and s["val"] is None for s in d["supports"])
+    assert all("kind" not in s and "dirs" not in s and "val" not in s for s in d["supports"])
