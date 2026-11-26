@@ -560,3 +560,28 @@ def pos_u_hash_view(pos_u: dict | None) -> dict | None:
     if not isinstance(pos_u, dict):
         return None
     return {k: float(pos_u[k]) for k in ("range_rel", "max_rel", "gap_rel", "hold_frac_max")}
+
+
+def u_motion_ratio(vec) -> float:
+    """v0.24.9 INT-7: U 기저의 실제 이동 / 요청 이동 비 = 기저 벡터(ΔU 당 변위) 노드 크기 최대(이동 노드 없음 = 0). 기저가 선형이라
+    범위 안 모든 값에서 같은 비(요청 ΔU → 가장 많이 움직이는 노드 max|ΔU·vec|)."""
+    v = np.asarray(vec, dtype=np.float64).reshape(-1, 3)
+    return float(np.linalg.norm(v, axis=1).max()) if v.size else 0.0
+
+
+def u_saturation(vec, lo: float, hi: float, ratio_min: float) -> dict | None:
+    """v0.24.9 INT-7 range guard U 포화 판정(순수): ratio = ``u_motion_ratio`` < ratio_min(설정 pos_u.sat_ratio_min) 이면 포화 —
+    {ratio, usable[lo·ratio, hi·ratio]}(포화 전 범위 = 범위 끝에서 실제로 닿는 이동), 아니면 None. 기저·결과 불변(보고만)."""
+    r = u_motion_ratio(vec)
+    if r >= float(ratio_min):
+        return None
+    return {"ratio": r, "usable": [float(lo) * r, float(hi) * r]}
+
+
+U_SHORT_RAMP_ENDS = 2       # 세그먼트 양 끝 접합 램프(BG_SEGMENT_SHORT 화면 문구 "길이 < 램프 2×" 와 같은 기준 — 구조 상수)
+
+
+def u_short_seg(short: bool, length_mm: float, ramp_mm: float) -> bool:
+    """v0.24.9 INT-8: U 기저에 달성 구간 없음(패키지 info.short) 이 램프 때문인지 — 길이 < U_SHORT_RAMP_ENDS·램프. 간격 κ·품질 가드로
+    달성 구간이 없는 경우(길이는 충분)는 아님(그쪽은 range guard U_SATURATED 가 비로 알림)."""
+    return bool(short) and float(length_mm) < U_SHORT_RAMP_ENDS * float(ramp_mm)

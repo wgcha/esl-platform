@@ -1251,13 +1251,15 @@ class BeadDoeDepthSectionRulesCfg(_M):
 
 class BeadDoePosUCfg(_M):
     """v0.24.9 PU(esl_bead_pos_u.md §3) — 비드 위치 변수 U. 새 select 스냅샷 doe.pos_u 로 복사(옛 스터디 = 키 없음 = U 행 없음).
-    range_rel = 기본 범위 ±range_rel·W_ref, max_rel = feasible 상한, gap_rel = 이웃 간격 계수, hold_frac_max = U_HELD 판정 비율."""
+    range_rel = 기본 범위 ±range_rel·W_ref, max_rel = feasible 상한, gap_rel = 이웃 간격 계수, hold_frac_max = U_HELD 판정 비율,
+    sat_ratio_min = range guard U 포화 판정 — 실제/요청 이동 비가 이보다 작으면 limited + 정보 U_SATURATED(해시 밖, 보고만 — INT-7)."""
 
     enabled: bool = True
     range_rel: float = Field(0.25, gt=0.0, le=1.0)
     max_rel: float = Field(0.5, gt=0.0, le=1.0)
     gap_rel: float = Field(0.5, gt=0.0, le=1.0)
     hold_frac_max: float = Field(0.2, ge=0.0, le=1.0)
+    sat_ratio_min: float = Field(0.9, gt=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _max_rel(self) -> "BeadDoePosUCfg":

@@ -583,7 +583,8 @@ def u_reason_doc(v: Any) -> dict[str, str] | None:
 
 
 _INFO_TAIL = re.compile(r"\s*\(Info[^)]*\)\s*$")
-DS_TEXT_CODES = ("DS_FALLBACK", "DS_THETA_SPREAD", "DS_ONE_SIDE", "DS_HOLD_PINCH", "DS_ENGINE_NATIVE")
+DS_TEXT_CODES = ("DS_FALLBACK", "DS_THETA_SPREAD", "DS_ONE_SIDE", "DS_HOLD_PINCH", "DS_ENGINE_NATIVE",
+                 "U_SATURATED", "U_SHORT_SEG")      # v0.24.9 INT-7·8: U 행 회색 꼬리표 툴팁(문구 = doe_messages.json)
 
 
 def ds_text(key: str, **kw: Any) -> str:

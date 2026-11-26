@@ -394,6 +394,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
     max_rel: 0.5                      # feasible 상한 = max_rel × W_ref(range_rel 이상)
     gap_rel: 0.5                      # 이웃 형상까지 평면 거리 5% 분위 × gap_rel 이 feasible 상한
     hold_frac_max: 0.2                # 입구 노드 중 hold(ψ<1) 비율이 이를 넘으면 U_HELD(0..1)
+    sat_ratio_min: 0.9                # range guard U 포화 판정 — 실제/요청 이동 비 < 이 값 = limited + 정보 U_SATURATED(0 초과 1 이하, 해시 밖)
   load_follow:                        # v0.24.9 PU 하중 공간 고정(§2.2) — pos_u 블록이 있는 새 스냅샷에만
     cell_mm: 3.0                      # 전달 셀(mm) — load_transfer.cell_min_mm..cell_max
     noise_floor_min: 0.01             # 순위 noise 하한(해시 밖)

@@ -1,7 +1,7 @@
 // 비드 DOE ② 비드·변수(esl_bead_doe.md §5·§12.2, BD-D-7): 비드별 D·W·U/V 포함 체크·범위(기본 = feasible), 범위 밖 경고 배지(차단 아님),
 // 하한 ≥ 상한·깊이/폭 ≤ 0 은 오류. DOE 방식·안 수(풀 팩토리얼은 수준)·시드 + 실제 안 수(POST /matrix). 방법·출처 ⓘ.
 import { useEffect, useRef, useState } from "react";
-import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, POS_U_TEXT, doeSourcesOk, guardTag, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
+import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, POS_U_TEXT, doeSourcesOk, guardTag, posUTags, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
 import type { DoeBead, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamsOut, DoeSettingsOut, DoeShapeRules } from "../api/types";
 import { useBlobUrl } from "./DoeThumbGrid";
 import { Field } from "./ui";
@@ -202,6 +202,22 @@ function DepthTags({ p, b, data }: { p: DoeParam; b: DoeBead; data: DoeParamsOut
   );
 }
 
+/** v0.24.9 INT-7·8 U 행 회색 꼬리표: U_SATURATED("포화 ×비")·U_SHORT_SEG("짧은 구간") — 툴팁 = 서버 문구 */
+function PosUTags({ p, b, data }: { p: DoeParam; b: DoeBead; data: DoeParamsOut }) {
+  if (p.type !== "U") return null;
+  const tags = posUTags(p.name, [...(b.warnings ?? []), ...data.warnings]);
+  if (!tags.length) return null;
+  return (
+    <>
+      {tags.map((t) => (
+        <span key={t.code} className="badge neutral doe-tag doe-tag-ds" title={t.tip} data-testid={`utag-${t.code}-${p.name}`}>
+          {t.label}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, select, shapeRules }: {
   /** v0.21.0 스터디 스냅샷 형상 규칙(툴팁의 기준값 출처 — 없으면 값만) */
   shapeRules?: DoeShapeRules | null;
@@ -279,6 +295,7 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
                         {p.group_members.length > 0 && <span className="small muted" title={`같은 값: ${p.group_members.join(", ")}`}> · 묶음 {[p.name, ...p.group_members].map((n) => n.split("_")[1]).join("+")}</span>}
                         <ShapeTags p={p} rules={shapeRules} />
                         <DepthTags p={p} b={b} data={data} />
+                        <PosUTags p={p} b={b} data={data} />
                       </td>
                       <td className="num">
                         <input type="number" className="doe-num" aria-label={`${label} 하한`} step="any" value={r.lo} disabled={readOnly || !r.on} onChange={(e) => upd(p.name, { lo: e.target.value })} onFocus={() => select.onActive(p.name)} />

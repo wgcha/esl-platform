@@ -667,7 +667,7 @@ $env:PGPASSWORD = $null
 **DB migration 없음.** 설정 키가 늘었지만 없으면 기본값이라 현장 `esl_platform.yaml` 은 고치지 않아도 된다. 현장 확인표: `docs/manual/field_check_v0249.md`. 계약 `docs/contracts/esl_bead_pos_u.md`.
 
 - **설정**(`bead_doe`, 새 비드 직접 선택 스터디 스냅샷 `doe.pos_u`·`doe.load_follow` 에만 쓰임 — 진행 중·옛 스터디 불변, 복제 = 원 블록 그대로):
-  - `pos_u`: `enabled`(true — false 면 새 스터디도 U 행 없음·하중 node 경로)·`range_rel`(0.25 — 기본 범위 = 값 × W_ref)·`max_rel`(0.5 — 상한, range_rel 이상)·`gap_rel`(0.5 — 이웃 형상 간격 대비 상한)·`hold_frac_max`(0.2 — 입구 노드 중 체결부 hold 비율이 이보다 크면 U 없음).
+  - `pos_u`: `enabled`(true — false 면 새 스터디도 U 행 없음·하중 node 경로)·`range_rel`(0.25 — 기본 범위 = 값 × W_ref)·`max_rel`(0.5 — 상한, range_rel 이상)·`gap_rel`(0.5 — 이웃 형상 간격 대비 상한)·`hold_frac_max`(0.2 — 입구 노드 중 체결부 hold 비율이 이보다 크면 U 없음)·`sat_ratio_min`(0.9 — 범위 점검에서 U 의 실제/요청 이동 비가 이보다 작으면 "포화" 정보·꼬리표, 보고만이라 스냅샷·결과에 영향 없음).
   - `load_follow`: `cell_mm`(3.0 — 하중 공간 고정 셀, `load_transfer.cell_min_mm` 이상·셀 상한 이하, 해시 안)·`noise_floor_min`(0.01 — 순위 오차 범위 하한, 해시 밖).
   - 같은 이름이 `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml` 에 있고, 코어 DEFAULTS·pydantic 과 시험으로 같음을 확인한다.
 - **beadgraph 휠 1.3.0 배포**(`deploy\requirements.lock` 의 `beadgraph==1.3.0`): §4.7 과 같은 방법 — git 폴더 업데이트(`update-repo.ps1`)는 자동 설치·판 대조, 오프라인은 `collect-offline` 로 **새 묶음**(`beadgraph-1.3.0-py3-none-any.whl`). 확인: `<venv>\Scripts\python.exe -c "import beadgraph; print(beadgraph.__version__, beadgraph.U_RULES)"` → `1.3.0 1`.

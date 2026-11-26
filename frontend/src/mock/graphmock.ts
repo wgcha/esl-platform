@@ -380,6 +380,20 @@ export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, d
       params.push(u);
     }
   });
+  // v0.24.9 INT-7·8: U 행이 둘 이상이면 마지막 U = 짧은 구간 포화(가드 limited·reason U_SATURATED — 기본 범위 그대로) + 정보 U_SATURATED·U_SHORT_SEG
+  const us = params.filter((p) => p.type === "U");
+  const last = us.length > 1 ? us[us.length - 1] : null;
+  if (last && shape?.range_guard) {
+    const ratio = 0.1;
+    const [lo, hi] = last.default_range;
+    const usable: [number, number] = [+(lo * ratio).toFixed(4), +(hi * ratio).toFixed(4)];
+    last.guard = { state: "limited", from: last.default_range, usable, reason: "U_SATURATED", value: ratio, combo_scale: null };
+    const fill = (code: string, f: Record<string, string | number>) => kor(code).replace(/\{(\w+)\}/g, (_, k: string) => String(f[k] ?? `{${k}}`));
+    const sat = { var: last.name, ratio, lo_mm: usable[0], hi_mm: usable[1] };
+    const sh = { var: last.name, ratio, length_mm: 36, ramp_mm: 44.055 };
+    warnings.push({ code: "U_SATURATED", level: "info", bead: last.bead, ...sat, usable, from: last.default_range, message: fill("U_SATURATED", sat) });
+    warnings.push({ code: "U_SHORT_SEG", level: "info", bead: last.bead, ...sh, message: fill("U_SHORT_SEG", sh) });
+  }
   return { beads, params, warnings };
 }
 

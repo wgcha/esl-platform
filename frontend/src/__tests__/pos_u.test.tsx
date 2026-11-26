@@ -2,7 +2,7 @@
 // 결과 경고 줄(LOAD_FOLLOW_SPATIAL 정보 등급)·순위 정의 꼬리·민감도 U 행. 응답 새 필드는 백엔드 B1 병행 — 시험은 목 응답으로 한다.
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { POS_U_INFO_CODES, POS_U_TEXT, guardTag, isInfoWarn, loadFollowTail, rowProblem, warnText } from "../api/doe";
+import { POS_U_INFO_CODES, POS_U_TAG_CODES, POS_U_TEXT, guardTag, isInfoWarn, loadFollowTail, posUTags, rowProblem, warnText } from "../api/doe";
 import { foldCounts } from "../components/MsgFold";
 import { MOCK_SHAPE_RULES } from "../mock/doedata";
 import { renderApp } from "../test/render";
@@ -46,6 +46,42 @@ describe("규칙 함수", () => {
     expect(guardTag(g, MOCK_SHAPE_RULES, "W")!.tip).not.toContain("부호별");
     expect(guardTag(g, MOCK_SHAPE_RULES)!.tip).toBe(guardTag(g, MOCK_SHAPE_RULES, "D")!.tip);
   });
+});
+
+describe("INT-7·8 U 포화·짧은 구간 회색 꼬리표", () => {
+  it("posUTags: 이 변수(var)의 U_SATURATED·U_SHORT_SEG 만, 코드 순서, 라벨 = 표 문구·툴팁 = 서버 message", () => {
+    const ws = [
+      { code: "U_SHORT_SEG", var: "B3_U", ratio: 0.1, message: "짧음 서버" },
+      { code: "U_SATURATED", var: "B3_U", ratio: 0.1021, message: "포화 서버" },
+      { code: "U_SATURATED", var: "B4_U", ratio: 0.5, message: "다른 변수" },
+      { code: "RG_RANGE_LIMITED", var: "B3_U" },
+    ];
+    expect(posUTags("B3_U", ws)).toEqual([
+      { code: "U_SATURATED", label: "포화 ×0.1", tip: "포화 서버" },
+      { code: "U_SHORT_SEG", label: POS_U_TEXT.tag.U_SHORT_SEG(0.1), tip: "짧음 서버" },
+    ]);
+    expect(posUTags("B9_U", ws)).toEqual([]);
+    for (const c of POS_U_TAG_CODES) expect(isInfoWarn({ code: c }), c).toBe(true);
+  });
+  it("guardTag: 포화만(reason U_SATURATED) = 꼬리표 없음(기본 범위 그대로 — U 회색 꼬리표가 알림), 조합 축소는 그대로", () => {
+    const g = { state: "limited" as const, from: [-15, 15] as [number, number], usable: [-1.5, 1.5] as [number, number], reason: "U_SATURATED", value: 0.1, combo_scale: null };
+    expect(guardTag(g, MOCK_SHAPE_RULES, "U")).toBeNull();
+    expect(guardTag({ ...g, combo_scale: 0.5 }, MOCK_SHAPE_RULES, "U")!.label).toBe("조합 축소");
+  });
+  it("변수 표(doe-70): 마지막 U 행에 회색 꼬리표 2개(툴팁 = 서버 문구 doe_messages), 축소 꼬리표 없음 — 다른 U 행은 없음", async () => {
+    const r = renderApp("/p/p-body/doe/doe-70", "power", demo);
+    await waitFor(() => expect(document.querySelectorAll('[data-testid^="param-"][data-testid$="_U"]').length).toBeGreaterThan(1), { timeout: 15000 });
+    const rec = r.server.doe.recs.find((x) => x.out.id === "doe-70")!;
+    const us = r.server.doe.paramsOf(rec).filter((p) => p.type === "U");
+    const last = us[us.length - 1];
+    const sat = await screen.findByTestId(`utag-U_SATURATED-${last.name}`);
+    expect(sat.textContent).toBe("포화 ×0.1");
+    expect(sat.className).toContain("neutral");
+    expect(sat.getAttribute("title")).toMatch(/실제 이동이 요청의 ×0\.1 에 그침/);
+    expect(screen.getByTestId(`utag-U_SHORT_SEG-${last.name}`).getAttribute("title")).toMatch(/세그먼트 길이 36 mm < 접합 램프 2×44\.055 mm/);
+    expect(screen.queryByTestId(`guard-${last.name}`)).toBeNull();
+    for (const p of us.slice(0, -1)) expect(document.querySelectorAll(`[data-testid^="utag-"][data-testid$="-${p.name}"]`).length).toBe(0);
+  }, 40000);
 });
 
 describe("① 변수 표(doe-70 = pos_u 새 스냅샷, doe-30 = 대조)", () => {

@@ -4670,58 +4670,50 @@ def _jig_view3d(c: Ctx, t, results: list, shown: list) -> tuple[dict, list]:
     """v0.23.2 지그 3D(esl_v0232_fixes.md §4.1): 3D 비교 대상 안마다 e_d = 순위 행 worst 엔트리(rank._agg(per_esl, "C_jig") — 순위표 '최악 ESL' 과 같은 함수·값)로 지그 응답
     변위장 → post/view3d/<did>_jig/, 베이스라인은 쓰인 엔트리마다 d000_jig_e<kk>/. 조건 = 지그 계산됨(jig.json ok·jig.npz) ∧ 설정
     view3d.jig. 반환 ({view3d_jig, view3d_jig_esl, view3d_jig_ref} | {}, 경고 문자열). v0.24.6: 출처 표 v3d_store = result 행(지그 고정)
-    — 본문은 _jig_v3d_build 공용(표식 = 지그 노드 샘플 '123' 그대로 — 바이트 동일)."""
-    from esl.doe import jig as jg
-    from esl.mech.jig_bc import MARK_TIE
+    — 본문은 _jig_v3d_build 공용. 표식 = ``_jig_support_rows``(방식 3D·Case 3D 와 같은 코어 ``jig_bc.support_rows`` — v0.24.9 INT-5:
+    BC 배열 있는 jig.npz(normal) = tie_fixed 법선 + aux 면내, 배열 없는 옛 jig.npz(translation) = 옛 '123' 바이트 그대로)."""
     vc = c.cfg["view3d"]
     jd = _jig_doc(c)
     pz = c.p("prep", JIG_NPZ)
     if not vc.get("jig") or _jig(c) is None or jd is None or jd.get("status") != "ok" or not os.path.isfile(pz):
         return {}, []
     row = next(s_ for s_ in RANK_SOURCES if s_["v3d_store"] == "result")
-
-    def marks(x0, jidx, _rmap, smax, e=None):                   # 옛 지그 고정(병진 123) = 옛 2튜플 그대로(옛 3D 바이트 불변 —
-        return [(int(i), MARK_TIE) for i in jg.support_sample(x0, jidx, smax)]   # 화면은 "이전 형식" 대체 표시, BM §10.3)
-    return _jig_v3d_build(c, t, results, shown, U.load_npz(pz), row, marks)
+    return _jig_v3d_build(c, t, results, shown, U.load_npz(pz), row)
 
 
 def _jig_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[dict, list]:
     """v0.24.6 스터디 지그 방식 3D(esl_viewer_hv.md §8.1 — R-JIGC-2): 출처 표 행 row(v3d_store = sidecar — jig_disp·jig_spring)의 응답
     변위장 → post/view3d/<did>_<v3d_tag>/·d000_<v3d_tag>_e<kk>/, 키 row.v3d. 조건 = view3d.jig ∧ _jig_src_ready(prep/<src>.json ok ∧
     npz), 아니면 ({}, []). 비교 안 = shown(≠ d000) 중 per_esl 이 모두 row.need(C_<pe>) 를 가진 안, worst = rank._agg(…, need).
-    응답 = 저장 BC 재풀이(_jig_resp_rows — 강제 변위 값·스프링 바닥·k), 표식 = jig_bc.support_marks(tie ∪ 스프링 샘플 '123' + 면내 'ij').
-    실패 = 그 안·기준만 경고 VIEW3D_FAILED: <did>_<tag> <code>. 호출부는 열만 읽음(출처 이름 분기 없음)."""
-    from esl.mech import jig_bc
+    응답 = 저장 BC 재풀이(_jig_resp_rows — 강제 변위 값·스프링 바닥·k), 표식 = ``_jig_support_rows``(코어 jig_bc.support_rows — 지그 고정
+    3D·Case 3D 와 같은 함수). 실패 = 그 안·기준만 경고 VIEW3D_FAILED: <did>_<tag> <code>. 호출부는 열만 읽음(출처 이름 분기 없음)."""
     if not c.cfg["view3d"].get("jig"):
         return {}, []
     rd = _jig_src_ready(c, row["key"])
     if rd is None:
         return {}, []
-    z = rd[1]
-    bc = jig_bc.load_bc({n: z[n] for n in JIG_BC_PATTERN if n in z})
-
-    mrow = _jig_method_row(str(row["key"]))
-    zeids_ = [str(e) for e in z["entry_ids"].tolist()]
-
-    def marks(x0, _jidx, rmap, smax, e=None):                   # v0.24.9 BM §10.2: [(노드, kind, dirs, val)] — 값 = 그 엔트리 BC
-        b = _jig_bc_of(z, zeids_.index(e)) if e is not None and e in zeids_ else bc
-        if e is None:                                           # 엔트리 없음 = 옛 2튜플 규칙(노드·dof)만
-            return jig_bc.support_marks(rmap(bc["bc_node"]), bc["bc_kind"], rmap(bc["sp_node"]), x0, smax)
-        return jig_bc.support_marks_full({**b, "bc_node": rmap(b["bc_node"]), "sp_node": rmap(b["sp_node"])}, x0, smax,
-                                         mrow)
-    return _jig_v3d_build(c, t, results, shown, z, row, marks)
+    return _jig_v3d_build(c, t, results, shown, rd[1], row)
 
 
-def _jig_method_row(src: str) -> dict | None:
-    """출처 키(jig_disp·jig_spring·…) → jig_bc.METHODS 행(표식 kind 판정 — 열 값만 읽음). 없으면 None."""
+def _jig_support_rows(z, e: str, rmap, x0, smax: int, nid, src: str) -> list[dict]:
+    """지그 3D 지지 표식 행(스터디 지그 고정·방식 3D 공용 — v0.24.9 INT-5, Case 3D ``services/view3d._jig_supports`` 와 같은 코어
+    ``jig_bc.support_rows``): z = 방식 npz, e = 엔트리 id(값 = 그 엔트리 BC 행 — K × 행 배열), rmap = npz 노드 인덱스 → 보기 메시 인덱스,
+    src = 출처 키(METHODS 열 src — kind 판정). BC 배열(JIG_BC_PATTERN·JIG_BC_VALUES) 없는 옛 jig.npz(translation 단일 경로) = 지그 노드
+    전부 tie 구속으로 같은 함수의 옛 분기 → [{node_id, dof '123'}](v0.23.2 이후 바이트 그대로)."""
     from esl.mech import jig_bc
-    return jig_bc.method_row_of(src)
+    if all(n in z for n in JIG_BC_PATTERN + JIG_BC_VALUES):
+        zeids = [str(x) for x in z["entry_ids"].tolist()]
+        b = _jig_bc_of(z, zeids.index(e) if e in zeids else None)
+        bc = {**b, "bc_node": rmap(b["bc_node"]), "sp_node": rmap(b["sp_node"])}
+    else:
+        jidx = rmap(z["jig_idx"])
+        bc = {"bc_node": jidx, "bc_kind": np.full(np.asarray(jidx).size, jig_bc.KIND_TIE, dtype=np.int8)}
+    return jig_bc.support_rows(bc, x0, smax, nid, src)
 
 
-def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -> tuple[dict, list]:
-    """지그 응답 3D 공용(지그 고정 _jig_view3d · 방식 _jig_view3d_src): 출처 표 행 열 need·v3d·v3d_tag 만 읽음. z = 방식 npz,
-    marks(x0, jidx, rmap, smax) → [(노드 인덱스, dof)] (rmap = 기준 npz 노드 인덱스 → 보기 메시 인덱스). 안 폴더 <did>_<tag>,
-    기준 d000_<tag>_e<kk>. 기준 실패 = 비교 불가 → ({}, 경고)."""
+def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict) -> tuple[dict, list]:
+    """지그 응답 3D 공용(지그 고정 _jig_view3d · 방식 _jig_view3d_src): 출처 표 행 열 key·need·v3d·v3d_tag 만 읽음. z = 방식 npz,
+    표식 = ``_jig_support_rows``(한 경로 — INT-5). 안 폴더 <did>_<tag>, 기준 d000_<tag>_e<kk>. 기준 실패 = 비교 불가 → ({}, 경고)."""
     from esl.doe import jig as jg
     from esl.view3d import build_view
     need, tag = str(row["need"]), str(row["v3d_tag"])
@@ -4762,11 +4754,9 @@ def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict, marks) -
         jidx = rmap(z["jig_idx"])
         ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
         rows = _jig_resp_rows(c, mesh, z, jidx, ld)
-        from esl.mech import jig_bc as _jb
         names = {}
         for (e, F), rr in zip(ld, rows):
-            mk = marks(mesh["x0"], jidx, rmap, smax, e)            # v0.24.9 BM: 일반형 = dof(옛) + kind·dirs·val(엔트리 BC)
-            sup = _jb.mark_rows(mk, nid) if mk and len(mk[0]) == 4 else [{"node_id": int(nid[i]), "dof": d} for i, d in mk]
+            sup = _jig_support_rows(z, e, rmap, mesh["x0"], smax, nid, str(row["key"]))   # dof(옛) + kind·dirs·val(엔트리 BC)
             nm = name if name else f"{BASELINE}_{tag}_e{order.index(e):02d}"
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
             build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=rr["u"],
@@ -6825,7 +6815,7 @@ def _jg_mesh_of(c: Ctx, t, did: str) -> tuple[dict, list, object]:
 def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[dict, list]:
     """격자 지그 방식 3D(§5 — 출처 표 행 row 의 키·폴더 그대로): 비교 안 = shown 중 per_esl 이 모두 row.need 를 가진 형상, worst =
     rank._agg(…, need), 응답 = _jg_shape(keep_u) 재실행(결정적 — 평가와 같은 값), 메시·지지·영역 = 그 모드 실행 함수, 표식 =
-    jig_bc.support_marks(형상 인덱스). 실패 = 그 형상만 VIEW3D_FAILED."""
+    jig_bc.support_rows(형상 인덱스 — INT-5 한 경로). 실패 = 그 형상만 VIEW3D_FAILED."""
     from esl.mech import jig_bc
     from esl.view3d import build_view
     if not c.cfg["view3d"].get("jig") or not _jg_ready(c, row["key"]):
@@ -6858,11 +6848,11 @@ def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[di
         names = {}
         for e in ents_:
             BC = res["bc"][src][e]
-            marks = jig_bc.support_marks_full(BC, mesh["x0"], smax, _jig_method_row(src))     # v0.24.9 BM §10.2 일반형
+            sup = jig_bc.support_rows(BC, mesh["x0"], smax, nid, src)      # v0.24.9 INT-5: 스터디·Case 3D 와 같은 코어 함수
             nm = name or f"{BASELINE}_{tag}_e{order.index(e):02d}"
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
             build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=res["loads"][src][e],
-                       u_rel=res["u"][src][e], supports=jig_bc.mark_rows(marks, nid),
+                       u_rel=res["u"][src][e], supports=sup,
                        key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
         return names

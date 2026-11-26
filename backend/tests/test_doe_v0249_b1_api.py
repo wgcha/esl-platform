@@ -108,7 +108,8 @@ def _saved(client, world, engine, esl_root, **kw):  # noqa: F811
 
 
 # ================================================================ 설정 거울 (V-0249-PU-17)
-POS_U_DEFAULT = {"enabled": True, "range_rel": 0.25, "max_rel": 0.5, "gap_rel": 0.5, "hold_frac_max": 0.2}
+POS_U_DEFAULT = {"enabled": True, "range_rel": 0.25, "max_rel": 0.5, "gap_rel": 0.5, "hold_frac_max": 0.2,
+                 "sat_ratio_min": 0.9}       # v0.24.9 INT-7: range guard U 포화 판정(해시 밖 — 스냅샷에 넣지 않음)
 LOAD_FOLLOW_DEFAULT = {"cell_mm": 3.0, "noise_floor_min": 0.01}
 
 
@@ -169,7 +170,8 @@ def test_pos_u_settings_ranges(bad):
 
 def test_settings_out_pos_u(client, world):  # noqa: F811
     s = api(client, "GET", "/doe/settings").json()
-    assert s["pos_u"] == POS_U_DEFAULT and s["load_follow"] == LOAD_FOLLOW_DEFAULT
+    want = {k: v for k, v in POS_U_DEFAULT.items() if k != "sat_ratio_min"}     # INT-7 판정 키는 워커 설정만(화면 응답 불변)
+    assert s["pos_u"] == want and s["load_follow"] == LOAD_FOLLOW_DEFAULT
 
 
 # ================================================================ 스냅샷 (V-0249-PU-16)
