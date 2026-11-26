@@ -83,6 +83,11 @@ PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_250_bt -o tmp_p
   packages/beadgraph 117 passed·2 skipped. (첫 전체 실행에서 test_jig_grid_plan 정적 시험 2건 = VB_VERIFY_HINT 의 c.scn 비교 →
   시나리오 조건 없이 A<n>_A 변수 유무만으로 고침.)
 
+- 개정 2·3(dd3c3ada): merge v0.24.9 05a2c0dc(b58c3d1f — 충돌 decisions.md·work/findings.md 만, 둘 다 보존), 구현 8762b627,
+  H6·findings·handoff 8a799bf7, 정확도 표 97970690. H6(r = h): 띠 ξ·평탄부 ξ·30° θ45·30° θ60 모두 ok·guard ok usable [0, 5]·
+  뒤집힘 0·밖 이동 0(warp 정보 n 23~106). 정확도(cells, r 기본): 최대 |차| 4.41 %(h5 D6 θ45), h3 최대 3.28 %, h1.5 최대 1.60 %.
+  findings VB-C1-14~21.
+
 ## 남은 일
 - 메인 결정: VB-C1-5(warp 15° → r 0 blocked), VB-C1-6(H6 부모 바닥 = 띠), VB-C1-7(θ > flip 60°).
 - B1: 설정 거울·스냅샷 블록·SelectionInV2·derive 인수·settings 응답. F1: basis.ts hinge·VirtualBeadPanel·DoeParamTable kind virtual.
