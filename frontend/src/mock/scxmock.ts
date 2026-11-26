@@ -44,7 +44,11 @@ const TREES: Record<string, DTree> = {
       // 릴레이 상한(목 64 GiB)을 넘는 h3d — 크기 경고 시연
       drop_full_rec: scene("full", 70 * GB),
     },
-    "65QN80": { drop_rear: scene("rear", 18.2 * GB) },
+    "65QN80": {
+      drop_rear: scene("rear", 18.2 * GB),
+      // #92 한글·공백·괄호가 든 기존 폴더 이름(esl 이 새로 만드는 이름 규칙은 읽기에 적용하지 않음)
+      "PROJ-000099_R95J개발과제": { "해석 모델 (v2)": scene("낙하", 9.5 * GB) },
+    },
     ".scx_tmp": { "x.part": 1 },
     "readme.txt": 1 * KB,
   },

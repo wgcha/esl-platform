@@ -12,6 +12,8 @@
 - API: `jig_plan` 값 `grid`, `DoeJigOut.transfer`·`grid`(`grid.mesh` — 기준·형상 메시 비교), `DoeJigMethodOut.grid`, 결과 경고 `JIG_GRID_*` 의 `message`.
 ### 변경
 - 새 ④·옛 ③ 스터디의 순위 지표가 재풀이(solve) 대신 격자 지그 변위(jd)다(Case 지그 결과가 없으면 지금처럼 재풀이 순위 + `JIG_GRID_SOURCE_MISSING`). 같은 메시 모드(①②·새 ③)는 그대로다.
+### 수정
+- #92 SCX 드라이브에서 한글 등 이름의 폴더를 탐색할 수 없던 것("허용 범위 밖 경로입니다(폴더 이름 형식 오류 …)").
 ### 현장 주의
 - **DB migration 없음**. 설정 키 추가(없으면 기본값 — 현장 `esl_platform.yaml` 에 적지 않아도 된다).
 - **옛 ④·옛 ③ 스터디는 그대로**(결과 바이트 동일). 지그 ESL 을 계산하려면 **복제**한다.
