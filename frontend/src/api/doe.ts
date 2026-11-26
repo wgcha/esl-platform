@@ -402,7 +402,7 @@ export const BEAD_DEF_NAME = { same: "자동 탐지(STEP)", select: "직접 선�
 /** 라디오 값: select 는 ① 라디오 아래 하위 선택 */
 export const radioScenario = (s: DoeScenario): DoeScenario => (s === "select" ? "same" : s);
 export const METHOD_NAME: Record<DoeMethod, string> = { lhs: "LHS", halton: "Halton", fullfact: "풀 팩토리얼" };
-export const TYPE_NAME: Record<DoeParamType, string> = { D: "깊이 D", W: "폭 W", U: "위치 U", V: "위치 V" };
+export const TYPE_NAME: Record<DoeParamType, string> = { D: "깊이 D", W: "폭 W", U: "위치 U", V: "위치 V", A: "추가 비드 깊이" };
 export const PHASE_NAME: Record<DoePhase, string> = {
   PREP: "입력 준비 중",
   READY: "준비 완료",
@@ -1162,11 +1162,11 @@ export interface ParamRow {
   hi: string;
 }
 
-/** 기본 변수 행: use_default 이고 기본 종류(D·W)면 포함, 범위 = default_range(없으면 feasible) */
+/** 기본 변수 행: use_default 이고 (기본 종류(D·W) 이거나 hinge 형식 = 추가 비드 A — §5.2)면 포함, 범위 = default_range(없으면 feasible) */
 export function defaultRows(params: DoeParam[], types: DoeParamType[]): ParamRow[] {
   return params.map((p) => {
     const r = p.default_range ?? p.feasible;
-    return { name: p.name, on: p.use_default && types.includes(p.type), lo: String(r[0]), hi: String(r[1]) };
+    return { name: p.name, on: p.use_default && (types.includes(p.type) || p.form === "hinge"), lo: String(r[0]), hi: String(r[1]) };
   });
 }
 
@@ -1179,8 +1179,22 @@ export function rowProblem(p: Pick<DoeParam, "type">, r: ParamRow): string | nul
   if (!(lo < hi)) return "하한 < 상한이어야 합니다";
   if ((p.type === "D" || p.type === "W") && lo <= 0) return "깊이·폭 하한은 0보다 커야 합니다";
   if (p.type === "U" && !(lo <= 0 && hi >= 0)) return POS_U_TEXT.rangeRule;
+  // v0.25.0 추가 비드 깊이: 공칭 0 = 하한 쪽(§0.3) — 종류별 규칙 표(U 와 같은 분기)
+  if (p.type === "A" && lo < 0) return VB_TEXT.rangeRule;
   return null;
 }
+
+/** v0.25.0 추가 비드 화면 고정 문구(서버 문구 VB_*·A_RANGE_INVALID 와 같은 뜻 — 코드별 문구는 API 가 text 로 동봉) */
+export const VB_TEXT = {
+  section: "추가 비드(평판에 새 비드)",
+  /** VB_LIST_TIP */
+  tip: "추가 비드는 모핑으로 만든 근사 형상 — 유리한 후보는 실제 형상으로 ④ 비교나 재낙하로 확인",
+  rangeRule: "추가 비드 깊이 하한은 0 이상",
+  /** "추가 비드 n · 깊이"(label 키가 없는 옛 응답 대비) */
+  label: (n: string | number) => `추가 비드 ${n} · 깊이`,
+  warpTag: (n: number) => `뒤틀림 ${n}`,
+  scopeHint: "그래프 방식 새 스터디만 쓸 수 있습니다",
+} as const;
 
 /** feasible 밖(경고 배지만 — 미리보기가 실패 안을 거름) */
 export function outsideFeasible(p: Pick<DoeParam, "feasible">, r: ParamRow): boolean {
