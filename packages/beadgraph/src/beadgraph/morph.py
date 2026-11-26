@@ -1051,6 +1051,8 @@ U_RANGE_REL = 0.25                              # ext without a range = U_RANGE_
 U_GAP_REL = 0.5                                 # neighbour-gap limit (esl passes pos_u.gap_rel — same value as feasible)
 U_DIR_RHO_H = 3.0                               # t⊥ gaussian smoothing radius ρ = max(U_DIR_RHO_H·h, ext) (U_RULES 1)
 U_ACH_RAD = 0.005                               # achieved sample: motion within 0.005 rad of t⊥ (ext·(1 − cos) ≤ 2.5e-4 mm at 20 mm)
+U_GAP_K = 64                                    # obstacle candidates per entry node (gap factor)
+U_GAP_CONE_DEG = 45.0                           # obstacles within ±45° of the motion direction limit it
 U_GUARD_CUT = 2.0                               # guard bump support = U_GUARD_CUT·ρ (exp(−4) step ≈ 0.4 % of the shrink)
 U_SKEL_RHO_EXT = 4.0                            # skeleton-normal smoothing radius ρ_s = max(U_DIR_RHO_H·h, 4·ext) (U_RULES 1)
 
@@ -1107,6 +1109,18 @@ def _u_smooth(M, idx: np.ndarray, t: np.ndarray, rho: float) -> np.ndarray:
     same = np.linalg.norm(v - t, axis=1) < 1e-12              # exact where the neighbourhood is uniform
     v[same] = t[same]
     return v
+
+
+U_CLOSED_H = 2.0                                # closed skeleton: no junctions and |end − start| ≤ U_CLOSED_H·h
+
+
+def u_closed(seg: dict, h: float) -> bool:
+    """closed (loop) skeleton — graph.json segments carry no ``closed`` flag: no junction nodes and the skeleton's last
+    point within U_CLOSED_H·h of its first (U_CLOSED — moving a loop sideways changes its size)."""
+    P = np.asarray(seg.get("skeleton") or [], float).reshape(-1, 2)
+    if P.shape[0] < 3 or seg.get("junctions"):
+        return False
+    return float(np.linalg.norm(P[-1] - P[0])) <= U_CLOSED_H * float(h)
 
 
 def u_orient(segs_by_id: dict, S) -> dict:
@@ -1193,7 +1207,8 @@ def u_dir(graph, segs, orient: dict | None = None) -> list[float] | None:
     return [float(x) for x in num / nv]
 
 
-def _u_gap(M: Mesh, eI: np.ndarray, mI: np.ndarray, oth: np.ndarray, ends, tE: np.ndarray, gap: float, rho: float):
+def _u_gap(M: Mesh, eI: np.ndarray, mI: np.ndarray, oth: np.ndarray, ends, tE: np.ndarray, gap: float, rho: float,
+           phiE: np.ndarray | None = None):
     """neighbour-gap factor (DF ``_entry_fix`` κ_o rule, U motion = ext along t⊥): raw κ_e = min(1, gap·d_o/ext) at the
     entry nodes eI, d_o = plan distance to the other shapes ``oth`` (node mask); eroded (min over entries within
     U_GUARD_CUT·ρ) then the moving nodes mI get the gaussian mean of it (weights exp(−(d/ρ)²), same support — nearest
@@ -1204,10 +1219,17 @@ def _u_gap(M: Mesh, eI: np.ndarray, mI: np.ndarray, oth: np.ndarray, ends, tE: n
     if eI.size == 0 or not oth.any() or max(abs(lo), abs(hi)) <= 0:
         return np.ones(n), 0
     oi = np.flatnonzero(oth)
-    d_o, jo = cKDTree(M.P[oi]).query(M.P[eI])
-    toward = np.einsum("ij,ij->i", M.P[oi[jo]] - M.P[eI], tE)
-    ext = np.where(toward > 0.0, abs(hi), abs(lo))
-    raw = np.where(ext > gap * d_o, gap * d_o / np.maximum(ext, 1e-300), 1.0)
+    kk = min(U_GAP_K, oi.size)
+    dk, jk = cKDTree(M.P[oi]).query(M.P[eI], k=kk)
+    dk, jk = dk.reshape(eI.size, kk), jk.reshape(eI.size, kk)
+    vec = M.P[oi[jk]] - M.P[eI][:, None, :]
+    cs = np.einsum("ikj,ij->ik", vec, tE) / np.maximum(dk, 1e-12)
+    cone = float(np.cos(np.radians(U_GAP_CONE_DEG)))
+    d_p = np.where(cs >= cone, dk, np.inf).min(axis=1)       # obstacle ahead of the + motion
+    d_m = np.where(cs <= -cone, dk, np.inf).min(axis=1)      # … of the − motion
+    ph = np.ones(eI.size) if phiE is None else np.maximum(np.asarray(phiE, float), 1e-300)
+    raw = np.minimum.reduce([np.ones(eI.size), gap * d_p / (max(abs(hi), 1e-300) * ph),
+                             gap * d_m / (max(abs(lo), 1e-300) * ph)])
     n_clip = int((raw < 1.0).sum())
     if not n_clip:
         return np.ones(n), 0
@@ -1383,6 +1405,9 @@ def _one_u(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, ed
     ws = [M.segs[x]["entry_width"] for x in S]
     if any(w is None for w in ws):
         raise ValueError(f"bead {b['name']}: U needs entry lines on both sides for every segment")
+    bad = [x for x in S if len(M.segs[x].get("skeleton") or []) < 2 or u_closed(M.segs[x], M.h_mm)]
+    if bad:
+        raise ValueError(f"bead {b['name']}: U needs an open skeleton with a direction ({bad}: closed / one point)")
     lens = np.array([float(M.segs[x]["length"] or 1.0) for x in S])
     w_ref = float(np.sum(lens * np.array(ws, float)) / lens.sum())
     mc = cfg["morph"]
@@ -1469,7 +1494,8 @@ def _one_u(M: Mesh, b: dict, ranges: dict, cfg: dict, fixed_mask: np.ndarray, ed
     if ent_idx.size:
         pe = -np.ones(M.n, np.int64)
         pe[idx] = np.arange(idx.size)
-        kap[idx], info["gap_clip_n"] = _u_gap(M, ent_idx, idx, oth, ends, tsm[pe[ent_idx]], gap, rho)
+        phiE = _ramp(M, J, ent_idx, L)[ent_idx] if J.any() else None
+        kap[idx], info["gap_clip_n"] = _u_gap(M, ent_idx, idx, oth, ends, tsm[pe[ent_idx]], gap, rho, phiE)
         Uv[idx] *= kap[idx, None]
     # parent blend band (both sides, distance-weighted mix, islands + outer edge = obstacles)
     bl = cfg["blend"]
