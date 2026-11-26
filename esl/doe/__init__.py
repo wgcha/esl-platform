@@ -34,7 +34,7 @@ METHOD_SOURCES_PATH = os.path.join(RESOURCES, "doe_method_sources.json")
 
 SCENARIOS = ("same", "mesh", "step", "compare", "select")      # v0.14.0 ④ compare, v0.15.0 select(esl_bead_select.md)
 METHODS = ("lhs", "halton", "fullfact")
-PARAM_TYPES = ("D", "W", "U", "V")
+PARAM_TYPES = ("D", "W", "U", "V", "A")
 SOLVERS = ("linear",)
 
 # 안 상태 (§9.2)
@@ -265,6 +265,15 @@ DEFAULTS: dict = {
     "pos_u": {"enabled": True, "range_rel": 0.25, "max_rel": 0.5, "gap_rel": 0.5, "hold_frac_max": 0.2,
               "sat_ratio_min": 0.9},     # v0.24.9 INT-7: range guard U 포화 판정(실제/요청 이동 비) — 해시 밖(보고만)
     "load_follow": {"cell_mm": 3.0, "noise_floor_min": 0.01},
+    # v0.25.0 VB(esl_virtual_bead.md §7.1 — pydantic BeadDoeVirtualBeadCfg·두 yaml 거울, 같은 이름): 가상 비드("추가 비드", 변수 종류
+    # A — 공칭 0 = 지금 형상). 새 select 그래프 스터디 스냅샷 doe.virtual_bead{schema 1, 해시 안 키}에만 복사(블록 없는 옛 스터디 = VB_SCOPE).
+    # 해시 안: min_wall_elems·margin_mm·theta_default_deg·theta_range_deg·warp_max_deg, 밖: enabled·max_count·d_max_limit_mm·default_on·
+    # preview_max_nodes
+    # 개정 2(§19): theta_range_deg [15, 60](상한 ≤ select.quality.flip_deg — 어기면 CONFIG_INVALID VB_THETA_FLIP),
+    # r_default_h_mult(r 생략 = min(배수·h, r_cap), 해시 안), warp_max_deg = 정보(VB_WARP_INFO) 세는 기준
+    "virtual_bead": {"enabled": True, "max_count": 4, "min_wall_elems": 2.0, "margin_mm": 3.0, "theta_default_deg": 45.0,
+                     "theta_range_deg": [15.0, 60.0], "d_max_limit_mm": 30.0, "default_on": True, "warp_max_deg": 15.0,
+                     "preview_max_nodes": 50000, "r_default_h_mult": 1.0},
     # v0.22.0 REDROP(esl_redrop_bundle.md §6) — 재낙하 입력 묶음 받기(pydantic BeadDoeRedropCfg·두 yaml 거울 — 같은 이름)
     "redrop": {"enabled": True, "name_max_chars": 40, "tmp_ttl_s": 3600, "base_coord_tol_mm": 0.0},
     # v0.15.0 비드 직접 선택(esl_bead_select.md §10). quality 의 기준값은 compare.quality 한 곳(복제 없음) —
@@ -364,10 +373,34 @@ def settings(cfg: dict | None = None) -> dict:
             return copy.deepcopy(DEFAULTS)
         if not isinstance(sect, dict):
             raise EslError("CONFIG_INVALID", "bead_doe 절은 매핑이어야 함")
-        return _deep_merge(DEFAULTS, sect)
+        return check_virtual_bead(_deep_merge(DEFAULTS, sect))
     if any(k in cfg for k in ("opt_run", "commands", "upload", "worker")):
         return copy.deepcopy(DEFAULTS)              # 전체 설정인데 bead_doe 절 없음 → 비활성
-    return _deep_merge(DEFAULTS, cfg)
+    return check_virtual_bead(_deep_merge(DEFAULTS, cfg))
+
+
+def check_virtual_bead(st: dict) -> dict:
+    """v0.25.0 §19.4-2 설정 검증(백엔드 pydantic 과 같은 식): virtual_bead.theta_range_deg 1 ≤ lo < hi ≤ 89, theta_default_deg ∈
+    [lo, hi], **hi ≤ select.quality.flip_deg** — 어기면 CONFIG_INVALID(문구 VB_THETA_FLIP, detail {key, theta_hi, flip_deg})."""
+    vc = st.get("virtual_bead") if isinstance(st, dict) else None
+    if not isinstance(vc, dict):
+        return st
+    key = "bead_doe.virtual_bead.theta_range_deg"
+    try:
+        lo, hi = (float(x) for x in vc["theta_range_deg"])
+        dflt = float(vc["theta_default_deg"])
+        flip = float(((st.get("select") or {}).get("quality") or {}).get("flip_deg"))
+    except (KeyError, TypeError, ValueError):
+        raise EslError("CONFIG_INVALID", f"{key}: [lo, hi] 두 수 필요") from None
+    if not (1.0 <= lo < hi <= 89.0) or not (lo <= dflt <= hi):
+        e = EslError("CONFIG_INVALID", f"{key}: 1 ≤ lo < hi ≤ 89, theta_default_deg ∈ [lo, hi] (값 [{lo}, {hi}], {dflt})")
+        e.detail = {"key": key, "theta_lo": lo, "theta_hi": hi, "theta_default_deg": dflt}
+        raise e
+    if hi > flip:
+        e = EslError("CONFIG_INVALID", message("VB_THETA_FLIP").format(theta_hi=f"{hi:g}", flip=f"{flip:g}"))
+        e.detail = {"key": key, "theta_hi": hi, "flip_deg": flip}
+        raise e
+    return st
 
 
 def opt_settings(cfg: dict | None = None) -> dict:

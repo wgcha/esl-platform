@@ -1127,6 +1127,8 @@ def bd_post(spec: dict, echo=print) -> dict:
         out["load_follow"] = lfp
         warns.append("LOAD_FOLLOW_SPATIAL: " + _msg_fmt("LOAD_FOLLOW_SPATIAL", cell_mm=f"{lfp['cell_mm']:g}"))
         warns.append("PU_LIN_SKIPPED: " + _msg_fmt("PU_LIN_SKIPPED"))
+    if any(_bgr().VB_NAME_RE.match(str(p_.get("name", ""))) for p_ in ((m.get("spec") or {}).get("params") or [])):
+        warns.append("VB_VERIFY_HINT: " + _msg_fmt("VB_VERIFY_HINT"))   # v0.25.0 VB §10: 가상 비드 변수(A<n>_A)가 있는 행렬만
     evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만 — 옛 결과 키 없음)
     if evs is not None:
         out["eval_region"] = evs
@@ -7347,7 +7349,8 @@ def _sel_norm(c: Ctx, mesh: dict | None = None) -> tuple[dict, str]:
         if select_schema(c) != 2:
             raise EslError("SELECT_SCHEMA_MISMATCH", "schema 1 스터디에 schema 2 선택")
         graph, labels = _graph_or_none(c)                # GRAPH_FAILED: elems beads only
-        norm, sha = bgr.normalize_v2(s["input"], graph, c.cfg, labels=labels, mesh=mesh, shape_rules=_shape(c))
+        norm, sha = bgr.normalize_v2(s["input"], graph, c.cfg, labels=labels, mesh=mesh, shape_rules=_shape(c),
+                                     virtual_bead=_vb(c))      # v0.25.0 INT-2: 백엔드와 같은 블록 해석
         if mesh is not None:
             bsel.check_elems(mesh, {"fixed_user": norm["fixed_user"], "exclude": norm["exclude"],
                                     "beads": [b for b in norm["beads"] if b["src"] == "elems"]})
@@ -7898,7 +7901,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                 bj.get("depth_section", "entry_fixed") == _sec_mod().resolve(_ds(c)[0]) and \
                 ("df_rules" not in bj or bj["df_rules"] == _bgr()._bg().DF_RULES) and \
                 ("w1_rules" not in bj or bj["w1_rules"] == _bgr()._bg().W1_RULES) and \
-                ("u_rules" not in bj or bj["u_rules"] == _bgr()._bg().U_RULES):     # v0.24.9 PU §3 재사용 조건
+                ("u_rules" not in bj or bj["u_rules"] == _bgr()._bg().U_RULES) and \
+                ("vb_rules" not in bj or bj["vb_rules"] == _vbm().VB_RULES):         # v0.24.9 PU·v0.25.0 VB §7.2 재사용 조건
             echo(f"[bd_matrix] select 기저 재사용 {sha[:12]}…")
             return {"params": U.read_json(pp)["params"], "warnings": [],
                     "rev_doc": _sel_rev(c, sha, bj["basis_sha256"])}
@@ -7915,6 +7919,9 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
             dskw = {"depth_section": dsv, "section_rules": dsr}
         if _pos_u(c) is not None:               # v0.24.9 PU: pos_u 블록 있는 스냅샷만 키 전달(없음 = 호출 불변)
             dskw.update(pos_u=_pos_u(c), tie_node_ids=_pos_u_tie_ids(c, t.mesh))
+        if norm.get("virtual_beads"):           # v0.25.0 VB: 가상 비드 있는 선택만(없음 = 호출 불변) — 계획 열 vbead·frame·지그 tie
+            dskw.update(virtual_bead=_vb(c), vb_plan=str(_lt_plan(c)["vbead"]), frame=bmeta.get("frame"),
+                        tie_node_ids=_pos_u_tie_ids(c, t.mesh))
         if sr is None:                          # v0.20.0 그대로(옛 스냅샷 — 호출·바이트 불변)
             D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids,
                                      mesh_sha256=bmeta["mesh_sha256"],
@@ -7963,7 +7970,7 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                                                          **({"w_reason": {"code": b.w_reason}}
                                                             if getattr(b, "w_reason", None) else {}),
                                                          **_u_reason_key(b)}
-                                                        for b in D.beads],
+                                                        for b in D.beads] + _bgr().vb_bead_rows(D),
                                               "params": tab, "warnings": D.warnings})
     meta = bsel.basis_meta(B, bsha)
     import hashlib
@@ -7982,6 +7989,16 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                                 for v in getattr(D, "graph_basis", [])])
         if any(v["kind"] == "U" for v in getattr(D, "graph_basis", [])):     # v0.24.9 PU §3: U 기저가 있을 때만
             meta.update(u_rules=bg.U_RULES, beadgraph_package=bg.__version__)
+    if getattr(D, "vbeads", None):              # v0.25.0 VB §7.2: 가상 비드 있을 때만(없음 = basis.json 바이트 그대로)
+        meta.update(vb_rules=_vbm().VB_RULES,
+                    virtual_beads=[{"id": vb.id, "n_fp": (vb.diag or {}).get("n_fp"),
+                                    "h": None if vb.h is None else round(float(vb.h), 4),
+                                    "n_wall": None if vb.n_wall is None else round(float(vb.n_wall), 2),
+                                    "n_top": None if vb.n_top is None else round(float(vb.n_top), 2),
+                                    "stretch_max": (vb.diag or {}).get("stretch_max"),
+                                    "side": None if vb.side is None else ("+" if vb.side > 0 else "-"),
+                                    "r": None if vb.r is None else round(float(vb.r), 4), "host": vb.host,
+                                    "reasons": list(vb.reasons)} for vb in D.vbeads])
     dsv, dsr = _ds(c)
     if dsr is not None:                         # v0.24.7 DM §5: floor_fixed 만(entry_fixed basis.json 바이트 그대로)
         bg = _bgr()._bg()
@@ -8195,6 +8212,24 @@ def _jig_apply_spatial0(c: Ctx, did: str, mesh: dict, loads: list, r: dict, td: 
             for k in _jig_pe_keys(td, m, ev_on):
                 p[k] = None if vals.get(k) is None else float(vals[k])
     return warns
+def _vbm():
+    from esl.morph import virtual_bead as vbm
+    return vbm
+
+
+def _vb(c: Ctx) -> dict | None:
+    """v0.25.0 VB §7.2: 스냅샷 doe.virtual_bead 블록(없음 = None — 옛 스터디 VB_SCOPE)."""
+    d = getattr(c, "D", None)
+    v = d.get("virtual_bead") if isinstance(d, dict) else None
+    return v if isinstance(v, dict) else None
+
+
+def _has_vb(c: Ctx) -> bool:
+    """선택 문서에 virtual_beads 가 있나(해시 보기 조건)."""
+    sel = ((getattr(c, "D", None) or {}).get("selection") or {}).get("input") or {}
+    return isinstance(sel, dict) and bool(sel.get("virtual_beads"))
+
+
 def _pos_u(c: Ctx) -> dict | None:
     """스냅샷 doe.pos_u 블록(없음·꺼짐 = None — 옛 스터디 U 행 없음, U_OFF)."""
     d = getattr(c, "D", None)
@@ -8229,14 +8264,15 @@ class _ReadCtx:
         return os.path.join(self.out, *parts)
 
 
-def pos_u_tie_ids_at(doe: dict, out_dir: str, mesh: dict) -> np.ndarray:
-    """(Backend API — 통합 v0.24.9) PU-14 지그 tie 노드 ID — 워커 select 기저(``_pos_u_tie_ids``)와 같은 함수를 스터디 스냅샷 doe·스터디
-    폴더(out_dir — prep/ 의 부모)로 읽기만 해서 부른다(백엔드 derive_v2 의 tie_node_ids — U_HELD·hold 비율이 워커와 같게).
-    pos_u 블록 없음 = 빈 배열."""
-    c = _ReadCtx(doe, out_dir)
-    if _pos_u(c) is None:
-        return np.zeros(0, np.int64)
-    return _pos_u_tie_ids(c, mesh)
+def jig_tie_ids_at(doe: dict, out_dir: str, mesh: dict) -> np.ndarray:
+    """(Backend API — v0.24.9 PU-14 · v0.25.0 INT-1) 지그 tie 노드 ID — 워커 select 기저(``_pos_u_tie_ids`` — pos_u U hold·가상 비드
+    VB_FIXED 가 함께 쓰는 tie 집합)와 같은 함수를 스터디 스냅샷 doe·스터디 폴더(out_dir — prep/ 의 부모)로 읽기만 해서 부른다(백엔드
+    derive_v2 의 tie_node_ids). pos_u 블록 유무·enabled 와 무관(워커와 같은 출처 — 계획 jig_fix·지그 없음 = 빈 배열). 쓰는 쪽(pos_u·
+    가상 비드)의 켜짐 판정은 derive 가 한다."""
+    return _pos_u_tie_ids(_ReadCtx(doe, out_dir), mesh)
+
+
+pos_u_tie_ids_at = jig_tie_ids_at       # v0.24.9 계약 이름(esl_bead_pos_u.md INT-2) — 같은 함수
 
 
 def _u_reason_key(b) -> dict:
@@ -8359,6 +8395,8 @@ def _sel_cfg_sha(c: Ctx) -> str:
     pv = sec.pos_u_hash_view(_pos_u(c))
     if pv is not None:                           # v0.24.9 PU §3: pos_u 블록 있을 때만(없음 = 해시 불변)
         h["pos_u"] = pv
+    if _has_vb(c):                               # v0.25.0 VB §7.2: 선택에 virtual_beads 가 있을 때만(블록만 = 해시 불변)
+        h["virtual_bead"] = _vbm().hash_view(_bgr().vb_block(_vb(c), c.cfg))
     s = json.dumps(h, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 

@@ -3,7 +3,7 @@ import { API_PREFIX, ApiError, CODE_TEXT, errorText, request } from "./client";
 import type {
   DoeBasisMeta, DoeBeadSource, DoeDeriveOut, DoeSelectAutoOut, DoeSelectBase, DoeSelectCfg, DoeSelectDeriveIn, DoeSelectionPutIn, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSelectGraphOut,
   DoeCellWarning, DoeDefeatureFeature, DoeDefeatureKind, DoeDefeatureList, DoeShapeDefeature, DoeShapeDiag,
-  DoeCheckIn, DoeCheckOut, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
+  DoeCheckIn, DoeCheckOut, DoeVirtualBeadCfg, DoeCompareCfg, DoeLoadTransferCfg, DoeLoadTransferDiag, DoeLoadTransferMethod, DoeLoadTransferSummary, DoeMeshAttempt, DoeMeshMethod, DoeMeshMode, DoeMeshPart, DoePrepShape, DoeShapeRef, DoeDesignStatus, DoeFileOut, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamType, DoeParamsOut, DoePhase, DoePlanOut,
   DoePerEslOut, DoeJigRegionsFile, DoeRankRow, DoeResultOut, DoeScenario, DoeSettingsOut, DoeSpec, DoeStudyIn, DoeStudyOut, EntryOut,
   DoeFixedXferMethod, DoePrepFixedXfer, DoeWarning, DeleteCheckOut, DeleteOut,
   DoeCloneIn, DoeDepthSection, DoeGuard, DoeParam as DoeParamRow, DoeRankMq, DoeShapeRoute, DoeShapeRules, XY,
@@ -84,6 +84,23 @@ export function normalizeDoeSettings(raw: unknown): DoeSettingsOut {
     compare: normalizeCompareCfg(r.compare, r),
     select: normalizeSelectCfg(r.select, r),
     select_reason: typeof r.select_reason === "string" ? r.select_reason : null,
+    ...(normalizeVbCfg(r.virtual_bead) ? { virtual_bead: normalizeVbCfg(r.virtual_bead) } : {}),
+  };
+}
+
+/** v0.25.0 GET /doe/settings virtual_bead(§8·§19.7) — 칸이 없거나 enabled 가 아니면 없음(절 숨김). 칸 범위가 틀리면 계약 기본값 */
+export function normalizeVbCfg(raw: unknown): DoeVirtualBeadCfg | null {
+  if (!isObj(raw) || raw.enabled !== true) return null;
+  const tr = Array.isArray(raw.theta_range_deg) && raw.theta_range_deg.length === 2 && raw.theta_range_deg.every((x) => typeof x === "number" && Number.isFinite(x)) && (raw.theta_range_deg[0] as number) < (raw.theta_range_deg[1] as number) ? ([raw.theta_range_deg[0], raw.theta_range_deg[1]] as [number, number]) : ([15, 60] as [number, number]);
+  const pos = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
+  return {
+    enabled: true,
+    max_count: Math.min(9, Math.max(1, Math.round(pos(raw.max_count, 4)))),
+    theta_default_deg: typeof raw.theta_default_deg === "number" && raw.theta_default_deg >= tr[0] && raw.theta_default_deg <= tr[1] ? raw.theta_default_deg : Math.min(tr[1], Math.max(tr[0], 45)),
+    theta_range_deg: tr,
+    d_max_limit_mm: pos(raw.d_max_limit_mm, 30),
+    min_wall_elems: pos(raw.min_wall_elems, 2),
+    ...(typeof raw.r_default_h_mult === "number" ? { r_default_h_mult: raw.r_default_h_mult } : {}),
   };
 }
 
@@ -402,7 +419,7 @@ export const BEAD_DEF_NAME = { same: "자동 탐지(STEP)", select: "직접 선�
 /** 라디오 값: select 는 ① 라디오 아래 하위 선택 */
 export const radioScenario = (s: DoeScenario): DoeScenario => (s === "select" ? "same" : s);
 export const METHOD_NAME: Record<DoeMethod, string> = { lhs: "LHS", halton: "Halton", fullfact: "풀 팩토리얼" };
-export const TYPE_NAME: Record<DoeParamType, string> = { D: "깊이 D", W: "폭 W", U: "위치 U", V: "위치 V" };
+export const TYPE_NAME: Record<DoeParamType, string> = { D: "깊이 D", W: "폭 W", U: "위치 U", V: "위치 V", A: "추가 비드 깊이" };
 export const PHASE_NAME: Record<DoePhase, string> = {
   PREP: "입력 준비 중",
   READY: "준비 완료",
@@ -899,6 +916,19 @@ export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules |
   if (g.state === "blocked") return { label: "막힘", kind: "warn", tip: `양쪽 모두 거의 움직일 수 없어 기본 체크를 해제했습니다${range ? `\n안전 범위 ${range}` : ""}${why ? `\n${why}` : ""}` };
   return { label: g.state === "ok" || (g.combo_scale != null && g.combo_scale < 1) ? "조합 축소" : "축소", kind: "info", tip: `품질 점검으로 기본 범위를 줄였습니다${range ? `\n${range}` : ""}${why ? `\n${why}` : ""}${combo}` };
 }
+/** v0.25.0 A 행 회색 정보 꼬리표 "뒤틀림 n"(§19.2-5 — n > 0 일 때만, 경고색 아님). 툴팁 = guard.warp.text(서버 VB_WARP_INFO), 없으면 수치 */
+export function warpTag(g: DoeGuard | null | undefined): { label: string; tip: string } | null {
+  const w = g?.warp;
+  if (!w || !(w.n > 0)) return null;
+  return { label: VB_TEXT.warpTag(w.n), tip: w.text || `깊이 ${w.at} mm 에서 뒤틀린 사각 요소 ${w.n} 개(최대 ${w.max_deg}°) — 범위는 줄이지 않음` };
+}
+/** v0.25.0 A 행 툴팁: 사면 요소 수 · 정확도 표 칸의 C 차(표 밖 = "측정 범위 밖") */
+export function vbRowTip(p: Pick<DoeParam, "wall_elems" | "acc_hint">): string {
+  const n = p.wall_elems != null ? `사면 요소 ${p.wall_elems.toFixed(1)}개` : "";
+  const a = p.acc_hint?.c_err_pct;
+  const acc = a != null ? `예상 오차 ±${Math.abs(a).toFixed(1)} %` : "예상 오차: 측정 범위 밖";
+  return [n, acc].filter(Boolean).join(" · ");
+}
 /** W 부분 꼬리표 툴팁: 구간 앵커·길이 비율 % */
 export function wPartialTip(anchors: number[] | null | undefined, cover: number | null | undefined): string {
   const a = (anchors ?? []).map((x) => `#${x}`).join(" · ");
@@ -1173,11 +1203,11 @@ export interface ParamRow {
   hi: string;
 }
 
-/** 기본 변수 행: use_default 이고 기본 종류(D·W)면 포함, 범위 = default_range(없으면 feasible) */
+/** 기본 변수 행: use_default 이고 (기본 종류(D·W) 이거나 hinge 형식 = 추가 비드 A — §5.2)면 포함, 범위 = default_range(없으면 feasible) */
 export function defaultRows(params: DoeParam[], types: DoeParamType[]): ParamRow[] {
   return params.map((p) => {
     const r = p.default_range ?? p.feasible;
-    return { name: p.name, on: p.use_default && types.includes(p.type), lo: String(r[0]), hi: String(r[1]) };
+    return { name: p.name, on: p.use_default && (types.includes(p.type) || p.form === "hinge"), lo: String(r[0]), hi: String(r[1]) };
   });
 }
 
@@ -1190,8 +1220,22 @@ export function rowProblem(p: Pick<DoeParam, "type">, r: ParamRow): string | nul
   if (!(lo < hi)) return "하한 < 상한이어야 합니다";
   if ((p.type === "D" || p.type === "W") && lo <= 0) return "깊이·폭 하한은 0보다 커야 합니다";
   if (p.type === "U" && !(lo <= 0 && hi >= 0)) return POS_U_TEXT.rangeRule;
+  // v0.25.0 추가 비드 깊이: 공칭 0 = 하한 쪽(§0.3) — 종류별 규칙 표(U 와 같은 분기)
+  if (p.type === "A" && lo < 0) return VB_TEXT.rangeRule;
   return null;
 }
+
+/** v0.25.0 추가 비드 화면 고정 문구(서버 문구 VB_*·A_RANGE_INVALID 와 같은 뜻 — 코드별 문구는 API 가 text 로 동봉) */
+export const VB_TEXT = {
+  section: "추가 비드(평판에 새 비드)",
+  /** VB_LIST_TIP */
+  tip: "추가 비드는 모핑으로 만든 근사 형상 — 유리한 후보는 실제 형상으로 ④ 비교나 재낙하로 확인",
+  rangeRule: "추가 비드 깊이 하한은 0 이상",
+  /** "추가 비드 n · 깊이"(label 키가 없는 옛 응답 대비) */
+  label: (n: string | number) => `추가 비드 ${n} · 깊이`,
+  warpTag: (n: number) => `뒤틀림 ${n}`,
+  scopeHint: "그래프 방식 새 스터디만 쓸 수 있습니다",
+} as const;
 
 /** feasible 밖(경고 배지만 — 미리보기가 실패 안을 거름) */
 export function outsideFeasible(p: Pick<DoeParam, "feasible">, r: ParamRow): boolean {

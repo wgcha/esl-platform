@@ -114,7 +114,7 @@ def test_matrix_422_nominal_in_range():
 def test_plan_tables():
     sec.validate_plans()
     assert {r: sec.pos_plan(r) for r in sec.SECTION_PLANS} == {"graph": "pkg_u", "elems": "none", "paicad": "native",
-                                                                "none": "none"}
+                                                                "none": "none", "virtual": "none"}   # v0.25.0 VB 행 virtual
     bad = {**sec.SECTION_PLANS, "graph": {**sec.SECTION_PLANS["graph"], "pos": ""}}
     with pytest.raises(EslError):
         sec.plan("graph", bad)

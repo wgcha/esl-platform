@@ -2546,7 +2546,8 @@ export type DoeFixedXferMethod = "xyz_nearest" | "xyz_fitted" | "ab_hole_snap" |
 export type DoeRegionMode = "auto" | "a_bbox" | "largest" | "all";
 export type DoeMethod = "lhs" | "halton" | "fullfact";
 export type DoePhase = "PREP" | "READY" | "PREVIEW" | "PREVIEW_READY" | "RUN" | "DONE" | "FAILED";
-export type DoeParamType = "D" | "W" | "U" | "V";
+/** v0.25.0 A = 추가 비드(가상 비드) 깊이 — paicad V(위치 V)와 다른 문자(esl_virtual_bead.md D-0.25.0-VB-13) */
+export type DoeParamType = "D" | "W" | "U" | "V" | "A";
 /** 안 상태(§9.2) */
 export type DoeDesignStatus =
   | "READY"
@@ -2618,8 +2619,17 @@ export interface DoeShapeRules {
 }
 /** v0.21.0 변수 행 guard(§4.4 — 새 스냅샷의 그래프 변수만) */
 export type DoeGuardState = "ok" | "limited" | "blocked" | "unchecked";
+export interface DoeGuardWarp {
+  limit_deg: number;
+  n: number;
+  max_deg: number;
+  at: number;
+  text?: string | null;
+}
 export interface DoeGuard {
   state: DoeGuardState;
+  /** v0.25.0 A 행: 뒤틀린 사각 요소 정보(판정 아님 — §19.2). n = 공칭 이하 → 기준 초과로 새로 뒤틀린 수. text = n > 0 일 때 서버 문구(VB_WARP_INFO) */
+  warp?: DoeGuardWarp | null;
   from: XY;
   usable: XY | null;
   /** 첫 위반 기준(inverted·jac·tri_angle·area_ratio·new_fail) */
@@ -2671,6 +2681,8 @@ export interface DoeSettingsOut {
   reason: string | null;
   paicad: { ready: boolean; version: string | null; pinned: string | null; warning: string | null };
   gmsh: { ready: boolean; version: string | null };
+  /** v0.25.0 추가 비드 설정(bead_doe.virtual_bead — 칸 범위·기본값 표시용, 옛 서버면 없음 = 절 숨김) */
+  virtual_bead?: DoeVirtualBeadCfg | null;
   /** select 는 v0.15.0 이후 서버만(없으면 꺼짐) */
   scenarios: Record<Exclude<DoeScenario, "select">, boolean> & {
     select?: boolean;
@@ -2707,6 +2719,27 @@ export interface DoeSettingsOut {
   select?: DoeSelectCfg | null;
   /** v0.15.0 select 비활성 사유(DOE_DISABLED·SELECT_DISABLED, paicad 무관). null = 사용 가능 */
   select_reason?: string | null;
+}
+/** v0.25.0 스냅샷 doe.virtual_bead = inputs.virtual_bead(§7.2 — schema 1 + 해시 안 키) */
+export interface DoeVbBlock {
+  schema: number;
+  min_wall_elems?: number;
+  margin_mm?: number;
+  theta_default_deg?: number;
+  theta_range_deg?: [number, number];
+  warp_max_deg?: number;
+  r_default_h_mult?: number;
+}
+/** v0.25.0 GET /doe/settings virtual_bead 칸(§8·§19.7) */
+export interface DoeVirtualBeadCfg {
+  enabled: boolean;
+  max_count: number;
+  theta_default_deg: number;
+  /** [15, 60] — θ 칸 min·max */
+  theta_range_deg: [number, number];
+  d_max_limit_mm: number;
+  min_wall_elems: number;
+  r_default_h_mult?: number | null;
 }
 /** v0.15.0 GET /doe/settings select 칸 */
 export interface DoeSelectCfg {
@@ -3146,6 +3179,8 @@ export interface DoeStudyOut {
     /** v0.24.9 위치 U 설정 블록(새 스냅샷만 — 없으면 U 행 없음·하중 node) · 하중 공간 고정 설정 */
     pos_u?: { schema: number; range_rel?: number; max_rel?: number; gap_rel?: number; hold_frac_max?: number } | null;
     load_follow?: { schema: number; cell_mm: number } | null;
+    /** v0.25.0 추가 비드 스냅샷 블록(새 select 그래프 스터디·설정 켬만 — 옛 스터디 = null = 추가 비드 절 숨김, INT-5) */
+    virtual_bead?: DoeVbBlock | null;
     /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) */
     load_source?: string | null;
     load_source_check?: LoadSourceCheck | null;
@@ -3213,8 +3248,10 @@ export interface DoeBead {
   fixed_overlap: boolean;
   png: string | null;
   /** v0.15.0 select 비드(§9 params): kind = "select" */
-  kind?: "select" | null;
+  kind?: "select" | "virtual" | null;
   name?: string | null;
+  /** v0.25.0 kind "virtual": 거부 사유 1건(첫 사유 — 회색 1줄) */
+  vb_reason?: DoeWReason | null;
   n_tiers?: number | null;
   W_nom?: number | null;
   W_min?: number | null;
@@ -3277,6 +3314,35 @@ export interface DoeParam {
   dir_text?: string | null;
   w_ref?: number | null;
   group_signs?: Record<string, number> | null;
+  /** v0.25.0 A 행(§5.1·§19.7): 평가 형식·화면 라벨 "추가 비드 n · 깊이"·사면 요소 수·단면 요약·정확도 표 칸 */
+  form?: "hinge" | null;
+  label?: string | null;
+  wall_elems?: number | null;
+  vb?: DoeParamVb | null;
+  acc_hint?: DoeAccHint | null;
+}
+/** v0.25.0 params A 행 vb(§5.1·§19.7) — side = 적용 방향(자동 × flip) */
+export interface DoeParamVb {
+  w_top: number;
+  theta_deg: number;
+  side: "+" | "-";
+  n_wall: number | null;
+  n_top: number | null;
+  len_mm: number | null;
+  angle_deg: number | null;
+  d_max?: number | null;
+  r?: number | null;
+  r_source?: "default" | "user" | null;
+  host?: "base" | "area" | "plateau" | null;
+}
+/** v0.25.0 정확도 표 칸(resources/vbead_accuracy.json 에서 API 가 고름 — 표 밖 = null) */
+export interface DoeAccHint {
+  h: number;
+  d: number;
+  theta: number;
+  r?: number | null;
+  c_err_pct: number | null;
+  pi_err_pct: number | null;
 }
 export interface DoeParamsOut {
   beads: DoeBead[];
@@ -4193,6 +4259,27 @@ export interface SelectionInV2 {
   ties?: string[][];
   fixed_user?: SelectElemSet;
   exclude?: SelectElemSet;
+  /** v0.25.0 추가 비드(없음·빈 목록 = 키 없음) */
+  virtual_beads?: VirtualBeadIn[];
+}
+/** openapi VirtualBeadIn(esl_virtual_bead.md §2.1·§19.7) — (a) p0 + p1 | (b) p0 + length + angle_deg. flip true 만 키. r 생략 = 요소 크기 기본(0 도 키 유지). side 키 없음(주면 422) */
+export interface VirtualBeadIn {
+  /** ^a[1-9]$ */
+  id: string;
+  name?: string | null;
+  p0: [number, number, number];
+  p1?: [number, number, number] | null;
+  length?: number | null;
+  /** ESL frame +ξ 기준 +η 쪽(°) — (−180, 180] */
+  angle_deg?: number | null;
+  w_top: number;
+  /** [theta_range_deg] — 생략 = theta_default_deg */
+  theta_deg?: number | null;
+  d_max: number;
+  /** true = 자동 방향의 반대(개정 3). false·생략 = 키 없음 */
+  flip?: true | null;
+  end?: "round" | "square" | null;
+  r?: number | null;
 }
 /** POST …/select/derive 요청(v0.17.0 schema 2 수용) */
 export interface DoeSelectDeriveIn {
@@ -4322,6 +4409,54 @@ export interface SelectionDerived {
   graph_algo?: number | null;
   /** v0.17.0 schema 2 선택의 그래프 요약 */
   graph?: DoeDerivedGraph | null;
+  /** v0.25.0 추가 비드 결과(가상 비드가 있을 때만 키 — §8) */
+  virtual_beads?: DoeVirtualBeadDerived[] | null;
+  /** v0.25.0 입력 칸 ξ·η ↔ 모델 좌표 변환용(ab = (x − origin)·e) */
+  vb_frame?: DoeVbFrame | null;
+}
+export interface DoeVbFrame {
+  origin: [number, number, number];
+  e_xi: [number, number, number];
+  e_eta: [number, number, number];
+  n_h: [number, number, number];
+}
+/** derive 경고·정보 1건(text = 서버가 자리표시 채움) */
+export interface DoeVbWarning {
+  code: string;
+  level?: "info" | null;
+  vbead?: string;
+  text?: string | null;
+  [k: string]: unknown;
+}
+/** derive virtual_beads[] 1개(§8·§19.7) */
+export interface DoeVirtualBeadDerived {
+  id: string;
+  name: string;
+  p0: [number, number, number];
+  /** INT-8: 판 평면 위 시작점(좌표 입력 높이를 코어가 host 면에 맞춘 뒤 — 옛 서버면 없음) */
+  p0_resolved?: [number, number, number] | null;
+  p1_resolved: [number, number, number] | null;
+  len_mm: number | null;
+  angle_deg: number | null;
+  /** 적용 방향("+" = n_h 쪽, 자동 × flip) */
+  side_resolved: "+" | "-" | null;
+  ok: boolean;
+  reasons: { code: string; text: string }[];
+  warnings: DoeVbWarning[];
+  h: number | null;
+  n_wall: number | null;
+  n_top: number | null;
+  r_resolved?: number | null;
+  r_source?: "default" | "user" | null;
+  host?: "base" | "area" | "plateau" | null;
+  host_floor?: number | null;
+  stretch_max?: number;
+  n_fp?: number;
+  n_elems_fp?: number;
+  /** 발자국 윤곽 — ESL frame (a, b) 닫힌 꺾은선 */
+  outline_ab?: { a: number; b: number }[] | null;
+  /** ok 인 비드만(노드 수 > preview_max_nodes 면 생략 + VB_PREVIEW_SKIPPED). g·c 는 해석된 r 기준 — 깊이 보상은 평가 식(depthEff) */
+  preview?: { idx: number[]; vec: number[][]; g: number[]; c: number } | null;
 }
 export type DoeSelectionDerived = SelectionDerived;
 /** v0.17.0 derive 응답 graph 칸(esl_beadgraph.md §6.1) — schema 2 선택만 */
@@ -4410,11 +4545,14 @@ export interface DoeSelectBinSection {
 /** basis.json 변수 1개(순서 = basis.bin). R_mm = 폭 변수 블렌딩 반경(깊이 변수 null) */
 export interface DoeBasisVar {
   name: string;
-  type: "D" | "W";
+  type: "D" | "W" | "A";
   bead: string;
   nominal: number;
   n: number;
   R_mm: number | null;
+  /** v0.25.0 hinge 변수: basis.bin 에 vec 뒤 [g:f32×n] 꼬리, c = 입구 둥글림 상수(mm). 키 없음 = linear */
+  form?: "hinge";
+  c?: number;
 }
 /** select/basis?meta=1 → basis.json(schema esl/bead_select_basis/1, 변수 순서 = basis.bin). 비드 방향 n̂_b 는 없음 — basis.bin 이 3D 벡터 전체를 담는다 */
 export interface DoeBasisMeta {
@@ -4601,6 +4739,8 @@ export interface DoeSelectionV2 {
   ties: string[][];
   fixed_user: DoeElemSet;
   exclude: DoeElemSet;
+  /** v0.25.0 추가 비드(없음·빈 목록 = 키 없음) */
+  virtual_beads?: VirtualBeadIn[];
 }
 /** 저장·seed 선택(schema 1 | 2) */
 export type DoeSelectionAny = DoeSelectionIn | DoeSelectionV2;

@@ -1,7 +1,7 @@
 // 선택 층(esl_bead_select.md §4.1·§11.2): 층 = 비드 b 의 단 k 바닥 | 비드 b 사면(자동 결과에 더하기·빼기) | 고정 | 제외.
 // 규칙: 한 요소는 최대 1 개 비드·1 개 층(단 바닥|사면 더하기) — 다른 비드 요소는 덮어쓰지 않는다. 고정·제외는 비드 층과 겹칠 수 있다.
 // 상태는 요소 번호(select.bin 순서) 색인 Int32Array — 칠하기 1획 = History 패치 1개.
-import type { BgEdits, BgSegRef, DoeBeadSel, DoeBeadSelElems, DoeBeadSelGraph, DoeSelectionAny, DoeSelectionIn, DoeSelectionV2 } from "../../api/types";
+import type { BgEdits, BgSegRef, DoeBeadSel, DoeBeadSelElems, DoeBeadSelGraph, DoeSelectionAny, DoeSelectionIn, DoeSelectionV2, VirtualBeadIn } from "../../api/types";
 import type { MeshTopo } from "./adjacency";
 import { networkAnchor, refKey, repOf, resolveRef, sortRefs, editView, type GraphIndex } from "./graph";
 import { enclosedComponents, outerPolygons, type Island, type Vec3 } from "./grow";
@@ -54,11 +54,13 @@ export interface SelState {
   edits?: BgEdits;
   /** v0.17.0 대칭 묶기(비드 id 묶음) */
   ties?: string[][];
+  /** v0.25.0 추가 비드(가상 비드 — schema 2 만, 입력 형식 그대로 저장·전송: esl_virtual_bead.md §2.1) */
+  vbeads?: VirtualBeadIn[];
 }
 
 export function emptyState(nElems: number, schema: 1 | 2 = 1, graphRef: { sha256: string; rules: number } | null = null): SelState {
   const s: SelState = { nElems, beads: [], owner: new Int32Array(nElems).fill(-1), remove: new Int32Array(nElems).fill(-1), fixed: new Int32Array(nElems), exclude: new Int32Array(nElems) };
-  if (schema === 2) Object.assign(s, { schema: 2, graphRef, edits: emptyEdits(), ties: [] });
+  if (schema === 2) Object.assign(s, { schema: 2, graphRef, edits: emptyEdits(), ties: [], vbeads: [] });
   return s;
 }
 
@@ -67,8 +69,10 @@ interface Snap {
   beads: BeadMeta[];
   edits?: BgEdits;
   ties?: string[][];
+  vbeads?: VirtualBeadIn[];
 }
-const snap = (s: SelState): Snap => ({ beads: cloneBeads(s.beads), ...(s.edits ? { edits: cloneEdits(s.edits) } : {}), ...(s.ties ? { ties: s.ties.map((g) => [...g]) } : {}) });
+export const cloneVBeads = (v: VirtualBeadIn[]): VirtualBeadIn[] => v.map((x) => JSON.parse(JSON.stringify(x)) as VirtualBeadIn);
+const snap = (s: SelState): Snap => ({ beads: cloneBeads(s.beads), ...(s.edits ? { edits: cloneEdits(s.edits) } : {}), ...(s.ties ? { ties: s.ties.map((g) => [...g]) } : {}), ...(s.vbeads ? { vbeads: cloneVBeads(s.vbeads) } : {}) });
 function restore(s: SelState, m: unknown) {
   if (Array.isArray(m)) {
     s.beads = cloneBeads(m as BeadMeta[]);
@@ -78,6 +82,7 @@ function restore(s: SelState, m: unknown) {
   s.beads = cloneBeads(x.beads);
   if (x.edits) s.edits = cloneEdits(x.edits);
   if (x.ties) s.ties = x.ties.map((g) => [...g]);
+  if (x.vbeads) s.vbeads = cloneVBeads(x.vbeads);
 }
 
 export const MAX_BEADS = 20;
@@ -291,13 +296,14 @@ export function resetAll(s: SelState): Patch<LayerName> {
   s.beads = [];
   if (s.edits) s.edits = emptyEdits();
   if (s.ties) s.ties = [];
+  if (s.vbeads) s.vbeads = [];
   return r.patch({ before, after: snap(s) });
 }
 
 /** 상태 깊은 복사(v0.16.2 seed 기준 상태 — 편집이 seed 를 바꾸지 않게) */
 export function cloneState(s: SelState): SelState {
   const c: SelState = { nElems: s.nElems, beads: cloneBeads(s.beads), owner: s.owner.slice(), remove: s.remove.slice(), fixed: s.fixed.slice(), exclude: s.exclude.slice() };
-  if (s.schema === 2) Object.assign(c, { schema: 2, graphRef: s.graphRef ? { ...s.graphRef } : null, edits: cloneEdits(s.edits ?? emptyEdits()), ties: (s.ties ?? []).map((g) => [...g]) });
+  if (s.schema === 2) Object.assign(c, { schema: 2, graphRef: s.graphRef ? { ...s.graphRef } : null, edits: cloneEdits(s.edits ?? emptyEdits()), ties: (s.ties ?? []).map((g) => [...g]), vbeads: cloneVBeads(s.vbeads ?? []) });
   return c;
 }
 
@@ -346,6 +352,7 @@ export function resetAllTo(s: SelState, seed: SelState): Patch<LayerName> {
   if (s.schema === 2) {
     s.edits = cloneEdits(seed.edits ?? emptyEdits());
     s.ties = (seed.ties ?? []).map((g) => [...g]);
+    s.vbeads = cloneVBeads(seed.vbeads ?? []);
   }
   return r.patch({ before, after: snap(s) });
 }
@@ -419,6 +426,8 @@ export function toSelectionAny(s: SelState, elemId: ArrayLike<number>, elemType:
     ties: (s.ties ?? []).map((g) => [...g].sort(byBeadId)).sort((a, b) => byBeadId(a[0], b[0])),
     fixed_user: v1.fixed_user,
     exclude: v1.exclude,
+    // v0.25.0 추가 비드: 없거나 빈 목록 = 키 없음(옛 문서·sha 불변 — §2.1), id 순
+    ...(s.vbeads?.length ? { virtual_beads: cloneVBeads(s.vbeads).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))) } : {}),
   };
   return out;
 }
@@ -464,6 +473,7 @@ export function fromSelectionIn(sel: DoeSelectionAny, idx: ElemIndex, nElems: nu
   if (v2) {
     if (sel.graph?.edits) s.edits = cloneEdits({ toggle: sel.graph.edits.toggle ?? [], merge: sel.graph.edits.merge ?? [], split: sel.graph.edits.split ?? [] });
     s.ties = (sel.ties ?? []).map((g) => [...g]);
+    s.vbeads = cloneVBeads(sel.virtual_beads ?? []);
   }
   let unknown = 0;
   const take = (set: DoeBeadSel["slope"]["add"] | undefined, fn: (e: number) => void) => {
@@ -751,6 +761,22 @@ export function toggleTie(s: SelState, ids: string[]): Patch<LayerName> | null {
       s.ties = t.map((g) => g.filter((x) => !ids.includes(x))).filter((g) => g.length > 1);
       s.ties.push([...ids].sort(byBeadId));
     }
+  });
+}
+
+/** v0.25.0 추가 비드 더하기(id = 빈 a1..a9 중 가장 작은 것은 호출 쪽이 정함) — 실행 취소 가능 */
+export function addVBead(s: SelState, v: VirtualBeadIn): Patch<LayerName> | null {
+  if (!s.vbeads || s.vbeads.some((x) => x.id === v.id)) return null;
+  return metaOp(s, () => {
+    s.vbeads!.push(JSON.parse(JSON.stringify(v)) as VirtualBeadIn);
+  });
+}
+
+/** v0.25.0 추가 비드 삭제(번호는 당기지 않음 — a2 만 남을 수 있음) */
+export function removeVBead(s: SelState, id: string): Patch<LayerName> | null {
+  if (!s.vbeads?.some((x) => x.id === id)) return null;
+  return metaOp(s, () => {
+    s.vbeads = s.vbeads!.filter((x) => x.id !== id);
   });
 }
 

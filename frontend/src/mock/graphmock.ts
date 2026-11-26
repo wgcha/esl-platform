@@ -8,6 +8,7 @@ import type {
 } from "../api/types";
 import MESSAGES from "../../../resources/doe_messages.json";
 import { writeBasis } from "../view3d/select/basis";
+import type { DoeParam as DoeParamT, DoeVbFrame, DoeVirtualBeadDerived, VirtualBeadIn } from "../api/types";
 import { writeGraphBin, type GraphLabels } from "../view3d/select/graph";
 import { EMPTY_SET, compress } from "../view3d/select/ranges";
 import { writeSelectBin } from "../view3d/select/view";
@@ -274,7 +275,7 @@ export function mockGuard(name: string, type: "D" | "W", nominal: number, def: X
   return { guard: ok, ...keep };
 }
 
-export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null): MockResponse {
+export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null, vbOn = false): MockResponse {
   const m = graphMesh();
   const g = graphFor(!!shape);
   const r = resolve(sel, shape);
@@ -321,6 +322,11 @@ export function graphDerive(sel: DoeSelectionV2, shape?: DoeShapeRules | null): 
     sym_pairs: sym,
   };
   const out: DoeDeriveOut = { sha256: graphSelSha(sel), beads, fixed: { scan_n: m.fixed.reduce((s, v) => s + v, 0), user_n: 0, source: "scan" }, warnings, graph_algo: 1, graph };
+  if (sel.virtual_beads?.length) {
+    const vbs = mockVBeads(sel.virtual_beads, shape);
+    out.virtual_beads = vbs.map((x) => x.d);
+  }
+  if (vbOn || sel.virtual_beads?.length) out.vb_frame = VB_FRAME;   // INT-4: 블록 있는 스터디 = 비드 0개여도 frame
   return { status: 200, body: out };
 }
 
@@ -393,6 +399,11 @@ export function graphParams(sel: DoeSelectionV2, shape?: DoeShapeRules | null, d
     warnings.push({ code: "U_SATURATED", level: "info", bead: last.bead, ...sat, move_mm, from: last.default_range, message: fill("U_SATURATED", sat) });
     warnings.push({ code: "U_SHORT_SEG", level: "info", bead: last.bead, ...sh, message: fill("U_SHORT_SEG", sh) });
   }
+  // v0.25.0 추가 비드(kind virtual): 행 + 놓을 수 있으면 A 변수 행(range guard 켬이면 guard.warp 포함)
+  mockVBeads(sel.virtual_beads ?? [], shape).forEach((x, i) => {
+    beads.push({ id: x.d.id, k: 100 + i, shape: "virtual", sense: "concave", center_ab: [0, 0], nominal: { depth: 0, width: 0 }, fixed_overlap: false, png: null, kind: "virtual", name: x.d.name, warnings: x.d.warnings, ...(x.d.reasons.length ? { vb_reason: x.d.reasons[0] } : {}) });
+    if (x.param) params.push(shape?.range_guard ? { ...x.param, guard: { state: "ok", from: [0, x.param.feasible[1]], usable: [0, x.param.feasible[1]], reason: null, value: null, combo_scale: null, warp: { limit_deg: 15, n: 3 + i, max_deg: 21.4, at: x.param.feasible[1], text: kor("VB_WARP_INFO").replace("{n}", String(3 + i)).replace("{max}", "21.4").replace("{d}", String(x.param.feasible[1])) } } } : x.param);
+  });
   return { beads, params, warnings };
 }
 
@@ -433,7 +444,7 @@ export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds
   const m = graphMesh();
   const r = resolve(sel, shape);
   const ps = graphParams(sel, shape, ds, posU);
-  const vars: { idx: number[]; vec: number[] }[] = [];
+  const vars: { idx: number[]; vec: number[]; g?: number[] }[] = [];
   const meta: DoeBasisMeta = { schema: "esl/bead_select_basis/1", sha256: "", selection_sha256: graphSelSha(sel), n_nodes: m.n, vars: [] };
   for (const p of ps.params) {
     const idx: number[] = [];
@@ -454,6 +465,15 @@ export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds
           }
       });
     }
+    if (p.type === "A") {
+      const vbf = mockVBeads(sel.virtual_beads ?? [], shape).find((x) => x.d.id === p.bead);
+      const pv = vbf?.d.preview;
+      if (pv) {
+        vars.push({ idx: pv.idx, vec: pv.vec.flat(), g: pv.g });
+        meta.vars.push({ name: p.name, type: "A", bead: p.bead, nominal: 0, n: pv.idx.length, R_mm: null, form: "hinge", c: pv.c });
+        continue;
+      }
+    }
     vars.push({ idx, vec });
     meta.vars.push({ name: p.name, type: p.type as "D" | "W", bead: p.bead, nominal: p.nominal, n: idx.length, R_mm: p.type === "W" ? 12 : null });
   }
@@ -464,7 +484,8 @@ export function graphBasis(sel: DoeSelectionV2, shape?: DoeShapeRules | null, ds
 /** schema 2 저장 검사(요소 비드 + GRAPH_FAILED 스터디 포함 — 목은 그래프 비드만 해석) */
 export function graphValidate(sel: DoeSelectionV2 | undefined, graphAvailable: boolean, shape?: DoeShapeRules | null): MockResponse | null {
   if (!sel || sel.schema_version !== 2) return err(422, "SELECT_SCHEMA_MISMATCH", "이 스터디는 선택 schema 2 입니다.");
-  if (!Array.isArray(sel.beads) || !sel.beads.length) return err(422, "SELECT_EMPTY_TIER", "비드가 없습니다.");
+  if (!Array.isArray(sel.beads) || (!sel.beads.length && !sel.virtual_beads?.length)) return err(422, "SELECT_EMPTY_TIER", "비드가 없습니다.");
+  for (const v of sel.virtual_beads ?? []) if ("side" in (v as object)) return err(422, "VB_INPUT_INVALID", "side 는 없어진 키 — 방향은 자동, 반대는 flip: true", { vbead: v.id, key: "side" });
   if (!graphAvailable && sel.beads.some((b) => b.src === "graph")) return err(422, "BG_SEG_UNKNOWN", "분류 결과가 없어 그래프 비드를 쓸 수 없습니다.", { anchor: -1 });
   for (const b of sel.beads) if (b.src === "graph" && !b.segs.length) return err(422, "BG_GROUP_NOT_CONNECTED", "세그먼트 없는 비드가 있습니다.", { bead: b.id });
   if (!graphAvailable) return null;
@@ -518,4 +539,78 @@ export function stepPlan(sel: DoeSelectionV2): DoePlanOut & { region_ab: XY[][] 
     fixed: p.fixed.map((f) => ({ ...f, src: "a_transfer" as const })),
     region_ab: [[[a0, b0], [a1, b0], [a1, bt], [a0, bt], [a0, b0]]],
   };
+}
+
+
+// ---------------------------------------------------------------- v0.25.0 추가 비드(가상 비드) 목 — 코어 §4.1 식을 r 기본(= 격자 h)·평판 z 기준으로 흉내 낸 것(화면 개발·스크린샷용)
+const VB_FRAME: DoeVbFrame = { origin: [0, 0, 0], e_xi: [1, 0, 0], e_eta: [0, 1, 0], n_h: [0, 0, 1] };
+const qRound = (t: number, a: number) => (a <= 0 ? Math.max(0, t) : t <= -a ? 0 : t >= a ? t : ((t + a) * (t + a)) / (4 * a));
+/** 목 서버가 아는 추가 비드 1개: derive 행 + (ok 면) A 변수 행. 코어와 달리 평판 = z 0 인 격자 노드 */
+export function mockVBeads(list: VirtualBeadIn[], shape?: DoeShapeRules | null): { d: DoeVirtualBeadDerived; param: DoeParamT | null }[] {
+  void shape;
+  const m = graphMesh();
+  const { h, x0, y0, nx, ny } = fx.grid;
+  return list.map((v) => {
+    const th = v.theta_deg ?? 45;
+    const t = (th * Math.PI) / 180;
+    const p0 = v.p0;
+    let p1 = v.p1 ?? null;
+    if (!p1 && v.length != null && v.angle_deg != null) p1 = [p0[0] + v.length * Math.cos((v.angle_deg * Math.PI) / 180), p0[1] + v.length * Math.sin((v.angle_deg * Math.PI) / 180), p0[2]];
+    const L = p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0;
+    const ang = p1 ? (Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 180) / Math.PI : 0;
+    const run = v.d_max / Math.tan(t);
+    const r = v.r ?? Math.min(h, v.w_top / Math.sin(t));
+    const rcap = Math.min(v.w_top / Math.sin(t), (run) / (Math.sin(t) / 2 + 0.75 * Math.tan(t / 2)));
+    const rr = Math.min(r, rcap);
+    const a = rr * Math.tan(t / 2) * (1 + Math.cos(t)) / 2;
+    const c = rr * Math.tan(t / 2) * Math.tan(t);
+    const reasons: { code: string; text: string }[] = [];
+    const R = (code: string) => reasons.push({ code, text: kor(code) });
+    const inside = p1 && [p0, p1].every((q) => q[0] > x0 + 6 && q[0] < x0 + nx * h - 6 && q[1] > y0 + 6 && q[1] < y0 + ny * h - 6);
+    if (!inside) R("VB_NOT_ON_PLATE");
+    else if (run < h || v.w_top < h) R("VB_MESH_COARSE");
+    const warnings: DoeVirtualBeadDerived["warnings"] = [];
+    if (!reasons.length && run < 2 * h) warnings.push({ code: "VB_WALL_COARSE", vbead: v.id, n_wall: +(run / h).toFixed(2), text: kor("VB_WALL_COARSE").replace("{n_wall}", (run / h).toFixed(2)) });
+    const d: DoeVirtualBeadDerived = {
+      id: v.id, name: v.name ?? `추가 비드 ${v.id.slice(1)}`, p0, p0_resolved: p0, p1_resolved: p1, len_mm: p1 ? +L.toFixed(3) : null, angle_deg: p1 ? +ang.toFixed(3) : null,
+      side_resolved: v.flip ? "+" : "-", ok: !reasons.length, reasons, warnings, h, n_wall: +(run / h).toFixed(2), n_top: +(v.w_top / h).toFixed(2),
+      r_resolved: +rr.toFixed(4), r_source: v.r != null ? "user" : "default", host: "base", host_floor: 0,
+    };
+    if (!reasons.length && p1) {
+      const dir = [(p1[0] - p0[0]) / L, (p1[1] - p0[1]) / L];
+      const rad = v.w_top / 2 + v.d_max / Math.tan(t) + 1.25 * rr * Math.tan(t / 2);
+      const pts: { a: number; b: number }[] = [];
+      for (let k = 0; k <= 8; k++) {
+        const w = -Math.PI / 2 + (Math.PI * k) / 8;
+        pts.push({ a: p1[0] + rad * (Math.cos(w) * dir[0] - Math.sin(w) * dir[1]), b: p1[1] + rad * (Math.cos(w) * dir[1] + Math.sin(w) * dir[0]) });
+      }
+      for (let k = 0; k <= 8; k++) {
+        const w = -Math.PI / 2 + (Math.PI * k) / 8;
+        pts.push({ a: p0[0] - rad * (Math.cos(w) * dir[0] - Math.sin(w) * dir[1]), b: p0[1] - rad * (Math.cos(w) * dir[1] + Math.sin(w) * dir[0]) });
+      }
+      pts.push(pts[0]);
+      d.outline_ab = pts;
+      const idx: number[] = [];
+      const vec: number[][] = [];
+      const g: number[] = [];
+      const s = v.flip ? 1 : -1;
+      for (let i = 0; i < m.n; i++) {
+        const px = m.x[i * 3] - p0[0];
+        const py = m.x[i * 3 + 1] - p0[1];
+        const sl = px * dir[0] + py * dir[1];
+        const y = -px * dir[1] + py * dir[0];
+        const dist = v.end === "square" ? Math.max(Math.abs(y), Math.max(0, -sl, sl - L)) : Math.hypot(y, Math.max(0, -sl, sl - L));
+        if (dist >= rad) continue;
+        idx.push(i);
+        vec.push([0, 0, s]);
+        g.push(+(Math.tan(t) * qRound(dist - v.w_top / 2, a)).toFixed(6));
+      }
+      d.n_fp = idx.length;
+      d.preview = { idx, vec, g, c: +c.toFixed(6) };
+    }
+    const param: DoeParamT | null = d.ok
+      ? { name: `A${v.id.slice(1)}_A`, type: "A", bead: v.id, tier: null, form: "hinge", nominal: 0, feasible: [0, v.d_max], feasible_source: "estimate", default_range: [0, v.d_max], use_default: true, group_members: [], label: `추가 비드 ${v.id.slice(1)} · 깊이`, wall_elems: d.n_wall, vb: { w_top: v.w_top, theta_deg: th, side: d.side_resolved ?? "-", n_wall: d.n_wall, n_top: d.n_top, len_mm: d.len_mm, angle_deg: d.angle_deg, d_max: v.d_max, r: d.r_resolved, r_source: d.r_source, host: "base" }, acc_hint: { h, d: v.d_max, theta: th, r: d.r_resolved, c_err_pct: -2.1, pi_err_pct: -1.4 } }
+      : null;
+    return { d, param };
+  });
 }

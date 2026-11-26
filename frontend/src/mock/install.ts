@@ -76,6 +76,7 @@ export function installMockFetch() {
   if (params.get("demoJigGrid") === "1") server.doe.demoJigGrid();
   // v0.24.9 위치 U·지그 표식 시연: ?demoPosU=1 doe-70(① 변수 표 U 행) · doe-71(② 공간 고정 결과) · doe-72(④ 지그 3방식 표식) · Case ③ 지그 3D 표식 = ?demoJigRows=1 의 jig·jig_disp·jig_spring 출처(src 로 방식별 기호)
   if (params.get("demoPosU") === "1") server.doe.demoPosU();
+  if (params.get("demoVBead") === "1") server.doe.demoVBead();
   // v0.24.0 경계력 ESL 시연: ?demoBforce=1 doe-50(contact 등급 ok) · doe-51(경계력 자료 없음)
   if (params.get("demoBforce") === "1") server.doe.demoBforce();
   if (params.get("demoPc") === "1") {

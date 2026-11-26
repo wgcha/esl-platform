@@ -1,8 +1,9 @@
 // 비드 DOE ② 비드·변수(esl_bead_doe.md §5·§12.2, BD-D-7): 비드별 D·W·U/V 포함 체크·범위(기본 = feasible), 범위 밖 경고 배지(차단 아님),
 // 하한 ≥ 상한·깊이/폭 ≤ 0 은 오류. DOE 방식·안 수(풀 팩토리얼은 수준)·시드 + 실제 안 수(POST /matrix). 방법·출처 ⓘ.
 import { useEffect, useRef, useState } from "react";
-import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, POS_U_TEXT, doeSourcesOk, guardTag, posUTags, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
+import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, POS_U_TEXT, doeSourcesOk, guardTag, posUTags, outsideFeasible, paramWPartial, rowProblem, vbRowTip, warnText, warpTag, wPartialTip, VB_TEXT, type ParamRow, type SpecForm } from "../api/doe";
 import type { DoeBead, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamsOut, DoeSettingsOut, DoeShapeRules } from "../api/types";
+import { vbHeadText } from "../view3d/select/vbead";
 import { useBlobUrl } from "./DoeThumbGrid";
 import { Field } from "./ui";
 
@@ -163,7 +164,8 @@ function BlendField({ bead, opts, readOnly, resolved }: { bead: string; opts: Se
 function ShapeTags({ p, rules }: { p: DoeParam; rules: DoeShapeRules | null | undefined }) {
   const wp = paramWPartial(p);
   const gt = guardTag(p.guard, rules, p.type);
-  if (!wp && !gt) return null;
+  const wt = p.type === "A" ? warpTag(p.guard) : null;
+  if (!wp && !gt && !wt) return null;
   return (
     <>
       {wp && (
@@ -174,6 +176,11 @@ function ShapeTags({ p, rules }: { p: DoeParam; rules: DoeShapeRules | null | un
       {gt && (
         <span className={`badge ${gt.kind} doe-tag`} title={gt.tip} data-testid={`guard-${p.name}`} data-state={p.guard?.state}>
           {gt.label}
+        </span>
+      )}
+      {wt && (
+        <span className="badge neutral doe-tag doe-tag-info" title={wt.tip} data-testid={`warp-${p.name}`}>
+          {wt.label}
         </span>
       )}
     </>
@@ -231,8 +238,8 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
   const byName = new Map(rows.map((r) => [r.name, r]));
   const upd = (name: string, patch: Partial<ParamRow>) => setRows(rows.map((r) => (r.name === name ? { ...r, ...patch } : r)));
   const grouped = new Set(data.params.flatMap((p) => p.group_members));
-  // v0.24.9 §4: U 행이 있을 때만 표 안 스크롤(.table-wrap.scroll) — 없으면 DOM·높이 불변
-  const hasU = data.params.some((p) => p.type === "U");
+  // v0.24.9 §4 · v0.25.0 §11.2: U 또는 A(추가 비드) 행이 있을 때만 표 안 스크롤(.table-wrap.scroll) — 없으면 DOM·높이 불변
+  const hasU = data.params.some((p) => p.type === "U" || p.type === "A");
   return (
     <div className={hasU ? "table-wrap scroll" : "table-wrap"}>
       <table className="table compact doe-params" aria-label="비드 변수">
@@ -251,6 +258,63 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
           {data.beads.map((b) => {
             // 비드 안 순서 D·W·U 고정(서버 params 는 이름 정렬이라 D·U·W 로 옴 — U 가 없으면 순서 불변)
             const ps = data.params.filter((p) => p.bead === b.id).sort((x, y) => (x.type === "U" ? 1 : 0) - (y.type === "U" ? 1 : 0));
+            // v0.25.0 추가 비드(kind virtual, §9): 묶음 머리 + A 행(라벨 = label), 거부 비드 = 회색 1줄 "추가 불가 · <문구>"
+            if (b.kind === "virtual") {
+              const vp = data.params.filter((p) => p.bead === b.id);
+              const nm = b.name || `추가 비드 ${b.id.slice(1)}`;
+              if (!vp.length)
+                return [
+                  <tr key={b.id} className="doe-bead-row doe-vb-na" data-testid={`vb-na-${b.id}`} data-code={b.vb_reason?.code}>
+                    <td colSpan={7} className="small muted">
+                      <b>{b.id.toUpperCase()}</b> {nm} · 추가 불가{b.vb_reason ? ` · ${b.vb_reason.text}` : ""}
+                    </td>
+                  </tr>,
+                ];
+              const ws = (b.warnings ?? []).filter((w) => w.level !== "info");
+              return [
+                <tr key={b.id} className="doe-bead-row" data-testid={`vb-head-${b.id}`}>
+                  <td colSpan={7}>
+                    <span className="doe-bead-head">
+                      <span className="small">{vbHeadText(b.id, nm, vp[0].vb)}</span>
+                      {ws.map((w, i) => (
+                        <span key={i} className="badge warn" title={String(w.text ?? warnText(w))}>
+                          ⚠ {String(w.text ?? warnText(w)).split(" — ")[0].slice(0, 24)}
+                        </span>
+                      ))}
+                    </span>
+                  </td>
+                </tr>,
+                ...vp.map((p) => {
+                  const r = byName.get(p.name) ?? { name: p.name, on: false, lo: "", hi: "" };
+                  const why = rowProblem(p, r);
+                  const label = p.label || VB_TEXT.label(b.id.slice(1));
+                  return (
+                    <tr key={p.name} className={why ? "bad-row" : undefined} data-testid={`param-${p.name}`} title={vbRowTip(p)}>
+                      <td>
+                        <input type="checkbox" aria-label={`${label} 포함`} checked={r.on} disabled={readOnly} onChange={(e) => upd(p.name, { on: e.target.checked })} />
+                      </td>
+                      <td>
+                        {label} <span className="mono small muted">{p.name}</span>
+                        <ShapeTags p={p} rules={shapeRules} />
+                      </td>
+                      <td className="num">
+                        <input type="number" className="doe-num" aria-label={`${label} 하한`} step="any" value={r.lo} disabled={readOnly || !r.on} onChange={(e) => upd(p.name, { lo: e.target.value })} />
+                      </td>
+                      <td className="num">
+                        <input type="number" className="doe-num" aria-label={`${label} 상한`} step="any" value={r.hi} disabled={readOnly || !r.on} onChange={(e) => upd(p.name, { hi: e.target.value })} />
+                      </td>
+                      <td className="num mono">{p.nominal}</td>
+                      <td className="small mono" title={vbRowTip(p)}>
+                        {p.feasible[0]}–{p.feasible[1]}
+                      </td>
+                      <td>
+                        {why ? <span className="small error-text">{why}</span> : outsideFeasible(p, r) ? <span className="badge warn" title="추정 범위 밖 — 미리보기에서 실패 안이 늘 수 있습니다(차단 아님)">⚠ 범위 밖</span> : null}
+                      </td>
+                    </tr>
+                  );
+                }),
+              ];
+            }
             if (select && b.kind === "select") {
               const wp = ps.find((p) => p.type === "W");
               const wr = wp ? byName.get(wp.name) : undefined;

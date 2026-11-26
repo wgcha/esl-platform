@@ -1,14 +1,43 @@
 // 선형 기저 모핑(esl_bead_select.md BS-D-9·§7.3·§9): u = Σ_v (v − v_nom)·B_v. 워커와 같은 식이라 float32 오차(≤ 1e-4 mm) 외 같다(V-BS-12).
 // basis.bin = 변수 순서(basis.json `vars`) 대로 [n:u32][idx:u32×n][vec:f32×3n] 이어 붙임(리틀 엔디언).
+// v0.25.0 추가 비드(esl_virtual_bead.md §4.2·§19.9.1): hinge 변수(form "hinge")는 vec 뒤에 [g:f32×n] 꼬리 + meta c.
+// 항 계수 f_i = ramp(depthEff(x, c) − g_i, c) − ramp(depthEff(nominal, c) − g_i, c) 이고 u_i = f_i·vec_i(코어 esl.morph.virtual_bead 와 같은 식 — V-0250-VB-8·31).
 import type { DoeBasisMeta } from "../../api/types";
 
 export interface BasisVar {
   name: string;
   bead: string;
-  type: "D" | "W";
+  type: "D" | "W" | "A";
   nominal: number;
   idx: Uint32Array;
   vec: Float32Array;
+  /** v0.25.0 평가 형식(키 없음 = linear) — hinge 만 g(노드별 상수)·c(스칼라) */
+  form?: "hinge";
+  g?: Float32Array;
+  c?: number;
+}
+
+/** 코어 virtual_bead.ramp(t, c): 입구 모서리 둥글림 F_c — c ≤ 0 이면 max(0, t) */
+export function ramp(t: number, c: number): number {
+  if (!(c > 0)) return t > 0 ? t : 0;
+  if (t <= -c) return 0;
+  if (t >= c) return t;
+  return ((t + c) * (t + c)) / (4 * c);
+}
+
+/** 코어 virtual_bead.depth_eff(v, c): 깊이 보상 e(D)(개정 3) — F_c(e(D)) − F_c(0) = D 의 역함수. c ≤ 0 ∨ v ≤ 0 이면 v */
+export function depthEff(v: number, c: number): number {
+  if (!(c > 0) || !(v > 0)) return v;
+  return v >= 0.75 * c ? v + c / 4 : c * (Math.sqrt(1 + (4 * v) / c) - 1);
+}
+
+/** 항 계수 f_i: linear = x − nominal, hinge = ramp(depthEff(x) − g_i) − ramp(depthEff(nominal) − g_i). u_i = f_i·vec_i */
+export function termAt(v: BasisVar, x: number, i: number): number {
+  if (v.form === "hinge" && v.g) {
+    const c = v.c ?? 0;
+    return ramp(depthEff(x, c) - v.g[i], c) - ramp(depthEff(v.nominal, c) - v.g[i], c);
+  }
+  return x - v.nominal;
 }
 
 /** nNodes(기본 basis.json `n_nodes`)가 있으면 idx < nNodes 검사 — 범위 밖 노드 번호는 morph 가 배열 밖에 쓰지 않게 거부 */
@@ -21,7 +50,9 @@ export function parseBasis(buf: ArrayBuffer, meta: DoeBasisMeta, nNodes: number 
     const n = dv.getUint32(off, true);
     off += 4;
     if (n !== v.n) throw new Error(`기저 ${v.name}: 노드 수가 basis.json 과 다릅니다`);
-    if (off + n * 16 > buf.byteLength) throw new Error("기저 파일이 짧습니다");
+    const hinge = v.form === "hinge";
+    if (hinge && !(typeof v.c === "number" && Number.isFinite(v.c))) throw new Error(`기저 ${v.name}: hinge 변수에 c 가 없습니다`);
+    if (off + n * (hinge ? 20 : 16) > buf.byteLength) throw new Error("기저 파일이 짧습니다");
     const idx = new Uint32Array(n);
     for (let i = 0; i < n; i++) {
       idx[i] = dv.getUint32(off + i * 4, true);
@@ -31,15 +62,20 @@ export function parseBasis(buf: ArrayBuffer, meta: DoeBasisMeta, nNodes: number 
     const vec = new Float32Array(n * 3);
     for (let i = 0; i < n * 3; i++) vec[i] = dv.getFloat32(off + i * 4, true);
     off += n * 12;
-    out.push({ name: v.name, bead: v.bead, type: v.type, nominal: v.nominal, idx, vec });
+    if (hinge) {
+      const g = new Float32Array(n);
+      for (let i = 0; i < n; i++) g[i] = dv.getFloat32(off + i * 4, true);
+      off += n * 4;
+      out.push({ name: v.name, bead: v.bead, type: v.type, nominal: v.nominal, idx, vec, form: "hinge", g, c: v.c as number });
+    } else out.push({ name: v.name, bead: v.bead, type: v.type, nominal: v.nominal, idx, vec });
   }
   if (off !== buf.byteLength) throw new Error("기저 파일 길이가 basis.json 과 다릅니다");
   return out;
 }
 
 /** basis.bin 쓰기(목·시험용 — 워커와 같은 형식) */
-export function writeBasis(vars: { idx: ArrayLike<number>; vec: ArrayLike<number> }[]): ArrayBuffer {
-  const size = vars.reduce((s, v) => s + 4 + v.idx.length * 16, 0);
+export function writeBasis(vars: { idx: ArrayLike<number>; vec: ArrayLike<number>; g?: ArrayLike<number> }[]): ArrayBuffer {
+  const size = vars.reduce((s, v) => s + 4 + v.idx.length * (v.g ? 20 : 16), 0);
   const buf = new ArrayBuffer(size);
   const dv = new DataView(buf);
   let off = 0;
@@ -50,6 +86,10 @@ export function writeBasis(vars: { idx: ArrayLike<number>; vec: ArrayLike<number
     off += v.idx.length * 4;
     for (let i = 0; i < v.idx.length * 3; i++) dv.setFloat32(off + i * 4, v.vec[i], true);
     off += v.idx.length * 12;
+    if (v.g) {
+      for (let i = 0; i < v.idx.length; i++) dv.setFloat32(off + i * 4, v.g[i], true);
+      off += v.idx.length * 4;
+    }
   }
   return buf;
 }
@@ -60,9 +100,9 @@ export function morph(vars: BasisVar[], values: Record<string, number>, nNodes: 
   for (const v of vars) {
     const x = values[v.name];
     if (x === undefined) continue;
-    const d = x - v.nominal;
-    if (d === 0) continue;
+    if (x - v.nominal === 0) continue;
     for (let i = 0; i < v.idx.length; i++) {
+      const d = termAt(v, x, i);
       const j = v.idx[i] * 3;
       u[j] += d * v.vec[i * 3];
       u[j + 1] += d * v.vec[i * 3 + 1];
@@ -79,7 +119,7 @@ export function morph(vars: BasisVar[], values: Record<string, number>, nNodes: 
 export function beadDirections(vars: BasisVar[]): Map<string, [number, number, number]> {
   const acc = new Map<string, [number, number, number]>();
   for (const v of vars) {
-    if (v.type !== "D") continue;
+    if (v.type !== "D" && v.type !== "A") continue;
     const a = acc.get(v.bead) ?? [0, 0, 0];
     for (let i = 0; i < v.idx.length; i++) for (let c = 0; c < 3; c++) a[c] += v.vec[i * 3 + c];
     acc.set(v.bead, a);
@@ -103,8 +143,7 @@ export function heightChange(vars: BasisVar[], values: Record<string, number>, n
     const x = values[v.name];
     const nb = dirs.get(v.bead);
     if (x === undefined || !nb) continue;
-    const d = x - v.nominal;
-    for (let i = 0; i < v.idx.length; i++) c[v.idx[i]] += d * (v.vec[i * 3] * nb[0] + v.vec[i * 3 + 1] * nb[1] + v.vec[i * 3 + 2] * nb[2]);
+    for (let i = 0; i < v.idx.length; i++) c[v.idx[i]] += termAt(v, x, i) * (v.vec[i * 3] * nb[0] + v.vec[i * 3 + 1] * nb[1] + v.vec[i * 3 + 2] * nb[2]);
   }
   return Float32Array.from(c);
 }

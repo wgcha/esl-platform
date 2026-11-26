@@ -39,6 +39,8 @@ _MODULES = {
     "doe_transfer_plan": "esl.doe.transfer_plan",
     # v0.24.7 DM(esl_bead_depth_mode.md §6.1): 복제 키 결정 clone_depth·w_reason_doc — 순수(esl.morph.section, 계획 표는 코어 소유)
     "morph_section": "esl.morph.section",
+    # v0.25.0 VB(esl_virtual_bead.md §7.2): 스냅샷 블록 해시 안 키 목록 HASH_KEYS 한 곳(순수 모듈)
+    "morph_virtual_bead": "esl.morph.virtual_bead",
     # v0.22.0 REDROP(esl_redrop_bundle.md §5.3): rd_prepare(동기 호출 전용 — 워커 STAGES 에는 없음)·공용 계산
     "verify_stages": "esl.verify.stages", "verify_redrop": "esl.verify.redrop",
     # 이슈 #53: 원자적 교체 공통 함수(atomic_replace·FileLocked·configure) — esl_platform.core.atomic 이 재노출
@@ -52,8 +54,10 @@ _FUNCS = {"build_template": ("esl.opt.target", "build_template"),
           "doe_load_messages": ("esl.doe", "load_messages"), "doe_message": ("esl.doe", "message"),
           "doe_load_method_sources": ("esl.doe", "load_method_sources"),
           "doe_sort_rows": ("esl.doe.rank", "sort_rows"),             # v0.10.0 §11.4 순위표 정렬 키
-          # v0.24.9 PU-14(통합): 백엔드 derive_v2 tie_node_ids = 워커 select 기저와 같은 함수(스냅샷·스터디 폴더 읽기만)
-          "doe_pos_u_tie_ids": ("esl.doe.stages", "pos_u_tie_ids_at"),
+          # v0.25.0 VB §19.4-2: 설정 검증(theta_range_deg ≤ flip_deg) 한 곳 = 코어 — pydantic 이 같은 함수를 부름
+          "doe_check_virtual_bead": ("esl.doe", "check_virtual_bead"),
+          # v0.24.9 PU-14·v0.25.0 INT-1: 백엔드 derive_v2 tie_node_ids = 워커 select 기저와 같은 함수(pos_u 유무 무관 — 스냅샷·스터디 폴더 읽기만)
+          "doe_jig_tie_ids": ("esl.doe.stages", "jig_tie_ids_at"),
           # v0.16.0 ④ 메시 입력 파트 스캔(esl_compare_mesh_options.md §6 — 1차 스캔만, 숫자 블록은 위치·행 수만)
           "rad_deck": ("esl.rad.parser", "_Deck")}
 

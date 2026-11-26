@@ -13,6 +13,7 @@ STABLE INTERFACE
   interacting(supports) -> [[name…]…];  corners(n, *, full_max, samples) -> int8 (m, n)
   combo(group[(name, nominal, lo, hi)], ok_multi, *, full_max, samples, steps, budget, max_group=None) -> dict | None
   blocked(nominal, frm, usable, min_keep_frac) -> (lo_blocked, hi_blocked);  inward(v, nominal) -> float
+  all_blocked(nominal, frm, usable, min_keep_frac) -> bool;  side_stuck(nominal, frm, usable, tol=1e-4) -> bool (v0.25.0)
   doc(scope, entries, combos, skipped, budget, crit, meta) -> dict
 """
 from __future__ import annotations
@@ -82,6 +83,8 @@ def accept(probe: dict, crit: dict) -> tuple[bool, str | None, float | None]:
     nf = probe.get("new_fail_ratio")
     if _on(crit.get("max_new_fail_ratio")) and nf is not None and float(nf) > float(crit["max_new_fail_ratio"]):
         return False, "new_fail", float(nf)
+    if _on(crit.get("warp_max_deg")) and int(probe.get("warp_bad_new") or 0) > 0:   # v0.25.0 VB: A 항목 crit 에만 키
+        return False, "warp", _f(probe.get("warp_max"))
     return True, None, None
 
 
@@ -112,6 +115,30 @@ def blocked(nominal, frm, usable, min_keep_frac) -> tuple[bool, bool]:
         keep = 1.0 if span <= 0.0 else abs(float(u) - v0) / span
         out.append(bool(keep < float(min_keep_frac)))
     return out[0], out[1]
+
+
+def all_blocked(nominal, frm, usable, min_keep_frac) -> bool:
+    """v0.25.0 VB §6.2(D-0.25.0-VB-16): "모든 쪽이 막힘" = 폭 > 0 인 쪽이 모두 막힘(폭 0 인 쪽 — 공칭 = 범위 끝 — 은 판정에서 뺌).
+    양쪽 범위(공칭이 안쪽)는 ``blocked`` 두 값의 and 와 같음(바이트 불변). 폭 > 0 인 쪽이 없으면 False."""
+    v0 = float(nominal)
+    bl = blocked(v0, frm, usable, min_keep_frac)
+    sides = [b for f, b in zip(frm, bl) if abs(float(f) - v0) > 0.0]
+    return bool(sides) and all(sides)
+
+
+def side_stuck(nominal, frm, usable, tol: float = 1e-4) -> bool:
+    """v0.25.0 VB §6.2 SH-28 보정: 폭 > 0 인 쪽 중 usable 이 공칭에 붙은(또는 넘은) 쪽이 있음. 양쪽 범위 = 지금 식
+    ¬(u_lo < v₀ < u_hi) 그대로(정확 비교 — 바이트 불변), 한쪽 범위(한쪽 폭 0) = 폭 > 0 인 쪽 |u − v₀| ≤ tol(계약 A: usable_hi ≤ 0 + 1e-4)."""
+    v0 = float(nominal)
+    u = [float(x) for x in usable]
+    spans = [abs(float(f) - v0) > 0.0 for f in frm]
+    if all(spans):
+        return not (u[0] < v0 < u[1])
+    if spans[0] and u[0] >= v0 - tol:
+        return True
+    if spans[1] and u[1] <= v0 + tol:
+        return True
+    return False
 
 
 def single(name, nominal, lo, hi, ok_fn, *, steps, budget, min_keep_frac=None) -> dict:
@@ -145,8 +172,7 @@ def single(name, nominal, lo, hi, ok_fn, *, steps, budget, min_keep_frac=None) -
         ends.append(e)
     state = "ok" if all(e["ok"] for e in ends) else "limited"
     if state == "limited" and min_keep_frac is not None:
-        bl = blocked(v0, frm, usable, min_keep_frac)
-        if bl[0] and bl[1]:
+        if all_blocked(v0, frm, usable, min_keep_frac):     # v0.25.0 VB-16: 폭 > 0 인 쪽만(양쪽 범위 = 지금과 같음)
             state = "blocked"
     return {"var": name, "nominal": v0, "from": frm, "usable": usable, "state": state, "ends": ends}
 

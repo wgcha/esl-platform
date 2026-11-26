@@ -23,7 +23,10 @@ from esl.doe import METHODS, PARAM_TYPES
 from esl.errors import EslError
 
 _POSITIVE = ("D", "W")              # 물리 하한(> 0)이 있는 변수 종류
-_NOMINAL_IN = ("U",)                # v0.24.9 PU §1.3-5: 범위가 공칭(0)을 포함해야 하는 종류(기준 d000 = 지금 형상)
+# 종류별 공칭 범위 규칙 표(한 곳 — v0.24.9 PU §1.3-5 U, v0.25.0 VB §0.3 A): 종류 → (규칙 이름, 문구 코드).
+# in = lo ≤ 공칭 ≤ hi(U — 위치 0 포함), lo_nom = lo ≥ 공칭(A — 추가 비드 깊이 공칭 0 = 하한 쪽). 규칙 = section.nominal_range_ok
+_NOMINAL_RULES = {"U": ("in", "U_RANGE_INVALID"), "A": ("lo_nom", "A_RANGE_INVALID")}
+_NOMINAL_IN = tuple(_NOMINAL_RULES)
 _FEAS_TOL = 1e-9
 
 
@@ -48,11 +51,12 @@ def _table(params_table) -> dict:
 
 
 def default_params(params_table, cfg: dict) -> list[dict]:
-    """기본 포함 변수(BD-D-7): ``use_default`` 이고 종류 ∈ ``doe.default_types``, 범위 = feasible."""
+    """기본 포함 변수(BD-D-7): ``use_default`` 이고 (종류 ∈ ``doe.default_types`` 또는 행 form = hinge — v0.25.0 VB §5.2 추가 비드
+    깊이), 범위 = feasible."""
     types = set(cfg["doe"]["default_types"])
     out = []
     for p in sorted(params_table or [], key=lambda r: r["name"]):
-        if not p.get("use_default") or p.get("type") not in types:
+        if not p.get("use_default") or (p.get("type") not in types and p.get("form") != "hinge"):
             continue
         rng = p.get("feasible") or p.get("default_range")
         if not rng:
@@ -107,11 +111,12 @@ def normalize_spec(spec: dict, params_table, cfg: dict) -> tuple[dict, list[dict
         typ = tab[name].get("type")
         if typ in _POSITIVE and lo <= 0:
             raise EslError("DOE_RANGE_INVALID", f"{name}: 깊이·폭 하한은 0 보다 커야 함 (lo {lo})")
-        if typ in _NOMINAL_IN:
+        if typ in _NOMINAL_RULES:
             from esl.doe import message
             from esl.morph import section as sec
-            if not sec.u_range_ok(lo, hi, float(tab[name].get("nominal") or 0.0)):
-                raise EslError("DOE_RANGE_INVALID", f"{name}: {message('U_RANGE_INVALID')} (lo {lo}, hi {hi})")
+            rule, code = _NOMINAL_RULES[typ]
+            if not sec.nominal_range_ok(rule, lo, hi, float(tab[name].get("nominal") or 0.0)):
+                raise EslError("DOE_RANGE_INVALID", f"{name}: {message(code)} (lo {lo}, hi {hi})")
         fe = tab[name].get("feasible")
         if fe and (lo < float(fe[0]) - _FEAS_TOL or hi > float(fe[1]) + _FEAS_TOL):
             warns.append({"code": "RANGE_OUTSIDE_FEASIBLE", "name": name, "feasible": [float(fe[0]), float(fe[1])]})
@@ -242,7 +247,7 @@ def thumb_options(cfg: dict, frame: dict, spec: dict, params_table) -> dict:
         m = float(cfg["limits"]["min_disp_range_mm"])
         for p in spec["params"]:
             r = tab.get(p["name"]) or {}
-            if r.get("type") in ("D", "U"):                     # v0.24.9 PU §1.3-6: U 도 |ΔU|(U 없는 행렬 = 불변)
+            if r.get("type") in ("D", "U", "A"):                # v0.24.9 PU §1.3-6 U |ΔU|·v0.25.0 VB §0.3 A |hi|(없는 행렬 = 불변)
                 nomv = float(r["nominal"])
                 m = max(m, abs(p["hi"] - nomv), abs(p["lo"] - nomv))
         dr = [0.0, float(m)]

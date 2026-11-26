@@ -1412,7 +1412,9 @@ function SelectVarsPlan(p: {
   const chips = Object.fromEntries(
     (pd?.beads ?? []).map((b) => [
       b.id,
-      [b.id.toUpperCase(), ...params.filter((x) => x.bead === b.id).map((x) => `${x.type === "D" ? `D${x.tier ?? ""}` : "W"} ${x.nominal.toFixed(1)}`)].join(" · "),
+      b.kind === "virtual"
+        ? `${b.id.toUpperCase()} ${params.find((x) => x.bead === b.id)?.nominal ?? 0}`
+        : [b.id.toUpperCase(), ...params.filter((x) => x.bead === b.id).map((x) => `${x.type === "D" ? `D${x.tier ?? ""}` : "W"} ${x.nominal.toFixed(1)}`)].join(" · "),
     ]),
   );
   const mesh = useMemo(() => selectMesh(p.ctrl.data), [p.ctrl.data]);
@@ -1425,7 +1427,7 @@ function SelectVarsPlan(p: {
       <Card title="④ 변수" fold={p.fold4} right={<DoeMethodInfo src={st?.method_sources} method={form?.method} />}>
         {!p.ready ? (
           <div className="empty small" data-testid="vars-next">
-            {p.ctrl.state?.beads.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
+            {p.ctrl.state?.beads.length || p.ctrl.state?.vbeads?.length ? "비드를 고르고 [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다" : "[+ 비드] → 바닥 클릭 → [사면·경계 자동] → [선택 저장] 하면 변수 표가 나옵니다"}
           </div>
         ) : pd && !pd.params.length ? (
           <BlockErr title="변수가 없습니다" detail={noVarsReason(pd)} testId="vars-empty" />
@@ -1524,7 +1526,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const seedOn = isAuto || stepBaseSel;
   const autoSeed = usePolling(() => (seedOn && prepDone ? loadSelectAuto(id) : Promise.resolve(null)), 0, [id, seedOn, prepDone]);
   const seedSel = !seedOn ? null : autoSeed.data ? autoSeed.data.seed?.selection ?? null : autoSeed.error ? null : undefined;
-  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null, prepWarnings: s?.prep?.warnings ?? null });
+  const ctrl = useBeadSelect(id, !!isSelect && prepDone, selDropped ? null : selFull.data?.v ?? null, st, seedSel, { schema: s?.inputs.select_schema ?? null, prepWarnings: s?.prep?.warnings ?? null, vbBlock: s?.inputs.virtual_bead ?? null });
   const varsReady = beadPrep && (!isSelect || !!selSha);
   /** select 변수·평면도: 409 SELECTION_MISSING 은 오류 대신 '선택 없음'(SELECTION_DROPPED 면 안내) */
   const selGuard = <T,>(p: Promise<T>): Promise<T | null> =>

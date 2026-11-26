@@ -25,7 +25,7 @@ Worker / stage entry point (BD_LOADS, select_schema 2 only):
 Backend API helpers:
   load_graph(prep_dir) -> (graph, labels)               EslError GRAPH_NOT_AVAILABLE (404) when missing
   graph_sha256(prep_dir) -> str | None                  sha256 of graph.json bytes (selection graph.sha256)
-  normalize_v2(sel, graph, cfg, *, labels, mesh=None, current_sha=None) -> (norm, sha256)   422 / 409 codes below
+  normalize_v2(sel, graph, cfg, *, labels, mesh=None, current_sha=None, shape_rules=None, virtual_bead=None) -> (norm, sha256)   422 / 409 codes below
       graph None (GRAPH_FAILED) = elems beads only, normalized selection then has no "graph" block
   derive_v2(mesh, norm, cfg, graph, labels, *, frame=None, fixed_scan=(), bead=None) -> SelectionDerived dict
       (+ graph block, graph_algo, params = DoeParamsOut rows, param_beads = params.json beads rows)
@@ -562,10 +562,12 @@ def _resolve_segs(graph, labels, segs, bid) -> tuple[list[int], list[int], bool]
 
 def normalize_v2(sel, graph: dict | None, cfg: dict | None = None, *, labels: dict | None = None,
                  mesh: dict | None = None, current_sha: str | None = None,
-                 shape_rules: dict | None = None) -> tuple[dict, str]:
+                 shape_rules: dict | None = None, virtual_bead: dict | None = None) -> tuple[dict, str]:
     """SelectionIn schema 2 -> (normalized, sha256). Graph beads are validated against the edited graph.
     graph None (GRAPH_FAILED) = elems beads only (a graph bead -> BG_SEG_UNKNOWN); labels are required with a graph.
-    shape_rules (v0.21.0 스냅샷 ``doe.shape_rules`` 해석값, None = v0.20.0): ``w_partial`` 이면 W 가능 = |S_W| ≥ 1(SH-4)."""
+    shape_rules (v0.21.0 스냅샷 ``doe.shape_rules`` 해석값, None = v0.20.0): ``w_partial`` 이면 W 가능 = |S_W| ≥ 1(SH-4).
+    virtual_bead (v0.25.0 INT-2 — 스냅샷 ``doe.virtual_bead`` 블록, None = 설정값): 가상 비드 θ 기본·범위 등 해시 안 키 = 블록 값
+    (``vb_block`` — derive 와 같은 해석, 설정이 스터디 생성 뒤 바뀌어도 선택 sha 같음)."""
     from esl.doe import bead_select as bs
     sc = select_cfg(cfg)
     wp = _w_partial(shape_rules)
@@ -582,8 +584,10 @@ def normalize_v2(sel, graph: dict | None, cfg: dict | None = None, *, labels: di
     edits = _norm_edits(gin.get("edits")) if graph is not None else {}
     g2, l2 = edited_graph(graph, labels, edits, mesh) if graph is not None else (None, None)
     beads = sel.get("beads")
-    if not isinstance(beads, list) or not 1 <= len(beads) <= int(sc["max_beads"]):
-        _bad("SELECT_EMPTY_TIER", f"beads 는 1..{sc['max_beads']} 개")
+    vbs = normalize_vbeads(sel.get("virtual_beads"), cfg, vb_flip_deg(cfg, shape_rules) if sel.get("virtual_beads")
+                           else None, block=virtual_bead)   # v0.25.0 VB §2.1·§19(없음·빈 목록 = [] — 키 안 씀), INT-2 블록 값
+    if not isinstance(beads, list) or not (1 if not vbs else 0) <= len(beads) <= int(sc["max_beads"]):
+        _bad("SELECT_EMPTY_TIER", f"beads 는 1..{sc['max_beads']} 개")   # VB-15: beads + virtual_beads ≥ 1
     elem_beads = [b for b in beads if isinstance(b, dict) and b.get("src") == "elems"]
     graph_beads = [b for b in beads if isinstance(b, dict) and b.get("src", "graph") == "graph"]
     if len(elem_beads) + len(graph_beads) != len(beads):
@@ -680,6 +684,8 @@ def normalize_v2(sel, graph: dict | None, cfg: dict | None = None, *, labels: di
             "exclude": s1["exclude"] if s1 else bs._norm_set(sel.get("exclude"), "exclude", 10_000_000)}
     if graph is not None:                               # GRAPH_FAILED: no graph block (elems beads only)
         norm["graph"] = {"sha256": cur, "rules": int(graph["rules"]), "edits": edits}
+    if vbs:                                             # v0.25.0 VB: 있을 때만 키(옛 sha·산출물 바이트 불변)
+        norm["virtual_beads"] = vbs
     js = bs.canonical_json(norm)
     if len(js) > int(sc["max_selection_kb"]) * 1024:
         _bad("SELECT_TOO_LARGE", f"정규화 선택 {len(js) // 1024} KB")
@@ -795,16 +801,20 @@ def sym_pairs(graph, tol):
 def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *, frame=None,
               fixed_scan=(), bead: str | None = None, index=None, w_clamp: dict | None = None,
               range_guard: dict | None = None, shape_rules: dict | None = None, depth_section: str | None = None,
-              section_rules: dict | None = None, pos_u: dict | None = None, tie_node_ids=()) -> dict:
+              section_rules: dict | None = None, pos_u: dict | None = None, tie_node_ids=(),
+              virtual_bead: dict | None = None, vb_plan: str = "plate") -> dict:
     """(Backend API) normalized schema 2 selection -> SelectionDerived dict: beads, fixed, warnings, graph block
     (§6.1), graph_algo, slope_suggested, islands_suggested, fixed_ab, params (DoeParamsOut rows) + param_beads.
     ``bead`` is accepted for signature parity (the whole selection is derived — graph beads are cheap).
     v0.21.0: shape_rules(스냅샷 해석값)·range_guard(prep/select/range_guard.json) → ``derive_obj_v2``.
     v0.24.7 DM: depth_section·section_rules(스냅샷 값) → ``derive_obj_v2``, beads[].w_reason{code, text}(옛 스터디도 계산)."""
     from esl.doe import bead_select as bs
+    from esl.morph import section as sec
     dskw = {"depth_section": depth_section, "section_rules": section_rules} if depth_section is not None else {}
     if pos_u is not None:                                  # v0.24.9 PU: 스냅샷 pos_u 블록(없음 = 호출 불변)
         dskw.update(pos_u=pos_u, tie_node_ids=tie_node_ids)
+    if norm.get("virtual_beads"):                          # v0.25.0 VB: 가상 비드 있을 때만(없음 = 호출 불변)
+        dskw.update(virtual_bead=virtual_bead, vb_plan=vb_plan, frame=frame, tie_node_ids=tie_node_ids)
     D = derive_obj_v2(mesh, norm, cfg, graph, labels, fixed_node_ids=fixed_scan, index=index, w_clamp=w_clamp,
                       range_guard=range_guard, shape_rules=shape_rules, **dskw)
     doc = D.summary(frame)
@@ -818,6 +828,14 @@ def derive_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labe
     _graph_figures(mesh, D, cfg, doc, frame)               # v0.18.2 BG-D-46 그래프 비드 평면도·단면 자료
     w_reason_rows(D, doc["beads"])
     u_reason_rows(D, doc["beads"])
+    vfr = None
+    if getattr(D, "vbeads", None):                         # v0.25.0 VB §8: 가상 비드 있을 때만 키
+        doc["virtual_beads"], vfr = vb_derive_doc(D, cfg, frame)
+    if vfr is None and isinstance(virtual_bead, dict) and graph is not None and \
+            sec.vb_allowed(vb_plan, "graph" if norm.get("graph") is not None else "none"):
+        vfr = vb_frame_base(D, mesh, frame)                # INT-4: 켜진 스터디는 비드 0개(첫 비드 전)여도 입력 칸 frame
+    if vfr is not None:
+        doc["vb_frame"] = vfr
     return doc
 
 
@@ -1037,14 +1055,15 @@ def param_beads(D) -> list[dict]:
     return [{"id": b.id, "name": b.name, "kind": "select", "src": getattr(b, "src", "elems"),
              "n_tiers": len(b.tiers), "W_nom": _r(getattr(b, "W_nom", None)), "W_min": _r(getattr(b, "W_min", None)),
              "W_max": _r(getattr(b, "W_max", None)), "blend_mm": _r(getattr(b, "blend_mm", None)),
-             "warnings": b.warnings} for b in D.beads]
+             "warnings": b.warnings} for b in D.beads] + vb_bead_rows(D)
 
 
 def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, labels: dict | None, *,
                   fixed_node_ids=(), index=None, mesh_sha256: str | None = None,
                   w_clamp: dict | None = None, range_guard: dict | None = None,
                   shape_rules: dict | None = None, depth_section: str | None = None,
-                  section_rules: dict | None = None, pos_u: dict | None = None, tie_node_ids=()) -> GraphDerived:
+                  section_rules: dict | None = None, pos_u: dict | None = None, tie_node_ids=(),
+                  virtual_bead: dict | None = None, vb_plan: str = "plate", frame=None) -> GraphDerived:
     """normalized schema 2 selection -> GraphDerived (arrays — worker basis / tests).
     v0.24.7 DM: depth_section(스냅샷 값, None = 옛 = entry_fixed)·section_rules(스냅샷 depth_section_rules) — floor_fixed 면
     계획 표 graph 행(esl.morph.section) 열로 D = 패키지 kind DF(입구 노드 없으면 D + DS_FALLBACK), W 없는 한쪽 입구 비드 = W1.
@@ -1182,6 +1201,16 @@ def derive_obj_v2(mesh: dict, norm: dict, cfg: dict | None, graph: dict | None, 
         _pos_u_beads(D, mesh, sc, cfg)
     if _guard_rules(shape_rules) is not None:          # v0.21.0 SH-14·15: 준비 표 적용(맞지 않는 변수 = unchecked)
         apply_range_guard(D, range_guard, cfg)
+    if norm.get("virtual_beads"):                      # v0.25.0 VB §2~4(가상 비드 있을 때만 — 없음 = 속성 없음·바이트 불변)
+        tids = np.asarray(tie_node_ids if tie_node_ids is not None else (), np.int64).reshape(-1)
+        tix = np.flatnonzero(np.isin(ix.node_id, tids)) if tids.size else np.zeros(0, np.int64)
+        D.vb_blk = vb_block(virtual_bead, cfg)
+        virtual_beads(D, mesh, D.vb_blk, vb_plan=vb_plan, frame=frame, tie_idx=tix, flip_deg=vb_flip_deg(cfg, shape_rules),
+                      cfg=cfg)
+        if _guard_rules(shape_rules) is not None:      # 준비 표 후보 아님 — BD_MATRIX guard_selection 이 켜진 A 만 점검
+            for vb in D.vbeads:
+                if vb.ok:
+                    vb.guard = {VB_TYPE: _unchecked(vb.range_basis[VB_TYPE])}
     return D
 
 
@@ -1481,6 +1510,9 @@ def params_rows_v2(derived: GraphDerived, cfg: dict | None = None) -> list[dict]
                 out[-1]["w_side"] = "one"
         if getattr(b, "u_ok", False):                  # v0.24.9 PU §1.3·§4: U 행(공칭 0, 기본 꺼짐)
             out.append(u_row(b, grp))
+    for vb in getattr(derived, "vbeads", None) or []:  # v0.25.0 VB §5.1: A 행(놓을 수 있는 가상 비드만)
+        if vb.ok:
+            out.append(vb_row(vb, cfg))
     out.sort(key=lambda r: r["name"])
     return out
 
@@ -1622,6 +1654,7 @@ def basis_v2(mesh: dict, derived: GraphDerived, cfg: dict | None = None):
                       "R": (by_name[name]["info"].get("blend_mm") if name in by_name else None),
                       "idx": idx.astype(np.int32), "vec": full[idx], "zone": np.flatnonzero(zone).astype(np.int64),
                       "allowed": np.flatnonzero(allowed).astype(np.int64)})
+    vars_ += vb_basis_vars(derived)                    # v0.25.0 VB §4.2: hinge 변수(가상 비드 있을 때만)
     vars_.sort(key=lambda v: v["name"])
     B = bs.Basis(vars_, n, derived.sha256)
     B.graph_algo = GRAPH_ALGO
@@ -1958,6 +1991,8 @@ def _mask_sha(mask) -> str:
 def _var_key(g: dict, b, typ: str) -> dict:
     """표 항목 key{kind, segs[[앵커, 요소 수]…], w_segs(W 만), hold}. v0.24.7 DM: floor_fixed 비드(section 있음) = + ds,
     한쪽 입구 W = kind W1."""
+    if typ == VB_TYPE:                                  # v0.25.0 VB: 가상 비드 항목 key(선택 표에만 — 준비 표 후보 아님)
+        return {"kind": VB_TYPE, "vbead": b.id}
     kind = "W1" if typ == "W" and getattr(b, "w_side", None) == "one" else typ
     k = {"kind": kind, "segs": _seg_keys(g, b.seg_ids), "hold": int(b.hold_fixed) if typ != "U" else 1}
     if typ == "W":
@@ -2058,19 +2093,35 @@ class _Prober:
         Cl[:, 3] = np.where(qe, loc[np.maximum(Ce[:, 3], 0)], Cl[:, 2])
         x0l = self.X[nodes]
         lv = []
-        for idx, vec in vs:
+        for item in vs:
+            idx, vec = item[0], item[1]
             li = loc[np.asarray(idx, np.int64)]
             k = li >= 0                                   # 요소 없는 노드는 품질과 무관
-            lv.append((li[k], np.asarray(vec, np.float64)[k]))
+            t = {"idx": li[k], "vec": np.asarray(vec, np.float64)[k], "nominal": 0.0}
+            if len(item) > 2 and item[2] is not None:      # v0.25.0 VB: hinge 항(g, c, v₀) — 탐침 값 = v₀ + Δ
+                g, c, v0 = item[2]
+                t.update(form="hinge", g=np.asarray(g, np.float64)[k], c=float(c), nominal=float(v0))
+            lv.append(t)
         return _Local(E, x0l, Cl, ete, lv, mq.guard_base(x0l, Cl, ete, np.arange(E.size), self.qcfg))
 
     def ok(self, L: _Local, dvs) -> tuple:
-        from esl.doe import mesh_quality as mq
         from esl.morph import range_guard as rgm
+        pr = self.probe(L, dvs)
+        c = self.crit
+        ok, reason, value = rgm.accept(pr, c)
+        n = {"inverted": pr["inverted"], "jac": pr["jac_bad_new"], "tri_angle": pr["tri_bad_new"],
+             "warp": pr.get("warp_bad_new")}.get(reason)
+        return ok, reason, (None if value is None else _r(value, 6)), n
+
+    def probe(self, L: _Local, dvs, warp_max_deg=None) -> dict:
+        """시험 모핑 1회 → ``guard_probe`` 결과(warp_max_deg 를 주면 warp_bad_new·warp_max 도 — v0.25.0 VB 정보, 판정 안 씀)."""
+        from esl.doe import mesh_quality as mq
+        from esl.morph import core as mcore
         x = np.array(L.x0, dtype=np.float64, copy=True)
-        for (li, vec), dv in zip(L.vs, dvs):
-            if dv != 0.0 and li.size:
-                x[li] += dv * vec
+        for t, dv in zip(L.vs, dvs):
+            if dv != 0.0 and t["idx"].size:
+                li, du = mcore.basis_term(t, t["nominal"] + dv)   # 항 함수 한 곳(linear = dv·vec 바이트 같음)
+                x[li] += du
         u = np.linalg.norm(x - L.x0, axis=1) > self.eps
         C = L.C
         q = L.et == 4
@@ -2078,12 +2129,17 @@ class _Prober:
         am[q] |= u[C[q, 3]]
         idx = np.flatnonzero(am)
         c = self.crit
-        pr = mq.guard_probe(L.x0, x, C, L.et, idx, flip_deg=c["flip_deg"], jac_min=c["jac_min"],
-                            tria_angle_min_deg=c["tria_angle_min_deg"], qcfg=self.qcfg,
-                            base=L.base if idx.size == am.size else None)
-        ok, reason, value = rgm.accept(pr, c)
-        n = {"inverted": pr["inverted"], "jac": pr["jac_bad_new"], "tri_angle": pr["tri_bad_new"]}.get(reason)
-        return ok, reason, (None if value is None else _r(value, 6)), n
+        wkw = {"warp_max_deg": float(warp_max_deg)} if warp_max_deg is not None else {}
+        return mq.guard_probe(L.x0, x, C, L.et, idx, flip_deg=c["flip_deg"], jac_min=c["jac_min"],
+                              tria_angle_min_deg=c["tria_angle_min_deg"], qcfg=self.qcfg,
+                              base=L.base if idx.size == am.size else None, **wkw)
+
+
+def _pv(v) -> tuple:
+    """기저 변수 → 탐침 항목 (idx, vec[, (g, c, v₀)]) — hinge(v0.25.0 VB)만 셋째 값."""
+    if v.get("form") == "hinge":
+        return (v["idx"], v["vec"], (v["g"], float(v.get("c") or 0.0), float(v["nominal"])))
+    return (v["idx"], v["vec"])
 
 
 def _qcfg_for(rg: dict, cfg) -> dict | None:
@@ -2294,7 +2350,7 @@ def _combo_one(P, rgm, grp, items, cc, steps, bud, combos, skipped, keyf):
     """조합 점검 1묶음: items{이름: (항목{nominal, usable|default}, 기저 dict)} → combos/skipped 에 추가, 결과 반환."""
     names = sorted(grp)
     tup = [(n, items[n][0]["nominal"], items[n][0]["usable"][0], items[n][0]["usable"][1]) for n in names]
-    L = P.local([(items[n][1]["idx"], items[n][1]["vec"]) for n in names])
+    L = P.local([_pv(items[n][1]) for n in names])
     noms = [t[1] for t in tup]
     res = rgm.combo(tup, lambda vals: P.ok(L, [vals[n] - v0 for n, v0 in zip(names, noms)]),
                     full_max=int(cc["full_max_vars"]), samples=int(cc["samples"]), steps=steps, budget=bud,
@@ -2319,6 +2375,7 @@ def _unchecked(frm) -> dict:
 
 def _apply_single(b, typ: str, e: dict, nom: float) -> None:
     """§4.4 SH-15: 항목(state·usable·ends) → 변수 행 guard + 기본 범위·feasible(위반 쪽) + RG_RANGE_LIMITED / RG_VAR_BLOCKED."""
+    from esl.morph import range_guard as rgm
     name = var_name(b.id, typ)
     frm = [float(x) for x in b.range_basis[typ]]
     u = [float(x) for x in e["usable"]]
@@ -2335,7 +2392,7 @@ def _apply_single(b, typ: str, e: dict, nom: float) -> None:
     if e["state"] == "ok":
         return
     sides = [x["side"] for x in bad]
-    if e["state"] == "limited" and not (u[0] < nom < u[1]):
+    if e["state"] == "limited" and rgm.side_stuck(nom, frm, u):   # v0.25.0 VB-16: 폭 > 0 인 쪽만(양쪽 범위 = ¬(u_lo < nom < u_hi))
         g["state"] = "blocked"                          # 한쪽이 공칭에 붙음(그쪽 keep 0) — 축소 범위로 쓸 수 없어 막힘으로
     if g["state"] == "blocked":
         if u[0] < u[1]:
@@ -2468,6 +2525,8 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
     by = {b.id: b for b in D.beads if b.src == "graph"}
     bv = {v["name"]: v for v in B.vars}
     P = _Prober(mesh, crit, _qcfg_for(rg, cfg))
+    vbs = [vb for vb in getattr(D, "vbeads", None) or [] if vb.ok]
+    warp_lim = float((getattr(D, "vb_blk", None) or vb_cfg(cfg))["warp_max_deg"])   # §19.2: A warp = 정보(세는 기준)
     carriers = []
     for b in by.values():
         grp = tie.get(b.id)
@@ -2478,6 +2537,9 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
         for typ in _types(b):
             if var_name(b.id, typ) in bv:
                 carriers.append((var_name(b.id, typ), b, typ, grp))
+    for vb in vbs:                                      # v0.25.0 VB §6.1: 켜진(기저 있는) A 변수
+        if var_name(vb.id, VB_TYPE) in bv:
+            carriers.append((var_name(vb.id, VB_TYPE), vb, VB_TYPE, None))
     carriers.sort(key=lambda t: t[0])
     want = set(only) if only is not None else None
     entries, skipped, total, done = [], [], 0, 0
@@ -2492,7 +2554,7 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
         v = bv[name]
         nom = float(v["nominal"])
         lo, hi = (float(x) for x in b.range_basis[typ])
-        L = P.local([(v["idx"], v["vec"])])
+        L = P.local([_pv(v)])
         res = rgm.single(name, nom, lo, hi, lambda val, L=L, nom=nom: P.ok(L, [val - nom]), steps=steps, budget=bud,
                          min_keep_frac=mkf)
         if res.get("skipped"):
@@ -2505,8 +2567,20 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
              "usable": res["usable"], "state": res["state"], "ends": res["ends"]}
         if typ == "U":                                  # v0.24.9 INT-7: 실제/요청 이동 비 → 포화면 정보 u_sat(보고만)
             _u_sat_entry(e, v, lo, hi, _u_sat_min(cfg))
+        wd = None
+        if typ == VB_TYPE:                              # §19.2: usable 상한(막힘 = d_max)에서 warp 측정 — 판정에 안 씀
+            at = float(res["from"][1]) if res["state"] == "blocked" else float(res["usable"][1])
+            pr = P.probe(L, [at - nom], warp_max_deg=warp_lim)
+            wd = {"limit_deg": warp_lim, "n": int(pr.get("warp_bad_new") or 0),
+                  "max_deg": None if pr.get("warp_max") is None else _r(float(pr["warp_max"]), 3), "at": _r(at)}
+            e["warp"] = wd
         entries.append(e)
         _apply_single(b, typ, e, nom)
+        if wd is not None:
+            b.guard[typ]["warp"] = dict(wd)
+            if wd["n"] > 0:
+                b.warnings.append({"code": "VB_WARP_INFO", "level": "info", "vbead": b.id, "n": wd["n"],
+                                   "max": wd["max_deg"], "d": wd["at"]})
     combos = []
     cc = rg.get("combo") or {}
     if cc.get("enabled", True):
@@ -2521,6 +2595,11 @@ def guard_selection(mesh: dict, D, B, cfg: dict | None, *, only=None, clock=None
         keyof = {name: _var_key(D.graph, b, typ) for name, b, typ, _g in carriers}
         tgt = {name: (b, typ) for name, b, typ, _g in carriers}
         for grp_ in rgm.interacting(sup):
+            va = [n for n in grp_ if tgt[n][1] == VB_TYPE]
+            if va and len(va) < len(grp_):               # v0.25.0 VB §6.1: 그래프 비드 띠와 A 지지 겹침 = 정보
+                for n in va:
+                    tgt[n][0].warnings.append({"code": "VB_BAND_OVERLAP", "level": "info", "vbead": tgt[n][0].id,
+                                               "vars": [x for x in grp_ if x != n]})
             c = _combo_one(P, rgm, grp_, items, cc, steps, bud, combos, skipped, lambda n: keyof[n])
             if c is not None and "scale" in c:
                 _apply_combo([tgt[n] for n in c["vars"]], c)
@@ -2605,3 +2684,604 @@ def load_range_guard(prep_dir: str) -> dict | None:
     except (OSError, ValueError):
         return None
     return doc if isinstance(doc, dict) and doc.get("schema") == RANGE_GUARD_SCHEMA else None
+
+
+# ====================================================================== v0.25.0 VB — 가상 비드("추가 비드", esl_virtual_bead.md)
+VB_ID_RE = __import__("re").compile(r"^a[1-9]$")
+VB_KEYS = ("id", "name", "p0", "p1", "length", "angle_deg", "w_top", "theta_deg", "d_max", "end", "r", "flip")
+VB_TYPE = "A"
+VB_NAME_RE = __import__("re").compile(r"^A[1-9]_A$")     # 가상 비드 변수 이름(var_name("a<n>", "A"))
+
+
+def vb_cfg(cfg) -> dict:
+    """설정 ``bead_doe.virtual_bead``(settings dict 의 절 — 없으면 DEFAULTS 거울)."""
+    from esl.doe import DEFAULTS
+    vc = cfg.get("virtual_bead") if isinstance(cfg, dict) else None
+    return {**copy.deepcopy(DEFAULTS["virtual_bead"]), **(vc or {})}
+
+
+def vb_block(block, cfg) -> dict | None:
+    """스냅샷 ``doe.virtual_bead`` 블록 → 해석값(블록 없음 = None — 옛 스터디 VB_SCOPE). 해시 안 키 = 블록 값, 그 밖 = 지금 설정.
+    §19.1-7: 블록에 r_default_h_mult 가 없으면 0.0(없던 규칙 주입 안 함)."""
+    if not isinstance(block, dict):
+        return None
+    out = {**vb_cfg(cfg), **{k: v for k, v in block.items() if k != "schema"}}
+    if "r_default_h_mult" not in block:
+        out["r_default_h_mult"] = 0.0
+    return out
+
+
+def vb_flip_deg(cfg, shape_rules=None) -> float:
+    """뒤집힘 기준 flip_deg — 스냅샷 range guard 블록 값(``_crit`` 와 같은 값), 없으면 select.quality.flip_deg."""
+    rg = _guard_rules(shape_rules)
+    if rg is not None:
+        return float(_crit(rg, cfg)["flip_deg"])
+    return float(select_cfg(cfg)["quality"]["flip_deg"])
+
+
+def _vbnum(x) -> bool:
+    return not isinstance(x, bool) and isinstance(x, (int, float)) and np.isfinite(float(x))
+
+
+def _vb_bad(vid, msg: str, **kw):
+    _bad("VB_INPUT_INVALID", f"추가 비드 {vid}: {msg}", vbead=vid, **kw)
+
+
+def normalize_vbeads(vbs, cfg, flip_deg: float | None = None, block: dict | None = None) -> list[dict]:
+    """§2.1·§19 선택 키 virtual_beads 정규화(형식 오류 = 422 VB_INPUT_INVALID, 개수 초과 = VB_MAX_COUNT). 입력 형식 그대로((a) p0·p1 |
+    (b) p0·length·angle_deg), 숫자 1e-4 반올림, id 정렬, 기본값 키 생략(name·theta_deg = theta_default_deg·end round·flip false).
+    r 은 준 값이면 0 도 키 유지(§19.1-5), r > r_cap + 1e-4 = 422(key r, r_max). θ 상한 = min(theta_range_deg[1], flip_deg)(§19.4-3).
+    side 키 = 422(개정 3 삭제). 없음·빈 목록 = [] (호출자가 키를 쓰지 않음). block = 스냅샷 블록(INT-2 — 있으면 ``vb_block`` 해석값, 없음 = 설정)."""
+    from esl.morph import virtual_bead as vbm
+    if vbs is None:
+        return []
+    vc = vb_block(block, cfg) if isinstance(block, dict) else vb_cfg(cfg)
+    if not isinstance(vbs, list):
+        _bad("VB_INPUT_INVALID", "virtual_beads 는 목록")
+    mx = int(vc["max_count"])
+    if len(vbs) > mx:
+        _bad("VB_MAX_COUNT", f"추가 비드는 {mx}개까지 (값 {len(vbs)})", n=len(vbs), max=mx)
+    th_lo, th_hi = (float(x) for x in vc["theta_range_deg"])
+    flip = float(select_cfg(cfg)["quality"]["flip_deg"]) if flip_deg is None else float(flip_deg)
+    th_hi = min(th_hi, flip)
+    th_def = float(vc["theta_default_deg"])
+    dlim = float(vc["d_max_limit_mm"])
+    from esl.doe import bead_select as bs
+    out, seen = [], set()
+    for v in vbs:
+        if not isinstance(v, dict):
+            _bad("VB_INPUT_INVALID", "추가 비드 항목은 객체")
+        vid = v.get("id")
+        if not isinstance(vid, str) or not VB_ID_RE.match(vid) or int(vid[1:]) > mx or vid in seen:
+            _bad("VB_INPUT_INVALID", f"추가 비드 id {vid!r} 는 a1..a{mx} 고유", vbead=vid)
+        seen.add(vid)
+        if "side" in v:
+            _vb_bad(vid, "side 는 없어진 키 — 방향은 자동, 반대는 flip: true", key="side")
+        extra = sorted(set(v) - set(VB_KEYS))
+        if extra:
+            _vb_bad(vid, f"모르는 키 {extra}", key=extra[0])
+        nb = {"id": vid}
+        name = v.get("name")
+        if name is not None:
+            if not isinstance(name, str) or not 1 <= len(name) <= 32 or bs._CTRL_RE.search(name):
+                _vb_bad(vid, "이름은 1..32자, 제어문자 금지", key="name")
+            if name != f"추가 비드 {vid[1:]}":
+                nb["name"] = name
+
+        def pt(k):
+            p = v.get(k)
+            if not isinstance(p, (list, tuple)) or len(p) != 3 or not all(_vbnum(x) for x in p):
+                _vb_bad(vid, f"{k} 는 [x, y, z] 유한한 수", key=k)
+            return [_r(float(x)) for x in p]
+        nb["p0"] = pt("p0")
+        has_b = v.get("length") is not None or v.get("angle_deg") is not None
+        if v.get("p1") is not None:
+            if has_b:
+                _vb_bad(vid, "p1 과 length·angle_deg 는 함께 쓸 수 없음", key="p1")
+            nb["p1"] = pt("p1")
+            if float(np.linalg.norm(np.subtract(nb["p1"], nb["p0"]))) < 1e-6:
+                _vb_bad(vid, "길이 0(p0 = p1)", key="p1")
+        else:
+            ln, an = v.get("length"), v.get("angle_deg")
+            if not (_vbnum(ln) and float(ln) > 0):
+                _vb_bad(vid, "length > 0 필요(또는 p1)", key="length")
+            if not (_vbnum(an) and -180.0 < float(an) <= 180.0):
+                _vb_bad(vid, "angle_deg 는 (−180, 180]", key="angle_deg")
+            nb["length"], nb["angle_deg"] = _r(float(ln)), _r(float(an))
+        wt = v.get("w_top")
+        if not (_vbnum(wt) and float(wt) > 0):
+            _vb_bad(vid, "w_top > 0", key="w_top")
+        nb["w_top"] = _r(float(wt))
+        th = v.get("theta_deg")
+        if th is not None:
+            if not (_vbnum(th) and th_lo <= float(th) <= th_hi):
+                _vb_bad(vid, f"theta_deg 는 {th_lo:g}..{th_hi:g}", key="theta_deg")
+            if _r(float(th)) != _r(th_def):
+                nb["theta_deg"] = _r(float(th))
+        dm = v.get("d_max")
+        if not (_vbnum(dm) and 0.0 < float(dm) <= dlim):
+            _vb_bad(vid, f"d_max 는 (0, {dlim}]", key="d_max")
+        nb["d_max"] = _r(float(dm))
+        en = v.get("end")
+        if en is not None:
+            if en not in ("round", "square"):
+                _vb_bad(vid, "end 는 round | square", key="end")
+            if en != "round":
+                nb["end"] = en
+        rr = v.get("r")
+        if rr is not None:
+            if not (_vbnum(rr) and float(rr) >= 0):
+                _vb_bad(vid, "r ≥ 0", key="r")
+            rc = vbm.r_cap(nb["w_top"], float(nb.get("theta_deg", th_def)), nb["d_max"])
+            if float(rr) > rc + 1e-4:
+                _vb_bad(vid, f"r ≤ {rc:.4f}(이 단면의 모서리 둥글기 상한)", key="r", r_max=_r(rc))
+            nb["r"] = _r(float(rr))                        # §19.1-5: 0 도 키 유지(키 없음 = 요소 크기 기본)
+        fl = v.get("flip")
+        if fl is not None:
+            if not isinstance(fl, bool):
+                _vb_bad(vid, "flip 은 true | false", key="flip")
+            if fl:
+                nb["flip"] = True                          # §19.9.2-1: true 만 키(false = 생략)
+        out.append(nb)
+    out.sort(key=lambda x: int(x["id"][1:]))
+    return out
+
+
+class VirtualBead:
+    """가상 비드 1개(derive) — guard·params·basis 가 쓰는 그래프 비드와 같은 이름의 속성(range_*·guard·warnings·vars)."""
+
+    def __init__(self, spec: dict, blk: dict | None):
+        self.id = spec["id"]
+        self.name = spec.get("name") or f"추가 비드 {self.id[1:]}"
+        self.src = "virtual"
+        self.spec = spec
+        self.tier = None
+        self.hold_fixed = 1
+        self.vars: list[str] = []
+        self.reasons: list[str] = []
+        self.warnings: list[dict] = []
+        self.guard: dict = {}
+        self.w_top = float(spec["w_top"])
+        self.theta = float(spec.get("theta_deg", (blk or {}).get("theta_default_deg", 45.0)))
+        self.theta_f = self.theta
+        self.d_max = float(spec["d_max"])
+        self.end = spec.get("end", "round")
+        self.r_user = spec.get("r")
+        self.r = float(self.r_user) if self.r_user is not None else 0.0
+        self.r_source = "user" if self.r_user is not None else "default"
+        self.flip = bool(spec.get("flip", False))
+        self.range_default = {"A": [0.0, _r(self.d_max)]}
+        self.range_feasible = {"A": [0.0, _r(self.d_max)]}
+        self.range_basis = {"A": [0.0, _r(self.d_max)]}
+        self.field = None
+        self.h = self.n_wall = self.n_top = None
+        self.p0 = list(spec["p0"])
+        self.p1 = self.t = self.L = self.angle = self.plane = None
+        self.p0r, self.seat0 = None, 0.0                  # INT-8: 판 평면 사영 시작점·높이 맞춤 거리
+        self.side = None
+        self.diag = None
+        self.chk = None
+        self.d_move = None
+        self.n_hat = None
+        self.host = None
+        self.host_floor = None
+
+    @property
+    def ok(self) -> bool:
+        return not self.reasons and self.field is not None
+
+
+def _vb_majority(D, X, ph, nh) -> int:
+    """§2.3 그래프 비드 다수결(비드 바닥 노드의 host 판 평면 부호 거리 중앙값 부호 — VB-C1-2). 동률·없음 = 0."""
+    votes = 0
+    for b in D.beads:
+        if getattr(b, "src", "") != "graph" or not hasattr(b, "floor_mask"):
+            continue
+        nd = D.index.elem_nodes(b.floor_mask)
+        if not np.asarray(nd).size:
+            continue
+        off = float(np.median((X[nd] - ph) @ nh))
+        if abs(off) > 1e-9:
+            votes += 1 if off > 0 else -1
+    return 0 if votes == 0 else (1 if votes > 0 else -1)
+
+
+def _vb_side_auto(D, X, ph, nh, frame_n, host_type, floor) -> int:
+    """§19.9.2-4 자동 방향 s_auto(n_h 기준): ① 평탄부 host ∧ |level(f) − level(parent)| > 1e-6 → 그 부호(n0 기준 — n_h 는 n0 쪽)
+    ② 그래프 비드 다수결 ③ frame n 반대."""
+    from esl.morph import virtual_bead as vbm
+    if host_type in ("area", "plateau") and floor is not None:
+        fl = {int(f["id"]): f for f in D.graph.get("floors") or []}
+        f = fl.get(int(floor))
+        par = fl.get(int(f.get("parent", -1))) if f is not None else None
+        if f is not None and par is not None and f.get("level") is not None and par.get("level") is not None:
+            dl = float(f["level"]) - float(par["level"])
+            if abs(dl) > vbm.LEVEL_EPS:
+                return 1 if dl > 0 else -1
+    m = _vb_majority(D, X, ph, nh)
+    if m:
+        return m
+    return -1 if float(np.dot(frame_n, nh)) >= 0.0 else 1
+
+
+def _vb_outline(q0, q1, t, nh, rad, end: str, frame) -> list | None:
+    """발자국 윤곽(이동 띠 d_move) → frame (a, b) 꺾은선(닫힘, 3 자리) — 3D 강조용. frame 없음 = None."""
+    if frame is None:
+        return None
+    from esl.opt.keepout import project_ab
+    ey = np.cross(nh, t)
+    if end == "square":
+        pts = [q0 - rad * t - rad * ey, q1 + rad * t - rad * ey, q1 + rad * t + rad * ey, q0 - rad * t + rad * ey]
+    else:
+        a = np.linspace(-np.pi / 2, np.pi / 2, 9)
+        pts = [q1 + rad * (np.cos(x) * t + np.sin(x) * ey) for x in a] + \
+              [q0 + rad * (-np.cos(x) * t - np.sin(x) * ey) for x in a]
+    pts.append(pts[0])
+    return [{"a": a_, "b": b_} for a_, b_ in project_ab(frame, np.asarray(pts)).round(3).tolist()]
+
+
+def virtual_beads(D, mesh, blk: dict | None, *, vb_plan: str = "plate", frame=None, tie_idx=None, flip_deg=None,
+                  cfg=None) -> None:  # noqa: C901
+    """§2.2~§4·§19 derive: 선택 virtual_beads → D.vbeads[VirtualBead](사유 목록·경고·기저 장). 범위 밖(블록 없음·계획·출처) =
+    VB_SCOPE. host = 세그먼트 종류 ∈ VB_HOST_SEG_TYPES(부모 바닥·평탄부)의 floor 요소(씨앗 floor 만, wall_islands floor 제외),
+    평탄부 바깥 테두리 transition = VB_PLATE_EDGE(§19.3). r 생략 = min(r_default_h_mult·h, r_cap)(h = r 0 발자국 — 2-pass, §19.1),
+    장 각 θ_f = min(θ, flip_deg − ε)(§19.4-4), 방향 = 자동(§19.9.2) × flip."""
+    from esl.morph import section as sec
+    from esl.morph import virtual_bead as vbm
+    specs = D.norm.get("virtual_beads") or []
+    D.vbeads = [VirtualBead(sp, blk) for sp in specs]
+    if not specs:
+        return
+    host_row = "graph" if D.norm.get("graph") is not None else "none"
+    if blk is None or not sec.vb_allowed(vb_plan, host_row):
+        for vb in D.vbeads:
+            vb.reasons = ["VB_SCOPE"]
+        return
+    from esl.mesh import features
+    ix = D.index
+    g2, l2 = D.graph, D.labels
+    X = np.asarray(mesh["x0"], np.float64)
+    C = _conn(mesh)
+    et = np.asarray(mesh["elem_type"]).astype(int)
+    excl = np.asarray(getattr(D, "exclude_mask", np.zeros(C.shape[0], bool)), bool)
+    seg = np.asarray(l2["segment"])
+    stype = np.array([s["type"] for s in g2["segments"]] or ["base"], dtype=object)
+    etype = np.where(seg >= 0, stype[np.clip(seg, 0, stype.size - 1)], None)
+    host_t = np.array([t in vbm.VB_HOST_SEG_TYPES for t in etype.tolist()], bool)
+    area_t = np.array([t in vbm.VB_HOST_SEG_TYPES and t != "base" for t in etype.tolist()], bool)
+    cls = np.asarray(l2["cls"])
+    floor = np.asarray(l2["floor"])
+    jz, isl, tr = (np.asarray(l2[k]) for k in ("junction_zone", "island", "transition"))
+    max_mm = float(select_cfg(cfg)["graph"]["island"]["max_mm"]) if cfg is not None else 60.0
+    wi = {int(w["floor"]) for w in wall_islands(g2, l2, mesh, max_mm)} if g2.get("floors") else set()
+    wi_mask = np.isin(floor, sorted(wi)) if wi else np.zeros(C.shape[0], bool)
+    host_all = (cls == 0) & host_t & (jz < 0) & (isl < 0) & ~excl & ~wi_mask
+    island = (isl >= 0) | (cls == 2) | (cls == 3) | wi_mask
+    free = np.zeros(X.shape[0], bool)
+    fe = ix.edge_nodes[ix.edge_count == 1]
+    free[fe.ravel()] = True
+    outer = np.zeros(X.shape[0], bool)
+    outer[np.asarray(features.plate_edge_nodes(ix), np.int64)] = True
+    holes = free & ~outer
+    fixed = np.asarray(D.fixed_mask, bool).copy()
+    if tie_idx is not None and np.asarray(tie_idx).size:
+        fixed[np.asarray(tie_idx, np.int64)] = True
+    fr = g2.get("frame") or {}
+    n0 = np.asarray(fr.get("n0") or [0.0, 0.0, 1.0], np.float64)
+    if frame is not None:
+        e_xi, e_eta = (np.asarray(frame[k], np.float64) for k in ("e_xi", "e_eta"))
+        frame_n = np.asarray(frame.get("n") or np.cross(e_xi, e_eta), np.float64)
+    else:                                               # ESL frame 없음(시험·옛 호출) = 그래프 frame 축
+        e_xi = np.asarray(fr.get("e1") or [1.0, 0.0, 0.0], np.float64)
+        e_eta = np.asarray(fr.get("e2") or [0.0, 1.0, 0.0], np.float64)
+        frame_n = n0
+    floors = {int(f["id"]): f for f in g2.get("floors") or []}
+    trans = g2.get("transitions") or []
+    h_g = float(fr.get("h_mm") or 1.0)
+    margin = float(blk["margin_mm"])
+    mult = float(blk.get("r_default_h_mult", 0.0))
+    cen = (X[C[:, 0]] + X[C[:, 1]] + X[C[:, 2]]) / 3.0
+    q = et == 4
+    cen[q] = (X[C[q, 0]] + X[C[q, 1]] + X[C[q, 2]] + X[C[q, 3]]) / 4.0
+    hidx = np.flatnonzero(host_all)
+    for vb in D.vbeads:
+        sp = vb.spec
+        vb.theta_f = vbm.theta_field(vb.theta, flip_deg)
+        if not hidx.size:
+            vb.reasons = ["VB_NOT_ON_PLATE"]
+            continue
+        # INT-8: 점 높이 = host 후보면(좌표 입력은 frame 판 높이 — 평탄부·부모 바닥 높이 차를 코어가 정함, 3D 찍기 점은 그대로)
+        p0, vb.seat0 = vbm.seat_point(sp["p0"], cen[hidx], n0, h_g)
+        p1s = vbm.seat_point(sp["p1"], cen[hidx], n0, h_g)[0] if "p1" in sp else None
+        seed = hidx[int(np.argmin(np.linalg.norm(cen[hidx] - p0, axis=1)))]
+        f = int(floor[seed])
+        H = host_all & (floor == f)
+        vb.host, vb.host_floor = str(etype[seed]), f
+        if p1s is not None:
+            p1r = p1s
+            Lr = float(np.linalg.norm(p1r - p0))
+        else:
+            al = np.radians(float(sp["angle_deg"]))
+            Lr = float(sp["length"])
+            p1r = p0 + Lr * (np.cos(al) * e_xi + np.sin(al) * e_eta)
+        th = np.radians(vb.theta)
+        rad = Lr / 2.0 + (vb.w_top + 2.0 * vb.d_max / np.tan(th)) / 2.0 + margin
+        hn = ix.elem_nodes(H)
+        near = hn[np.linalg.norm(X[hn] - 0.5 * (p0 + p1r), axis=1) <= rad]
+        if near.size < 3:
+            near = np.unique(C[seed][C[seed] >= 0])
+        ph, nh, _rms = mcore_plane_fit(X[near])
+        if float(np.dot(nh, n0)) < 0.0:
+            nh = -nh
+        vb.plane = (ph, nh)
+        try:
+            q0, q1, t, L = vbm.resolve_line(p0, p1s, sp.get("length"), sp.get("angle_deg"), (e_xi, e_eta),
+                                            (ph, nh))
+        except ValueError:
+            vb.reasons = ["VB_INPUT_INVALID"]
+            continue
+        vb.p0r, vb.p1, vb.t, vb.L = q0, q1, t, L
+        ex, ey = vbm.frame_in_plane((e_xi, e_eta), nh)
+        vb.angle = float(np.degrees(np.arctan2(float(t @ ey), float(t @ ex))))
+        far = max(vbm.plane_dist(p0, (ph, nh)), vbm.plane_dist(p1r if p1s is not None else q1, (ph, nh))) > margin + 2.0 * h_g
+        line = (q0, q1, t, L, nh)
+        # §19.1-2·3: ① r 0 발자국 → h(한 번) ② r 생략 = min(mult·h, r_cap) ③ 그 r 로 발자국
+        fp0 = vbm.footprint(X, line, vb.w_top, vb.theta_f, vb.d_max, vb.end, 0.0, margin)
+        efp0 = vbm.chk_elems(C, et, fp0["move_mask"]) & H
+        vb.h = vbm.edge_median(X, C, et, efp0) if efp0.any() else None
+        if vb.r_user is None and vb.h is not None:
+            rh = mult * float(vb.h)
+            rc = vbm.r_cap(vb.w_top, vb.theta_f, vb.d_max)
+            vb.r = _r(min(rh, rc))
+            if rh > rc + 1e-4:
+                vb.warnings.append({"code": "VB_R_CLAMPED", "level": "info", "vbead": vb.id, "r": _r(vb.r), "r_h": _r(rh)})
+        fp = vbm.footprint(X, line, vb.w_top, vb.theta_f, vb.d_max, vb.end, vb.r, margin)
+        vb.d_move = fp["d_move"]
+        vb.fp = fp
+        vb.chk = vbm.chk_elems(C, et, fp["chk_mask"])
+        vb.H = H
+        vb.far = far
+        # §19.3-2 평탄부 바깥 테두리 transition(child == f)·그 너머 부모 floor
+        edge_tr = [int(x["id"]) for x in trans if int(x.get("child", -1)) == f]
+        vb.edge = np.isin(tr, edge_tr) if edge_tr else np.zeros(C.shape[0], bool)
+        par = int((floors.get(f) or {}).get("parent", -1))
+        vb.skip = (floor == par) & (par >= 0) if edge_tr else np.zeros(C.shape[0], bool)
+        vb.bead = ((seg >= 0) & ~host_t) | (area_t & (floor != f)) | (jz >= 0) | ((tr >= 0) & ~vb.edge)
+        s_auto = _vb_side_auto(D, X, ph, nh, frame_n, vb.host, f)
+        vb.side = -s_auto if vb.flip else s_auto
+    for vb in D.vbeads:
+        if vb.reasons or vb.chk is None:
+            continue
+        other = np.zeros(C.shape[0], bool)
+        for o in D.vbeads:
+            if o is not vb and o.chk is not None:      # 겹침 = 둘 다 VB_OVER_VBEAD(§12-3)
+                other |= o.chk
+        codes = vbm.host_check(C, vb.chk, {"host": vb.H, "bead": vb.bead, "island": island, "exclude": excl,
+                                           "other_vb": other, "edge": vb.edge, "skip": vb.skip, "hole_nodes": holes,
+                                           "edge_nodes": outer, "fixed_nodes": fixed})
+        if vb.far and "VB_NOT_ON_PLATE" not in codes:
+            codes.insert(0, "VB_NOT_ON_PLATE")
+        h = vb.h
+        if h is None:
+            if "VB_NOT_ON_PLATE" not in codes:
+                codes.insert(0, "VB_NOT_ON_PLATE")
+        else:
+            rs = vbm.resolution(h, vb.w_top, vb.theta, vb.d_max, float(blk["min_wall_elems"]))
+            vb.n_wall, vb.n_top = rs["n_wall"], rs["n_top"]
+            codes += rs["codes"]
+            for w in rs["warns"]:
+                vb.warnings.append({**w, "level": "warning", "vbead": vb.id})
+        vb.reasons = sorted(set(codes), key=vbm.REASONS.index)
+        if vb.reasons:
+            continue
+        idx = np.flatnonzero(vb.fp["move_mask"]).astype(np.int64)
+        nrm = vbm.node_normals(X, C, et, vb.H, vb.plane[1])[idx]
+        vb.field = vbm.field(vb.fp["d"][idx], nrm, vb.side, vb.w_top, vb.theta_f, vb.r, idx=idx)
+        vb.diag = vbm.diag(X, C, et, vb.field, vb.d_max)
+        vb.n_hat = np.asarray(vb.plane[1], np.float64)
+        vb.vars = [VB_TYPE]
+        vb.warnings.append({"code": "VB_EDGE_SMEAR", "level": "info", "vbead": vb.id, "h": _r(h)})
+
+
+def mcore_plane_fit(P):
+    from esl.morph import core as mcore
+    return mcore.plane_fit(P)
+
+
+def vb_row(vb, cfg=None) -> dict:
+    """§5.1·§19.7 params[] A 행."""
+    name = var_name(vb.id, VB_TYPE)
+    dm = _r(vb.d_max)
+    blk_on = bool(vb_cfg(cfg).get("default_on", True))
+    r = {"name": name, "type": VB_TYPE, "bead": vb.id, "tier": None, "form": "hinge", "nominal": 0.0, "unit": "mm",
+         "feasible": list(vb.range_feasible[VB_TYPE]), "feasible_source": "user",
+         "default_range": list(vb.range_default[VB_TYPE]), "use_default": blk_on, "group_members": [name],
+         "label": f"추가 비드 {vb.id[1:]} · 깊이", "wall_elems": _r(vb.n_wall, 2),
+         "vb": {"w_top": _r(vb.w_top), "theta_deg": _r(vb.theta), "side": "+" if vb.side > 0 else "-",
+                "n_wall": _r(vb.n_wall, 2), "n_top": _r(vb.n_top, 2), "len_mm": _r(vb.L), "angle_deg": _r(vb.angle, 3),
+                "d_max": dm, "r": _r(vb.r), "r_source": vb.r_source, "host": vb.host}}
+    r["acc_hint"] = vb_acc_hint(vb.h, vb.d_max, vb.theta, r_user=vb.r_user, r_resolved=vb.r)
+    gd = vb.guard.get(VB_TYPE)
+    if gd is not None:
+        r["guard"] = copy.deepcopy(gd)
+        if gd.get("state") == "blocked":
+            r["use_default"] = False
+    return r
+
+
+_ACC_CACHE: dict = {}
+
+
+def load_vbead_accuracy(path: str | None = None) -> dict | None:
+    """resources/vbead_accuracy.json(정확도 표 — 문구 자료, 설정 아님 · V-0250-VB-11·27 측정값). 없으면 None."""
+    from esl.doe import RESOURCES
+    p = path or os.path.join(RESOURCES, "vbead_accuracy.json")
+    if p not in _ACC_CACHE:
+        try:
+            with open(p, encoding="utf-8") as fh:
+                _ACC_CACHE[p] = json.load(fh)
+        except (OSError, ValueError):
+            _ACC_CACHE[p] = None
+    return _ACC_CACHE[p]
+
+
+def vb_acc_hint(h, d_max, theta, table: dict | None = None, *, r_user=None, r_resolved=None) -> dict | None:
+    """§9·§19.5-5: 정확도 표에서 (h, D_max, θ) 에 가장 가까운 칸 {h, d, theta, r, c_err_pct, pi_err_pct}(상대 거리 최소 — 표 범위의
+    1/1.25..1.25 배 밖 = None). 칸 목록: r 생략 → cells(r 기본), 준 r 0 → cells_r0, 그 밖의 준 r → 해석된 r 이 고른 칸 r 의
+    1/1.25..1.25 배 안일 때만 cells(아니면 None). 표 없음 = None."""
+    tab = table if table is not None else load_vbead_accuracy()
+    if not tab or h is None:
+        return None
+    if r_user is not None and float(r_user) == 0.0 and tab.get("cells_r0") is not None:
+        src = tab["cells_r0"]
+    else:
+        src = tab.get("cells") or []
+    cells = [c for c in src if c.get("c_err_pct") is not None]
+    if not cells:
+        return None
+    hs = [float(c["h"]) for c in cells]
+    ds = [float(c["d"]) for c in cells]
+    ts = [float(c["theta"]) for c in cells]
+
+    def out(v, vs):
+        return v < min(vs) / 1.25 - 1e-9 or v > max(vs) * 1.25 + 1e-9
+    if out(float(h), hs) or out(float(d_max), ds) or out(float(theta), ts):
+        return None
+    best = min(cells, key=lambda c: (abs(np.log(float(h) / float(c["h"]))) + abs(np.log(float(d_max) / float(c["d"]))) +
+                                     abs(np.log(float(theta) / float(c["theta"]))), float(c["h"]), float(c["d"]),
+                                     float(c["theta"])))
+    rc = best.get("r")
+    if r_user is not None and float(r_user) != 0.0 and src is tab.get("cells"):
+        rr = float(r_resolved if r_resolved is not None else r_user)
+        if rc is None or float(rc) <= 0 or not (float(rc) / 1.25 - 1e-9 <= rr <= float(rc) * 1.25 + 1e-9):
+            return None
+    return {"h": float(best["h"]), "d": float(best["d"]), "theta": float(best["theta"]),
+            "r": None if rc is None else float(rc), "c_err_pct": best.get("c_err_pct"), "pi_err_pct": best.get("pi_err_pct")}
+
+
+def vb_reason_doc(vb) -> dict | None:
+    """비드 행 vb_reason{code, text}(첫 사유 — 회색 1줄)."""
+    if not vb.reasons:
+        return None
+    from esl.doe import message
+    return {"code": vb.reasons[0], "text": message(vb.reasons[0])}
+
+
+def vb_bead_rows(D) -> list[dict]:
+    """params.json·derive param_beads 의 kind virtual 행 {id, name, kind, warnings, vb_reason?}."""
+    out = []
+    for vb in getattr(D, "vbeads", None) or []:
+        r = {"id": vb.id, "name": vb.name, "kind": "virtual", "warnings": vb.warnings}
+        rd = vb_reason_doc(vb)
+        if rd is not None:
+            r["vb_reason"] = rd
+        out.append(r)
+    return out
+
+
+def vb_basis_vars(D) -> list[dict]:
+    """§4.2 기저 변수(hinge): {name, type A, bead, tier None, members, nominal 0, n_hat, R None, idx, vec, form, g, c}."""
+    out = []
+    for vb in getattr(D, "vbeads", None) or []:
+        if not vb.ok:
+            continue
+        f = vb.field
+        name = var_name(vb.id, VB_TYPE)
+        out.append({"name": name, "type": VB_TYPE, "bead": vb.id, "tier": None, "members": [name], "nominal": 0.0,
+                    "n_hat": vb.n_hat, "R": None, "idx": np.asarray(f["idx"], np.int32),
+                    "vec": np.asarray(f["vec"], np.float64), "form": "hinge", "g": np.asarray(f["g"], np.float64),
+                    "c": float(f["c"])})
+    return out
+
+
+def vb_text(w: dict, msgs: dict) -> str:
+    """경고·정보 dict → 문구(자리표시 {키} 를 그 dict 값으로 — 없으면 문구 그대로)."""
+    t = msgs.get(w.get("code"), w.get("code"))
+    try:
+        return t.format(**{k: (f"{v:g}" if isinstance(v, float) else v) for k, v in w.items()})
+    except (KeyError, IndexError, ValueError):
+        return t
+
+
+def vb_derive_doc(D, cfg=None, frame=None) -> tuple[list[dict], dict | None]:
+    """§8 derive 응답 virtual_beads[…]·vb_frame(가상 비드 있을 때만 — 호출자가 키를 씀)."""
+    from esl.doe import load_messages
+    from esl.morph import virtual_bead as vbm
+    msgs = load_messages()["messages"]
+    vc = vb_cfg(cfg)
+    rows, vfr = [], None
+    for vb in getattr(D, "vbeads", None) or []:
+        r = {"id": vb.id, "name": vb.name, "p0": list(vb.spec["p0"]),
+             "p0_resolved": None if vb.p0r is None else [_r(float(x)) for x in vb.p0r],
+             "p1_resolved": None if vb.p1 is None else [_r(float(x)) for x in vb.p1],
+             "len_mm": None if vb.L is None else _r(vb.L), "angle_deg": None if vb.angle is None else _r(vb.angle, 3),
+             "side_resolved": None if vb.side is None else ("+" if vb.side > 0 else "-"), "ok": bool(vb.ok),
+             "reasons": [{"code": c, "text": msgs.get(c, c)} for c in vb.reasons],
+             "warnings": [{**w, "text": vb_text(w, msgs)} for w in vb.warnings],
+             "h": None if vb.h is None else _r(vb.h), "n_wall": None if vb.n_wall is None else _r(vb.n_wall, 2),
+             "n_top": None if vb.n_top is None else _r(vb.n_top, 2),
+             "r_resolved": _r(vb.r), "r_source": vb.r_source, "host": vb.host, "host_floor": vb.host_floor}
+        if vb.diag is not None:
+            r.update(stretch_max=vb.diag["stretch_max"], n_fp=vb.diag["n_fp"], n_elems_fp=vb.diag["n_elems_fp"])
+        if vb.p1 is not None and vb.plane is not None and vb.d_move is not None:
+            ol = _vb_outline(np.asarray(vb.p1) - vb.L * vb.t, vb.p1, vb.t, vb.plane[1], vb.d_move, vb.end, frame)
+            if ol is not None:
+                r["outline_ab"] = ol
+        if vb.ok:
+            f = vb.field
+            if f["idx"].size > int(vc["preview_max_nodes"]):
+                r["warnings"].append({"code": "VB_PREVIEW_SKIPPED", "level": "info", "vbead": vb.id,
+                                      "n": int(f["idx"].size), "text": msgs.get("VB_PREVIEW_SKIPPED", "")})
+            else:
+                r["preview"] = {"idx": [int(i) for i in f["idx"]], "vec": np.round(f["vec"], 6).tolist(),
+                                "g": np.round(f["g"], 6).tolist(), "c": float(f["c"])}
+        rows.append(r)
+        if vfr is None and vb.plane is not None:
+            vfr = _vb_frame_doc(D, frame, *vb.plane)
+    return rows, vfr
+
+
+def _vb_frame_doc(D, frame, ph, nh) -> dict:
+    """vb_frame{origin, e_xi, e_eta, n_h}: 입력 칸 ξ·η 축 = ESL frame 축(없으면 그래프 e1·e2)을 판 평면(n_h)에 사영(``frame_in_plane`` —
+    resolve_line (b) 와 같은 축), origin = ESL frame 원점(없으면 판 점 ph)을 판 평면(ph, n_h)에 사영(INT-4 — ξ·η 값은 그대로, 판 위 점은
+    법선 성분 0 → 프런트 역변환이 판 높이를 따로 추정하지 않음)."""
+    from esl.morph import virtual_bead as vbm
+    fr = (getattr(D, "graph", None) or {}).get("frame") or {}
+    ph, nh = np.asarray(ph, np.float64), np.asarray(nh, np.float64)
+    exa = np.asarray(frame["e_xi"] if frame else fr.get("e1") or [1, 0, 0], float)
+    eya = np.asarray(frame["e_eta"] if frame else fr.get("e2") or [0, 1, 0], float)
+    ex, ey = vbm.frame_in_plane((exa, eya), nh)
+    nu = nh / float(np.linalg.norm(nh))
+    org = np.asarray(frame["origin"], float) if frame and frame.get("origin") is not None and \
+        len(frame["origin"]) == 3 else ph
+    org = org - float(np.dot(org - ph, nu)) * nu
+    return {"origin": [_r(float(x)) for x in org], "e_xi": [round(float(x), 9) for x in ex],
+            "e_eta": [round(float(x), 9) for x in ey], "n_h": [round(float(x), 9) for x in nu]}
+
+
+def vb_frame_base(D, mesh, frame=None) -> dict | None:
+    """INT-4: 가상 비드가 켜진 스터디의 입력 칸 frame(비드 0개 — 첫 비드 전에도 derive 가 줌). 판 = 그래프 frame 법선 n0(바닥 쪽) ·
+    높이 = 부모 바닥(segment base ∧ floor ∧ 접합·섬 아님) 노드의 n0 성분 중앙값(없으면 host 종류 전체 → floor 전체). 그래프 없음 = None."""
+    from esl.morph import virtual_bead as vbm
+    g2, l2 = getattr(D, "graph", None), getattr(D, "labels", None)
+    if g2 is None or l2 is None:
+        return None
+    fr = g2.get("frame") or {}
+    n0 = np.asarray(fr.get("n0") or [0.0, 0.0, 1.0], np.float64)
+    n0 = n0 / float(np.linalg.norm(n0))
+    X = np.asarray(mesh["x0"], np.float64)
+    C = _conn(mesh)
+    seg = np.asarray(l2["segment"])
+    stype = np.array([sg["type"] for sg in g2.get("segments") or []] or ["base"], dtype=object)
+    etype = np.where(seg >= 0, stype[np.clip(seg, 0, stype.size - 1)], None)
+    flo = (np.asarray(l2["cls"]) == 0) & (np.asarray(l2["junction_zone"]) < 0) & (np.asarray(l2["island"]) < 0)
+    sel = None
+    for m in (flo & (etype == "base"), flo & np.array([t in vbm.VB_HOST_SEG_TYPES for t in etype.tolist()], bool), flo):
+        if m.any():
+            sel = m
+            break
+    if sel is None:
+        return None
+    nodes = np.unique(C[sel][C[sel] >= 0])
+    lev = float(np.median(X[nodes] @ n0))
+    return _vb_frame_doc(D, frame, lev * n0, n0)
