@@ -186,6 +186,7 @@ def _codes(vbs, **kw):
     ({"p0": [200.0, 150.0, 0.0], "p1": [225.0, 150.0, 0.0]}, "VB_OVER_HOLE"),
     ({"p0": [60.0, 194.0, 0.0], "p1": [180.0, 194.0, 0.0]}, "VB_PLATE_EDGE"),
     ({"p0": [60.0, 140.0, 0.0], "p1": [180.0, 140.0, 0.0], "d_max": 4.0}, "VB_MESH_COARSE"),
+    ({"p0": [60.0, 140.0, 20.0], "p1": [180.0, 140.0, 20.0]}, "VB_NOT_ON_PLATE"),     # 판에서 먼 점(사영 > margin + 2h)
 ])
 def test_reasons_on_classified_plate_v3(over, code):
     rs = _codes([{**VB_OK, **over}])[0]

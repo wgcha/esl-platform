@@ -1,0 +1,191 @@
+{
+ "schema": "esl/vbead_accuracy/1",
+ "world": {
+  "plate_mm": [
+   400.0,
+   300.0
+  ],
+  "t_mm": 1.0,
+  "E_mpa": 210000.0,
+  "nu": 0.3,
+  "line": [
+   [
+    100.0,
+    150.0
+   ],
+   [
+    300.0,
+    150.0
+   ]
+  ],
+  "w_top_mm": 20.0,
+  "end": "square",
+  "r_mm": 0.0,
+  "side": "-",
+  "loads": [
+   "uniform pressure 1 MPa (-z)",
+   "point 1 N at (200,150) (-z)"
+  ],
+  "support": "4 edges z + in-plane 3-2-1",
+  "jig": "8 ties translation, target g_z = 0.2·x/400·y/300, load = pressure 1, methods prescribed·spring(alpha 1)"
+ },
+ "metric": "B/A - 1 (%) — A = 모서리 정렬 실제 메시 사다리꼴, B = 균일 격자 + 힌지 모핑; c = max|C_p, C_f|, pi = max|Π prescribed, Π spring|",
+ "cells": [
+  {
+   "h": 5.0,
+   "d": 3.0,
+   "theta": 45.0,
+   "wall_elems": 0.6,
+   "status": "VB_MESH_COARSE",
+   "C_p_err_pct": null,
+   "C_f_err_pct": null,
+   "Pi_prescribed_err_pct": null,
+   "Pi_spring_err_pct": null,
+   "c_err_pct": null,
+   "pi_err_pct": null
+  },
+  {
+   "h": 5.0,
+   "d": 3.0,
+   "theta": 60.0,
+   "wall_elems": 0.346,
+   "status": "VB_MESH_COARSE",
+   "C_p_err_pct": null,
+   "C_f_err_pct": null,
+   "Pi_prescribed_err_pct": null,
+   "Pi_spring_err_pct": null,
+   "c_err_pct": null,
+   "pi_err_pct": null
+  },
+  {
+   "h": 5.0,
+   "d": 6.0,
+   "theta": 45.0,
+   "wall_elems": 1.2,
+   "status": "VB_WALL_COARSE",
+   "C_p_err_pct": -1.859,
+   "C_f_err_pct": -2.171,
+   "Pi_prescribed_err_pct": -1.563,
+   "Pi_spring_err_pct": -1.553,
+   "c_err_pct": -2.171,
+   "pi_err_pct": -1.563
+  },
+  {
+   "h": 5.0,
+   "d": 6.0,
+   "theta": 60.0,
+   "wall_elems": 0.693,
+   "status": "VB_MESH_COARSE",
+   "C_p_err_pct": null,
+   "C_f_err_pct": null,
+   "Pi_prescribed_err_pct": null,
+   "Pi_spring_err_pct": null,
+   "c_err_pct": null,
+   "pi_err_pct": null
+  },
+  {
+   "h": 3.0,
+   "d": 3.0,
+   "theta": 45.0,
+   "wall_elems": 1.0,
+   "status": "VB_WALL_COARSE",
+   "C_p_err_pct": -0.695,
+   "C_f_err_pct": 0.382,
+   "Pi_prescribed_err_pct": -0.569,
+   "Pi_spring_err_pct": -0.566,
+   "c_err_pct": -0.695,
+   "pi_err_pct": -0.569
+  },
+  {
+   "h": 3.0,
+   "d": 3.0,
+   "theta": 60.0,
+   "wall_elems": 0.577,
+   "status": "VB_MESH_COARSE",
+   "C_p_err_pct": null,
+   "C_f_err_pct": null,
+   "Pi_prescribed_err_pct": null,
+   "Pi_spring_err_pct": null,
+   "c_err_pct": null,
+   "pi_err_pct": null
+  },
+  {
+   "h": 3.0,
+   "d": 6.0,
+   "theta": 45.0,
+   "wall_elems": 2.0,
+   "status": "ok",
+   "C_p_err_pct": -1.021,
+   "C_f_err_pct": -0.55,
+   "Pi_prescribed_err_pct": -0.789,
+   "Pi_spring_err_pct": -0.786,
+   "c_err_pct": -1.021,
+   "pi_err_pct": -0.789
+  },
+  {
+   "h": 3.0,
+   "d": 6.0,
+   "theta": 60.0,
+   "wall_elems": 1.155,
+   "status": "VB_WALL_COARSE",
+   "C_p_err_pct": -1.438,
+   "C_f_err_pct": -0.37,
+   "Pi_prescribed_err_pct": -1.188,
+   "Pi_spring_err_pct": -1.186,
+   "c_err_pct": -1.438,
+   "pi_err_pct": -1.188
+  },
+  {
+   "h": 1.5,
+   "d": 3.0,
+   "theta": 45.0,
+   "wall_elems": 2.0,
+   "status": "ok",
+   "C_p_err_pct": -0.415,
+   "C_f_err_pct": 0.101,
+   "Pi_prescribed_err_pct": -0.354,
+   "Pi_spring_err_pct": -0.353,
+   "c_err_pct": -0.415,
+   "pi_err_pct": -0.354
+  },
+  {
+   "h": 1.5,
+   "d": 3.0,
+   "theta": 60.0,
+   "wall_elems": 1.155,
+   "status": "VB_WALL_COARSE",
+   "C_p_err_pct": -0.437,
+   "C_f_err_pct": 0.454,
+   "Pi_prescribed_err_pct": -0.399,
+   "Pi_spring_err_pct": -0.399,
+   "c_err_pct": 0.454,
+   "pi_err_pct": -0.399
+  },
+  {
+   "h": 1.5,
+   "d": 6.0,
+   "theta": 45.0,
+   "wall_elems": 4.0,
+   "status": "ok",
+   "C_p_err_pct": -0.592,
+   "C_f_err_pct": -0.334,
+   "Pi_prescribed_err_pct": -0.469,
+   "Pi_spring_err_pct": -0.469,
+   "c_err_pct": -0.592,
+   "pi_err_pct": -0.469
+  },
+  {
+   "h": 1.5,
+   "d": 6.0,
+   "theta": 60.0,
+   "wall_elems": 2.309,
+   "status": "ok",
+   "C_p_err_pct": -0.293,
+   "C_f_err_pct": 0.244,
+   "Pi_prescribed_err_pct": -0.277,
+   "Pi_spring_err_pct": -0.277,
+   "c_err_pct": -0.293,
+   "pi_err_pct": -0.277
+  }
+ ]
+}

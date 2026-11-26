@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import json
 import math
 
 import numpy as np
@@ -206,6 +207,25 @@ def table(cells=None) -> dict:
             "metric": "B/A - 1 (%) — A = 모서리 정렬 실제 메시 사다리꼴, B = 균일 격자 + 힌지 모핑; c = max|C_p, C_f|, "
                       "pi = max|Π prescribed, Π spring|",
             "cells": [cell(h, d, th) for h, d, th in keys]}
+
+
+def table_md(doc: dict) -> str:
+    """tests/doe/vbead_accuracy.md 본문(같은 값 — 시험이 대조)."""
+    st = {"ok": "–", "VB_WALL_COARSE": "VB_WALL_COARSE", "VB_MESH_COARSE": "불가(VB_MESH_COARSE)"}
+    lines = ["# 가상 비드 정확도 표 (V-0250-VB-11, D-0.25.0-VB-17)", "",
+             "생성: `python tests/doe/synth_vbead.py OUT.json` → resources/vbead_accuracy.json(같은 값). 차 = B/A − 1 (%),",
+             "A = 모서리 정렬 실제 메시 사다리꼴 비드, B = 균일 격자(같은 h) + 힌지 모핑. 세계: " +
+             json.dumps(doc["world"], ensure_ascii=False), "",
+             "| h mm | D mm | θ ° | 사면 요소 n_wall | 상태 | C 압력 % | C 집중 % | Π 강제 변위 % | Π 스프링 % |",
+             "|---|---|---|---|---|---|---|---|---|"]
+    for c in doc["cells"]:
+        head = f"| {c['h']:g} | {c['d']:g} | {c['theta']:g} | {c['wall_elems']:.2f} | {st[c['status']]} |"
+        if c["c_err_pct"] is None:
+            lines.append(head + " 불가 | 불가 | 불가 | 불가 |")
+        else:
+            lines.append(head + "".join(f" {c[k]:+.3f} |" for k in ("C_p_err_pct", "C_f_err_pct", "Pi_prescribed_err_pct",
+                                                                      "Pi_spring_err_pct")))
+    return "\n".join(lines) + "\n"
 
 
 if __name__ == "__main__":                       # 표 생성(느림 — h 1.5 칸): python tests/doe/synth_vbead.py OUT.json
