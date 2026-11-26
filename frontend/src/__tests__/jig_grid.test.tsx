@@ -120,5 +120,33 @@ describe("V-0248-JG-13·17 ④ 격자 지그 결과 화면(픽스처 doe-60)", (
     await screen.findByTestId("doe-result-rows", {}, { timeout: 8000 });
     expect(screen.queryByTestId("doe-load-tab")).toBeNull();
     expect(screen.getByTestId("metric-defs").textContent).not.toContain("매핑");
+    // v0.24.8 fix(JG-21): 실제 형태(코어 jig unsupported 블록 + 서버 JIG_GRID_ON_CLONE 1건) — 안내 줄이 결과 경고 목록에 보인다
+    const fold = await screen.findByTestId("result-warn");
+    const btn = fold.querySelector("button.msg-fold-line") as HTMLButtonElement;
+    if (btn.getAttribute("aria-expanded") !== "true") fireEvent.click(btn);
+    await waitFor(() => expect(fold.textContent).toContain("이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다"));
+    expect((fold.textContent ?? "").split("격자 매핑해 계산합니다").length - 1).toBe(1);
   }, 40000);
+
+  it("옛 스냅샷 ④ 설정 꺼짐(doe-63) = 안내 줄 없음", async () => {
+    open("doe-63");
+    await screen.findByTestId("doe-result-rows", {}, { timeout: 8000 });
+    const fold = await screen.findByTestId("result-warn");
+    const btn = fold.querySelector("button.msg-fold-line") as HTMLButtonElement;
+    if (btn.getAttribute("aria-expanded") !== "true") fireEvent.click(btn);
+    await waitFor(() => expect(fold.querySelector("ul")).not.toBeNull());
+    expect(fold.textContent).not.toContain("격자 매핑해 계산합니다");
+  }, 40000);
+});
+
+describe("V-0248-JG-21 옛 ④·옛 ③ 실제 결과 형태(코어 jig{status: unsupported} 블록 있음)", () => {
+  const unsup = { status: "unsupported", code: "JIG_UNSUPPORTED", methods: { jig_disp: { status: "fallback", code: "JIG_SKIPPED", warnings: [] } } } as never;
+  it("블록이 있어도 탭 사유는 jig_on_clone 으로 — 옛 문구(복제해도 같습니다)가 나오지 않음", () => {
+    const yes = jigMethodState(base({ jig_plan: "none", jig: unsup, jig_on_clone: true }), "jig_disp");
+    expect(yes.state).toBe("not_planned");
+    expect(yes.why).toContain("복제하면 Case 지그를 격자 매핑해 계산합니다");
+    expect(yes.why).not.toContain("복제해도 같습니다");
+    const no = jigMethodState(base({ jig_plan: "none", jig: unsup, jig_on_clone: false }), "jig_spring");
+    expect(no.why).toContain("설정 bead_doe.rank.jig_grid 가 꺼져 있어 복제해도 계산하지 않습니다");
+  });
 });

@@ -2124,9 +2124,12 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
     snap_raw = _rank_snapshot_raw(ctx, sid)
     gsnap = (snap_raw or {}).get("jig_grid")
     kind = _plan_sm_jig(s, gsnap if isinstance(gsnap, dict) and (snap_raw or {}).get("jig") else None)
-    if isinstance(r.get("jig"), dict):                        # v0.23.0 지그 블록(DoeJigOut) — 코어 값 그대로(옛 결과 = 키 없음 → null; v0.24.8 transfer·grid 도 그대로)
-        out["jig"] = r["jig"]
-    else:                                                     # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가(v0.24.8: 격자 포함)
+    jb = r.get("jig")
+    if isinstance(jb, dict):                                  # v0.23.0 지그 블록(DoeJigOut) — 코어 값 그대로(옛 결과 = 키 없음 → null; v0.24.8 transfer·grid 도 그대로)
+        out["jig"] = jb
+    # v0.23.2 D-0.23.2-3: 지그 미계산 결과 — 복제하면 계산되는가(v0.24.8: 격자 포함). v0.24.8 fix(D-0.24.8-JG-21): 옛 ④·옛 ③ 결과는 코어가
+    # jig {status: unsupported} 블록을 쓰므로 블록이 있어도 unsupported 이거나 jig_plan none ∧ 계획 jig_fix grid 면 같은 규칙(계약 §6)
+    if not isinstance(jb, dict) or jb.get("status") == "unsupported" or (kind == "none" and _plan_col(s, "jig_fix") == "grid"):
         out["jig_on_clone"] = _jig_on_clone(c, s, out["rank"], kind)
     out["jig_plan"] = kind                                    # v0.24.5 #88 후속·v0.24.8: base | grid | none — 탭 사유 문구를 이 값으로 고름
     if kind == "none" and out.get("jig_on_clone") is True and _plan_col(s, "jig_fix") == "grid":

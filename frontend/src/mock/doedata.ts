@@ -1036,6 +1036,21 @@ export function withJigGrid(res: DoeResultOut, opts: { plain?: boolean; cellMm?:
     ...v3("jd"), ...v3("js"),
   } as DoeResultOut;
 }
+/** v0.24.8 fix(D-0.24.8-JG-21): 옛 ④·옛 ③ 스냅샷 결과의 실제 형태 — 코어가 jig{status: unsupported, code JIG_UNSUPPORTED} 블록을 쓰고,
+ *  서버는 그래도 jig_on_clone(설정 rank.jig ∧ rank.jig_grid)을 내며 참이면 정보 줄 JIG_GRID_ON_CLONE 1건을 응답에 덧붙인다(esl_jig_grid_map.md §5·§6) */
+export function withOldGridSnapshot(res: DoeResultOut, onClone: boolean): DoeResultOut {
+  const th = res.jig?.th ?? { mac_min: 0.9, umax_err_max: 0.2, tie_rel_warn: 0.1, cancel_warn: 0.5, work_eff_min: 0.05, tie_spread_min: 0.02 };
+  const sk = (method: string, name: string) => ({ method, method_name: name, tie_dofs: "normal" as const, status: "fallback", code: "JIG_SKIPPED", detail: null,
+    fit_mac_min: null, fit_umax_err_max: null, warnings: [], limits: [], n_jig: 0, bc: null, spring: null });
+  const jig: DoeJigOut = {
+    status: "unsupported", code: "JIG_UNSUPPORTED", region_source: null, n_jig: 0, n_regions: 0, n_contact: 0, n_patch: 0, fit_mac_min: null, fit_umax_err_max: null,
+    fit_mac_min_nomodes: null, fit_umax_err_max_nomodes: null, cancel_rel_max: null, fit_work_eff_min: null, tie_rel_max: null, tie_spread: null, n_modes: 0,
+    hz_jig: [], hz_321: null, hz_ratio: null, th, entries: [], tie_dofs: "normal",
+    methods: { jig_disp: sk("prescribed", "강제 변위"), jig_spring: sk("spring", "스프링") } as never,
+  };
+  const info = onClone ? [{ code: "JIG_GRID_ON_CLONE", level: "info" as const, message: (MOCK_MESSAGES.JIG_GRID_ON_CLONE ?? "").replace(/\s*\((?:Info|Warn)[^)]*\)\s*$/, "") }] : [];
+  return { ...res, jig, jig_plan: "none", jig_on_clone: onClone, warnings: [...res.warnings, ...info] } as DoeResultOut;
+}
 /** v0.24.0 경계력 ESL(esl_bforce.md §5.6·§7): kind ok = contact 등급 보기·3D·칩, none = Case 경계력 자료 없음(탭 비활성 + [경계력 ESL 계산]) */
 export function withBforce(res: DoeResultOut, kind: "ok" | "none"): DoeResultOut {
   const ids = (res.esl ?? []).map((e) => ({ entry_id: e.entry_id, label: e.label ?? e.entry_id }));
@@ -1834,7 +1849,7 @@ export class DoeMock {
   }
 
   /** v0.24.8 시연·시험(?demoJigGrid=1): ④ 형상 직접 비교 — doe-60 = 격자 지그(jd·js 3D·noise_floor 표식) · doe-61 = 같은 자료 transfer·grid 없음(높이 대조) ·
-   *  doe-62 = 옛 스냅샷(jig_plan none, jig_on_clone 참) · doe-63 = 옛 스냅샷(jig_on_clone 거짓 — rank.jig_grid 꺼짐) */
+   *  doe-62 = 옛 스냅샷(jig_plan none, 코어 jig unsupported 블록, jig_on_clone 참 + JIG_GRID_ON_CLONE 줄) · doe-63 = 옛 스냅샷(jig_on_clone 거짓 — rank.jig_grid 꺼짐) */
   demoJigGrid() {
     if (this.recs.some((r) => r.out.id === "doe-60")) return;
     const t20 = this.recs.find((r) => r.out.id === "doe-20")!;
@@ -1843,8 +1858,8 @@ export class DoeMock {
     this.recs.push(
       mk("doe-60", "Ch/R 형상 비교 — 격자 지그 3 mm(v0.24.8)", "2026-11-26T01:00:00Z", withJigGrid(base)),
       mk("doe-61", "Ch/R 형상 비교 — 격자 지그(대조: 진단 없음)", "2026-11-26T02:00:00Z", withJigGrid(base, { plain: true })),
-      mk("doe-62", "Ch/R 형상 비교 — 옛 스냅샷(복제하면 격자)", "2026-11-26T03:00:00Z", { ...base, jig_plan: "none", jig_on_clone: true }),
-      mk("doe-63", "Ch/R 형상 비교 — 옛 스냅샷(격자 설정 꺼짐)", "2026-11-26T04:00:00Z", { ...base, jig_plan: "none", jig_on_clone: false }),
+      mk("doe-62", "Ch/R 형상 비교 — 옛 스냅샷(복제하면 격자)", "2026-11-26T03:00:00Z", withOldGridSnapshot(base, true)),
+      mk("doe-63", "Ch/R 형상 비교 — 옛 스냅샷(격자 설정 꺼짐)", "2026-11-26T04:00:00Z", withOldGridSnapshot(base, false)),
     );
   }
 

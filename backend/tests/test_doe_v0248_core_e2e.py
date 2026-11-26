@@ -177,3 +177,54 @@ def test_on_clone_warning_absent_when_config_off(client, world, engine, esl_root
     monkeypatch.setattr(svc, "_jig_on_clone", lambda *a, **k: False)                          # 설정 꺼짐 = jig_on_clone 거짓
     o = _res(client, old)
     assert o["jig_on_clone"] is False and _on_clone(o) == []
+
+
+# v0.24.8 fix(D-0.24.8-JG-21): 실제 코어 `_jig_post_fixed` 가 옛 ④·옛 ③ 스냅샷(rank.jig 있음)에 쓰는 지그 블록 — 검증 때 코어 산출 result.json 에서 그대로 옮김.
+# 앞 시험들은 지그 블록 없는 결과로만 확인해 이 형태(블록 있음 ∧ status unsupported)에서 jig_on_clone 이 null 로 남는 결함을 놓쳤다.
+UNSUP_JIG = json.loads('{"status": "unsupported", "code": "JIG_UNSUPPORTED", "region_source": null, "n_jig": 0, "n_regions": 0, "n_contact": 0, "n_patch": 0, "fit_mac_min": null, "fit_umax_err_max": null, "fit_mac_min_nomodes": null, "fit_umax_err_max_nomodes": null, "cancel_rel_max": null, "fit_work_eff_min": null, "tie_rel_max": null, "tie_spread": null, "n_modes": 0, "hz_jig": [], "hz_321": null, "hz_ratio": null, "th": {"mac_min": 0.9, "umax_err_max": 0.2, "tie_rel_warn": 0.1, "cancel_warn": 0.5, "work_eff_min": 0.05, "tie_spread_min": 0.02}, "entries": [], "tie_dofs": "normal", "methods": {"jig_disp": {"method": "prescribed", "method_name": "강제 변위", "tie_dofs": "normal", "status": "fallback", "code": "JIG_SKIPPED", "detail": null, "fit_mac_min": null, "fit_umax_err_max": null, "warnings": [], "limits": [], "n_jig": 0, "bc": null, "spring": null}, "jig_spring": {"method": "spring", "method_name": "스프링", "tie_dofs": "normal", "status": "fallback", "code": "JIG_SKIPPED", "detail": null, "fit_mac_min": null, "fit_umax_err_max": null, "warnings": [], "limits": [], "n_jig": 0, "bc": null, "spring": null}}}')
+
+
+def _old_snapshot(engine, sid):
+    for jid, params in _jobs(engine, sid):
+        p = copy.deepcopy(params)
+        p["doe"]["rank"].pop("jig_grid", None)
+        _set_params(engine, jid, p)
+
+
+def test_on_clone_with_core_unsupported_block_old_compare(client, world, engine, esl_root):  # noqa: F811
+    """옛 ④: 결과에 코어 jig{status: unsupported} 블록이 있어도 jig_on_clone 참 + ON_CLONE 1건, 블록은 그대로 통과."""
+    old = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz", "warnings": [], "jig": UNSUP_JIG})
+    _old_snapshot(engine, old)
+    o = _res(client, old)
+    assert o["jig_plan"] == "none" and o["jig"]["status"] == "unsupported" and o["jig_on_clone"] is True
+    assert len(_on_clone(o)) == 1 and _on_clone(_res(client, old)) == _on_clone(o)
+
+
+def test_on_clone_with_core_unsupported_block_old_step(client, world, engine, esl_root):  # noqa: F811
+    """옛 ③(scenario step, 계획 step_per_design): 같은 규칙 — 탭 사유 문구 입력 jig_on_clone 참(화면 = "복제하면 … 격자 매핑")."""
+    from doe_support import body, upload_step
+
+    req = body([world["a"]], upload_step(client), scenario="step")
+    old = _done(client, world, engine, esl_root, {"scenario": "step", "metric": "solve", "lin_form": "ritz", "warnings": [], "jig": UNSUP_JIG},
+                req=req)
+    _old_snapshot(engine, old)
+    o = _res(client, old)
+    assert o["jig_plan"] == "none" and o["jig_on_clone"] is True and len(_on_clone(o)) == 1
+
+
+def test_on_clone_with_core_unsupported_block_config_off(client, world, engine, esl_root, monkeypatch):  # noqa: F811
+    """설정 rank.jig_grid 꺼짐(복제해도 계산 안 함) = jig_on_clone 거짓 · ON_CLONE 없음 — 블록이 있어도 null 이 아님."""
+    old = _done(client, world, engine, esl_root, {"metric": "solve", "lin_form": "ritz", "warnings": [], "jig": UNSUP_JIG})
+    _old_snapshot(engine, old)
+    from esl_platform.api.services import doe as svc
+
+    orig = svc.cfg
+    monkeypatch.setattr(svc, "cfg", lambda ctx: _cfg_grid_off(orig(ctx)))
+    o = _res(client, old)
+    assert o["jig_plan"] == "none" and o["jig_on_clone"] is False and _on_clone(o) == []
+
+
+def _cfg_grid_off(c):
+    c = copy.deepcopy(c)
+    c["rank"] = {**c["rank"], "jig_grid": {**(c["rank"].get("jig_grid") or {}), "enabled": False}}
+    return c
