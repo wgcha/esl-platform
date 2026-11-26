@@ -87,6 +87,9 @@ PYTHONPATH += packages/beadgraph/src). pytest --basetemp=/tmp/c1_250_bt -o tmp_p
   H6·findings·handoff 8a799bf7, 정확도 표 97970690. H6(r = h): 띠 ξ·평탄부 ξ·30° θ45·30° θ60 모두 ok·guard ok usable [0, 5]·
   뒤집힘 0·밖 이동 0(warp 정보 n 23~106). 정확도(cells, r 기본): 최대 |차| 4.41 %(h5 D6 θ45), h3 최대 3.28 %, h1.5 최대 1.60 %.
   findings VB-C1-14~21.
+- 개정 2·3 전체 시험: tests/ 1872 passed·192 skipped·실패 3(허용 3건만 — 첫 실행의 test_vbead_cost 는 r 기본으로 발자국이 넓어져
+  가상 비드끼리 겹침 → r 생략으로 고쳐 단독 재실행 통과), beadgraph 117 passed·2 skipped. 가상 비드 0개 골든(c35b8ac1) 바이트 동일.
+  비용(r = h): 1개 derive 20 ms·guard 0.012 s(2 평가 + warp 측정 1)·morph 0.06 ms, 4개 derive 40 ms·guard 0.044 s(8).
 
 ## 남은 일
 - 메인 결정: VB-C1-5(warp 15° → r 0 blocked), VB-C1-6(H6 부모 바닥 = 띠), VB-C1-7(θ > flip 60°).

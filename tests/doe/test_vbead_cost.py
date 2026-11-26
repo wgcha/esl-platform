@@ -30,7 +30,7 @@ def _world():
 
 def _vbs(n):
     ys = (14.0, 30.0, 46.0, 62.0)[:n]
-    return [{"id": f"a{i + 1}", "p0": [20.0, y, 0.0], "p1": [100.0, y, 0.0], "w_top": 4.0, "d_max": 2.0, "r": 2.0}
+    return [{"id": f"a{i + 1}", "p0": [20.0, y, 0.0], "p1": [100.0, y, 0.0], "w_top": 4.0, "d_max": 2.0}   # r 생략 = h(1)
             for i, y in enumerate(ys)]
 
 
