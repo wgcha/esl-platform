@@ -188,7 +188,8 @@
 10. 계획 표: `SECTION_PLANS.pos`·`PLANS.load_follow` 모든 행 채움(빈 칸 CONFIG_INVALID), `load_follow_effective` 진리표, 호출 쪽 시나리오 이름 분기 0(정적).
 11. **하중이 따라가지 않음**: 평판 + 채널, 비드 깊이면 위 한 점 근처 집중 하중. U +10 안에서 (a) node 경로 = 하중 도심이 10 mm 이동(지금 동작 확인), (b) spatial 경로 = 하중 도심 이동 ≤ cell_mm/2, ΣF·ΣM 오차 ≤ 1e-9.
 12. 기준 같은 경로: spatial 스터디 d000 score = 1 정확, C_ref = d000(spatial), `d000_shift_rel` 기록, noise 표식.
-13. 경로 선택: U 변수 0개 = node 경로·안·순위·결과·prep·3D·done input_sha256 바이트 = `pos_u` 없는 스냅샷과 같음 — 단 **선택 단위 파일**(select/<sha12>/basis.npz·basis.bin·basis.json·derived.npz — U 가능 비드의 U 기저가 들어감, basis.json cfg_sha256 은 `_sel_cfg_sha += pos_u`)·params.json·derived.json(U 행·`u_reason`)·`matrix.json load_follow: "node"` 키는 달라짐(통합 보정 PU-C1-1·PU-C1-8 — 비교는 이 키·행을 뺀 내용), U 변수 ≥ 1 = spatial·`matrix.json load_follow`·정보 `LOAD_FOLLOW_SPATIAL`.
+13. 경로 선택: U 변수 0개 = node 경로·안·순위·결과·prep·3D 바이트 = `pos_u` 없는 스냅샷과 같음 — 단 **선택 단위 파일**(select/<sha12>/basis.npz·basis.bin·basis.json·derived.npz — U 가능 비드의 U 기저가 들어감, basis.json cfg_sha256 은 `_sel_cfg_sha += pos_u`)·params.json·derived.json(U 행·`u_reason`)·`matrix.json load_follow: "node"` 키는 달라짐(통합 보정 PU-C1-1·PU-C1-8 — 비교는 이 키·행을 뺀 내용), U 변수 ≥ 1 = spatial·`matrix.json load_follow`·정보 `LOAD_FOLLOW_SPATIAL`.
+    **정정(INT-6, 독립 검증 2026-11-26)**: U 가능한 비드가 있으면(U 행 ≥ 1) U 기저가 basis 에 들어가 basis_sha256 이 달라지므로 `run/designs/<did>/done.json input_sha256`·`doe/<rev>/selection.json`·`best/<did>/selection.json` 의 `basis_sha256`·`report.html`(변수 표 U 행 + 비드 경고 칸 `SELECT_BLEND_CLIPPED`)도 달라진다 — **결과·순위는 같다**(post/result.json·ranking.csv·designs.json·per_esl.json·안 result.json·prep·3D 바이트 동일). params·derived 는 U 행·`u_reason`·`range_default/feasible["U"]`·비드 경고 `SELECT_BLEND_CLIPPED`·선택 경고 `SELECT_RANGE_COMBO`(조합 점검에 U 가 끼어 vars·corners·inverted_n·usable[B*_U] — D·W usable 같음)만 다름. U 가능한 비드가 없으면(모두 U_ONE_SIDE 등) input_sha256·basis_sha256 도 같음. `pos_u` 블록 없는 옛 스냅샷 = 전 산출물 바이트 동일(시험 15). 허용 차이 목록 고정 = `tests/doe/test_pos_u_golden.py::test_channel_pos_u_block_u0_allowed_diffs`(`CHANNEL_U0_ALLOWED` — 목록 밖 차이 = 실패).
 14. 지그: spatial 에서 jd·js 의 a·BC·k = 기준 값(노드 번호), 하중 벡터만 전달본, 단조성(같은 위치에서 깊이↑ → s 변화 방향이 node 경로와 같음), U 로 비드를 하중 밖/안으로 옮기면 Π 변화 부호가 해석 예상과 같음(합성: 비드가 하중선 아래로 오면 강성↑).
 15. 옛 바이트: v0.24.8 머지 헤드 골든(그래프 select 스터디·①②③④ regress) — `pos_u` 없는 스냅샷 전 산출물·input_sha256 동일.
 16. 해시: spatial 일 때만 `_cfg_hash` 에 load_follow, 해시 밖 키 변경 = 불변, 복제 = 원 블록.
@@ -305,8 +306,11 @@
 ## 11. C1 구현 보정 기록(PU-C1-1~10 — work/findings.md 에서 옮김, 통합 2026-11-26)
 - PU-C1-1 (§3·§5-13) U 기저는 선택 단위(select/<sha12>/basis.npz·basis.bin·basis.json·derived.npz)에 U 가능한 비드마다 들어간다(프런트 3D
   미리보기 basis.bin 이 U 를 보여야 하므로 — §4). 그래서 pos_u 블록이 있는 스냅샷은 U 변수 0개여도 이 선택 파일들과 params.json·derived.json
-  이 달라진다(basis.json cfg_sha256 은 §3 `_sel_cfg_sha += pos_u` 로도 달라짐). 안·순위·결과·prep·3D·done input_sha256 은 골든과 같음(시험
+  이 달라진다(basis.json cfg_sha256 은 §3 `_sel_cfg_sha += pos_u` 로도 달라짐). 안·순위·결과·prep·3D 는 골든과 같음(시험
   test_pos_u_golden — 선택 파일은 pos_u 키·U 행을 뺀 내용이 같은 세계와 같음). 계약 §5-13 문구를 "선택 단위 파일 + params.json" 으로 보정 필요.
+  **정정(INT-6)**: 위 "done input_sha256 같음" 은 골든 세계의 비드가 모두 U_ONE_SIDE(U 기저 없음)여서 성립했다. U 가능한 비드가 있으면 U 기저가
+  basis 에 들어가 done.json input_sha256·selection.json(doe·best) basis_sha256·report.html 이 달라짐(결과·순위 동일) — 채널 모형 시험
+  `test_channel_pos_u_block_u0_allowed_diffs` 가 허용 차이 목록을 고정. pos_u 블록 없는 옛 스냅샷은 바이트 동일.
 - PU-C1-2 (§1.1·§1.2) graph.json segments 에 `closed` 필드가 없다 → U_CLOSED 판정 = 패키지 `morph.u_closed`(접합 없음 ∧ 골격 끝-시작 ≤ 2h).
 - PU-C1-3 (§1.3) params U 행 dir{xi, eta} 는 그래프 판 평면 frame(e1·e2) 성분 — params_rows_v2 에는 ESL frame 이 없음. dir_text 의 곡선 판정 =
   골격 누적 회전 ≥ 30°(section.U_CURVE_DEG, 계약에 기준 없음).

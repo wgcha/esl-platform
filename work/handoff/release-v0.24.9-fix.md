@@ -4,4 +4,5 @@
 ## 상태
 - [x] 1: stages `_jig_support_rows`(코어 jig_bc.support_rows) — `_jig_view3d`·`_jig_view3d_src`·`_jg_view3d_src` 모두. 시험
   tests/doe/test_jig_view3d_src.py::test_fixed_3d_marks_int5(세 방식 × 스터디 3D post·regen × Case 3D = npz BC), 골든은 v0244 고정 3D manifest 만 제외.
-- [ ] 2 · [ ] 3 · [ ] 4 · [ ] 5 · [ ] 전체 시험
+- [x] 2: 계약 §5-13·§11 PU-C1-1 정정(INT-6), decisions INT-5·6, 시험 test_pos_u_golden.py::test_channel_pos_u_block_u0_allowed_diffs(80 s).
+- [ ] 3 · [ ] 4 · [ ] 5 · [ ] 전체 시험
