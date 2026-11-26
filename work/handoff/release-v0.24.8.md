@@ -1,4 +1,4 @@
-# HANDOFF release/v0.24.8 — C1 코어(격자 지그, 계약 docs/contracts/esl_jig_grid_map.md)
+# HANDOFF release/v0.24.8 — C1 코어 **완료**(2026-11-26)(격자 지그, 계약 docs/contracts/esl_jig_grid_map.md)
 
 ## 끝난 일
 1. 골든(옛 바이트, 코드 변경 전): tests/doe/golden_v0248_c1/ + test_jig_grid_golden.py, 합성 세계 tests/doe/synth_jig_grid.py
@@ -14,7 +14,7 @@
    test_jig_grid_golden.py(3). work/findings.md = 계약 보정 필요 2건.
 
 ## 남은 일(순서)
-- 메인 결정: findings 1(§1.3-3 골격 밖 띠 노드 외삽 — jd 다른 메시 ΔΠ 0.54 → 0.021), 2(§4.2 ΔΠ_5 ≤ 0.02 → 측정 2.5~3.5e-2).
+- C1 없음(결정 JG-16~19 반영·xfail 0). 통합: conv_warn 기본 0.05 를 pydantic BeadDoeRankJigGridCfg·yaml 2개에 맞춤.
 - 통합: CHANGELOG·user.md·decisions 확정(메인).
 
 ## 시험 상태

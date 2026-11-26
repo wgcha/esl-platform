@@ -136,9 +136,7 @@ def test_identity_kink_rank2_auto():
 
 
 # ---------------------------------------------------------------- V-0248-JG-3 수렴(§4.2) · V-9 분해 재사용
-# 측정(2026-11-26, A h5 → 같은 형상 h3): ΔΠ_5 = 2.5e-2(jd)·3.5e-2(js) > 0.02, ΔΠ_10 = 3.6e-2·4.9e-2 ≤ 0.05, MAC ≥ 0.9999 — §4.2 허용치
-# 초과(5 mm 셀 최소노름 재분배)를 완화하지 않고 보고(work/findings.md "계약 보정 필요" — 메인 결정 대기). 분해 0 추가는 아래 시험이 따로 단언.
-@pytest.mark.xfail(strict=True, reason="계약 §4.2 ΔΠ_5 ≤ 0.02 초과 측정(2.5e-2·3.5e-2) — 메인 결정 대기(findings)")
+# D-0.24.8-JG-17: ΔΠ_s = 격자 크기 민감도(3 mm 오차 아님 — 오차 근거 §4.1·§4.3), 기준 ΔΠ_5 ≤ 0.05·ΔΠ_10 ≤ 0.07·MAC ≥ 0.995.
 def test_convergence_remesh_and_no_extra_factor(capsys):
     A = G.plate(5.0)
     S = G.plate(3.0, tri_cols=6, node_base=200001)
@@ -163,14 +161,11 @@ def test_convergence_remesh_and_no_extra_factor(capsys):
     with capsys.disabled():
         print(f"\nGRIDMAP conv {({f'{k[0]}@{k[1]:g}': (f'{v[0]:.2e}', f'{v[1]:.6f}') for k, v in meas.items()})}")
     for (src, s2), (dpi, mc) in meas.items():
-        assert dpi <= (0.02 if s2 == 5.0 else 0.05) and mc >= 0.995, (src, s2, dpi, mc)
+        assert dpi <= (0.05 if s2 == 5.0 else 0.07) and mc >= 0.995, (src, s2, dpi, mc)
 
 
 # ---------------------------------------------------------------- V-0248-JG-4 다른 메시 정확도(§4.3)
-# 측정(2026-11-26): 스프링 ΔΠ 2.5e-2·Δumax 2.8e-2·MAC 0.9997 ✓, 강제 변위 ΔΠ 0.54·Δumax 0.12 ✗, 면적비 0.64~0.80(< 0.67) ✗ —
-# 원인 = §1.3-3 골격 보간이 골격 밖 띠 노드(점·변 최근접, 거리 ≤ r_cap)에 최근접 값(0차)을 줘 g 오차 2.5e-2·umax → 강제 변위 반력 폭증.
-# 보정안(면 무게중심 비클립 외삽) 측정 = jd 2.1e-2·js 1.2e-2(work/findings.md). 완화하지 않고 보고.
-@pytest.mark.xfail(strict=True, reason="계약 §4.3 강제 변위 ΔΠ 0.54·면적비 0.64 측정 — §1.3-3 보정 필요(findings)")
+# D-0.24.8-JG-16: 골격 밖 띠 노드 g = 최근접 골격 요소 선형 외삽, 면적비 기준 = [1/area_ratio_warn, area_ratio_warn] = [0.5, 2].
 def test_cross_mesh_accuracy(capsys):
     A = G.plate(5.0)
     S = G.plate(3.0, tri_cols=10, node_base=300001)
@@ -190,7 +185,7 @@ def test_cross_mesh_accuracy(capsys):
                      "mac_vs_field": _mac(uS, ut)}
     with capsys.disabled():
         print(f"\nGRIDMAP cross-mesh {meas}")
-    assert tie["n_miss"] == 0 and 0.67 <= tie["area_ratio_min"] and tie["area_ratio_max"] <= 1.5
+    assert tie["n_miss"] == 0 and 0.5 <= tie["area_ratio_min"] and tie["area_ratio_max"] <= 2.0
     for src in ("jig_disp", "jig_spring"):
         m = meas[src]
         assert m["dPi"] <= 3e-2 and m["dumax"] <= 3e-2 and m["mac_vs_field"] >= 0.99, (src, m)

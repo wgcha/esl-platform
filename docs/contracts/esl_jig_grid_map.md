@@ -94,11 +94,12 @@
 1. **맞춤 하중**(합력·모멘트 보존): F_S = 기존 하중 자리 `_plan_loads(c, plan, did, dst_S, ("cell", s), cache, srcs=[ltm.src_load(eid, raw, f_<src>[i], F_A)])` — `cell_loads` + LT-4 `conserve`(합력·모멘트 = A 값). dst_S = 그 형상 ESL 하중과 같은 dst(영역 마스크·frame·h — `c._lt_last`), W 캐시 공유(같은 원본 메시 sha). s ≈ 형상 h(3 mm)이면 칸 대부분 노드 < 3 → 그 칸 A 하중은 W(일 등가) — 기존 셀 규칙 그대로(`small_frac` 로 보임). 보존 후 dF_rel 또는 dM_rel > `load_resid_warn` = 경고 `JIG_GRID_LOAD_RESID`(계산 계속).
 2. **tie 잡기**(구멍 가장자리·반경·법선): 형상 노드 ŷ 의 골격 거리 d = min(점·변·면 정확 거리 — 후보 = cKDTree(P) 반경 r_cap + 최대 골격 변 길이, 점-삼각형 = Ericson).
    - r_cap = `tie_capture_rel` × max(h_T, h_S), h_S = 골격 점에서 2·h_T 안 형상 노드에 닿는 형상 변 길이 중앙값.
-   - 띠(band): d ≤ r_cap ∧ 법선 맞음 → 잡음. 법선 맞음 = 형상 노드 법선(`node_weights(S).normal`, R_plᵀ 로 A 좌표)이 최근접 골격 점 구속 방향 중 하나와 |·| ≥ cos(`tie_normal_deg`) — 옆 플랜지·벽 노드 제외(`n_reject_normal`).
+   - 띠(band): d ≤ r_cap ∧ 법선 맞음 → 잡음. 법선 맞음 = 형상 노드 법선(`node_weights(S).normal`, R_plᵀ 로 A 좌표)의 최근접 골격 점 구속 방향 **부분공간(랭크 r) 사영 노름** ≥ cos(`tie_normal_deg`)(랭크 1 = |d̂·m|, 랭크 3·translation = 항상 맞음 — D-0.24.8-JG-19) — 옆 플랜지·벽 노드 제외(`n_reject_normal`).
    - 클러스터 q 에 띠 노드 0 → 법선 맞는 형상 노드 중 q 점까지 최근접 1개(≤ `tie_snap_rel` × max(h_T, h_S)) 잡음(snap). 그래도 0 = miss.
    - 형상 tie 행 = `jig_bc.tie_rows(mesh_S, idx, td, kink_deg)` — **구속 방향 = 형상 자기 법선**(td = Case tie_dofs, kink_deg = 스냅샷 rank.jig.normal_kink_deg). A 법선은 잡기 판정에만.
    - 클러스터 진단: n_a·n_s·면적비 a_q = Σ_S A / Σ_A A·via(band|snap|miss)·스프링 배율 c_q(6.). a_q ∉ [1/`area_ratio_warn`, `area_ratio_warn`] = 정보 `JIG_GRID_AREA_RATIO`. miss ≥ 1 = 경고 `JIG_GRID_TIE_MISS`, miss 클러스터 비 > `tie_miss_frac_max` = **그 형상 그 묶음 방식 실패**(per_esl null, 같은 코드).
 3. **강제 변위 g**(Kabsch 강체 제거 u_rel 의 tie 구속 방향 성분): ũ(ŷ) = 골격 보간(최근접 골격 요소: 면 = 무게중심, 변 = 선형, 점·snap = 그 값) of `tie_u_<frame>`, g_r = d̂_r · R_pl ũ(형상 tie 행 r). A 를 형상으로 넣으면 tie 노드 = 골격 점 → g 정확.
+   - **골격 밖 띠 노드 = 선형 외삽**(D-0.24.8-JG-16, 검토 개정 2): 최근접이 변·점이고 거리 > 0 인 band 노드는 최근접 골격 점에 닿는 면 중 바깥 정도(음의 무게중심 합)가 가장 작은 면의 **자르지 않은 무게중심**(평면 사영)으로 보간, 닿는 면이 없으면 변 = 선분 방향 자르지 않은 선형, 점·snap = 그 값. 외삽 거리 ≤ r_cap(잡힌 노드만). 거리 0(항등)은 그대로. 근거: 0차(최근접 값)면 g 오차 = 기울기 × 거리(합성 2.5e-2·umax) → 강제 변위 반력 폭증(ΔΠ 0.54), 외삽 = 1.0e-3·umax·ΔΠ 2.1e-2. κ(스프링, §1.3-6)는 자른 무게중심 그대로(양수 유지 — 클러스터 합 보존이라 결과 무관).
 4. **3-2-1 재선정**: 형상 자기 3-2-1 = 그 형상 순위 해에 쓴 지지(④ `_lt_design` 지지 — d000 auto·형상 LT-7 이전, 옛 ③ `design_target`) → `jig_bc.aux_rows(X_S, spc_of(mesh_S, sup_S), tie_S, td, dup_deg)`(판 평면 = 형상 PCA — 다른 출처와 같은 3-2-1, esl_jig_case §3.3). 값 = d̂·R_pl ũ(ŷ)(5. 복셀 표본 — 면내 강체 위치만 정하고 변형·에너지는 불변). A 3-2-1 점과 거리 = 진단 `sup_shift_mm`.
 5. **복셀 표본(노드 보간)** ũ(ŷ): 이웃 (2·`sample_nbr`+1)³ 복셀 중 |N_v·m_S| ≥ cos(`sample_normal_deg`)(없으면 법선 조건 없이 + `n_normal_relax`), w_v = A_v·exp(−(‖X_v − ŷ‖/s)²), 접평면(m_S ⊥ 의 t1, t2) 2D 선형 가중 최소제곱 u ≈ c + B·[(X_v−ŷ)·t1, (X_v−ŷ)·t2] → c. 후보 < 3 이거나 모멘트 행렬 최소 고유값 < (0.1·s)²·Σw = 가중 평균(`n_const`). 후보 0 = 이웃 ×2 한 번(`n_expand`), 그래도 0 = **격자 밖**(값 0, `n_outside`, 정보 `JIG_GRID_OUTSIDE`).
 6. **스프링 k = 설계 무관**(D-0.24.8-JG-14 — 스프링 = 이웃 부품 강성이라 설계가 바꿀 수 없는 값; 같은 메시 스터디가 k 를 기준 K₀ 로 1회 구해 모든 안에 고정하는 규칙 `stages.py:4294-4296` 과 같은 뜻). 스프링 출처만, 엔트리마다:
@@ -115,7 +116,7 @@
 ### 1.4 실패 · 경고 · 정보 코드 (새 9개 = JIG_GRID_* 8 + 정보 JIG_GRID_RANK — 원본 `resources/doe_messages.json`, 화면 대체 `api/doe.ts`)
 | 코드 | 등급 | 위치 | 조건 → 결과 |
 |---|---|---|---|
-| `JIG_GRID_SOURCE_MISSING` | 경고 | prep | 엔트리 Case 지그(그 방식) 없음·status ≠ ok(find 사유 그대로 detail) → 그 방식 fallback(전 형상 null). 같은 묶음 안 스프링 k 불일치(§1.2)도 이 코드 — 그 엔트리만 fallback, reason 문자열로 구분. 문구(조치 포함): "엔트리 <이름> 의 Case 에 {방식} 지그 결과가 없습니다 — 그 Case 에서 ③ ESL 을 다시 실행(v0.24.4 이후)한 뒤 스터디를 복제하세요. 지금은 재풀이(solve) 순위입니다". 방식 일부만 없으면 있는 방식으로 진행, 순위 출처 = ok 인 첫 방식(§3) — 모든 방식이 없을 때만 solve |
+| `JIG_GRID_SOURCE_MISSING` | 경고 | prep | 엔트리 Case 지그(그 방식) 없음·status ≠ ok(find 사유 그대로 detail) → 그 방식 fallback(전 형상 null). 같은 묶음 안 스프링 k 불일치(§1.2)도 이 코드 — 그 엔트리만 fallback, reason 문자열로 구분. 문구(조치 포함): "엔트리 <이름> 의 Case 에 {방식} 지그 결과가 없습니다 — 그 Case 에서 ③ ESL 을 다시 실행(v0.24.4 이후)한 뒤 스터디를 복제하세요. {rank_note}(사유 {reason})" — rank_note = "지금은 재풀이(solve) 순위입니다"(ok 방식 없음) | "순위는 지그 {다음 ok 방식} 로 매깁니다"(D-0.24.8-JG-19). 결과 경고 = {code, message, entry, entry_id, method, reason}. 방식 일부만 없으면 있는 방식으로 진행, 순위 출처 = ok 인 첫 방식(§3) — 모든 방식이 없을 때만 solve |
 | `JIG_GRID_TIE_MISS` | 경고 | 형상 | 골격 클러스터를 형상에서 못 잡음(n_miss/n_clusters). 비 > tie_miss_frac_max = 그 형상 그 방식 실패 |
 | `JIG_GRID_OUTSIDE` | 정보 | 형상 | 3-2-1 표본이 격자 밖(값 0 — 면내 강체 위치만 영향) |
 | `JIG_GRID_LOAD_RESID` | 경고 | 형상 | 보존 후 합력·모멘트 오차 > load_resid_warn(계산 계속) |
@@ -217,10 +218,13 @@
 - 크기 [s] + `conv_mm`(기본 [5, 10]) — **분해 재사용**(BC 패턴이 s 와 무관: 잡기·3-2-1 은 메시 척도로, k 는 골격 κ·K_q 로만 정함) → 크기마다 하중 재사상·값 재표본·해 K 회만.
 - 보고(방식·엔트리 최악): ΔΠ_s = \|C_mix(s) − C_mix(3)\|/E_0, Δumax_s, MAC(u_s, u_3). `JIG_GRID_CONV` = ΔΠ_5 > `conv_warn`(0.02).
 - 이 ΔΠ_5(방식·엔트리 최악)가 격자 순위의 noise_floor 하한 재료다(§3 불확실 구간 — 다른 메시 매핑·이산화 오차는 형상 간 차이와 같은 자릿수일 수 있음: §4.3 목표 Π 3e-2 vs 현장 #88 설계 차 ±5 %).
-- 시험 기준(합성 — 같은 형상 다시 메시, V-0248-JG-3): ΔΠ_5 ≤ 0.02, ΔΠ_10 ≤ 0.05, MAC ≥ 0.995.
+- **ΔΠ_s 는 격자 크기 민감도(상한 추정)이지 3 mm 의 오차가 아니다** — 실제 오차 근거는 §4.1 항등(h 1.5 ΔΠ 5.7e-5)·§4.3 다른 메시(D-0.24.8-JG-17).
+- 시험 기준(합성 — 같은 형상 다시 메시 h 3, V-0248-JG-3, 측정 후 확정): ΔΠ_5 ≤ 0.05, ΔΠ_10 ≤ 0.07, MAC ≥ 0.995(측정 ΔΠ_5 3.4e-2, ΔΠ_10 4.8e-2, MAC ≥ 0.9999). `conv_warn` 기본 0.05.
 
 ### 4.3 다른 메시 정확도 (V-0248-JG-4 — 수치는 측정 후 확정)
-- A(h 5) Case 지그 → 같은 형상 다른 메시(h 3, 쿼드·삼각 섞음, 구멍 고리 다른 분할): Π ≤ 3e-2·E, MAC ≥ 0.99, umax ≤ 3e-2, 잡기 miss 0, 면적비 [0.67, 1.5].
+- A(h 5) Case 지그 → 같은 형상 다른 메시(h 3, 쿼드·삼각 섞음, 구멍 고리 다른 분할): Π ≤ 3e-2·E, MAC ≥ 0.99, umax ≤ 3e-2, 잡기 miss 0, 면적비 [1/area_ratio_warn, area_ratio_warn] = [0.5, 2](정보 코드 임계와 같은 값 — 스프링 k 는 클러스터 합 보존이라 면적비 무관).
+- 측정(§1.3-3 외삽 적용 후): jd ΔΠ 2.1e-2·Δumax 6.4e-3·MAC 0.99999, js 1.2e-2·1.2e-2·0.999999, 면적비 0.64~0.80, miss 0.
+- 메시만 다른 같은 형상(D-0.24.8-JG-18): 기준 h 3 ↔ 다른 h 3 메시(칸 69·삼각 20열) 개선율 −1.2e-3 < noise_floor 3.4e-2 → 행 noise 표식. 참고: 기준이 Case 메시(h 5)·형상 h 3 이면 메시만의 개선율 ≈ 2 %(noise_floor = 하한 0.01 — d000 ΔΠ_5 가 h 5 기준에선 6e-5) — 기준 STEP(같은 메싱) 권장.
 
 ---
 
@@ -257,7 +261,7 @@
 | sample_nbr | 1 | 1..3 | 안 |
 | sample_normal_deg | 45.0 | (0, 90] | 안 |
 | area_ratio_warn | 2.0 | > 1 | 밖 |
-| conv_warn | 0.02 | > 0 | 밖 |
+| conv_warn | 0.05(D-0.24.8-JG-17 측정 후 확정) | > 0 | 밖 |
 | frame_shift_warn | 0.5 | > 0(× cell_mm) | 밖 |
 | load_resid_warn | 1.0e-6 | > 0 | 밖 |
 | noise_floor_min | 0.01 | [0, 0.2] | 밖(표시 판정 — 정렬 불변, §3) |
@@ -351,7 +355,7 @@
 - **Q-JG-2 지그 출처** — 기본: Case 04_esl 지그 결과(맞춤 하중·tie·α = Case 설정, 항등 기준과 같음, 추가 맞춤 비용 0). 대안: 스터디가 A 메시에서 rank.jig 설정으로 다시 맞춤(Case 와 다른 설정 반영 가능, A 분해·deck 읽기 +수 분).
 - **Q-JG-3 ④·옛 ③ 새 스터디 기본 순위** — 기본: rank.metric jig 그대로 → 격자 지그(ok 인 첫 방식 — 기본 jd), 실패면 solve. 대안: solve 유지 + 지그는 탭 비교만(순위 불변).
 
-## 12. 결정 요약 — 전문 `docs/decisions.md` 2026-11-25 D-0.24.8-JG-1~15(14·15 = 검토 개정 1).
+## 12. 결정 요약 — 전문 `docs/decisions.md` 2026-11-25 D-0.24.8-JG-1~15(14·15 = 검토 개정 1), 2026-11-26 D-0.24.8-JG-16~19(검토 개정 2 — 구현 측정).
 
 ## 13. 후속 (R-JG-n)
 - R-JG-1 실행 중 A 왕복 자기 점검(A→격자→A 해, A 분해 +1 — 설정 끔 기본으로 추가 검토).
@@ -367,3 +371,9 @@
 - 격자 순위 noise_floor = max(ΔΠ_5, noise_floor_min 0.01) → 기존 rank noise 표식 — §3·§4.2·§5·§6·§7.1·§9-22.
 - `JIG_GRID_SOURCE_MISSING` 조치 문구, 순위 출처 = ok 인 첫 방식 — §1.4·§3.
 - 앞뒤 버전 접점 — §10.2(v0.24.7)·§10.3(v0.24.9).
+
+## 15. 개정 2 — 구현 측정 반영 (2026-11-26, D-0.24.8-JG-16~19)
+- §1.3-3 골격 밖 띠 노드 g = 최근접 골격 요소 선형 외삽(JG-16), §4.3 면적비 기준 [0.5, 2](= area_ratio_warn).
+- §4.2 ΔΠ_s = 민감도 상한 추정, 기준 ΔΠ_5 ≤ 0.05·ΔΠ_10 ≤ 0.07·MAC ≥ 0.995, `conv_warn` 기본 0.05(JG-17). 순위 noise_floor = max(ΔΠ_5, noise_floor_min) 그대로.
+- 메시만 다른 같은 형상의 개선율이 noise_floor 안·noise 표식(JG-18, 시험 고정).
+- 구현 메모(JG-19): 법선 판정 = 구속 방향 부분공간 사영 노름, 지그 종류 grid 는 하중 전달 스냅샷(doe.load_transfer)이 있을 때만(격자 지그 하중 = 공용 실행기 셀 전달 — 새 스터디는 항상 있음), `tp.jig_kind` 의 grid_snap = bool 또는 스냅샷 rank.jig_grid 블록(dict — enabled 거짓 = none), `grid_map.hash_view` 는 블록 안 schema·enabled 를 뺌, SOURCE_MISSING 문구 {rank_note}, JIG_GRID_* 결과 경고 = {code, message(+ 필드)}.

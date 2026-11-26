@@ -390,3 +390,21 @@ def test_cost_record(capsys):
     with capsys.disabled():
         print(f"\nJG cost 120×80 ({S['x0'].shape[0]} 노드): 격자 지그 {tg:.2f}s(분해 2 · {res['factor']['seconds']:.2f}s) vs "
               f"3-2-1 평가 {tb:.2f}s → 비 {tg / max(tb, 1e-9):.2f}")
+
+
+# ---------------------------------------------------------------- D-0.24.8-JG-18 메시만 다른 같은 형상 = 격자 순위 차이가 noise_floor 안
+def test_remesh_only_within_noise_floor(tmp_path, capsys):
+    """기준 d000 = 같은 형상 h 3 메시(기준 형상 — 메시 입력), d001 = 같은 형상 다른 h 3 메시(칸 69·삼각 20열): 개선율 = 메시만의 차."""
+    shapes = (("d000", {"h": 3.0, "tri_cols": 6, "node_base": 100001}),
+              ("d001", {"h": 200.0 / 69.0, "tri_cols": 20, "node_base": 200001}))
+    doe, out, _A = G.cmp_world(str(tmp_path), rank=G.rank_snap(grid=True), shapes=shapes)
+    doe["shapes"][0]["reference"] = True
+    doe["reference_source"] = "step"
+    doe.pop("base")
+    res = G.run_cmp(doe, out)["result"]
+    assert res["metric_effective"] == "jd" and res["reference_source"] == "step"
+    nf = res["noise_floor"]
+    x = next(r for r in res["ranking"] if r["id"] == "d001")
+    with capsys.disabled():
+        print(f"\nJG remesh-only(h3 vs h3): nf {nf:.4f} · improvement {x['improvement']:.4f} · noise {x['noise']}")
+    assert abs(x["improvement"]) < nf and x["noise"] is True

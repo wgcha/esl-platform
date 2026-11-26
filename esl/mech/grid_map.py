@@ -473,6 +473,8 @@ def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: flo
         via = np.r_[via, np.full(len(add), VIA_SNAP, np.int64)]
     o = np.argsort(idx, kind="stable")
     idx, kind, elem, dist, pts, w, qn, via = idx[o], kind[o], elem[o], dist[o], pts[o], w[o], qn[o], via[o]
+    w_clip, pts_clip = w.copy(), pts.copy()
+    w, pts = _extrapolate(skel, Xs, idx, kind, dist, via, pts, w)
     cl = []
     na = np.bincount(skel["q"], minlength=skel["n_q"])
     aa = np.bincount(skel["q"], weights=skel["area"], minlength=skel["n_q"])
@@ -483,8 +485,48 @@ def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: flo
         v = VIA_SNAP if q in snapq else (VIA_BAND if ns[q] else VIA_MISS)
         cl.append({"q": q, "n_a": int(na[q]), "n_s": int(ns[q]), "area_a": float(aa[q]), "area_s": float(as_[q]),
                    "via": VIA_NAMES[v], "miss": v == VIA_MISS})
-    return {"idx": idx, "elem_kind": kind, "elem": elem, "pts": pts, "w": w, "dist": dist, "via": via, "q": qn,
+    return {"idx": idx, "elem_kind": kind, "elem": elem, "pts": pts, "w": w, "w_clip": w_clip, "pts_clip": pts_clip, "dist": dist,
+            "via": via, "q": qn,
             "clusters": cl, "n_reject_normal": n_rej, "r_cap": r_cap, "h_S": h_S, "normal_A": mA, "area_S": aS}
+
+
+def _extrapolate(skel: dict, Xs, idx, kind, dist, via, pts, w):
+    """골격 밖 띠 노드(D-0.24.8-JG-16 — 최근접이 변·점, 거리 > 0, band)의 보간 → 선형 외삽: 최근접 골격 점에 닿는 면 중 바깥 정도
+    (음의 무게중심 합)가 가장 작은 면의 비클립 무게중심(평면 사영), 면이 없으면 변 = 선분 방향 비클립 선형, 점·snap = 그 값.
+    외삽 거리 ≤ r_cap(잡힌 노드만). 거리 0(A 를 형상으로 — 항등)은 그대로."""
+    w = w.copy()
+    pts = pts.copy()
+    tri, seg, Xp = skel["tri"], skel["seg"], skel["x"]
+    tptr, tix = _csr(tri, Xp.shape[0])
+    for i in np.flatnonzero((kind != ELEM_TRI) & (dist > 0) & (via == VIA_BAND)):
+        x = Xs[idx[i]]
+        near = int(pts[i, int(np.argmax(w[i]))])
+        cand = tix[tptr[near]:tptr[near + 1]]
+        best = None
+        for t in cand.tolist():
+            a, b, c = Xp[tri[t]]
+            nrm = np.cross(b - a, c - a)
+            ln = float(np.linalg.norm(nrm))
+            if ln <= 0:
+                continue
+            nrm /= ln
+            xp = x - float(np.dot(x - a, nrm)) * nrm
+            T = np.column_stack([b - a, c - a])
+            lam = np.linalg.lstsq(T, xp - a, rcond=None)[0]
+            bc = np.array([1.0 - lam.sum(), lam[0], lam[1]])
+            out = float(-np.minimum(bc, 0.0).sum())
+            if best is None or (out, t) < best[:2]:
+                best = (out, t, bc)
+        if best is not None:
+            w[i] = best[2]
+            pts[i] = tri[best[1]]
+        elif kind[i] == ELEM_SEG:
+            sa, sb = int(pts[i, 0]), int(pts[i, 1])
+            ab = Xp[sb] - Xp[sa]
+            den = float(ab @ ab)
+            tt = float((x - Xp[sa]) @ ab) / den if den > 0 else 0.0
+            w[i] = [1.0 - tt, tt, 0.0]
+    return w, pts
 
 
 def sample_tie(skel: dict, cap: dict, frame: str, k: int) -> np.ndarray:
@@ -612,7 +654,7 @@ def shape_spring_k(skel: dict, cap: dict, tie_S: dict, area_S, kappa, kq) -> dic
         raise EslError("INPUT_INVALID", "tie_S 행 노드가 잡힌 노드 밖")
     kap = np.asarray(kappa, dtype=np.float64)
     kqv = np.asarray(kq, dtype=np.float64)
-    kn = np.einsum("mj,mj->m", cap["w"], kap[cap["pts"]])
+    kn = np.einsum("mj,mj->m", cap.get("w_clip", cap["w"]), kap[cap.get("pts_clip", cap["pts"])])   # κ = 클립 보간(양수 유지)
     rn = np.bincount(pos, minlength=idx.size)
     aS = np.asarray(area_S, dtype=np.float64)
     kt = kn[pos] * aS[tn] / rn[pos]
