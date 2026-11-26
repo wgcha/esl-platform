@@ -53,7 +53,7 @@ export function VirtualBeadPanel({ ctrl, editable }: { ctrl: BeadSelectCtrl; edi
   const num = (key: keyof VbForm, label: string, extra?: { min?: number; max?: number; step?: number; ph?: string; title?: string }) => (
     <label className="field-inline" title={extra?.title}>
       <span>{label}</span>
-      <input type="number" className="doe-num short" aria-label={label} value={String(form[key])} min={extra?.min} max={extra?.max} step={extra?.step ?? "any"} placeholder={extra?.ph} disabled={ro} onChange={(e) => (key === "xi" || key === "eta" || key === "length" || key === "angle" ? coordEdit({ [key]: e.target.value }) : set({ [key]: e.target.value }))} />
+      <input type="number" className={`doe-num short${key === "r" ? " bs-vb-r" : ""}`} aria-label={label} value={String(form[key])} min={extra?.min} max={extra?.max} step={extra?.step ?? "any"} placeholder={extra?.ph} disabled={ro} onChange={(e) => (key === "xi" || key === "eta" || key === "length" || key === "angle" ? coordEdit({ [key]: e.target.value }) : set({ [key]: e.target.value }))} />
     </label>
   );
   return (

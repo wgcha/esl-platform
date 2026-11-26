@@ -4526,3 +4526,6 @@ details.card.fold > .fold-body {
   background: transparent;
   border: 1px solid var(--line);
 }
+.bs-vb-line .doe-num.bs-vb-r {
+  width: 6em;
+}
