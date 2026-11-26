@@ -494,10 +494,24 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_GRID_ON_CLONE: "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다",
   JIG_GRID_MESH_MISMATCH: "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요(메시가 다른 형상 {n_shapes}개는 차이 {nf} % 이내를 오차 범위로 표시)",
   JIG_GRID_MESH_MISMATCH_SHAPE: "이 형상은 기준과 메시가 달라 차이 {nf} % 이내는 오차 범위입니다(요소 변 {h} mm · 삼각 비율 {tri})",
+  LOAD_FOLLOW_SPATIAL: "위치 변수가 있어 하중을 공간에 고정했습니다({cell_mm} mm 셀) — 기준 포함 모든 안이 같은 경로",
   JIG_GRID_TIE_SNAP: "체결부 {n_clusters_max}곳을 노드 1개로만 잡았습니다(형상 {n_shapes}개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요",
 };
 /** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */
 export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE"]);
+/** v0.24.9 위치 U 정보 등급 코드(계약 §2.3·§1.1 — 서버가 level 을 안 줘도 ⓘ, 경고 개수 제외) */
+export const POS_U_INFO_CODES: ReadonlySet<string> = new Set(["LOAD_FOLLOW_SPATIAL", "PU_PARTIAL", "PU_LIN_SKIPPED"]);
+/** v0.24.9 위치 U 화면 문구 표(서버 text·message 가 없을 때의 대체 + 순위 정의 꼬리 — 한 곳) */
+export const POS_U_TEXT = {
+  label: "위치(U)",
+  aria: (bead: string) => `${bead} 위치 U`,
+  rankDef: (cellMm: number) => `하중 공간 고정(${cellMm} mm)`,
+  rangeRule: "위치 범위는 0 을 포함해야 합니다",
+  usable: (lo: number, hi: number) => `부호별 사용 가능 범위: (−) ${Math.abs(lo)} mm · (+) ${hi} mm`,
+};
+/** 순위 정의 문구 꼬리(계약 §2.3·§4): " · 하중 공간 고정({cell_mm} mm)" — spatial 결과만, 아니면 "" */
+export const loadFollowTail = (r: { load_follow?: { mode?: string | null; cell_mm?: number | null } | null } | null | undefined): string =>
+  r?.load_follow?.mode === "spatial" && r.load_follow.cell_mm != null ? ` · ${POS_U_TEXT.rankDef(r.load_follow.cell_mm)}` : "";
 /** JIG_GRID_* 대체 문구의 {필드} 채움(경고에 없으면 "–") */
 const fillJigTpl = (tpl: string, w: Record<string, unknown>): string => tpl.replace(/\{(\w+)\}/g, (_, k: string) => (w[k] != null && w[k] !== "" ? String(w[k]) : "–"));
 /** 격자 지그 스터디(jig.transfer === "grid") — 화면 문구가 격자 뜻으로 바뀌는 열 값 */
@@ -547,7 +561,7 @@ export const warnText = (w: { code: string; message?: string | null; level?: unk
   autoWarnText(w) ||
   CODE_TEXT[w.code] || SELECT_CODE_TEXT[w.code] || SM_CODE_TEXT[w.code] || (JIG_CODE_TEXT[w.code] && fillJigTpl(JIG_CODE_TEXT[w.code], w)) || w.code;
 /** v0.16.1 정보 수준 비드 안내(SR-D-25·28 — level "info"): ⚠ 개수에 넣지 않고 ⓘ 로 표시. v0.16.2 AUTO_GROUP_DROPPED·AUTO_SLOPE_DIFF 도 */
-export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && (AUTO_INFO.has(w.code) || JIG_GRID_INFO_CODES.has(w.code)));
+export const isInfoWarn = (w: { code?: string; level?: unknown }) => w.level === "info" || (w.level == null && !!w.code && (AUTO_INFO.has(w.code) || JIG_GRID_INFO_CODES.has(w.code) || POS_U_INFO_CODES.has(w.code)));
 
 // ---------------------------------------------------------------- v0.15.0 비드 직접 선택 문구(서버 문구가 없을 때만 — 원본 resources/doe_messages.json)
 export const SELECT_CODE_TEXT: Record<string, string> = {
@@ -864,11 +878,12 @@ export function droppedOneSide(spec: DoeSpec | null | undefined, params: DoePara
 
 const gr = (v: XY) => `${Number(v[0].toFixed(2))}~${Number(v[1].toFixed(2))}`;
 /** 변수 표 guard 꼬리표: limited·blocked·unchecked 만(ok·없음 = null) — 라벨·종류·툴팁 */
-export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules | null): { label: string; kind: "info" | "warn" | "neutral"; tip: string } | null {
+export function guardTag(g: DoeGuard | null | undefined, rules?: DoeShapeRules | null, type?: string): { label: string; kind: "info" | "warn" | "neutral"; tip: string } | null {
   if (!g || (g.state === "ok" && !(g.combo_scale != null && g.combo_scale < 1))) return null;
   if (g.state === "unchecked") return { label: "미점검", kind: "neutral", tip: "품질 점검 전 — 준비 표에 없는 변수라 미리보기 준비에서 점검합니다" };
   const why = g.reason ? `${guardReasonText(g.reason, g.value)}${guardLimit(g.reason, rules)}` : "";
-  const range = g.usable ? `${gr(g.from)} → ${gr(g.usable)} mm` : "";
+  // v0.24.9 U: 부호별 비대칭 usable 을 같은 꼬리표 툴팁에 풀어 보임(새 요소 없음)
+  const range = g.usable ? `${gr(g.from)} → ${gr(g.usable)} mm${type === "U" ? `\n${POS_U_TEXT.usable(g.usable[0], g.usable[1])}` : ""}` : "";
   const combo = g.combo_scale != null && g.combo_scale < 1 ? `\n다른 변수와 함께 바꿀 때 위험 — 공통 비율 ×${Number(g.combo_scale.toFixed(2))} 로 추가 축소` : "";
   if (g.state === "blocked") return { label: "막힘", kind: "warn", tip: `양쪽 모두 거의 움직일 수 없어 기본 체크를 해제했습니다${range ? `\n안전 범위 ${range}` : ""}${why ? `\n${why}` : ""}` };
   return { label: g.state === "ok" || (g.combo_scale != null && g.combo_scale < 1) ? "조합 축소" : "축소", kind: "info", tip: `품질 점검으로 기본 범위를 줄였습니다${range ? `\n${range}` : ""}${why ? `\n${why}` : ""}${combo}` };
@@ -1163,6 +1178,7 @@ export function rowProblem(p: Pick<DoeParam, "type">, r: ParamRow): string | nul
   if (!r.lo.trim() || !r.hi.trim() || !Number.isFinite(lo) || !Number.isFinite(hi)) return "숫자를 입력하세요";
   if (!(lo < hi)) return "하한 < 상한이어야 합니다";
   if ((p.type === "D" || p.type === "W") && lo <= 0) return "깊이·폭 하한은 0보다 커야 합니다";
+  if (p.type === "U" && !(lo <= 0 && hi >= 0)) return POS_U_TEXT.rangeRule;
   return null;
 }
 

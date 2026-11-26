@@ -25,6 +25,7 @@ import { selectionFromPick, sceneSelection } from "./selection";
 import type { SceneApi } from "./sceneApi";
 import { PartStage } from "./part/PartStage";
 import { buildSupportSpecs } from "./supports";
+import { markLegend } from "./supportMarks";
 import type { LoadView } from "./useLoadView";
 import { fallbackAllowed, type LoadComp } from "./sources";
 import { colorField, decodeValues, loadFieldOf, loadRangeTop, maxNorm3, type DecodedValues } from "./values";
@@ -262,7 +263,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   arrowKeysRef.current = arrows.map((a) => a.key);
   const sc = options?.supportColor ?? null;
   const supports = useMemo(() => {
-    const out = manifest ? buildSupportSpecs(manifest.supports, uForArrows, deformOn ? k : 0, manifest.bbox.diag) : [];
+    const out = manifest ? buildSupportSpecs(manifest.supports, uForArrows, deformOn ? k : 0, manifest.bbox.diag, deformOn ? k : 1) : [];
     return sc ? out.map((x) => ({ ...x, color: sc(x.vertex) ?? undefined })) : out;
   }, [manifest, uForArrows, deformOn, k, sc]);
   useEffect(() => {
@@ -367,7 +368,8 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const legendLabel = fo ? fo.label : unit === "mm" ? options?.dispLabel ?? dov?.label ?? "변위 |u| (mm)" : unit === "MPa" ? "면압 |Fn|/A (MPa)" : loadComp === "fmag" ? "|F| 하중 크기 (N)" : "|Fn| 면외 하중 (N)";
   const maxMark = markList.find((m) => m.text.startsWith("최대"));
   const maxLine = maxMark ? `최대 ${f3(field?.values[maxMark.vertex])} @N ${data?.glb.nodeIds ? data.glb.nodeIds[maxMark.vertex] : maxMark.vertex}` : null;
-  const controlProps = { store, hasBc, hasLoad, deformOn, compact };
+  const bcLegend = manifest && hasBc ? markLegend(manifest.supports) : null;
+  const controlProps = { store, hasBc, hasLoad, deformOn, compact, bcLegend };
   const hotkeys = {
     b: () => hasBc && planOf(planKey).layers.includes("bc") && store.set({ bc: !st.bc }),
     l: () => hasLoad && planOf(planKey).layers.includes("load") && store.set({ load: !st.load }),

@@ -1,7 +1,7 @@
 // 비드 DOE ② 비드·변수(esl_bead_doe.md §5·§12.2, BD-D-7): 비드별 D·W·U/V 포함 체크·범위(기본 = feasible), 범위 밖 경고 배지(차단 아님),
 // 하한 ≥ 상한·깊이/폭 ≤ 0 은 오류. DOE 방식·안 수(풀 팩토리얼은 수준)·시드 + 실제 안 수(POST /matrix). 방법·출처 ⓘ.
 import { useEffect, useRef, useState } from "react";
-import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, doeSourcesOk, guardTag, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
+import { DEPTH_FALLBACK_BADGE, METHOD_NAME, TYPE_NAME, W_ONE_SIDE_TAG, W_ONE_SIDE_TIP, W_UNAVAILABLE_LEAD, POS_U_TEXT, doeSourcesOk, guardTag, outsideFeasible, paramWPartial, rowProblem, warnText, wPartialTip, type ParamRow, type SpecForm } from "../api/doe";
 import type { DoeBead, DoeMatrixOut, DoeMethod, DoeMethodSources, DoeParam, DoeParamsOut, DoeSettingsOut, DoeShapeRules } from "../api/types";
 import { useBlobUrl } from "./DoeThumbGrid";
 import { Field } from "./ui";
@@ -162,7 +162,7 @@ function BlendField({ bead, opts, readOnly, resolved }: { bead: string; opts: Se
 /** v0.21.0 변수 이름 옆 꼬리표: W 부분("부분") · guard(축소·조합 축소·막힘·미점검) — 새 스냅샷 변수만(키 없으면 아무것도 안 그림) */
 function ShapeTags({ p, rules }: { p: DoeParam; rules: DoeShapeRules | null | undefined }) {
   const wp = paramWPartial(p);
-  const gt = guardTag(p.guard, rules);
+  const gt = guardTag(p.guard, rules, p.type);
   if (!wp && !gt) return null;
   return (
     <>
@@ -215,8 +215,10 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
   const byName = new Map(rows.map((r) => [r.name, r]));
   const upd = (name: string, patch: Partial<ParamRow>) => setRows(rows.map((r) => (r.name === name ? { ...r, ...patch } : r)));
   const grouped = new Set(data.params.flatMap((p) => p.group_members));
+  // v0.24.9 §4: U 행이 있을 때만 표 안 스크롤(.table-wrap.scroll) — 없으면 DOM·높이 불변
+  const hasU = data.params.some((p) => p.type === "U");
   return (
-    <div className="table-wrap">
+    <div className={hasU ? "table-wrap scroll" : "table-wrap"}>
       <table className="table compact doe-params" aria-label="비드 변수">
         <thead>
           <tr>
@@ -231,7 +233,8 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
         </thead>
         <tbody>
           {data.beads.map((b) => {
-            const ps = data.params.filter((p) => p.bead === b.id);
+            // 비드 안 순서 D·W·U 고정(서버 params 는 이름 정렬이라 D·U·W 로 옴 — U 가 없으면 순서 불변)
+            const ps = data.params.filter((p) => p.bead === b.id).sort((x, y) => (x.type === "U" ? 1 : 0) - (y.type === "U" ? 1 : 0));
             if (select && b.kind === "select") {
               const wp = ps.find((p) => p.type === "W");
               const wr = wp ? byName.get(wp.name) : undefined;
@@ -242,7 +245,7 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
                 <tr key={b.id} className="doe-bead-row">
                   <td colSpan={7}>
                     <span className="doe-bead-head">
-                      <b>{b.id.toUpperCase()}</b> <span>{b.name}</span>
+                      <b>{b.id.toUpperCase()}</b> <span title={b.u_reason?.text || undefined} data-testid={b.u_reason ? `u-reason-${b.id}` : undefined} data-code={b.u_reason?.code}>{b.name}</span>
                       <span className="small mono">
                         단 {b.n_tiers} · W {b.W_nom ?? "–"} ({b.W_min ?? "–"}–{b.W_max ?? "–"}) mm
                       </span>
@@ -263,7 +266,8 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
                 ...ps.map((p) => {
                   const r = byName.get(p.name) ?? { name: p.name, on: false, lo: "", hi: "" };
                   const why = rowProblem(p, r);
-                  const label = `${b.id.toUpperCase()} ${p.type === "D" ? `D${p.tier ?? ""}` : "W"}`;
+                  const isU = p.type === "U";
+                  const label = isU ? POS_U_TEXT.aria(b.id.toUpperCase()) : `${b.id.toUpperCase()} ${p.type === "D" ? `D${p.tier ?? ""}` : "W"}`;
                   const on = select.active === p.name;
                   return (
                     <tr key={p.name} className={`${why ? "bad-row " : ""}${on ? "bs-row-on" : ""}`} data-testid={`param-${p.name}`} aria-selected={on} onClick={() => select.onActive(p.name)}>
@@ -271,7 +275,7 @@ export function DoeParamTable({ data, rows, setRows, readOnly, beadPngUrl, selec
                         <input type="checkbox" aria-label={`${label} 포함`} checked={r.on} disabled={readOnly} onChange={(e) => upd(p.name, { on: e.target.checked })} />
                       </td>
                       <td>
-                        {p.type === "D" ? `깊이 D${p.tier ?? ""}` : "폭 W"} <span className="mono small muted">{p.name}</span>
+                        {p.type === "D" ? `깊이 D${p.tier ?? ""}` : isU ? POS_U_TEXT.label : "폭 W"}{isU && p.dir_text ? <span className="small muted" data-testid={`udir-${p.name}`}> {p.dir_text}</span> : null} <span className="mono small muted">{p.name}</span>
                         {p.group_members.length > 0 && <span className="small muted" title={`같은 값: ${p.group_members.join(", ")}`}> · 묶음 {[p.name, ...p.group_members].map((n) => n.split("_")[1]).join("+")}</span>}
                         <ShapeTags p={p} rules={shapeRules} />
                         <DepthTags p={p} b={b} data={data} />

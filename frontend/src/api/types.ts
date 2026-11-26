@@ -1855,6 +1855,12 @@ export interface View3dSupport {
   vertex: number;
   dof: string;
   x0: number[];
+  /** v0.24.9 지그 표식 방식(esl_bead_pos_u.md §10.2) — 없으면 옛 파일(dof 문자열 기호) */
+  kind?: "tie_fixed" | "tie_disp" | "tie_spring" | "aux_inplane" | "support321" | null;
+  /** 구속 방향: 단위 벡터 목록 [[x,y,z],…](법선 1개·꺾임 2개·면내 1~2개) 또는 전역 축 번호 1·2·3 */
+  dirs?: (number[] | number)[] | null;
+  /** 값: tie_fixed 0 · tie_disp g(방향별 배열 가능, mm) · tie_spring {k, g} · aux_inplane 지정값 */
+  val?: number | number[] | { k: number; g: number | number[] } | null;
 }
 export interface View3dRange {
   max: number;
@@ -3133,6 +3139,9 @@ export interface DoeStudyOut {
     select_schema?: 1 | 2 | null;
     /** v0.21.0 형상 규칙 스냅샷(esl_bead_shape_v021.md §2.1 — 옛 스터디 = 키 없음/null) */
     shape_rules?: DoeShapeRules | null;
+    /** v0.24.9 위치 U 설정 블록(새 스냅샷만 — 없으면 U 행 없음·하중 node) · 하중 공간 고정 설정 */
+    pos_u?: { schema: number; range_rel?: number; max_rel?: number; gap_rel?: number; hold_frac_max?: number } | null;
+    load_follow?: { schema: number; cell_mm: number } | null;
     /** v0.24.4 P3 스냅샷(옛 스터디 = 키 없음) */
     load_source?: string | null;
     load_source_check?: LoadSourceCheck | null;
@@ -3213,6 +3222,8 @@ export interface DoeBead {
   islands_n?: number | null;
   /** v0.24.7 W 사용 불가·기본 끔 사유(§4.1 — text 는 서버 문구 그대로, 화면 거울 없음). 사유 없음 = 키 없음/null */
   w_reason?: DoeWReason | null;
+  /** v0.24.9 U(위치) 사용 불가 사유(§1.2 — text 는 서버 문구 그대로). 사유 없음 = 키 없음/null */
+  u_reason?: DoeWReason | null;
 }
 /** v0.24.7 W 사유 1건 */
 export interface DoeWReason {
@@ -3225,6 +3236,16 @@ export interface DoeParamSection {
   cot_deg?: number | null;
   applied: boolean;
   reason?: string | null;
+}
+/** v0.24.9 result.load_follow */
+export interface DoeLoadFollowOut {
+  mode: "node" | "spatial";
+  cell_mm: number | null;
+  dF_max?: number | null;
+  dM_max?: number | null;
+  corr_rel_max?: number | null;
+  small_frac_max?: number | null;
+  d000_shift_rel?: number | null;
 }
 export interface DoeParam {
   name: string;
@@ -3247,6 +3268,11 @@ export interface DoeParam {
   section?: DoeParamSection | null;
   /** v0.24.7 W 행: "one" = 한쪽 입구 W1(floor_fixed 만) */
   w_side?: "one" | null;
+  /** v0.24.9 U 행(§1.3): ESL frame 평균 t⊥ 성분·방향 문구("+ξ 쪽"·"바깥쪽")·W_ref(mm)·대칭 묶음 부호 */
+  dir?: { xi: number; eta: number } | null;
+  dir_text?: string | null;
+  w_ref?: number | null;
+  group_signs?: Record<string, number> | null;
 }
 export interface DoeParamsOut {
   beads: DoeBead[];
@@ -3618,6 +3644,8 @@ export interface DoeResultOut {
   view3d_js_ref?: Record<string, string> | null;
   /** v0.23.2 지그 블록 없는 결과: 복제하면 지그가 계산되는가(블록 있으면 null) */
   jig_on_clone?: boolean | null;
+  /** v0.24.9 하중 공간 고정(esl_bead_pos_u.md §2.3) — 위치 U 변수가 있는 스터디만(없으면 키 없음 = node) */
+  load_follow?: DoeLoadFollowOut | null;
   /** v0.24.5 #88 후속: 이 모드의 계획 표 열 sm_jig — base = 지그 계산 모드, none = 이 모드는 지그 ESL 을 계산하지 않음(탭 사유를 이 값으로 고름), v0.24.8 grid = 다른 메시 스터디의 격자 매핑 지그(상태 판정은 base 와 같음). 모르는 조합 = null */
   jig_plan?: "base" | "grid" | "none" | null;
   /** v0.23.3 기준 d000 엔트리별 지그 진단(목표·맞춤·오차 3D + 값, esl_jig_view.md §1.5) — 사이드카 없으면 null */
