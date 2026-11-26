@@ -232,6 +232,8 @@
 - 이 모드에도 jd·js 3D(v0.24.6 사이드카·탭 재사용): 출처 표 RANK_SOURCES 행·키 `view3d_jd/_esl/_ref`·`view3d_js/…`·폴더 `<did>_<tag>`·`d000_<tag>_e<kk>`·`view3d_src_seconds` 그대로(백엔드 `RANK_V3D` 병합 불변).
 - 빌더 `_jg_view3d_src(c, t, results, shown, row)`: 비교 안 = shown 중 per_esl 이 모두 row.need 를 가진 형상, worst = `rk._agg(…, need)`(순위와 같은 함수), 응답 = **`_jg_shape(…, keep_u=True)` 재실행**(결정적 — 평가 때 값과 같음, C_mix 일치 시험), 메시·지지·영역 = 그 모드 실행 함수(`_view3d` 선례). 표식 = `jig_bc.support_marks(bc_node, bc_kind, sp_node, x0, smax)`(형상 인덱스). 실패 격리 = `VIEW3D_FAILED: <did>_<tag>` 경고만.
 - 다시 만들기(`_post_view3d`) = 같은 빌더(④ m = None). `jig_diag`(영역 진단 3D)는 없음(영역 없음 — 격자 모드 정상, R-JG-5).
+- **실제 화면 동작(통합 INT-5)**: ④ 는 응답 `jig_plan === "grid"` 일 때만 하중 정의 탭을 만든다(`DoeStudy.tsx` `tabs` — 옛 스냅샷 ④ = 지금처럼 탭 없음, 이 줄 하나만 안내: 아래 `JIG_GRID_ON_CLONE`). 격자 정보(`gridOf(result)` = jig.transfer "grid" ∧ jig.grid)를 Compare3D(`gridMm` — 조건 줄 꼬리 " · 격자 3 mm")와 DoeRanking(`grid` — 순위 정의 문구·오차 범위 %·noise 배지)에 넘긴다. 옛 ③ 은 원래 탭이 있다.
+- 정보 코드 `JIG_GRID_ON_CLONE`(통합 INT-4): jig_plan none ∧ jig_on_clone 참(옛 ④·옛 ③ 스냅샷, 설정 켜짐)이면 결과 응답 warnings 에 응답 때만 1건({level "info", message}; DB·산출물 저장 없음 — 옛 산출물 바이트 불변). 문구 원본 `resources/doe_messages.json`.
 - 탭 사유 문구(`JIG_STATE_TEXT.not_planned.whyMode` — jig_plan none = 옛 ④·옛 ③ 스냅샷만 남음) 갱신: 응답 `jig_on_clone`(아래) 참 = "이 스터디는 이 모드에서 지그 ESL 을 계산하지 않았습니다(v0.24.8 이전 스냅샷): {label} — 복제하면 Case 지그를 격자 매핑해 계산합니다", 거짓 = "… 설정 bead_doe.rank.jig_grid 가 꺼져 있어 복제해도 계산하지 않습니다". jig_plan "grid" = 지금 상태 판정(methods) 그대로. 탭 title(조건 툴팁) 지지 문구 끝에 " · 격자 {cell_mm} mm"(`jig.transfer == "grid"` 일 때만), 순위 정의 문구(DoeRanking — 같은 줄)에 "형상마다 Case 지그를 {cell_mm} mm 격자로 매핑(기준 d000) · 차이 {noise_floor·100} % 이내는 매핑 오차 범위"(뒤 구절 = 격자 순위일 때만, §3). 행 표식은 기존 `r.noise` 배지(`DoeRanking.tsx:232-236` "잡음 이내") 그대로 — 그 title 의 "③ 메시 잡음 바닥" 은 `jig.transfer == "grid"` 이면 "격자 매핑 오차 범위 {noise_floor}" 로(문구만). 새 버튼·새 줄 0.
 
 ---
@@ -355,7 +357,7 @@
 - **Q-JG-2 지그 출처** — 기본: Case 04_esl 지그 결과(맞춤 하중·tie·α = Case 설정, 항등 기준과 같음, 추가 맞춤 비용 0). 대안: 스터디가 A 메시에서 rank.jig 설정으로 다시 맞춤(Case 와 다른 설정 반영 가능, A 분해·deck 읽기 +수 분).
 - **Q-JG-3 ④·옛 ③ 새 스터디 기본 순위** — 기본: rank.metric jig 그대로 → 격자 지그(ok 인 첫 방식 — 기본 jd), 실패면 solve. 대안: solve 유지 + 지그는 탭 비교만(순위 불변).
 
-## 12. 결정 요약 — 전문 `docs/decisions.md` 2026-11-25 D-0.24.8-JG-1~15(14·15 = 검토 개정 1), 2026-11-26 D-0.24.8-JG-16~19(검토 개정 2 — 구현 측정).
+## 12. 결정 요약 — 전문 `docs/decisions.md` 2026-11-25 D-0.24.8-JG-1~15(14·15 = 검토 개정 1), 2026-11-26 D-0.24.8-JG-16~19(검토 개정 2 — 구현 측정), JG-20(noise_floor_min 0.03)·INT-1~7(통합).
 
 ## 13. 후속 (R-JG-n)
 - R-JG-1 실행 중 A 왕복 자기 점검(A→격자→A 해, A 분해 +1 — 설정 끔 기본으로 추가 검토).
@@ -377,3 +379,11 @@
 - §4.2 ΔΠ_s = 민감도 상한 추정, 기준 ΔΠ_5 ≤ 0.05·ΔΠ_10 ≤ 0.07·MAC ≥ 0.995, `conv_warn` 기본 0.05(JG-17). 순위 noise_floor = max(ΔΠ_5, noise_floor_min) 그대로.
 - 메시만 다른 같은 형상의 개선율이 noise_floor 안·noise 표식(JG-18, 시험 고정).
 - 구현 메모(JG-19): 법선 판정 = 구속 방향 부분공간 사영 노름, 지그 종류 grid 는 하중 전달 스냅샷(doe.load_transfer)이 있을 때만(격자 지그 하중 = 공용 실행기 셀 전달 — 새 스터디는 항상 있음), `tp.jig_kind` 의 grid_snap = bool 또는 스냅샷 rank.jig_grid 블록(dict — enabled 거짓 = none), `grid_map.hash_view` 는 블록 안 schema·enabled 를 뺌, SOURCE_MISSING 문구 {rank_note}, JIG_GRID_* 결과 경고 = {code, message(+ 필드)}.
+
+## 16. 통합 구현 메모 (2026-11-26, D-0.24.8-INT-1~7, JG-20)
+- 설정 거울: `conv_warn` 0.05·`noise_floor_min` 0.03(§7.1) — 코어 DEFAULTS = pydantic = yaml 2개, 백엔드 시험이 코어 DEFAULTS.rank.jig_grid 전체를 대조한다.
+- 백엔드 `jig_plan` = `tp.jig_kind` 호출. 응답 JIG_GRID_* 경고 dict 는 message 의 "CODE: " 머리·영문 꼬리를 뺀다(응답 때만). `jig.grid.warnings` = list[str].
+- 격자 순위 보기 키 = 코어 RANK_SOURCES `jig_disp`·`jig_spring`(metric jd·js), 3D 키 `view3d_jd*`·`view3d_js*`.
+- 합성 측정(코어, 기준 Case h 5 ↔ 형상 h 3 메시만 다름): 개선율 ≈ 2.0 % < noise_floor 3 % → noise 표식(시험 `test_case_mesh_ref_vs_h3_remesh_gets_noise_mark`). 같은 h 3 ↔ h 3 은 −1.2e-3(JG-18).
+- 시험: 코어 `tests/doe/test_jig_grid_*.py`·`tests/mech/test_grid_map.py`, 백엔드 `test_doe_v0248_b1_api.py`·`test_doe_v0248_core_e2e.py`, 프런트 `jig_grid.test.tsx`.
+

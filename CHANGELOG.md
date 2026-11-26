@@ -2,6 +2,23 @@
 
 사용자에게 보이는 변경만 적는다. 최신 버전이 위.
 
+## [0.24.8] - 2026-11-26
+### 추가
+- **④ 형상 직접 비교·옛 ③(안마다 다시 메시)에 지그 ESL**: Case 의 지그 변위·지그 스프링 결과를 3 mm 격자로 형상마다 매핑해 계산한다. 새 스터디의 [하중 정의] 에 지그 변위·지그 스프링 탭(3D 비교 포함)이 생기고, **순위 기준도 지그 변위(jd)** 가 된다(순위 정의 문구에 "격자 3 mm"). 기준 형상(d000)도 같은 격자 지그로 계산해 개선율을 낸다.
+- **순위의 "오차 범위" 표식**: 격자 순위에서 기준 대비 차이가 매핑 오차 범위(격자 크기 민감도와 하한 3 % 중 큰 값) 안인 행에 표식이 붙고, 순위 정의 문구에 그 % 가 보인다. 정렬은 그대로다.
+- 결과의 **격자 진단**: 형상별 tie 못 잡음 비·잡힌 면적비·d000 재현 MAC·격자 크기(5·10 mm) 수렴 ΔΠ·noise_floor. 정보 코드 `JIG_GRID_AREA_RATIO`·`JIG_GRID_FRAME_SHIFT`·`JIG_GRID_CONV`·`JIG_GRID_OUTSIDE`·`JIG_GRID_RANK`, 경고 `JIG_GRID_SOURCE_MISSING`(엔트리 Case 에 지그 결과 없음 — 그 Case 에서 ③ ESL 을 v0.24.4 이후로 다시 실행한 뒤 복제)·`JIG_GRID_TIE_MISS`·`JIG_GRID_LOAD_RESID`·`JIG_GRID_NO_REF`.
+- **옛 ④·옛 ③ 스터디 안내 1줄** `JIG_GRID_ON_CLONE`: "이 스터디는 지그 ESL 없이 계산됐습니다 — 복제하면 Case 지그를 격자 매핑해 계산합니다"(경고 줄에 정보로 표시, 저장 없음).
+- 설정 `bead_doe.rank.jig_grid`(`enabled`·`cell_mm` 3.0·`conv_mm` [5, 10]·tie 잡기 4키·`sample_nbr`·`sample_normal_deg`·`area_ratio_warn`·`conv_warn` 0.05·`frame_shift_warn`·`load_resid_warn`·`noise_floor_min` 0.03). 없으면 기본값.
+- API: `jig_plan` 값 `grid`, `DoeJigOut.transfer`·`grid`, `DoeJigMethodOut.grid`, 결과 경고 `JIG_GRID_*` 의 `message`.
+### 변경
+- 새 ④·옛 ③ 스터디의 순위 지표가 재풀이(solve) 대신 격자 지그 변위(jd)다(Case 지그 결과가 없으면 지금처럼 재풀이 순위 + `JIG_GRID_SOURCE_MISSING`). 같은 메시 모드(①②·새 ③)는 그대로다.
+### 현장 주의
+- **DB migration 없음**. 설정 키 추가(없으면 기본값 — 현장 `esl_platform.yaml` 에 적지 않아도 된다).
+- **옛 ④·옛 ③ 스터디는 그대로**(결과 바이트 동일). 지그 ESL 을 계산하려면 **복제**한다.
+- **엔트리의 Case 에 지그 변위·스프링 결과가 있어야 한다**(Case ③ ESL 을 v0.24.4 이후로 실행한 것). 없으면 `JIG_GRID_SOURCE_MISSING` 이 뜨고 순위는 재풀이로 나온다.
+- **격자 순위는 약 3 % 이내 차이를 오차 범위로 표시한다**(메시가 다른 형상 비교의 한계). 기준 형상도 형상들과 같은 방식으로 메시하면(기준 STEP 지정) 오차 범위가 줄어든다. 합성 측정: 같은 형상을 Case 메시(5 mm)와 3 mm 로 메시하면 개선율 약 2 % 가 나온다.
+- 형상당 평가 시간이 늘어난다(지그 분해 2회 추가 — 현장 확인표 `docs/manual/field_check_v0248.md` 에서 실측).
+
 ## [0.24.7] - 2026-11-25
 ### 추가
 - **깊이 동작 선택(강성 평가 스터디 ① 비드 직접 선택)**: 새 스터디의 시나리오 선택 아래에 라디오 "입구 고정(깊이면 좁아짐)" | "깊이면 폭 유지(입구 넓어짐)"가 생긴다(기본 = 깊이면 폭 유지, 설정 `bead_doe.depth_section`). 깊이면 폭 유지는 깊이를 바꿔도 비드 바닥 폭과 사면 각을 지키고 입구가 넓어진다(채널·필렛 포함). 스터디 제목 줄의 칩이 "깊이면 폭 유지" | "입구 고정" | "입구 고정(이전)"을 보여 준다.

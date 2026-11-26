@@ -647,6 +647,20 @@ $env:PGPASSWORD = $null
 - **작업 재시작**: `ESL-Backend`·`ESL-Worker`.
 - 응답 새 키: `GET /doe/settings` `depth_section`·`depth_section_notes`, 변수 표 `section`·`w_side`·`w_reason`(저장하지 않고 응답 때 계산 — 옛 스터디도 같음).
 
+
+### 4.8 v0.24.8 업데이트 안내(④·옛 ③ 격자 지그 ESL)
+
+**DB migration 없음.** 설정 키가 늘었지만 없으면 기본값이라 현장 `esl_platform.yaml` 은 고치지 않아도 된다. 업데이트(§3.0)와 `ESL-Backend`·`ESL-Worker` 재시작만 하면 된다. 현장 확인표: `docs/manual/field_check_v0248.md`. 계약 `docs/contracts/esl_jig_grid_map.md`.
+
+- **설정 `bead_doe.rank.jig_grid`**(새 스터디 스냅샷 `doe.rank.jig_grid` 에 고정 — 진행 중·옛 스터디 불변, `rank.jig` 가 켜져 있을 때만):
+  - `enabled`(true — false 면 새 ④·옛 ③ 스터디도 지그 ESL 을 계산하지 않음)·`cell_mm`(3.0 — 격자 칸, 해시 안)·`conv_mm`([5.0, 10.0] — d000 격자 크기 민감도 진단, 해시 밖, [] = 끔)
+  - tie 잡기: `tie_capture_rel`(0.25)·`tie_snap_rel`(0.75)·`tie_normal_deg`(30)·`tie_miss_frac_max`(0.1 — 못 잡은 비 초과 = 그 형상 실패)·`sample_nbr`(1)·`sample_normal_deg`(45)
+  - 경고 문턱(해시 밖): `area_ratio_warn`(2.0)·`conv_warn`(0.05)·`frame_shift_warn`(0.5)·`load_resid_warn`(1e-6)·`noise_floor_min`(0.03 — 순위 "오차 범위" 하한)
+  - 같은 이름이 `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml` 에 있고, 코어 DEFAULTS·pydantic 과 시험으로 같음을 확인한다.
+- **비용**: 형상마다 분해 2회·해 2K개가 추가된다(계약 §8 — 50k/100k/150k 노드 약 50/120/220 s 외삽). 피크 메모리는 분해 1개분. 실제 시간은 현장 확인표에서 잰다.
+- **전제**: 엔트리 Case 의 `04_esl` 에 지그 변위·스프링 결과(v0.24.4 이후 ③ ESL)가 있어야 한다. 없으면 `JIG_GRID_SOURCE_MISSING` 경고와 함께 재풀이 순위. 서버는 Case 폴더·입력을 읽기만 한다.
+- 응답 새 키: `GET /doe/studies/{id}/results` 의 `jig_plan: "grid"`·`jig.transfer`·`jig.grid`·`jig.methods.*.grid`, 옛 스터디 `jig_plan: "none"` 이면 경고 `JIG_GRID_ON_CLONE`(응답 때만).
+
 ---
 
 ## 10. 환경 점검
