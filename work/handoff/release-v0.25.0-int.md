@@ -8,5 +8,7 @@
 2. merge wip/v0.25.0-b1(충돌 없음)·f1(충돌 DoeParamTable import·graphmock — U 포화 목 + 추가 비드 목 둘 다). node_modules = wt_v0250_f1 복사.
 3. 코어 보완 INT-1~3(계약 §20) 7ff3eb3d. 4. F1 보정 INT-4·5(계약 §20). 5. openapi 재생성 = 변화 없음(B1 이 이미 생성), check:api·check-api.test 통과.
 
+6. 문서: CHANGELOG [0.25.0]·user.md 추가 비드 절·admin.md §4.10·field_check_v0250.md·VERSION 0.25.0·버전 시험 2곳.
+
 ## 남은 단계
-6. 문서(CHANGELOG·매뉴얼·field_check_v0250·VERSION) 7. 전체 시험 → handoff 삭제(내용 = 계약 §20·decisions)
+ 문서(CHANGELOG·매뉴얼·field_check_v0250·VERSION) 7. 전체 시험 → handoff 삭제(내용 = 계약 §20·decisions)

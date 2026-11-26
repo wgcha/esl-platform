@@ -676,6 +676,31 @@ $env:PGPASSWORD = $null
 - **지그 3D 기호**: 3D 지지 표식에 `kind`·`dirs`·`val` 이 더해진다(`dof` 문자열 그대로). 이미 만든 Case·스터디 지그 3D 는 다시 만들 때 바뀐다. 서버는 Case 폴더·입력을 읽기만 한다.
 - 응답 새 키: `GET /doe/settings` `pos_u`·`load_follow`, 스터디 `inputs.pos_u`·`inputs.load_follow`(옛 = null), 변수 표 U 행·`beads[].u_reason`, 행렬 `load_follow`, 결과 `load_follow{…}`·경고 `LOAD_FOLLOW_SPATIAL`·`PU_*`, 3D `supports[].kind·dirs·val`.
 
+### 4.10 v0.25.0 업데이트 안내(추가 비드 — 가상 비드 kind A)
+
+**DB migration 없음.** **beadgraph 1.3.0 그대로**(휠 배포 불필요). 설정 키가 늘었지만 없으면 기본값이라 현장 `esl_platform.yaml` 은 고치지 않아도 된다. 현장 확인표: `docs/manual/field_check_v0250.md`. 계약 `docs/contracts/esl_virtual_bead.md`.
+
+- **설정 `bead_doe.virtual_bead`**(11키 — 새 비드 직접 선택 그래프 스터디를 만들 때 스냅샷 `doe.virtual_bead`(= 스터디 `inputs.virtual_bead`)에 해시 안 키가 고정 — 진행 중·옛 스터디 불변, 복제 = 원 블록 그대로):
+  | 키 | 기본 | 범위·뜻 | 해시 |
+  |---|---|---|---|
+  | `enabled` | true | false = 새 스터디도 블록 없음(추가 비드 절 없음) | 밖 |
+  | `max_count` | 4 | 1..9 — 스터디당 개수(넘으면 422 `VB_MAX_COUNT`) | 밖 |
+  | `min_wall_elems` | 2.0 | 1..10 — 사면 요소 수가 이 미만이면 경고 `VB_WALL_COARSE` | 안 |
+  | `margin_mm` | 3.0 | 0..50 — 이동 띠 밖 검사 여유(가장자리·이웃 판정) | 안 |
+  | `theta_default_deg` | 45.0 | 범위 안 — 사면 각 기본 | 안 |
+  | `theta_range_deg` | [15.0, 60.0] | 1 ≤ lo < hi ≤ 89, **hi ≤ `select.quality.flip_deg`**(어기면 시작 시 `CONFIG_INVALID` — 문구 `VB_THETA_FLIP`) | 안 |
+  | `r_default_h_mult` | 1.0 | 0..4 — 모서리 둥글기 기본 = 값 × 요소 크기(r_cap 이하로 줄임, 0 = 각진 모서리) | 안 |
+  | `d_max_limit_mm` | 30.0 | 0 초과 200 이하 — 최대 깊이 입력 상한(넘으면 422) | 밖 |
+  | `default_on` | true | 변수 기본 포함 | 밖 |
+  | `warp_max_deg` | 15.0 | 0 초과 90 미만 — 뒤틀린 사각 요소를 세는 기준(정보 `VB_WARP_INFO` — 범위를 줄이지 않음) | 안 |
+  | `preview_max_nodes` | 50000 | 1000..1000000 — derive 미리보기 자료 노드 수 상한(넘으면 생략 + `VB_PREVIEW_SKIPPED`) | 밖 |
+  - 같은 이름이 `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml` 에 있고, 코어 DEFAULTS·pydantic 과 시험으로 같음을 확인한다. 블록에 `r_default_h_mult` 가 없는 개발 중 스냅샷은 0.0(각진 모서리)으로 읽는다.
+- **작업 재시작**: `ESL-Backend`·`ESL-Worker`.
+- **비용**(9,801 노드 합성 판 실측): 추가 비드 1개 derive 약 20 ms·범위 점검 0.01 s·안 평가 morph 0.06 ms, 4개 derive 약 40 ms·범위 점검 0.04 s. 풀이 횟수는 늘지 않는다. 실제 모델 시간은 현장 확인표에서 잰다.
+- **정확도 표** `resources/vbead_accuracy.json`(문구 자료 — 설정 아님): 변수 행 툴팁의 예상 오차 원본. 다시 만들 때는 `python tests/doe/synth_vbead.py OUT.json`(h 1.5 칸 약 4 GB·수 분 — 다른 무거운 작업과 동시에 돌리지 않는다).
+- 서버는 Case 폴더·입력을 읽기만 한다(추가 비드도 스터디 폴더 안 기저 파일만 쓴다).
+- 응답 새 키: `GET /doe/settings` `virtual_bead`, 스터디 `inputs.virtual_bead`(옛 = null), 선택 `virtual_beads[]`, derive `virtual_beads[]`·`vb_frame`(블록 있는 스터디는 추가 비드 0개여도), 변수 표 A 행(`form "hinge"`·`label`·`wall_elems`·`vb`·`acc_hint`·`guard.warp`)·`beads[].kind "virtual"`·`vb_reason`, basis.json `vb_rules`·`virtual_beads[]`, 결과 경고 `VB_VERIFY_HINT`.
+
 ---
 
 ## 10. 환경 점검
