@@ -339,7 +339,7 @@ def test_base_mode_ignores_grid(tmp_path, monkeypatch):
     import test_jig_modes as JMo
     JMe._bead_world(monkeypatch)                                               # ① 세계(test_jig_modes runs 와 같은 준비)
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_v0248_c1"))
-    import golden as GD
+    import golden_jg as GD
     ra, rb = tmp_path / "a", tmp_path / "b"
     ra.mkdir()
     rb.mkdir()

@@ -7,7 +7,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "golden_v0248_c1"))
-import golden as G  # noqa: E402
+import golden_jg as G  # noqa: E402
 
 
 @pytest.mark.parametrize("case", G.CASES)

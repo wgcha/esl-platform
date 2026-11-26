@@ -2,7 +2,7 @@
 옛 스냅샷(rank.jig_grid 없음)의 ④ 형상 직접 비교·옛 ③(scenario step) 산출물 바이트: result.json·ranking.csv·per_esl.json·designs.json·
 report.html·안 result.json·done.json(input_sha256)·prep 전부. 세계 = tests/doe/synth_jig_grid.py(④ 메시 입력 형상, 옛 ③ 가짜 gmsh).
 
-기록: ESL_GOLDEN_RECORD=1 python tests/doe/golden_v0248_c1/golden.py (v0.24.7 머지 헤드 코드에서만).
+기록: ESL_GOLDEN_RECORD=1 python tests/doe/golden_v0248_c1/golden_jg.py (v0.24.7 머지 헤드 코드에서만).
 JSON = 시간 키(seconds*·elapsed*·created_at·time_s)를 뺀 정규 바이트 sha256, npz = 배열(키·dtype·shape·바이트) sha256, 그 밖 원 바이트."""
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ def _record():
         got[case] = {k: v for k, v in a.items() if k not in unstable}
         got.setdefault("_unstable", {})[case] = unstable
         print(case, len(a), "files", "unstable", unstable)
-    doc = {"made_by": "tests/doe/golden_v0248_c1/golden.py (main 6030b213 + v0.24.8 계약 f0718dd9 — 코드 변경 전)",
+    doc = {"made_by": "tests/doe/golden_v0248_c1/golden_jg.py (main 6030b213 + v0.24.8 계약 f0718dd9 — 코드 변경 전)",
            "cases": {k: v for k, v in got.items() if k != "_unstable"}, "unstable": got["_unstable"]}
     with open(GOLDEN, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False, indent=1, sort_keys=True)
