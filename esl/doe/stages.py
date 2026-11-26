@@ -465,6 +465,10 @@ def bd_matrix(spec: dict, echo=print) -> dict:
     want = c.D.get("matrix_sha256")
     if want and want != m["matrix_sha256"]:
         raise EslError("MATRIX_MISMATCH", f"워커 행렬 sha256 {m['matrix_sha256'][:12]}… ≠ API {str(want)[:12]}…")
+    if _pos_u(c) is not None:                    # v0.24.9 PU §2.2: pos_u 블록 있는 스냅샷만(키 없음 = 옛 바이트) — sha 계산 뒤 키
+        tt = {r["name"]: r.get("type") for r in tab}
+        m["load_follow"] = tp.load_follow_effective(_lt_plan(c), any(tt.get(p["name"]) == "U"
+                                                                     for p in m["spec"]["params"]))
     d = os.path.join("doe", str(rev))
     c.fresh(d)
     c.write_json(os.path.join(d, "matrix.json"), m)
@@ -526,6 +530,8 @@ def _cfg_hash(c: Ctx) -> str:
         keep["jig"] = ev.config_hash(jg.hash_view(_jig(c)))
     if _jg_kind(c) == "grid":                    # v0.24.8 JG §7.2: 격자 지그 스냅샷만(compare 포함 — _cmp_sha 의 cfg; 옛·base = 키 없음)
         keep["jig_grid"] = _jg_cfg_hash(c)
+    if _lf_mode(c) == "spatial":                 # v0.24.9 PU §2.2: 하중 공간 고정 스터디만(node = 키 없음 — 해시 불변)
+        keep["load_follow"] = {"schema": 1, "cell_mm": _lf(c)["cell_mm"]}
     if c.scn == "select":                       # 판정 설정도 이어하기 키에(select 만 — ①②③④ 해시 불변)
         from esl.doe import bead_select as bsel  # v0.16.1 새 키는 기본값이면 빠짐(SR-D-13b — v0.16.0 해시 그대로)
         keep.update(select=bsel.select_hash_view(c.cfg["select"], step=_is_step_base(c)),
@@ -659,14 +665,24 @@ def bd_eval(spec: dict, echo=print) -> dict:
                 rkw["region"] = reg
         reg_e = (getattr(c, "_lt_last", None) or {}).get("region") if _lt_plan(c)["mask"] == "compare_region" \
             else rkw.get("region")                # 평가 영역: 계획 열 mask(④ = LT-8 영역, 그 밖 = ③ 영역 또는 없음)
-        if _lt(c) is not None:                   # v0.20.0 LT-10·20: 주 방식 + 진단 풀이(인수분해 1회, 모든 모드)
+        lf_on = c.scn != "compare" and _lf_mode(c) == "spatial"     # v0.24.9 PU §2: 하중 공간 고정(계획 열 판정 값만 읽음)
+        if lf_on:
+            c._lf_ctx = _lf_prepare(c, t, bmeta, did, mesh, loads, reg_e)
+            if did != BASELINE:
+                loads = c._lf_ctx["loads"]
+        if lf_on and did == BASELINE:            # PU-16: d000 = node 경로 1회(sm_ref·지그 맞춤 = 지금 그대로) → spatial 평가
+            r = _lf_baseline(c, t, bmeta, did, mesh, sup, loads, reg_e, rkw, dd)
+        elif _lt(c) is not None:                   # v0.20.0 LT-10·20: 주 방식 + 진단 풀이(인수분해 1회, 모든 모드)
             r = _lt_eval(c, t, did, mesh, sup, loads, reg_e, dd, _lt_h(c, bmeta, mesh))
         elif _sm(c) is not None:
             r = _ev(c, mesh, sup, loads, rkw.get("region"), six=did == BASELINE)
         else:
             r = ev.evaluate(mesh, sup, loads, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], **rkw)
-        if _sm(c) is not None:                   # v0.20.0 SM-1·6: 강성 지표(재풀이 없음) — per_esl 키 추가
-            sm_w = _sm_apply(c, t, did, mesh, loads, reg_e, _lt_h(c, bmeta, mesh), r)
+        if lf_on and did == BASELINE:
+            pass                                 # _lf_baseline 이 지표·지그까지 채움
+        elif _sm(c) is not None:                 # v0.20.0 SM-1·6: 강성 지표(재풀이 없음) — per_esl 키 추가
+            sm_w = (_lf_sm(c, mesh, reg_e, r) if lf_on      # PU §2.2 A0-2: spatial = 선형 보조 열 null·umax_def 만
+                    else _sm_apply(c, t, did, mesh, loads, reg_e, _lt_h(c, bmeta, mesh), r))
             r["warnings"] = list(r["warnings"]) + sm_w
             if _jig(c) is not None:              # v0.23.0 지그 순위(esl_jig_rank.md §2): metric 과 무관하게 항상(Q-JIG-1)
                 r["warnings"] = list(r["warnings"]) + _jig_apply(c, t, did, mesh, loads, reg_e, r)
@@ -1024,6 +1040,9 @@ def bd_post(spec: dict, echo=print) -> dict:
     noise_r = noise
     if S_ is not None and S_.get("grid_rank"):               # v0.24.8 JG §3: 격자 순위 noise_floor = max(ΔΠ_5, 하한, 메시 잡음 바닥)
         noise_r = c._jg_nf = _jg_nf(c, noise)
+    lfp = _lf_post(c, m)                                     # v0.24.9 PU §2.3: spatial 스터디만(node = None — 바이트 불변)
+    if lfp is not None:                                      # noise_floor = max(d000_shift_rel, noise_floor_min) (JG-15 장치)
+        noise_r = max([float(x) for x in (noise_r, lfp["d000_shift_rel"], _lf(c)["noise_floor_min"]) if x is not None])
     R = rk.rank(res_rank, noise_floor=noise_r, tol=float(c.cfg["rank"]["ratio_tol"]),
                 **({"metric": S_["metric_effective"], "lin_form": S_["lin_form"],
                     "lin_valid": float(S_["lin_valid"])} if S_ else {}))
@@ -1103,6 +1122,10 @@ def bd_post(spec: dict, echo=print) -> dict:
            "view3d": v3, "best": None if not best_ids else {"id": best_ids[0], "files": best_files[best_ids[0]]},
            "best_all": [{"id": i, "files": best_files[i]} for i in best_ids], "noise_floor": noise_r,
            "matrix_sha256": m["matrix_sha256"], "warnings": warns}
+    if lfp is not None:                          # v0.24.9 PU §2.3 결과 load_follow{…} + 정보 2줄(LOAD_FOLLOW_SPATIAL·PU_LIN_SKIPPED)
+        out["load_follow"] = lfp
+        warns.append("LOAD_FOLLOW_SPATIAL: " + _msg_fmt("LOAD_FOLLOW_SPATIAL", cell_mm=f"{lfp['cell_mm']:g}"))
+        warns.append("PU_LIN_SKIPPED: " + _msg_fmt("PU_LIN_SKIPPED"))
     evs = _ev_summary(c, t)                      # v0.24.0 평가 영역 요약(새 스냅샷만 — 옛 결과 키 없음)
     if evs is not None:
         out["eval_region"] = evs
@@ -2797,14 +2820,16 @@ def _lt_method(c: Ctx, variant=None) -> dict:
 
 
 def _plan_loads(c: Ctx, plan: dict, did: str, dst: dict, variant=None, cache: dict | None = None,
-                srcs: list | None = None) -> tuple[list, dict | None]:
+                srcs: list | None = None, placement: dict | None = None) -> tuple[list, dict | None]:
     """하중 자리 하나(§13.3): reuse once 이고 안(did ≠ d000) = 베이스라인 노드 하중(prep/loads.npz) 그대로, 그 밖 = 공용 실행기
     ``run_transfer_plan``(identity 키·배치는 계획에서). variant = (method, cell_size_mm) — None = 주 방식.
-    srcs = 전달할 원천 하중(v0.24.0 경계력 ESL — esl_bforce.md §5.2), None = 엔트리 전 노드 ESL(기존)."""
+    srcs = 전달할 원천 하중(v0.24.0 경계력 ESL — esl_bforce.md §5.2), None = 엔트리 전 노드 ESL(기존).
+    placement(v0.24.9 PU-12) = None 이면 계획 배치(_lt_placement — 지금 그대로), 주면 그 값(하중 공간 고정 = global)."""
     if plan["reuse"] == "once" and did != BASELINE and variant is None and srcs is None:
         _, loads = sc.load_loads(c.p("prep"))
         return loads, None
-    rp = {"identity": {"key": plan["identity"], "coord_tol_rel": c.coord_tol()}, "placement": _lt_placement(c, plan)}
+    rp = {"identity": {"key": plan["identity"], "coord_tol_rel": c.coord_tol()},
+          "placement": _lt_placement(c, plan) if placement is None else dict(placement)}
     return ltm.run_transfer_plan(rp, _lt_srcs(_lt_ents(c)) if srcs is None else srcs, dst, _lt_method(c, variant),
                                  cache if cache is not None else {})
 
@@ -3453,7 +3478,7 @@ def _sm_post(c: Ctx) -> dict | None:
     if jsrc is not None:                                      # v0.23.0: 지그 순위는 베이스라인 지그 status ok 일 때만
         jd = _jig_src_doc(c, jsrc)
         jig_ok = bool(jd and jd.get("status") == "ok")
-    eff = tp.metric_effective(plan, S_["metric"], jig_ok)
+    eff = tp.metric_effective(plan, S_["metric"], jig_ok, **({"spatial": True} if _lf_mode(c) == "spatial" else {}))
     if eff == "jig" and jsrc is not None:                     # v0.24.5 §12: 지그 순위 = 첫 계산 방식의 출처 지표(jig·jd·js)
         eff = _jig_src_row(jsrc)["metric"]
     out = {**S_, "metric_effective": eff, "cross_mesh": tp.cross_mesh(plan)}
@@ -4521,15 +4546,29 @@ def _jig_design_multi(c: Ctx, did: str, mesh: dict, loads: list, td: str, ms: tu
                 omega = np.zeros(nid.size, bool)
                 omega[pos[np.asarray(z["omega"], bool)]] = True
                 rows = {}
+                lfc = getattr(c, "_lf_ctx", None)                # v0.24.9 PU §2.2-3: spatial = 하중 벡터만 전달본(a·BC·k 그대로)
                 for e, _F in loads:
                     k = eids.index(e)
                     Fb = jg.forces(basis, np.asarray(z["a"][k], dtype=np.float64), nb_.size)
-                    F = np.zeros((nid.size, 3))
-                    F[pos] = Fb
+                    if lfc is not None:
+                        F = _lf_jig_force(c, lfc, nb_, Fb, f"{src}:{e}")
+                    else:
+                        F = np.zeros((nid.size, 3))
+                        F[pos] = Fb
                     r = jig_bc.respond(h, F, remap(_jig_bc_of(z, k)))
                     u = np.asarray(r["u"], dtype=np.float64)[:, :3]
                     E = r["energy"]
-                    rows[e] = {f"C_{pe}": jig_bc.per_esl_C(E["C_mix"], float(z["Cmix_ref"][k]), float(z["E_ref"][k])),
+                    if lfc is not None:                           # 기준 C_mix,0·E_0 = spatial d000(prep/load_follow.json)
+                        if did == BASELINE:
+                            lfc.setdefault("jig_ref", {}).setdefault(src, {})[e] = {"C_mix": float(E["C_mix"]),
+                                                                                    "E": float(E["E"])}
+                        ref = ((lfc.get("jig_ref") or {}).get(src) or {}).get(e)
+                        if ref is None:
+                            raise EslError("OUTPUT_INCONSISTENT", f"load_follow 지그 기준 없음 {src} {e}")
+                        cz, ez = float(ref["C_mix"]), float(ref["E"])
+                    else:
+                        cz, ez = float(z["Cmix_ref"][k]), float(z["E_ref"][k])
+                    rows[e] = {f"C_{pe}": jig_bc.per_esl_C(E["C_mix"], cz, ez),
                                f"umax_{pe}": _jig_umax(u, omega), f"WF_{pe}": float(E["W_F"]), f"Wg_{pe}": float(E["W_g"])}
                     if em is not None:
                         rows[e][f"umax_{pe}_ev"] = _jig_umax(u, em if em.any() else None)
@@ -7819,7 +7858,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                 (_shape(c) is None or bj.get("range_guard_sha256") == _prep_rg_sha(c)) and \
                 bj.get("depth_section", "entry_fixed") == _sec_mod().resolve(_ds(c)[0]) and \
                 ("df_rules" not in bj or bj["df_rules"] == _bgr()._bg().DF_RULES) and \
-                ("w1_rules" not in bj or bj["w1_rules"] == _bgr()._bg().W1_RULES):   # v0.24.7 DM §5 재사용 조건
+                ("w1_rules" not in bj or bj["w1_rules"] == _bgr()._bg().W1_RULES) and \
+                ("u_rules" not in bj or bj["u_rules"] == _bgr()._bg().U_RULES):     # v0.24.9 PU §3 재사용 조건
             echo(f"[bd_matrix] select 기저 재사용 {sha[:12]}…")
             return {"params": U.read_json(pp)["params"], "warnings": [],
                     "rev_doc": _sel_rev(c, sha, bj["basis_sha256"])}
@@ -7834,6 +7874,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
         dsv, dsr = _ds(c)
         if dsr is not None:                     # v0.24.7 DM: floor_fixed 만 키 전달(entry_fixed·키 없음 = 호출 불변)
             dskw = {"depth_section": dsv, "section_rules": dsr}
+        if _pos_u(c) is not None:               # v0.24.9 PU: pos_u 블록 있는 스냅샷만 키 전달(없음 = 호출 불변)
+            dskw.update(pos_u=_pos_u(c), tie_node_ids=_pos_u_tie_ids(c, t.mesh))
         if sr is None:                          # v0.20.0 그대로(옛 스냅샷 — 호출·바이트 불변)
             D = _bgr().derive_obj_v2(t.mesh, norm, c.cfg, graph, labels, fixed_node_ids=fids,
                                      mesh_sha256=bmeta["mesh_sha256"],
@@ -7880,7 +7922,8 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                                                          "W_max": getattr(b, "W_max", None), "blend_mm": b.blend_mm,
                                                          "warnings": b.warnings,
                                                          **({"w_reason": {"code": b.w_reason}}
-                                                            if getattr(b, "w_reason", None) else {})}
+                                                            if getattr(b, "w_reason", None) else {}),
+                                                         **_u_reason_key(b)}
                                                         for b in D.beads],
                                               "params": tab, "warnings": D.warnings})
     meta = bsel.basis_meta(B, bsha)
@@ -7895,8 +7938,11 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
                     graph_vars=[{"name": v["name"], "kind": {"DF": "D"}.get(v["kind"], v["kind"]),
                                  "nominal": float(v["nominal"]), "ramp_mm": float(v["info"]["ramp_mm"]),
                                  **({"section": _sec_diag(v, getattr(D, "graph_basis", []))}
-                                    if v["kind"] in ("DF", "W1") else {})}
+                                    if v["kind"] in ("DF", "W1") else {}),
+                                 **({"pos": _pos_diag(v)} if v["kind"] == "U" else {})}
                                 for v in getattr(D, "graph_basis", [])])
+        if any(v["kind"] == "U" for v in getattr(D, "graph_basis", [])):     # v0.24.9 PU §3: U 기저가 있을 때만
+            meta.update(u_rules=bg.U_RULES, beadgraph_package=bg.__version__)
     dsv, dsr = _ds(c)
     if dsr is not None:                         # v0.24.7 DM §5: floor_fixed 만(entry_fixed basis.json 바이트 그대로)
         bg = _bgr()._bg()
@@ -7921,6 +7967,236 @@ def _sel_prepare(c: Ctx, t, echo) -> dict:
 def _sec_mod():
     from esl.morph import section as sec
     return sec
+
+
+# ====================================================================== v0.24.9 PU — 위치 변수 U(esl_bead_pos_u.md)
+LF_JSON = "load_follow.json"                    # prep/load_follow.json(spatial 스터디만 — PU-17)
+LF_SCHEMA = "esl/doe_load_follow/1"
+LF_NULL_KEYS = ("C_lin", "C_ritz", "rho", "imbalance_rel")     # A0-2 확정: spatial 에서 무효인 SM_ROW_KEYS
+
+
+def _lf(c: Ctx) -> dict | None:
+    """하중 공간 고정 설정(pos_u 블록 있는 스냅샷만): 스냅샷 doe.load_follow.cell_mm(없으면 설정) + noise_floor_min(해시 밖·설정)."""
+    if _pos_u(c) is None:
+        return None
+    b = (c.D.get("load_follow") if isinstance(c.D, dict) else None) or {}
+    cfg = c.cfg["load_follow"]
+    return {"cell_mm": float(b.get("cell_mm", cfg["cell_mm"])), "noise_floor_min": float(cfg["noise_floor_min"])}
+
+
+def _lf_mode(c: Ctx) -> str | None:
+    """이 행렬의 load_follow(matrix.json — BD_MATRIX 가 계획 열 load_follow_effective 로 정함). pos_u 없음 = None(키 없음)."""
+    if _pos_u(c) is None:
+        return None
+    try:
+        return str(_matrix(c).get("load_follow") or "node")
+    except (OSError, KeyError, ValueError, TypeError, EslError):
+        return "node"
+
+
+def _lf_method(c: Ctx) -> dict:
+    L = _lt(c) or settings(c.cfg if isinstance(c.cfg, dict) else None)["load_transfer"]
+    return tp.method_of(L, ("cell", _lf(c)["cell_mm"]), c.mapping_opts())
+
+
+def _lf_run(c: Ctx, lfc: dict, items: list) -> tuple[list, dict]:
+    """원본 = 기준 메시 공칭 좌표 X0 위 노드 하중 [(key, F (기준 노드 순서))] → 안 메시 X_d(같은 위상) 셀 전달(배치 global — PU-12,
+    양쪽 frame = 기준 frame). 하중 전달 스냅샷이면 ``_plan_loads(srcs=, placement=)`` 경로, 아니면 같은 실행기 직접."""
+    srcs = [ltm.src_load(k, lfc["base"], F, frame=lfc["frame"]) for k, F in items]
+    if _lt(c) is not None:
+        return _plan_loads(c, lfc["plan"], lfc["did"], lfc["dst"], ("cell", _lf(c)["cell_mm"]), lfc["cache"], srcs=srcs,
+                           placement={"kind": "global"})
+    rp = {"identity": {"key": lfc["plan"]["identity"], "coord_tol_rel": c.coord_tol()}, "placement": {"kind": "global"}}
+    return ltm.run_transfer_plan(rp, srcs, lfc["dst"], _lf_method(c), lfc["cache"])
+
+
+def _lf_prepare(c: Ctx, t, bmeta: dict, did: str, mesh: dict, loads_node: list, region) -> dict:
+    """§2.2-1·2: 안(d000 포함) 전 노드 ESL 하중 = prep/loads.npz(f0, 기준 좌표) → 안 좌표 셀 전달. 반환 ctx{loads, info, …}."""
+    plan = _lt_plan(c)
+    h = _lt_h(c, bmeta, mesh)
+    lfc = {"plan": plan, "did": did, "frame": t.frame, "base": dict(t.mesh), "cache": {},
+           "dst": ltm.dst_mesh(mesh, t.frame, region if plan["mask"] != "none" else None, h),
+           "node_id": np.asarray(mesh["node_id"], dtype=np.int64), "stats": []}
+    if did != BASELINE:
+        p = c.p("prep", LF_JSON)
+        if os.path.isfile(p):
+            lfc["jig_ref"] = (U.read_json(p).get("jig") or {})
+    loads, info = _lf_run(c, lfc, list(loads_node))
+    lfc["loads"], lfc["info"] = loads, info
+    lfc["stats"].append(info)
+    return lfc
+
+
+def _lf_jig_force(c: Ctx, lfc: dict, nb_: np.ndarray, Fb: np.ndarray, key: str) -> np.ndarray:
+    """지그 맞춤 하중 Σa·기저(기준 npz 노드 순서 nb_) → 기준 메시 노드 순서 → 안 좌표 셀 전달(안 노드 순서)."""
+    bid = np.asarray(lfc["base"]["node_id"], dtype=np.int64)
+    o = np.argsort(bid)
+    pos = o[np.searchsorted(bid, nb_, sorter=o).clip(0, bid.size - 1)]
+    if not np.array_equal(bid[pos], nb_):
+        raise EslError("OUTPUT_INCONSISTENT", "지그 기준 노드 ID 가 기준 메시와 다름")
+    F0 = np.zeros((bid.size, 3))
+    F0[pos] = Fb
+    out, info = _lf_run(c, lfc, [(key, F0)])
+    lfc["stats"].append(info)
+    return np.asarray(out[0][1], dtype=np.float64)
+
+
+def _lf_null_lin(r: dict) -> None:
+    for p in r.get("per_esl") or []:
+        for k in LF_NULL_KEYS:
+            p[k] = None
+
+
+def _lf_sm(c: Ctx, mesh: dict, region, r: dict) -> list:
+    """spatial 안의 강성 지표 키: C_lin·C_ritz·rho·imbalance_rel = null, umax_def = 강체 제거 변위(Ω = 계획 sm_omega), C_ref =
+    prep/sm_ref.npz(node 경로 기준 — 표시만). 경고 없음(PU_LIN_SKIPPED 는 결과에 1건)."""
+    plan = _lt_plan(c)
+    om = _sm_omega(plan, region)
+    om_nodes = None if om is None else ltm.active_nodes(mesh, om)
+    X = np.asarray(mesh["x0"], dtype=np.float64)
+    u3 = r.get("u") or {}
+    cref = {}
+    p_ = c.p("prep", SM_REF_NPZ)
+    if os.path.isfile(p_):
+        z = U.load_npz(p_)
+        cref = {str(e): float(v) for e, v in zip(z["entry_ids"].tolist(), z["C_ref"].tolist())}
+    for p in r["per_esl"]:
+        e = p["entry_id"]
+        p.update({k: None for k in LF_NULL_KEYS})
+        p["umax_def"] = smm.umax_def(X, u3[e], om_nodes) if e in u3 else None
+    c._sm_cref = {p["entry_id"]: cref.get(p["entry_id"]) for p in r["per_esl"]}
+    return []
+
+
+def _lf_stats(infos: list) -> dict:
+    """전달 진단 최악값 {dF_max, dM_max, corr_rel_max, small_frac_max}(엔트리·지그 하중 전부)."""
+    rows = [p for i in infos for p in (i or {}).get("per_esl") or []]
+
+    def mx_(k):
+        v = [float(p[k]) for p in rows if p.get(k) is not None]
+        return round(max(v), 12) if v else None
+    return {"dF_max": mx_("dF_rel"), "dM_max": mx_("dM_rel"), "corr_rel_max": mx_("corr_rel"),
+            "small_frac_max": mx_("small_frac")}
+
+
+def _lf_baseline(c: Ctx, t, bmeta: dict, did: str, mesh: dict, sup: list, loads_node: list, reg_e, rkw: dict,
+                 dd: str) -> dict:
+    """PU-16·17 d000(spatial 스터디): (1) node 경로 1회 — 진단·sm_ref·지그 맞춤(a·BC·k, prep/<src>) = 지금과 같은 내용, (2) 같은
+    메시에 spatial 하중으로 평가(지표 null·umax_def, 지그 = 하중 벡터만 전달본 → C_mix,0·E_0 기록) → prep/load_follow.json."""
+    h = _lt_h(c, bmeta, mesh)
+    if _lt(c) is not None:
+        rn = _lt_eval(c, t, did, mesh, sup, loads_node, reg_e, dd, h)
+    elif _sm(c) is not None:
+        rn = _ev(c, mesh, sup, loads_node, rkw.get("region"), six=True)
+    else:
+        rn = ev.evaluate(mesh, sup, loads_node, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], **rkw)
+    wn: list = []
+    lfc = c._lf_ctx
+    if _sm(c) is not None:
+        wn += _sm_apply(c, t, did, mesh, loads_node, reg_e, h, rn)
+        if _jig(c) is not None:
+            c._lf_ctx = None                                    # 맞춤은 node 하중(지금 그대로)
+            wn += _jig_apply(c, t, did, mesh, loads_node, reg_e, rn)
+            c._lf_ctx = lfc
+    ls = lfc["loads"]
+    if _sm(c) is not None or _lt(c) is not None:
+        r = _ev(c, mesh, sup, ls, rkw.get("region"), six=True)
+    else:
+        r = ev.evaluate(mesh, sup, ls, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], **rkw)
+    r["warnings"] = list(r["warnings"]) + wn
+    if _sm(c) is not None:
+        _lf_sm(c, mesh, reg_e, r)
+        if _jig(c) is not None:
+            td, ms = _jig_plan(c)
+            if _jig_single_legacy(td, ms):                   # 옛 단일 경로(지그 고정 병진) = node 값 그대로(정보만)
+                byn = {p["entry_id"]: p for p in rn["per_esl"]}
+                for p in r["per_esl"]:
+                    for k in ("C_jig", "umax_jig", "umax_jig_ev"):
+                        if k in byn.get(p["entry_id"], {}):
+                            p[k] = byn[p["entry_id"]][k]
+            else:
+                r["warnings"] = list(r["warnings"]) + _jig_apply_spatial0(c, did, mesh, ls, r, td, ms)
+    cn = {p["entry_id"]: float(p["C"]) for p in rn["per_esl"] if p.get("C") is not None}
+    shift = [abs(float(p["C"]) - cn[p["entry_id"]]) / abs(cn[p["entry_id"]]) for p in r["per_esl"]
+             if p.get("C") is not None and cn.get(p["entry_id"])]
+    lf = _lf(c)
+    doc = {"schema": LF_SCHEMA, "mode": "spatial", "cell_mm": lf["cell_mm"],
+           "node": {"per_esl": {e: {"C": v} for e, v in cn.items()}},
+           "d000_shift_rel": round(max(shift), 12) if shift else None,
+           "jig": lfc.get("jig_ref") or {}, "transfer": _lf_stats(lfc["stats"])}
+    c.write_json(os.path.join("prep", LF_JSON), U.jsonable(doc))
+    return r
+
+
+def _lf_post(c: Ctx, m: dict) -> dict | None:
+    """BD_POST result.json load_follow{mode, cell_mm, n_pos_vars, dF_max, dM_max, corr_rel_max, small_frac_max, d000_shift_rel}
+    — 행렬 load_follow = spatial 일 때만(prep/load_follow.json 에서)."""
+    if c.scn == "compare" or m.get("load_follow") != "spatial":
+        return None
+    p = c.p("prep", LF_JSON)
+    d = U.read_json(p) if os.path.isfile(p) else {}
+    tab = {r["name"]: r.get("type") for r in params_table(c)}
+    tr = d.get("transfer") or {}
+    return {"mode": "spatial", "cell_mm": float(_lf(c)["cell_mm"]),
+            "n_pos_vars": sum(1 for x in m["spec"]["params"] if tab.get(x["name"]) == "U"),
+            "dF_max": tr.get("dF_max"), "dM_max": tr.get("dM_max"), "corr_rel_max": tr.get("corr_rel_max"),
+            "small_frac_max": tr.get("small_frac_max"), "d000_shift_rel": d.get("d000_shift_rel")}
+
+
+def _msg_fmt(code: str, **kw) -> str:
+    from esl.doe import message
+    t = message(code)
+    try:
+        return t.format(**kw)
+    except (KeyError, IndexError, ValueError):
+        return t
+
+
+def _jig_apply_spatial0(c: Ctx, did: str, mesh: dict, loads: list, r: dict, td: str, ms: tuple) -> list:
+    """spatial d000 지그 평가: 방식마다 기준 npz(node 맞춤 a·BC·k) 그대로 + 하중 벡터 = 전달본 → C_<pe> = E_0(score 1)."""
+    from esl.mech import jig_bc
+    warns: list = []
+    res = _jig_design_multi(c, did, mesh, loads, td, ms, warns)
+    ev_on = _ev_cfg(c) is not None
+    for p in r["per_esl"]:
+        for m in ms:
+            vals = (res.get(jig_bc.METHODS[m]["src"]) or {}).get(p["entry_id"]) or {}
+            for k in _jig_pe_keys(td, m, ev_on):
+                p[k] = None if vals.get(k) is None else float(vals[k])
+    return warns
+def _pos_u(c: Ctx) -> dict | None:
+    """스냅샷 doe.pos_u 블록(없음·꺼짐 = None — 옛 스터디 U 행 없음, U_OFF)."""
+    d = getattr(c, "D", None)
+    v = d.get("pos_u") if isinstance(d, dict) else None
+    return v if isinstance(v, dict) and v.get("enabled", True) is not False else None
+
+
+def _pos_u_tie_ids(c: Ctx, mesh: dict) -> np.ndarray:
+    """PU-14: U 기저 hold 에 더할 지그 tie 노드 ID — 계획 jig_fix 출처(_jig_nodes 와 같은 함수). 지그 꺼짐·none = 빈."""
+    J = _jig(c)
+    plan = _lt_plan(c)
+    if J is None or plan.get("jig_fix") in (None, "none"):
+        return np.zeros(0, np.int64)
+    try:
+        return np.asarray(_jig_nodes(c, plan, mesh, J, [])["node_id"], dtype=np.int64)
+    except EslError:
+        return np.zeros(0, np.int64)
+
+
+def _u_reason_key(b) -> dict:
+    """params.json beads[] u_reason{code}(U 행 없을 때만 — U_OFF·pos_u 없음 = 키 없음, 옛 바이트 불변)."""
+    code = getattr(b, "u_reason", None)
+    return {"u_reason": {"code": code}} if code and code != "U_OFF" else {}
+
+
+def _pos_diag(v: dict) -> dict:
+    """basis.json graph_vars[].pos(§1.4 — U 변수만): dir·w_ref·band_mm·clipped·hold_n·straight_resid_mm + 가드·간격 진단."""
+    i = v["info"]
+    return {"dir": i.get("dir"), "w_ref": i.get("w_ref"), "band_mm": i.get("band_mm"), "clipped": bool(i.get("clipped")),
+            "hold_n": int(i.get("hold_n_fixed") or 0), "straight_resid_mm": i.get("straight_resid_mm"),
+            "guard_n": int(i.get("guard_n") or 0), "guard_frac": round(float(i.get("guard_frac") or 0.0), 4),
+            "guard_left": int(i.get("guard_left") or 0), "gap_clip_n": int(i.get("gap_clip_n") or 0),
+            "ends": [round(float(x), 6) for x in i.get("ends") or []]}
 
 
 def _sec_diag(v: dict, gb=()) -> dict:
@@ -8024,6 +8300,9 @@ def _sel_cfg_sha(c: Ctx) -> str:
     hv = sec.hash_view(dsv, dsr, has_elems=_has_elems(c))
     if hv is not None:                           # v0.24.7 DM §5: floor_fixed 만(entry_fixed·키 없음 = 해시 불변)
         h["section"] = hv
+    pv = sec.pos_u_hash_view(_pos_u(c))
+    if pv is not None:                           # v0.24.9 PU §3: pos_u 블록 있을 때만(없음 = 해시 불변)
+        h["pos_u"] = pv
     s = json.dumps(h, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
