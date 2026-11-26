@@ -187,11 +187,20 @@ def _codes(vbs, **kw):
     ({"p0": [200.0, 150.0, 0.0], "p1": [225.0, 150.0, 0.0]}, "VB_OVER_HOLE"),
     ({"p0": [60.0, 194.0, 0.0], "p1": [180.0, 194.0, 0.0]}, "VB_PLATE_EDGE"),
     ({"p0": [60.0, 140.0, 0.0], "p1": [180.0, 140.0, 0.0], "d_max": 4.0}, "VB_MESH_COARSE"),
-    ({"p0": [60.0, 140.0, 20.0], "p1": [180.0, 140.0, 20.0]}, "VB_NOT_ON_PLATE"),     # 판에서 먼 점(사영 > margin + 2h)
+    # 판에서 먼 점(사영 > margin + 2h) — INT-8: host 위(면내)의 점은 높이를 host 면에 맞추므로(아래 시험) 판 밖(면내 > 2h) 점으로
+    ({"p0": [-40.0, 140.0, 20.0], "p1": [-10.0, 140.0, 20.0]}, "VB_NOT_ON_PLATE"),
 ])
 def test_reasons_on_classified_plate_v3(over, code):
     rs = _codes([{**VB_OK, **over}])[0]
     assert code in rs and rs == sorted(rs, key=vbm.REASONS.index)
+
+
+def test_point_above_host_is_seated_int8():
+    """INT-8: host 면 위(면내)인데 높이만 다른 점(옛: VB_NOT_ON_PLATE) = 높이를 host 면에 맞춰 판정 — 면 위 점과 같은 발자국·사유."""
+    up = derive([{**VB_OK, "p0": [60.0, 140.0, 20.0], "p1": [180.0, 140.0, 20.0]}]).vbeads[0]
+    on = derive([{**VB_OK, "p0": [60.0, 140.0, 0.0], "p1": [180.0, 140.0, 0.0]}]).vbeads[0]
+    assert up.reasons == on.reasons == [] and up.seat0 == pytest.approx(20.0, abs=1e-6) and on.seat0 == 0.0
+    assert np.array_equal(up.field["idx"], on.field["idx"]) and np.allclose(up.field["vec"], on.field["vec"], atol=1e-9)
 
 
 def test_reasons_fixed_exclude_overlap_scope_v3():
