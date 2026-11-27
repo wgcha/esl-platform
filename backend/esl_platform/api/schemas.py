@@ -477,11 +477,13 @@ class View3dSupport(_Out):
     kind: str | None = None
     dirs: list[list[float]] | None = None
     val: Any | None = None
+    # v0.25.2 JF(esl_tstar_manual_jig_force.md §4.3·§6.3): "force" = 체결부 아닌 곳에 강제로 붙인 노드(강제 노드만 — 그 밖은 키 없음)
+    via: str | None = None
 
     @model_serializer(mode="wrap")
     def _drop_absent(self, handler):  # type: ignore[no-untyped-def]
         d = handler(self)
-        for k in ("kind", "dirs", "val"):
+        for k in ("kind", "dirs", "val", "via"):
             if isinstance(d, dict) and d.get(k) is None:
                 d.pop(k, None)
         return d
@@ -517,6 +519,16 @@ class View3dOut(_Out):
     geometry_url: str
     lod_url: str | None = None
     values_url: str
+    # v0.25.2 JF(§4.3·§6.3): 강제·못 붙임 체결부 표식 자료([{q, via: "force"|"miss", x[3], dist, n, far}] = jig_grid.json map.tie.marks 그대로,
+    # 지그 응답 3D 만 — 없으면 키를 내지 않는다: 그 밖 manifest 응답 바이트 불변)
+    tie_marks: list[dict[str, Any]] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_tie_marks_absent(self, handler):  # type: ignore[no-untyped-def]
+        d = handler(self)
+        if isinstance(d, dict) and d.get("tie_marks") is None:
+            d.pop("tie_marks", None)
+        return d
 
 
 class View3dSceneRanges(View3dRanges):
@@ -2181,6 +2193,17 @@ class DoeJigGridOut(_Out):
     sample_outside_max: float | None = None
     warnings: list[str] = []
     mesh: DoeJigGridMeshOut | None = None                   # v0.24.8 fix JG-23 — 옛 결과(이 키 없음) = null
+    # v0.25.2 JF(§6.3 — 스냅샷에 tie_force 가 있을 때만 키): 강제 부여를 쓴 형상 수·참고용 형상 수. 없으면 키를 내지 않는다(옛 결과 바이트 불변)
+    n_forced_shapes: int | None = None
+    n_ref_shapes: int | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_force_absent(self, handler):  # type: ignore[no-untyped-def]
+        d = handler(self)
+        for k in ("n_forced_shapes", "n_ref_shapes"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class DoeJigMethodOut(_Out):
@@ -2322,6 +2345,17 @@ class DoeRankViewOut(_Out):
     sensitivity: dict[str, Any] | None = None
     sensitivity_reason: str | None = None
     best_clean: str | None = None
+    # v0.25.2 DS(§4.1·§6.3): 참고용 형상 수(> 0 일 때만)·결과 개수 줄([{key, label, n}] — 새 결과만). 없으면 키를 내지 않는다
+    n_ref: int | None = None
+    counts: list[dict[str, Any]] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_counts_absent(self, handler):  # type: ignore[no-untyped-def]
+        d = handler(self)
+        for k in ("n_ref", "counts"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class DoeRankViewsOut(_Out):
@@ -2435,6 +2469,9 @@ class DoeResultOut(_Out):
     n_ok: int
     n_skipped: dict[str, int]
     n_failed: dict[str, int]
+    # v0.25.2 DS(§4.1·§6.3): 참고용 형상 수(> 0 일 때만)·결과 개수 줄 counts[{key, label, n}](= 코어 rank.count_items — 새 결과만). 없으면 키를 내지 않는다
+    n_ref: int | None = None
+    counts: list[dict[str, Any]] | None = None
     ranking: list[dict[str, Any]]
     excluded: list[dict[str, Any]] = Field(default_factory=list)
     sensitivity: dict[str, Any] | None = None
@@ -2522,6 +2559,15 @@ class DoeResultOut(_Out):
     scene_add: "DoeSceneAddOut | None" = None
     view3d_bf_recon: dict[str, str] | None = None
     view3d_fi_recon: dict[str, str] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_v0252_absent(self, handler):  # type: ignore[no-untyped-def]
+        """v0.25.2: n_ref·counts 가 없으면 키를 내지 않는다(옛 결과 응답 바이트 불변)."""
+        d = handler(self)
+        for k in ("n_ref", "counts"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
+        return d
 
 
 class DoePerEslDesign(_Out):

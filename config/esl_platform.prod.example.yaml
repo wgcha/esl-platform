@@ -79,6 +79,8 @@ altair:                               # 서버 h3d 추출(계약 esl_p3_ux.md §
   max_concurrent_hw: 2                # 동시 hw 수(HyperWorks 라이선스 한도에 맞춰 조정) — DB 세마포어, 넘으면 대기
   bf_on_demand_timeout_s: 1800        # v0.24.2 ③ ESL 때 경계력 원자료 보충(hw 1회) 시간 한도(초, ≥ 60). 넘으면 hw 트리 종료·BF_EXTRACT_FAILED(ESL 은 계속)
   bf_on_demand_wait_s: 600            # 보충 때 hw 동시 실행 한도를 기다리는 한도(초, 0 = 한 번만 시도). 넘으면 BF_EXTRACT_SKIPPED(ESL 은 계속)
+  frame_fill_timeout_s: 1800          # v0.25.2 ② 직접 고른 t* 가 추출 때 변위를 받은 프레임(D) 밖이면 ③ ESL 앞에서 그 프레임만 h3d 에서 읽는 hw 1회 시간 한도(초, ≥ 60, 계약 esl_tstar_manual_jig_force.md §2.4). 넘으면 hw 트리 종료·ESL 단계 실패 TSTAR_FRAME_FILL_FAILED
+  frame_fill_wait_s: 600              # 채움 때 hw 동시 실행 한도를 기다리는 한도(초, 0 = 한 번만 시도). 넘으면 실패(WAIT)
   optistruct_path: "C:/Program Files/Altair/2026.1/hwsolvers/scripts/optistruct.bat"   # 비드 최적화(v0.7.0). 없거나 파일이 없으면 503
   max_concurrent_os: 1                # 동시 OptiStruct 수(라이선스 한도) — DB 세마포어
 commands:                             # argv 템플릿(esl.md §4.4): argv[0] = {hw} 만. 허용 placeholder: hw, extract_tcl(_fwd), h3d(_fwd),
@@ -182,7 +184,7 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
   run: {parallel: 2, memory_margin: 0.7}
   solve: {reaction_warn: 0.01}        # 솔버 drill_factor·backend 는 opt_run.solver 재사용
   boundary: {fastener_warn_mm: 10.0, load_warn_mm: 20.0, load_share_min: 0.2}
-  view3d: {top_k: 3, jig: true, jig_support_max: 64, jig_diag: true, jig_tie_gap_mm: 5.0, regen_keep_backups: 1, recon: true, scene: {enabled: true, max_mb: 1024, diff_cell_h_mult: 2.0}}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수, v0.23.3 jig_diag = 지그 진단 3D·하중 정의 탭 자료, jig_tie_gap_mm = 지그 노드 상대 부품 찾기 거리(보고만), regen_keep_backups = 3D 다시 만들기 이전 진단 백업 유지 개수(0 = 백업 안 함), v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단(목표 sm_ref), v0.25.1 scene = 낙하 씬별 3D 묶음(enabled 끄면 만들지 않음, max_mb = 스터디당 추정 용량 한도 0 = 없음, diff_cell_h_mult = 차이 격자 셀 배율)
+  view3d: {top_k: 3, jig: true, jig_support_max: 64, jig_diag: true, jig_tie_gap_mm: 5.0, regen_keep_backups: 1, recon: true, scene: {enabled: true, max_mb: 1024, diff_cell_h_mult: 2.0}, jig_force_marks_max: 512}   # v0.23.2 jig = 지그 계산된 스터디 3D 에 지그 응답(tie 고정) 변위장, jig_support_max = tie 마커 최대 수, v0.23.3 jig_diag = 지그 진단 3D·하중 정의 탭 자료, jig_tie_gap_mm = 지그 노드 상대 부품 찾기 거리(보고만), regen_keep_backups = 3D 다시 만들기 이전 진단 백업 유지 개수(0 = 백업 안 함), v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단(목표 sm_ref), v0.25.1 scene = 낙하 씬별 3D 묶음(enabled 끄면 만들지 않음, max_mb = 스터디당 추정 용량 한도 0 = 없음, diff_cell_h_mult = 차이 격자 셀 배율), v0.25.2 jig_force_marks_max = 3D 강제·못 붙임 체결부 표식 최대 수(해시 밖)
   bforce: {enabled: false, grades: [full, contact], view3d: true}   # v0.24.5 기본 끔(§12 — 켜면 v0.24.4 와 같음) / v0.24.0 경계력 ESL(esl_bforce.md §9) — Case 에 접촉력 결과가 있으면 하중 정의 탭 [경계력 ESL]: grades = 순위에 쓸 데이터 등급(접촉력 전용, contact = tie 체결력 미포함), view3d = 응답 컨투어 + 하중 화살표
   fint: {enabled: false, grades: [fint], view3d: true}   # v0.24.5 기본 끔(§12) / v0.24.0 내력 ESL(esl_fint.md §9) — Case 에 FINT(/H3D/NODA/FINT) 결과가 있으면 탭 [내력 ESL](F = s·FINT, 3-2-1 재풀이)
   case_jig: {enabled: true, timeout_s: null}   # v0.24.4 Case ③ ESL 지그 3방식 — 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더 01_extract/jig_fixed 에 준비(esl_jig_case.md §5.1 — deck 표면 캐시 jig_surf.npz 는 코어가). enabled false = 준비·fixed-scan 호출 0. timeout_s null = bead_doe.paicad.timeout_s.fixed_scan
@@ -255,6 +257,11 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       noise_floor_mismatch: 0.05      # 기준 d000 과 형상의 메시가 다르면(아래 두 기준) 격자 순위 noise_floor 를 이 값 이상으로 [0, 0.2] — 정보 JIG_GRID_MESH_MISMATCH(해시 밖)
       mesh_h_ratio_warn: 1.25         # 요소 변 길이 중앙값 비(형상/기준)가 [1/r, r] 밖 = 메시 크기 다름 (> 1, 해시 밖)
       mesh_tri_frac_warn: 0.2         # 삼각형 요소 비율 차 초과 = 요소 종류 다름 ((0, 1], 해시 밖)
+      tie_force:                      # v0.25.2 JF 체결부 아닌 곳 강제 부여(계약 esl_tstar_manual_jig_force.md §3.6) — 형상이 못 잡은 Case 체결부 묶음을 가장 가까운 형상 면에 붙임. 새 스냅샷 doe.rank.jig_grid.tie_force 로 고정(해시 안). 옛 스냅샷(키 없음) = 끔
+        enabled: true                 # false = 강제 부여 끔(v0.25.1 과 같은 잡기 — 못 잡으면 형상 제외)
+        max_dist_mm: null             # 강제 거리 한도(mm, null = 한도 없음 — 사용자 결정, 관리자가 값을 주면 max(값, snap 한도) 밖은 못 붙임 JIG_GRID_TIE_UNPLACED) (null 또는 > 0)
+        normal_deg: 90.0              # 강제 단계 법선 조건(0, 90] — 90 = 조건 없음
+      tie_force_far_warn_mm: 10.0     # 먼 강제 표시 임계(mm, > 0) — 이 값 넘게 옮겨 붙인 묶음을 경고 JIG_GRID_TIE_FAR·참고용·3D 빨강 선으로 셈(붙이는 규칙·계산 값 불변, 해시 밖)
   settings_cache_s: 300               # GET /doe/settings 의 워커 점검 기록 캐시(초)
   load_source_default: null           # v0.24.4 P3 스터디 하중 출처 기본(안내용 — 코어 DEFAULTS·pydantic 같은 이름). null = 지금 동작(순위 지표 기준)
   compare:                            # v0.14.0 ④ 형상 직접 비교(계약 esl_step_compare.md §4) — paicad 불필요, gmsh 필요
@@ -360,6 +367,13 @@ bead_doe:                             # v0.9.0 비드 형상 DOE(계약 esl_bead
       local: {factors: [0.75, 0.5, 0.33], neighbor_rings: 1, max_faces: 20}   # 실패 면 + 이웃 고리 크기 = h × factor
       global: {factors: [0.8, 0.667]}   # 3 → 2.4 → 2.0 mm
       convergence: {enabled: true, tol: null, same_h_baseline: false}   # 기준 d000 을 세분화 h 로 다시 풀어 메시 편향 δ 표시(tol null = rank.ratio_tol)
+    double_sheet:                     # v0.25.2 DS 판 앞뒷면 두 장 경고(계약 esl_tstar_manual_jig_force.md §4.4) — 메시로 감지, 경고만(계산 불변, 해시·스냅샷 밖). enabled false = 호출 0
+      enabled: true
+      gap_min_t: 0.3                  # 마주 보는 면 간격 하한 = 이 값 × 두께 t (> 0)
+      gap_max_t: 3.0                  # 간격 상한 = 이 값 × t (> gap_min_t)
+      normal_deg: 15.0                # 법선 평행 허용각(0, 90)
+      frac_warn: 0.5                  # 짝 있는 표본 비율이 이 값 이상이면 경고 SHAPE_DOUBLE_SHEET ((0, 1])
+      sample_max: 2000                # 표본 요소 최대 수(≥ 1, 인덱스 등간격)
     load_transfer:                    # v0.20.0 ④ 전용(계약 esl_load_transfer.md §13.6) — 방식·셀·진단은 위 bead_doe.load_transfer(최상위)
       support: transfer               # transfer(기준 d000 지지 → 형상 최근접 노드) | auto(형상마다 PCA 3-2-1, 예전)
       support_tol_mm: null            # 이전 거리 허용(null = 2h) — 넘거나 rank < 6 이면 그 형상만 auto + LT_SUPPORT_FALLBACK

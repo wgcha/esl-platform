@@ -83,7 +83,7 @@ def test_v_p1b_1_full_flow(client, synth_inputs, worker_factory, esl_root):
     assert len(m["history"]["time"]) == len(m["history"]["value"]) > 0
     bad = client.put(f"{API}/cases/{cid}/tstar", json={"version": case["version"], "metric": tj["selected"]["metric"],
                                                        "frame_index": 999}, headers=W)
-    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "FRAME_NOT_CANDIDATE"
+    assert bad.status_code == 422 and bad.json()["detail"]["code"] == "FRAME_NOT_FOUND"   # v0.25.2: 프레임 목록에 없음
     ok = client.put(f"{API}/cases/{cid}/tstar", json={"version": case["version"], "metric": tj["selected"]["metric"],
                                                       "frame_index": synth_case.T_STAR_FRAME}, headers=W)
     assert ok.status_code == 200, ok.text

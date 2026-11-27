@@ -193,6 +193,9 @@ class AltairCfg(_M):
     # v0.24.2 경계력 원자료 ESL 때 보충(esl_bforce_ondemand.md §9): hw 1회 시간 한도·hw 동시 실행 한도 대기 한도(초)
     bf_on_demand_timeout_s: int = Field(default=1800, ge=60)
     bf_on_demand_wait_s: int = Field(default=600, ge=0)               # 0 = hw 차례를 한 번만 시도
+    # v0.25.2 TM 직접 고른 t* 의 D 밖 프레임 채움(esl_tstar_manual_jig_force.md §2.4·§8.1): hw 1회 시간 한도·hw 동시 실행 한도 대기 한도(초)
+    frame_fill_timeout_s: int = Field(default=1800, ge=60)
+    frame_fill_wait_s: int = Field(default=600, ge=0)                 # 0 = hw 차례를 한 번만 시도. 넘으면 실패 WAIT(ESL 단계 실패)
     # v0.7.0 비드 최적화(esl_opt_run.md §8): OptiStruct 실행 파일(optistruct.bat). None = 서버 최적화 불가(503)
     optistruct_path: str | None = None
     max_concurrent_os: int = Field(default=1, ge=1, le=MAX_SLOTS)   # 동시 OptiStruct 수 — DB 세마포어(acquire_os)
@@ -530,6 +533,7 @@ class BeadDoeView3dCfg(_M):
     regen_keep_backups: int = Field(default=1, ge=0, le=20)      # v0.23.3 3D 다시 만들기가 옮긴 이전 진단 폴더(_backup) 유지 개수(0 = 백업 안 함, esl_jig_view.md §3)
     recon: bool = True                                           # v0.24.1 노드 힘 출처 기준 3D 재현 진단(recon.json·recon.bin, esl_view3d_sources.md §5.2)
     scene: BeadDoeView3dSceneCfg = BeadDoeView3dSceneCfg()       # v0.25.1 VL 낙하 씬별 3D 묶음(esl_view3d_scene_legend.md §7.1)
+    jig_force_marks_max: int = Field(default=512, ge=1)          # v0.25.2 JF 3D 강제·못 붙임 체결부 표식 최대 수(esl_tstar_manual_jig_force.md §4.3 — 해시 밖)
 
 
 class BeadDoeBforceCfg(_M):
@@ -640,6 +644,15 @@ class BeadDoeRankJigCfg(_M):
 from .opt_core import LT_CELL_MAX_MM  # noqa: E402  v0.20.0 LT 셀 크기 상한 — 코어 transfer_plan.CELL_MAX_MM 한 곳(어댑터 경유)
 
 
+class BeadDoeRankJigGridForceCfg(_M):
+    """v0.25.2 JF 체결부 아닌 곳 강제 부여(esl_tstar_manual_jig_force.md §3.6·§8.1 — esl.doe.DEFAULTS["rank"]["jig_grid"]["tie_force"] 거울).
+    새 스냅샷 rank.jig_grid.tie_force 로 고정(해시 안). max_dist_mm null = 거리 한도 없음(사용자 결정 D-0.25.2-24)."""
+
+    enabled: bool = True
+    max_dist_mm: float | None = Field(default=None, gt=0)       # null = 한도 없음, 값 = max(값, snap 한도)
+    normal_deg: float = Field(default=90.0, gt=0, le=90)         # 강제 단계 법선 조건(90 = 조건 없음)
+
+
 class BeadDoeRankJigGridCfg(_M):
     """v0.24.8 ④·옛 ③ 격자 지그(esl.doe.DEFAULTS["rank"]["jig_grid"] 거울, 계약 esl_jig_grid_map.md §7.1). 해시 안 키 = cell_mm·tie_*·
     sample_*(esl.mech.grid_map.HASH_EXCLUDE 밖), 해시 밖 = conv_mm·area_ratio_warn·conv_warn·frame_shift_warn·load_resid_warn·noise_floor_min·
@@ -664,6 +677,9 @@ class BeadDoeRankJigGridCfg(_M):
     noise_floor_mismatch: float = Field(default=0.05, ge=0, le=0.2)
     mesh_h_ratio_warn: float = Field(default=1.25, gt=1)
     mesh_tri_frac_warn: float = Field(default=0.2, gt=0, le=1)
+    # v0.25.2 JF(esl_tstar_manual_jig_force.md §3.6): 강제 부여 블록(해시 안 — 옛 스냅샷은 이 키 없음 = 끔) · 먼 강제 표시 임계(해시 밖 — 경고·참고용·3D 색만)
+    tie_force: BeadDoeRankJigGridForceCfg = Field(default_factory=BeadDoeRankJigGridForceCfg)
+    tie_force_far_warn_mm: float = Field(default=10.0, gt=0)
 
     @field_validator("conv_mm")
     @classmethod
@@ -1338,6 +1354,23 @@ class BeadDoeCompareLoadTransferCfg(_M):
     region: BeadDoeCompareLoadTransferRegionCfg = BeadDoeCompareLoadTransferRegionCfg()
 
 
+class BeadDoeCompareDoubleSheetCfg(_M):
+    """v0.25.2 DS 판 앞뒷면 두 장 경고(esl_tstar_manual_jig_force.md §4.4·§8.1) — 해시·스냅샷 밖(경고만, 계산 불변). 끄면 호출 0."""
+
+    enabled: bool = True
+    gap_min_t: float = Field(default=0.3, gt=0)
+    gap_max_t: float = Field(default=3.0, gt=0)
+    normal_deg: float = Field(default=15.0, gt=0, lt=90)
+    frac_warn: float = Field(default=0.5, gt=0, le=1)
+    sample_max: int = Field(default=2000, ge=1)
+
+    @model_validator(mode="after")
+    def _gap(self) -> "BeadDoeCompareDoubleSheetCfg":
+        if not self.gap_max_t > self.gap_min_t:
+            raise ValueError("bead_doe.compare.double_sheet.gap_max_t 는 gap_min_t 보다 커야 합니다")
+        return self
+
+
 class BeadDoeCompareCfg(_M):
     """v0.14.0 ④ 형상 직접 비교(esl_step_compare.md §4). 섹션 없으면 기본값(enabled true — 전역 bead_doe.enabled·gmsh 필요)."""
 
@@ -1356,6 +1389,7 @@ class BeadDoeCompareCfg(_M):
     freeform: BeadDoeCompareFreeformCfg = BeadDoeCompareFreeformCfg()         # v0.16.3 C2-D-26
     tria: BeadDoeCompareTriaCfg = BeadDoeCompareTriaCfg()                     # v0.16.3 C2-D-28
     load_transfer: BeadDoeCompareLoadTransferCfg = BeadDoeCompareLoadTransferCfg()   # v0.20.0 ④ 전용 support·region(LT-7·8)
+    double_sheet: BeadDoeCompareDoubleSheetCfg = BeadDoeCompareDoubleSheetCfg()      # v0.25.2 DS 판 앞뒷면 두 장 경고(§4.4 — 해시·스냅샷 밖)
 
 
 class BeadDoeSelectWidthCfg(_M):

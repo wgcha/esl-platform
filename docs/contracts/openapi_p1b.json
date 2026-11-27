@@ -3928,9 +3928,31 @@
               }
             ]
           },
+          "n_forced_shapes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Forced Shapes"
+          },
           "n_groups": {
             "title": "N Groups",
             "type": "integer"
+          },
+          "n_ref_shapes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Ref Shapes"
           },
           "n_shapes": {
             "title": "N Shapes",
@@ -4918,6 +4940,21 @@
             ],
             "title": "Best Clean"
           },
+          "counts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counts"
+          },
           "metric": {
             "title": "Metric",
             "type": "string"
@@ -4932,6 +4969,17 @@
           "n_ok": {
             "title": "N Ok",
             "type": "integer"
+          },
+          "n_ref": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Ref"
           },
           "n_skipped": {
             "additionalProperties": {
@@ -5112,6 +5160,21 @@
           "boundary_warnings_n": {
             "title": "Boundary Warnings N",
             "type": "integer"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counts"
           },
           "cross_mesh": {
             "anyOf": [
@@ -5339,6 +5402,17 @@
           "n_ok": {
             "title": "N Ok",
             "type": "integer"
+          },
+          "n_ref": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Ref"
           },
           "n_skipped": {
             "additionalProperties": {
@@ -17961,6 +18035,21 @@
             "title": "Supports",
             "type": "array"
           },
+          "tie_marks": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Marks"
+          },
           "top": {
             "items": {
               "$ref": "#/components/schemas/View3dTopRow"
@@ -18382,6 +18471,21 @@
             "title": "Supports",
             "type": "array"
           },
+          "tie_marks": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Marks"
+          },
           "top": {
             "items": {
               "$ref": "#/components/schemas/View3dTopRow"
@@ -18646,6 +18750,17 @@
           "vertex": {
             "title": "Vertex",
             "type": "integer"
+          },
+          "via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via"
           },
           "x0": {
             "items": {
