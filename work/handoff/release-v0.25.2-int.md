@@ -13,3 +13,4 @@
 - [ ] 5. 시험(/tmp/int252/run_all.sh — nohup 실행 중, 진행 /tmp/int252/progress.log, 단계 rc /tmp/int252/<step>.rc, 다시 돌리면 끝난 단계 건너뜀). 끝나면 허용 실패·시간 의존 단독 재실행 → 계약 §15.4 INT-9·decisions 에 기록
 
 ## 메모
+- v0.25.1 수정본 추가 병합: b94df804(Compare3D 훅 순서 INT-13, 34fbe992)·2fe514f5(INT-14~16, 51f83cc0 — decisions 충돌 양쪽 보존). tests_full 은 00:02 시작(2fe514f5 병합 전 수집) → 끝나면 tests/doe/test_view3d_scene.py 단독 재실행. backend·worker·frontend 단계는 병합 뒤 코드.
