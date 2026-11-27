@@ -16,4 +16,6 @@
 | 3 | 시험 | 진행 — 결과는 아래 |
 
 ## 시험 결과
-(채움)
+- 실행기 /tmp/int251/run_all.sh(nohup — 단계별 로그 /tmp/int251/<단계>.log, 완료 표지 <단계>.rc, 진행 progress.log). 재시작되면 끝난 단계(.rc 있음)는 건너뛰고 이어서:
+  `nohup /tmp/int251/run_all.sh > /tmp/int251/run_all.out 2>&1 &`(PG 54329 꺼져 있으면 스크립트가 켬). 순서 tests/ → beadgraph → backend → worker → typecheck → build → check:api → vitest(다른 vitest 없을 때).
+- /tmp 정리: 옛 `sg_perf_*`(tests/doe/test_step_graph_perf 의 mkdtemp 잔여, 11-25~11-27, 약 1.5 GB) 삭제 → 여유 22.9 GB.
