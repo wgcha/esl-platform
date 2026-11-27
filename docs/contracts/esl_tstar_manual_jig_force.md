@@ -1,6 +1,6 @@
 # 계약: t* 임의 프레임 선택 + 체결부 아닌 곳 지그 BC 강제 부여 + #96 표시 개선 (TM·JF·DS, v0.25.2)
 
-- 상태: **초안 · 개정 1**(2026-11-27 — 사용자 답 Q-1 확정·Q-2 "거리 무관 무조건" 반영, §14) — 계약만. 코드·시험 실행 없음.
+- 상태: **개정 1 → 구현·통합 완료**(2026-11-27 — 사용자 답 Q-1 확정·Q-2 "거리 무관 무조건" 반영, §14). 구현 사실·통합 보정 = §15.1~§15.4(INT-n). 이 문서가 원본.
 - 기준: `release/v0.25.1` 5d1971f4(읽기만 감사). **v0.25.1 은 구현 중** — 이 계약의 구현은 v0.25.1 이 `release/v0.25.1` 에 다 합쳐진 뒤 그 헤드에서 시작한다(§11 전제). 아래 줄 번호는 5d1971f4 기준.
 - 결정 기록: `docs/decisions.md` 2026-11-27 D-0.25.2-1~26. 충돌하면 이 계약이 우선.
 - 배경 이슈: #96 "다른 형상 step 에러 / NO_FEASIBLE_DESIGNS".
@@ -592,4 +592,75 @@ ESL 작업 생성(`job_params.esl_solve_params`): 프레임이 `disp.npz` 에 �
 - R-JF-1 강제 부여 위치를 3D 에서 손으로 옮기기.
 - R-JF-2 순위에서 빠진 형상의 지그 3D(못 붙인 자리만 보기).
 - R-DS-1 두 장 감지를 ①·③ STEP 입력에도.
-- 구현 메모: (구현 때 실측값·계약과 다르게 된 점을 여기 적음)
+- 구현 메모: 아래 §15.1~§15.4(구현 사실·계약과 다르게 된 점·실측 — 인계 메모 `work/handoff/*v0.25.2*`·`work/findings.md` TM-C1 절에서 옮김).
+
+### 15.1 C1 코어 구현 사실 (release/v0.25.2 dc8cb725 → 4737a446 → be5ab88d → c32255b4 — 계약 보정·최소 해석 TM-C1-1~12)
+
+- 골든 = release/v0.25.1 393789a8 코드로 기록(`tests/doe/golden_v0252_c1/golden.json`, 비교 `tests/doe/test_v0252_golden.py`: 파이프라인 자동·후보 2 + 스터디 세계 6 — 옛 스냅샷 tie_force 없음). 시험 V-0252-1~9 `tests/pipeline/test_tstar_manual.py`·`tests/io/test_tcl_fr_only.py`, 10~18 `tests/mech/test_grid_force.py`, 19~23·#96 재현 `tests/doe/test_v0252_c.py`(합성 `synth_tm.py`).
+- `RANK_SOURCES` 새 열 `label`(지그 고정·지그 변위·지그 스프링·전 노드·경계력·내력 — 보고서 "다른 하중 출처 순위: {label}").
+- 물리 실측: V-0252-4 임의 프레임(D 밖 5 채움) F_eq = 알려진 하중 상대 < 1e-6·평형 ≤ 1e-6·④ PASS(MAC 1.0, RMS 2.8e-12), V-0252-5 채움 = 처음부터 추출(u_rel·f_eq 배열 정확 일치), V-0252-13 Σk/K_q − 1 ≤ 4.4e-16, V-0252-14 평형 ≤ 2e-13·ΔΣR ≤ 2.5e-11·ΔM 4e-7 ≪ 한계, V-0252-15 50·200 mm 전부 force·순위 진입·한도 20 = 전부 miss.
+
+- TM-C1-1 (§2.4·§11) 경계력 보충 병합 `esl/io/bforce_ondemand.py`(§11 소유표에 없음 — 코어라 C1)가 done.json mode `bf_only` 만 받음 →
+  "fr_only 와 같은 실행에서 함께 읽은 경계력이 보충에서 '있음'" 이 되려면 `fr_only` 도 받아야 함. 최소 해석: `FILL_MODES = (bf_only,
+  fr_only)` + frame_times 가 dict(`{"<f>": t}` — fr_only 형식)여도 읽음. 옛 bf_only 경로 불변(기존 시험 통과).
+- TM-C1-2 (§4.1·§6.3·§8.2) `counts` 는 "새 결과만" 인데 v0.25.2 새 결과를 가리는 표식이 계약에 없음. ①②③ base 모드는 스냅샷 jig_grid
+  블록을 무시해야 하는 v0.24.8 불변(test_base_mode_ignores_grid)이 있어, 표식 = **격자 지그 ∧ 스냅샷 rank.jig_grid 에 tie_force 키**
+  (`stages._jg_force_on` + `_jg_kind == grid`)일 때만 `counts`·`n_ref` 를 씀. 그 밖 결과(①②③·옛 ④)는 화면이 n_failed + COUNT_LABELS
+  거울로 같은 표시를 계산(계약 §8.2 C 의 옛 결과 경로). 보고서 개수 줄은 모든 결과에 `count_items` 로 덧붙임(덧붙일 키 없으면 글자 불변).
+- TM-C1-3 (§10.2-14 ②) 합성 세계의 Case 맞춤 하중은 자기평형(ΣF ≈ 0)이라 "반력 합력 차 / 반력 합력" 은 0/0 에 가까움 → 분모를
+  옮기지 않은 형상의 반력 크기 합 Σ‖R_n‖ 로(스프링 방식은 반력 = 구속 반력 + 스프링 힘 f_s·d̂). 측정(구멍 반지름 = 와셔 9 + snap 3.75
+  + 요소 3 + δ, 강제 거리 14.1~14.4·18.7~19.1 mm): ① 평형 F ≤ 2e-13·M ≤ 6e-14 ② ΔΣR ≤ 2.5e-11 ③ ΔM ≤ 4e-7 ≪ 한계 Σ|R_q|·δ_q(1.5e4~1.6e5)
+  ④ C_mix 차(옮기지 않은 판 대비): 강제 변위 δ3 −272.8 %·δ8 −361.7 %, 스프링 δ3 −40.2 %·δ8 −52.2 %. **강제 변위 방식은 멀리 옮긴
+  지지에서 C_mix 가 크게 바뀜**(구멍 + 지지 이동 효과 섞임) — 참고용 표시가 필요한 근거. 1 % 초안 문턱(②)은 평형 때문에 항상 성립.
+- TM-C1-4 (§10.2-14) "체결부 면을 δ 옮긴 판" 을 평판 세계에서 만들 수 없어(판이 어디나 면이라 band 가 잡음) 볼트 둘레 요소를 뺀 판
+  (구멍 = snap 밖)으로 대신함. δ = 구멍 반지름 추가분, 실제 옮긴 거리는 시험 출력(GRIDFORCE phys)에 기록. V-0252-15(50·200 mm)는
+  "좌표 통째 어긋남" 꼴(형상 A 좌표를 판 법선으로 δ) — 전부 force·dist ∈ [δ, √(δ²+(2h)²)]·한도 20 mm = 전부 miss·형상 제외 확인.
+- TM-C1-5 (§4.3) marks.x(Case 체결부 중심 — 형상 전역 좌표): A 좌표 → 형상 좌표 = 가장 가까운 형상 노드 n0 기준 X_S[n0] + (x_A −
+  ŷ[n0])·R_plᵀ(배치가 강체면 정확, frame 정규화 배치는 근사). 3D 선 끝점용으로 marks(force)에 `to`(붙인 노드 면적 가중 중심 — 형상
+  전역) 키를 더함(계약 키 목록 밖 추가 — F1 선 그리기용).
+- TM-C1-6 (§3.1) tie_force.normal_deg 90 = "조건 없음" 을 _proj_ok(cos 90° ≈ 6e-17)로 하면 법선 0 노드(고립)를 거름 → normal_deg ≥ 90 이면
+  법선 판정을 아예 하지 않음(< 90 일 때만 band 와 같은 _proj_ok).
+- TM-C1-7 (§2.3) D 안 비후보 프레임(--frame)의 옛 레코드(elem_id·value null)가 직접 고른 t* 레코드(frame_point 값 + manual)로 바뀜(계약
+  의도). 후보 ∧ D = 옛 레코드 그대로(골든 pipe_cand). 후보인데 D 밖(채운 프레임) = 직접 고른 t* 레코드(D 시각이 없어 옛 레코드 불가).
+- TM-C1-8 (§2.5) 경고 4종 중 TSTAR_MANUAL_LOW 만 run.json 단계 warnings(경고 수준), 나머지(정보)는 echo + esl_summary.tstar_manual.notes
+  [{code, level, text}]. ESL 단계 요약(run.json stages.esl.summary)에도 tstar_manual(notes 제외) — B1 작업 결과용.
+- TM-C1-9 (§2.4) TCL fr_only 의 변형률 출처 고정 = 요청 키 `strain_sources <추출 source 하나>`(frame_fill.request_keys) 또는 옛
+  `strain_type`(Max_Strain 고정). 덤프 source 가 골라지면 INPUT_INVALID(판정 표 행 3 이 먼저 막음). done.json frame_times = {"<f>": t}.
+  fr_only 블록은 `# >>> v0.25.2 fr_only` 표식 구간 — 빼면 393789a8 파일과 같은 글자(정적 시험 sha 고정).
+- TM-C1-10 (#96 재현 합성) 비대칭으로 구멍을 내면 PCA frame 이 기울어 SHAPE_SIZE_MISMATCH(6 % > 5 %)가 먼저 빼므로 네 모서리 볼트
+  자리(대칭)에 구멍. 두 장 형상은 band 가 두 장 다 잡아 잡힌 면적비 = 2.0(두께 두 번 — 정황이 JIG_GRID_AREA_RATIO 경계값에도 드러남).
+  요소 수 비 1.96(#96 1.97). 강제 켬 결과: 4/6 강제, 거리 7.14 mm, 참고용, score 0.971.
+- TM-C1-11 (§4.3, 범위 판단) v0.25.1 씬 3D 묶음(post/view3d_scene — `_scn_jig_grid_p`)의 지지 행에는 via·tie_marks 를 넣지 않음(계약은
+  지그 응답 3D manifest 만 지정). 필요하면 후속.
+- TM-C1-12 (§9 성능 실측 — 합성) 형상 노드 112,601(h 0.5 mm 판)·묶음 6: 구멍 4곳 강제 0.63 s · 30 mm 어긋남 전부 강제 0.81 s · 200 mm 0.66→
+  1.66 s(형상 전체 capture). 먼 묶음은 완결 조건(k 번째 이웃 거리 > 고른 거리 + L_q + ρ) 때문에 KD 질의 반경이 옮긴 거리만큼 커져 묶음당
+  비용이 거리에 비례(정확 거리 메모·묶음 중심 1점 질의·첫 k = 면적 어림 ×2 로 줄임). 228 묶음이 모두 수백 mm 어긋난 극단은 형상당 수십 초
+  가능 — 현장 E-0252-10 에서 실측 필요.
+
+### 15.2 B1 백엔드·워커 구현 사실 (wip/v0.25.2-b1 a2f45b84)
+
+- 설정 pydantic `AltairCfg.frame_fill_timeout_s·frame_fill_wait_s`, `BeadDoeRankJigGridForceCfg`(`tie_force`)·`tie_force_far_warn_mm`, `view3d.jig_force_marks_max`, `compare.double_sheet` + yaml 2개(§8.1 값). 스냅샷 `rank_snapshot` 은 블록 통째 복사(변경 없음 — 키 없으면 따라오지 않음).
+- `worker/esl_worker/frame_fill.py`(사실 `facts`·`fill_state`·요청 `request_extra`·평가 `evaluate`·문구 `LOG`·`CAUSE_TEXT` — 원인 `WAIT`·`TIMEOUT`·`LICENSE`·`HW_FAILED`·`MISMATCH`·`MERGE`·`SETTINGS`), `core_adapter.frame_fill_*`·`frame_point` 래퍼, `executor._frame_fill`(경계력 보충 바로 앞·같은 hw 세마포어 — 작업 폴더 `<esl_root>/_h3d/<Case 폴더>/frame_fill/raw`, 단계 outputs·작업 결과 `frame_fill`, 실패 = 단계 실패 `TSTAR_FRAME_FILL_FAILED`·막힘 = 기록 status `blocked`, 같은 실행 bforce 키가 있으면 같은 fill_out 으로 경계력 병합 — 실패해도 채움 성공).
+- API: `GET /tstar` `frames`(history.npz)·`frames_have`(코어 `frames_have`, 못 부르면 변위 프레임)·`fill`(행 2~5 — `have` 무관)·`history.frame_index`(곡선 점 수 = 프레임 수일 때만 — 어긋난 옛 산출물은 키 없음). `PUT`: 후보 ∧ in_D 면 지금 경로(저장 값 바이트 불변), 그 밖 = 코어 `frame_point` + `manual`(`tstar_confirm.manual_tstar`), 프레임 목록을 못 읽는 옛 산출물 = 지금 규칙(후보만). ESL 작업 사전 점검 `job_params._fill_ok`(manual ∧ 그 프레임 ∧ DECIDE ≠ block).
+- 결과 스키마 선택 키(`n_ref`·`counts`·`via`·`tie_marks`·`n_forced_shapes`·`n_ref_shapes`) — None 이면 직렬화에서 키를 뺌(옛 응답 바이트 불변). OpenAPI 재생성. 옛 시험 `test_p1b_e2e` 의 없는 프레임 422 코드 `FRAME_NOT_CANDIDATE` → `FRAME_NOT_FOUND`(§6.1 3).
+- 시험 `backend/tests/test_v0252_b1_api.py`(V-0252-24·25·27 — 손으로 심은 산출물 + 코어 `frame_point` 가짜, 판정·frames_have 는 실제 코어), `worker/tests/test_frame_fill.py`(V-0252-26 — 통합에서 실제 코어로, §15.4 INT-3).
+
+### 15.3 F1 프런트 구현 사실 (wip/v0.25.2-f1 63de3332)
+
+- A: `Stage2.tsx`·`MaxHoldChart.tsx`(곡선 클릭·안내선·그림 안 읽기 글자, 세로선 = `frames` 시각)·`lib/tstarFrames.ts`(가장 가까운 프레임·입력 해석·변위 칸·확정 전 경고). B: `view3d/supportMarks.ts` `TIE_TABLE`·`supports.buildTieMarks`·`scene.setTieMarks`·탐침 kind `tie`·범례 `markLegend`. C: `doeTabs.countItems·countTail·tabState`(빈 주 탭 → 순위 있는 첫 탭)·빈 탭 링크·`참고` 꼬리표(title = `JIG_GRID_TIE_FORCED` 경고를 `did` 로 찾음)·`SHAPE_DOUBLE_SHEET` 배지. 목 자료·시험 `tstar_manual_v0252.test.tsx`·`doe_v0252.test.tsx`.
+- 높이 측정 `scripts/screenshots-v0252-f1.mjs` — 2560×1440·1920×1080 ②·스터디 결과 높이 증가 0(V-0252-28·30). 경고 필드 이름(`did`·`n_force`·`pct`·`dmin`·… — 서버 `message` 가 없을 때 대체 문구용) 가정.
+- 계약 밖 제안 키 2개(`GET /tstar` `manual_ratio_warn`, 3D manifest `tie_far_mm`)와 `types.ts` 손 맞춤 11키는 통합에서 처리(§15.4 INT-4·5).
+
+### 15.4 통합 보정 (release/v0.25.2 통합 — INT-n)
+
+| # | 내용 | 근거 · 시험 |
+|---|---|---|
+| INT-1 | 병합 wip/v0.25.2-b1(a2f45b84) → wip/v0.25.2-f1(63de3332) — 글자 충돌 0 → release/v0.25.1 d578b0df(v0.25.1 독립 검증 수정 INT-10~12) — 충돌 2곳(`docs/decisions.md`·`resources/doe_messages.json` 끝 덧붙임) 양쪽 보존(문구 키 중복 0). `schemas.py` 자동 병합(v0.25.1 `View3dSceneOut.geometry_key`·`DoeScenePackOut.approx` + v0.25.2 `View3dOut.tie_marks`) | JSON 키 중복 검사, 아래 시험 |
+| INT-2 | B1 이 C1 껍데기 시점에 둔 설정 거울 분기(`test_doe_config` — 코어 DEFAULTS 에 새 키가 없으면 빼고 대조) 제거 → 새 키(`tie_force`·`tie_force_far_warn_mm`·`jig_force_marks_max`·`double_sheet`)가 코어 DEFAULTS 에 있음을 단언 + 전체 대조 | `backend/tests/test_doe_config.py` |
+| INT-3 | 워커 채움 시험의 가짜 `merge`·코어 ESL 가로채기(`TEST_STOP`) 제거 → **실제 코어** `frame_fill.merge`·`_select_frame`·ESL. 가짜 hw `fr_only` 출력 = `FAKE_HW_FR_SRC`(같은 합성 결과를 전 프레임 D 로 쓴 CSV)의 f·f−1 행·시각·프레임 수(실제 병합의 같은 h3d 확인 통과), 다른 h3d = `FAKE_HW_FR_NFRAMES` 로 실제 `FRAME_FILL_MISMATCH`(01_extract 바이트 불변 확인). 채움 → 코어 ESL 성공·`frames_fill[job_id]`·`disp.npz` 끝 프레임·`esl_summary.tstar_manual.filled`·단계 outputs `frame_fill`, 두 번째 실행 hw 0, 재시도·재추출 뒤 다시 채움도 ESL 성공 | `worker/tests/test_frame_fill.py` 34(+ `test_doe_config`) |
+| INT-4 | `check:api` 11건 → 0: B1 스키마가 9키(`n_forced_shapes`·`n_ref_shapes`·`counts`(결과·보기)·`tie_marks`·`via` …)를 이미 가짐, `n_ref`(결과·보기) = 스키마 선택·null 허용 ↔ TS `number` → TS `number \| null`(서버는 None 이면 키를 안 냄), `tie_far_mm` = INT-5 | `npm run check:api` 통과(스키마 267) |
+| INT-5 | F1 제안 키 2개 — 계약 밖이지만 **설정 값을 그대로 내보내는 것**(계약 본문 설계 변경 아님): (a) `GET /cases/{id}/tstar` 최상위 `manual_ratio_warn` = 코어 `esl.config.tstar_manual_settings(core cfg)`(새 래퍼 `core_adapter.tstar_manual_settings`, 코어를 못 부르면 키 없음 — 화면은 경고색 판정 생략) (b) 지그 응답 3D manifest `tie_far_mm` = 그 형상 `map.tie.force.far_mm`(실행 때 `tie_force_far_warn_mm` 기록 값 — `marks[].far` 를 정한 값과 같음, 설정을 나중에 바꿔도 범례·표식이 어긋나지 않게). `build_view(tie_far_mm=)` 는 `tie_marks` 가 있을 때만 씀(옛 manifest 바이트 불변 — `test_view3d_golden`), `View3dOut.tie_far_mm` 선택 키(None = 키 없음) | `test_v0252_b1_api::test_get_tstar_new_keys_results_case`·`test_manifest_tie_far_mm_passthrough`(실제 `build_view`), `tests/doe/test_v0252_c.py`(#96 켬 `man["tie_far_mm"] == tie["force"]["far_mm"]`) |
+| INT-6 | C1 구현 사실 `marks[].to`(TM-C1-5 — 붙인 노드 면적 가중 중심) ↔ 화면: F1 은 선 끝을 "가장 가까운 강제 지지 표식" 으로 그려 이웃 체결부 쪽으로 갈 수 있었음 → `to` 가 있으면 선 끝 = `to`(없으면 지금 규칙). TS `View3dTieMark.to?`·`dist: number \| null`(miss = null — 코어 그대로), 탐침 null 처리 | vitest `doe_v0252` "코어 marks[].to" |
+| INT-7 | `counts` 조건(TM-C1-2 — 격자 지그 ∧ 스냅샷 `tie_force` 일 때만 API `counts`·`n_ref`) ↔ 화면: 그 밖 결과는 화면 `countItems` 가 계산하는데 규칙이 코어 `count_items` 와 달랐음(같은 키 합 없음·n_skipped→n_failed 삽입 순서) → 코어와 같게(같은 키 합·`COUNT_LABELS` 표 순서·표에 없는 키는 뒤 이름순). 결과 제목 = 보고서 개수 줄 | vitest `doe_v0252` 기대값 = 코어 `count_items` 출력 |
+| INT-8 | 문서·버전: CHANGELOG [0.25.2]·`user.md`(② 직접 고르기·③ 채움 로그·강제 부여·참고·3D 표식·결과 개수·두 장 경고)·`admin.md` §4.12(새 설정 표·채움·API)·`docs/manual/field_check_v0252.md`(E-0252-1~15·#96 재시도 절차)·VERSION 0.25.2·OpenAPI info·버전 시험 2곳(`test_menu_deploy`·`test_p3_ux_hardening`), 인계 메모 3개·findings TM-C1 절 → 이 절·decisions 로 옮기고 삭제 | `test_menu_deploy`·`test_p3_ux_hardening`·`p3.test.tsx`(user.md) |
+| INT-9 | 통합 시험 — (실행 중, 끝나면 기록) | — |
