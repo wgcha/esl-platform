@@ -88,7 +88,7 @@
 | BS-R1-4 | derive | [사면·경계 자동] 응답 시간(p95 ≤ 3 s)·백엔드 메모리 피크(≤ 1.5 GB). 사면·경계가 실제 비드와 맞는지(±1줄 수정 횟수), 공칭 D·W 가 도면 값(22·60)과 맞는지, 경고 목록(특히 `SELECT_SLOPE_LEAK`·`SELECT_TIER_MISSING`·`SELECT_WIDTH_UNDEFINED`) | |
 | BS-R1-5 | 고정 노드 | 체결 고정 노드(fixed-scan 또는 칠한 고정 층) 수, `SELECT_FIXED_IN_BEAD`·`SELECT_FIXED_IN_BLEND`·`SELECT_BLEND_CLIPPED` 유무, `SELECT_FIXED_LAYER_OVERLAP` 이 의도한 겹침인지 | |
 | BS-R1-6 | 기저·미리보기 | BD_MATRIX 기저 시간·메모리(≤ 30 s·≤ 2 GB), 미리보기 안 수·총 시간(200안 ≤ 5 분), 안별 썸네일 ≤ 1 s, 품질 실패(`FAILED_MESH`) 비율·고정 침범(`SKIPPED_FIXED`) 비율 기록 | |
-| BS-R1-7 | 3D 보기 | 썸네일 클릭 → 3D 안 형상이 썸네일과 같은 모양·색 부호(깊어짐 파랑), 공칭 ↔ 안 전환 | |
+| BS-R1-7 | 3D 보기 | 썸네일 클릭 → 3D 안 형상이 썸네일과 같은 모양·색 부호(깊어짐 빨강 — v0.25.1 부터, 그 전 미리보기 썸네일은 깊어짐 파랑), 공칭 ↔ 안 전환 | |
 | BS-R1-8 | 노드 ID 불변 | 최적 안 include 사본(`best/<id>/`)이 원본과 `/NODE` 좌표 칸 외 바이트 동일, ID·연결·PID 불변 | |
 | BS-R1-9 | 순위 경향 | 실행 후 D 깊어질수록 score 감소 경향인지, 최적 안 검증 낙하 1회(①-VD 와 같은 절차)로 변위·변형률 경향이 순위와 같은 방향인지 | |
 | BS-R1-10 | 입력 보호 | Case 폴더 파일 목록·수정 시각·sha 가 실행 전후 같음 | |
