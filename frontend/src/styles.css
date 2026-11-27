@@ -4646,3 +4646,10 @@ details.card.fold > .fold-body {
 .warn-text {
   color: var(--wait);
 }
+/* v0.25.2 순위표 "참고" 꼬리표: 줄 높이를 키우지 않게(이름 칸 줄 높이 그대로) */
+.badge.ref-tag {
+  line-height: 1;
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: baseline;
+}

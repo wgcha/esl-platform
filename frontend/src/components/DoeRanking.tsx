@@ -234,7 +234,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                     {refTag && r.jig_ref && (
                       <>
                         {" "}
-                        <span className="badge neutral" data-testid={`rank-ref-${r.id}`} title={tieForcedText(result.warnings, r.id)}>
+                        <span className="badge neutral ref-tag" data-testid={`rank-ref-${r.id}`} title={tieForcedText(result.warnings, r.id)}>
                           참고
                         </span>
                       </>

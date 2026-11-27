@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/endpoints";
 import type { Metric } from "../api/types";
 import { Card, Empty } from "../components/ui";
@@ -26,6 +26,9 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   const [manualText, setManualText] = useState("");
   const [manualBad, setManualBad] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 후보 표 스크롤 칸: "직접" 행을 더해도 카드 높이가 늘지 않게, 칸 높이를 직접 행을 뺀 표 높이(= 지금까지의 높이)로 고정하고 직접 행은 그 안에서 스크롤로 닿는다
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const manualRowRef = useRef<HTMLTableRowElement>(null);
   const pts = useMemo(() => curvePoints(blk, tv.data), [blk, tv.data]);
   const hotspots = blk?.hotspots ?? tv.data?.hotspots ?? [];
   // v0.8.0 누적 씬: 값 = 누적(이전 + 이번), 표에 이전·이번(증분) 열
@@ -44,6 +47,22 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   }, [metric, tv.data, c.tstar?.metric, c.tstar?.frame_index]);
 
   const cands = blk?.candidates ?? [];
+  const hasManualRow = !!blk;
+  useLayoutEffect(() => {
+    const w = wrapRef.current;
+    const r = manualRowRef.current;
+    const t = w?.querySelector("table");
+    if (!w || !r || !t) return;
+    const fit = () => {
+      const h = t.getBoundingClientRect().height - r.getBoundingClientRect().height;
+      w.style.maxHeight = h > 0 ? `min(${+h.toFixed(3)}px, var(--tbl-max))` : "";
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(t);
+    return () => ro.disconnect();
+  }, [hasManualRow, cum, cands.length]);
   const isCand = frame !== null && cands.some((k) => k.frame_index === frame);
   const warnRatio = tv.data?.manual_ratio_warn;
   const autoFrame = blk?.tstar?.frame_index;
@@ -53,6 +72,11 @@ export function Stage2({ c, reload, allowed }: StageProps) {
     if (!cands.some((k) => k.frame_index === f)) {
       setManualFrame(f);
       setManualText(String(f));
+      // 직접 행은 후보 표 스크롤 칸 맨 아래 — 곡선을 눌러 고르면 보이게
+      requestAnimationFrame(() => {
+        const w = wrapRef.current;
+        if (w) w.scrollTop = w.scrollHeight;
+      });
     }
   };
   const commitManual = () => {
@@ -146,7 +170,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
           </Card>
           <div className="contents step2-pair">
             <Card title="후보 시점">
-              <div className="table-wrap scroll">
+              <div className="table-wrap scroll" ref={wrapRef}>
               <table className="table compact">
                 <thead>
                   <tr>
@@ -189,6 +213,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                   })}
                   {blk && (
                     <tr
+                      ref={manualRowRef}
                       data-testid="manual-row"
                       className={frame !== null && !isCand && frame === manualFrame ? "hl" : undefined}
                       onClick={() => {
