@@ -41,7 +41,9 @@ NEW_JIG = ("tie_dofs", "methods", "normal_kink_deg", "aux321_dup_deg", "aux_reac
 JIG_GRID_DEFAULT = {"enabled": True, "cell_mm": 3.0, "conv_mm": [5.0, 10.0], "tie_capture_rel": 0.25, "tie_snap_rel": 0.75,
                     "tie_normal_deg": 30.0, "tie_miss_frac_max": 0.1, "sample_nbr": 1, "sample_normal_deg": 45.0,
                     "area_ratio_warn": 2.0, "conv_warn": 0.05, "frame_shift_warn": 0.5, "load_resid_warn": 1e-6,
-                    "noise_floor_min": 0.03, "noise_floor_mismatch": 0.05, "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2}
+                    "noise_floor_min": 0.03, "noise_floor_mismatch": 0.05, "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2,
+                    # v0.25.2 JF(esl_tstar_manual_jig_force.md §3.6·§8.1): 강제 부여 블록(스냅샷·해시 안) + 먼 강제 표시 임계(해시 밖)
+                    "tie_force": {"enabled": True, "max_dist_mm": None, "normal_deg": 90.0}, "tie_force_far_warn_mm": 10.0}
 RANK_DEFAULT = {"ratio_tol": 1e-6, "per_esl_inline_max": 2000, "metric": "jig", "lin_form": "ritz", "lin_valid": 0.3,
                 "imbalance_warn": 0.02, "eval_region": "part", "eval_free_edge_mm": 10.0, "eval_boxes": [], "jig": JIG_DEFAULT, "jig_grid": JIG_GRID_DEFAULT}
 # v0.24.0 보완(esl_fint.md §6.2): 새 스냅샷에 평가 영역 고정
@@ -407,7 +409,8 @@ def test_view3d_cfg_mirror():
     from esl_platform.core.config import BeadDoeCfg
 
     want = {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1,   # v0.23.3
-            "recon": True}                                                                    # v0.24.1 재현 진단(esl_view3d_sources.md §7)
+            "recon": True,                                                                    # v0.24.1 재현 진단(esl_view3d_sources.md §7)
+            "jig_force_marks_max": 512}                                                       # v0.25.2 JF 3D 체결부 표식 상한(§4.3·§8.1)
     scene = {"enabled": True, "max_mb": 1024, "diff_cell_h_mult": 2.0}                    # v0.25.1 VL 낙하 씬별 3D 묶음(esl_view3d_scene_legend.md §7.1)
     full = {**want, "scene": scene}
     # 코어 DEFAULTS["view3d"]["scene"] 병합 전(C1 병합 전)에는 코어 쪽만 scene 없이 대조 — 병합 후에는 전체 대조(이 분기 사라짐)
