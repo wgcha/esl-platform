@@ -1113,6 +1113,21 @@ function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, se
   const showFull = !pairTab;
   const base = useDoeView(studyId, sceneOn ? "d000" : jigMode ? jigRef : showFull ? refId ?? (result.view3d.includes("d000") ? "d000" : null) : null, sceneSel);
   const cand = useDoeView(studyId, sceneOn ? did : jigMode ? jigDir : showFull ? did : null, sceneSel);
+  // 통합 INT-11: 씬 요약 숫자 = 표(per_esl — 인라인이 아니면 표와 같은 GET …/results/per-esl?view=) 값, 근사 씬은 정보 한 줄
+  const peKey = `${did ?? ""}|${perView ?? ""}`;
+  const [peFetched, setPeFetched] = useState<{ key: string; rows: DoePerEsl[] } | null>(null);
+  const peNeed = sceneOn && !!did && !result.per_esl_inline && peFetched?.key !== peKey;
+  useEffect(() => {
+    if (!peNeed || !did) return;
+    let alive = true;
+    doe
+      .perEsl(studyId, [did], perView)
+      .then((o) => alive && setPeFetched({ key: peKey, rows: o.designs.find((x) => x.id === did)?.per_esl ?? [] }))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [studyId, peKey, peNeed]); // eslint-disable-line react-hooks/exhaustive-deps
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
@@ -1182,21 +1197,7 @@ function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, se
   const picked = scene != null;
   const missingPick = picked && !sceneOn && designView && !!src;
   const skip = missingPick ? skippedFor(result, srcKey, did, eid) : null;
-  // 통합 INT-11: 씬 요약 숫자 = 표(per_esl — 인라인이 아니면 표와 같은 GET …/results/per-esl?view=) 값, 근사 씬은 정보 한 줄
-  const peKey = `${did ?? ""}|${perView ?? ""}`;
-  const [peFetched, setPeFetched] = useState<{ key: string; rows: DoePerEsl[] } | null>(null);
-  const peNeed = sceneOn && !!did && !result.per_esl_inline && peFetched?.key !== peKey;
-  useEffect(() => {
-    if (!peNeed || !did) return;
-    let alive = true;
-    doe
-      .perEsl(studyId, [did], perView)
-      .then((o) => alive && setPeFetched({ key: peKey, rows: o.designs.find((x) => x.id === did)?.per_esl ?? [] }))
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [studyId, peKey, peNeed]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 통합 INT-11: 씬 요약 숫자 = 표 값(훅은 위 — 조기 반환 앞)
   const peRows = result.per_esl_inline ? result.ranking.find((r) => r.id === did)?.per_esl ?? null : peFetched?.key === peKey ? peFetched.rows : null;
   const peRow = eid ? peRows?.find((p) => p.entry_id === eid) ?? null : null;
   const approx = sceneOn ? approxFor(result, srcKey, did, eid) : null;
