@@ -14,7 +14,7 @@
 | 6 | 시험 `tests/io/test_colormaps.py`(37·38·39) | 완료 |
 | 7 | 골든 갱신·V-43·44·45 시험 | 완료 |
 | 8 | main 대비 비교(43 픽셀·44 HTML) | 완료 — 아래 |
-| 9 | tests/ 전체 1회 | 진행 |
+| 9 | tests/ 전체 1회 | 완료 — 아래 |
 
 ## 통합 때 메인이 넣을 것
 - `esl/doe/stages.py:8528`(bd_select_grid manifest) 한 줄:
@@ -39,3 +39,21 @@
 ## 시험에 추가하면 좋은 것(통합 뒤 — stages.py 한 줄이 들어간 다음)
 - `tests/doe/test_select_render.py::test_select_stage_flow` 의 `assert gm["color"]["unit"] == "mm" …` 줄 뒤에
   `assert gm["color"]["map"] == sr.color_meta()["map"] == "diverge"` (지금은 stages.py 가 C1 소유라 넣지 않음 — 넣으면 이 브랜치에서 실패).
+
+## 시험 결과
+- C2 범위(test_colormaps·select_render·opt/test_post·opt/test_report·case_report·report_doe·library analysis·compare): **82 passed**.
+- tests/ 전체 1회(35:56): 1896 passed · 192 skipped · **23 failed** =
+  - 허용 3: `test_large_model_cad_share`(gmsh 없음)·`test_v0160_bytes_skip_policy[h8]`·`[h5open]`.
+  - 시간 경계 흔들림 1: `test_validate_tiers.py::test_v0245_vt_12_report_new_rows_and_old_render`(보고서 생성 시각 초 차이 — 다시 돌리면 통과).
+  - **report.html 바이트 고정 골든 19**(main e9745958 트리에서는 50개 모두 통과 — 이 변경 때문): 차이 목록이 모두 `report.html`·`07_report/report.html`
+    **하나뿐**(다른 결과 파일은 바이트 동일 = "나머지 바이트 불변" 확인).
+    `tests/cumulative/test_cumulative_e2e.py::test_b1_noncumulative_outputs_identical_to_v072`,
+    `tests/doe/test_jig_grid_golden.py::test_old_snapshot_bytes[cmp_old|cmp_norank|step_old]`,
+    `tests/doe/test_jig_move.py::test_v0244_jig_1_golden_bytes`,
+    `tests/doe/test_pos_u_golden.py::test_old_snapshot_bytes[sel_case_jig|sel_step_jig]`·`test_pos_u_block_without_u_vars_is_node_path[sel_case_jig|sel_step_jig]`,
+    `tests/doe/test_vbead_golden.py::test_no_virtual_beads_bytes[old|vb_block × sel_case_jig|sel_step_jig|sel_step_jig_pu]`(6),
+    `tests/pipeline/test_validate_sources.py::test_v0243_val_1_golden_full_bytes`,
+    `tests/pipeline/test_validate_tiers.py::test_v0245_vt_6_golden_v0244_plus_intended_only`·`test_v0245_vt_8_old_results_report_stage_reads_only[jig|never]`.
+  - 원인 = 계약 §7.2·V-0251-10(개정 1)은 그림 3종(report.html 등)을 "같은 입력 → 같은 바이트" 목록에서 뺐지만 §5.9 골든 갱신 목록에 이 19개가 빠짐.
+    지시대로 §5.9 목록 밖 골든은 고치지 않음 → **통합 때 메인 결정 필요**: 이 시험들의 비교 집합에서 report.html 을 빼거나(권장 — V-0251-10 개정과 같은 뜻)
+    report.html 해시만 새로 기록.
