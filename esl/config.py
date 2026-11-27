@@ -272,6 +272,7 @@ SCHEMA: dict[str, Any] = {
         "hotspot_min_dist": _num(0.0),
         "time_window": _time_window,
         "exclude_elem_ids": _int_list,
+        "manual_ratio_warn": _num(0.0, 1.0),    # 선택(OPTIONAL_KEYS, v0.25.2 esl_tstar_manual_jig_force.md §2.5): 직접 고른 t* 경고 임계
     },
     "support": {
         "candidates": _enum("pca4", "node_ids"),
@@ -483,6 +484,21 @@ OPTIONAL_KEYS = frozenset({"case.rad_max_line_kb", "cumulative.max_npt", "cumula
                            "validation.sources", *(f"validation.sources.{k}" for k in VALIDATION_SOURCES_DEFAULTS),
                            *(f"validation.{k}" for k in VALIDATION_TIER_DEFAULTS),
                            *(f"jig.{k}" for k in SCHEMA["jig"])})
+# v0.25.2 직접 고른 t*(계약 esl_tstar_manual_jig_force.md §2.5·§8.1 — D-0.25.2-6) 기본값 단일 출처 — 선택 키, cfg 에 주입 안 함(설정 해시
+# 불변, 경고 임계만 — 계산 불변). 읽기 = tstar_manual_settings. 백엔드 코어 설정 통과·config/esl.example.yaml 같은 이름·값.
+TSTAR_MANUAL_DEFAULTS = {"manual_ratio_warn": 0.5}
+OPTIONAL_KEYS = OPTIONAL_KEYS | frozenset(f"tstar.{k}" for k in TSTAR_MANUAL_DEFAULTS)
+
+
+def tstar_manual_settings(cfg: dict | None) -> dict:
+    """tstar.manual_ratio_warn(없으면 TSTAR_MANUAL_DEFAULTS)."""
+    tc = cfg.get("tstar") if isinstance(cfg, dict) else None
+    out = dict(TSTAR_MANUAL_DEFAULTS)
+    if isinstance(tc, dict):
+        out.update({k: tc[k] for k in TSTAR_MANUAL_DEFAULTS if tc.get(k) is not None})
+    return out
+
+
 # dump 원자료 키 기본값(단일 출처, cfg 에 주입 안 함)
 DUMP_DEFAULTS = {"dump_keep": False, "dump_max_bytes": 40 * 1024 ** 3}
 

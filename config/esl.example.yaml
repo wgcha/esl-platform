@@ -43,6 +43,7 @@ tstar:
   hotspot_min_dist: 20.0             # 모델 길이 단위. hotspot 간 최소 거리
   time_window: [null, null]          # [t_min, t_max] (null = 전체)
   exclude_elem_ids: []               # 특이점 제외용 요소 ID
+  manual_ratio_warn: 0.5             # 직접 고른 t* 의 지표가 자동 t* 의 이 비율 미만이면 경고(TSTAR_MANUAL_LOW, 계산 불변)
 
 support:
   candidates: pca4                   # pca4 (PCA 4꼭지점) | node_ids (아래 목록)

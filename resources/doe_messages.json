@@ -1,5 +1,5 @@
 {
- "version": "2026-11-26.3",
+ "version": "2026-11-27.1",
  "paicad_codes": {
   "SHELL_BODY_NOT_SHEET": "STEP_NOT_SHEET",
   "GEOM_EXTRACT_EMPTY": "NO_BEADS",
@@ -396,6 +396,18 @@
   "SCENE_NO_SOURCE": "이 출처에는 씬 3D 를 만들 입력(메시·응답)이 없습니다",
   "SCENE_DIFF_NO_FRAME": "공통 좌표를 얻지 못해 C 기여도 차이를 만들지 못했습니다",
   "SCENE_VIEW_INVALID": "씬 3D 요약(post/scene_view.json)을 읽지 못해 표시하지 않습니다 — 씬 3D 를 다시 만들 수 있습니다",
-  "SCENE_UNAVAILABLE_DISABLED": "설정 bead_doe.view3d.scene.enabled 가 꺼져 있어 씬 3D 를 만들 수 없습니다"
+  "SCENE_UNAVAILABLE_DISABLED": "설정 bead_doe.view3d.scene.enabled 가 꺼져 있어 씬 3D 를 만들 수 없습니다",
+  "TSTAR_MANUAL": "직접 고른 시점: 프레임 {f} · {t} s — 지표 값이 자동 t*(프레임 {fa} · {ta} s)의 {pct} % 입니다",
+  "TSTAR_MANUAL_LOW": "직접 고른 시점의 지표가 자동 t* 의 {pct} % 뿐입니다 — 하중이 최대에 한참 못 미친 시점의 ESL 입니다",
+  "TSTAR_MANUAL_AFTER": "자동 t* 뒤 시점입니다 — 지표(max-hold)는 지나간 최대값이고, ESL 은 이 시점의 변위로 만듭니다",
+  "TSTAR_MANUAL_NO_RISING": "이 시점에 변형률이 오르는 요소가 없어 변형률 hotspot 비교는 생략합니다(변위 검증은 그대로)",
+  "TSTAR_FRAME_FILL_FAILED": "직접 고른 시점을 h3d 에서 읽지 못했습니다: {detail} — 다시 실행하거나 ② 에서 다른 시점을 고르세요",
+  "JIG_GRID_TIE_FORCED": "형상 {did}: Case 지그 체결부 {n_force}/{n_clusters}곳({pct} %)이 형상의 체결부 자리가 아니어서 가장 가까운 면에 강제로 붙였습니다(옮긴 거리 최소 {dmin} · 중앙 {dmed} · 최대 {dmax} mm, {far} mm 넘는 곳 {n_far}곳 · 면적비 {lo}~{hi}{kscale}){ref}",
+  "JIG_GRID_TIE_FAR": "형상 {did}: 체결부 {n_far}곳은 {far} mm 넘게 떨어진 면에 붙였습니다(먼 순 상위 5곳: {list} mm) — 다른 모델이거나 좌표가 어긋났을 수 있습니다. 3D 지그 보기의 선 길이를 확인하세요",
+  "JIG_GRID_TIE_UNPLACED": "형상 {did}: 체결부 {n_miss}/{n_clusters}곳은 붙일 면이 없어 뺐습니다{limit}{fail}",
+  "JIG_GRID_TIE_HINT": "체결부를 많이 못 찾은 형상은 Case 와 다른 모델이거나, 좌표가 어긋났거나, STEP 이 중립면이 아닐 수 있습니다 — 3D 지그 보기에서 위치를 확인하세요",
+  "SHAPE_DOUBLE_SHEET": "{name}: 판 앞뒷면 표면이 둘 다 들어 있는 것 같습니다(마주 보는 면 {pct} % · 간격 {gap} mm ≈ 두께 {t} mm 의 {r}배) — 두께가 두 번 계산되고 지그 체결부를 못 찾을 수 있습니다. 중립면 한 장으로 올려 주세요.",
+  "RANK_OTHER_SOURCE_EMPTY": "이 하중 출처에는 순위에 든 형상이 없습니다({counts}) — [{other}] 탭에는 순위가 있습니다",
+  "RANK_OTHER_SOURCE_TITLE": "다른 하중 출처 순위: {source}"
  }
 }

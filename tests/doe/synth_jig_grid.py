@@ -217,8 +217,12 @@ def entries(root: str, A: dict, n: int = 2, *, case: bool = True, **jkw) -> list
 
 
 # ---------------------------------------------------------------- 스냅샷
-def rank_snap(*, grid: dict | bool | None = None, methods=None, metric: str = "jig") -> dict:
-    """새 스터디 스냅샷 doe.rank(백엔드 rank_snapshot 과 같은 키 — 설정 기본값). grid = True → DEFAULTS rank.jig_grid 사본,
+V0252_GRID_KEYS = ("tie_force", "tie_force_far_warn_mm")     # v0.25.2 새 키(esl_tstar_manual_jig_force.md §3.6)
+
+
+def rank_snap(*, grid: dict | bool | None = None, methods=None, metric: str = "jig", force: bool = False) -> dict:
+    """새 스터디 스냅샷 doe.rank(백엔드 rank_snapshot 과 같은 키 — 설정 기본값). grid = True → DEFAULTS rank.jig_grid 사본(force
+    False = v0.25.2 새 키 tie_force·tie_force_far_warn_mm 를 뺀 v0.25.1 스냅샷 — 옛 골든 세계, True = 지금 기본 그대로 — 강제 부여 켬),
     dict → 그 블록, None/False → 키 없음(옛 = v0.24.7)."""
     from esl.doe import DEFAULTS
     r = DEFAULTS["rank"]
@@ -228,7 +232,7 @@ def rank_snap(*, grid: dict | bool | None = None, methods=None, metric: str = "j
     if methods is not None:
         out["jig"]["methods"] = list(methods)
     if grid is True:
-        out["jig_grid"] = copy.deepcopy(r["jig_grid"])
+        out["jig_grid"] = {k: copy.deepcopy(v) for k, v in r["jig_grid"].items() if force or k not in V0252_GRID_KEYS}
     elif isinstance(grid, dict):
         out["jig_grid"] = copy.deepcopy(grid)
     return out

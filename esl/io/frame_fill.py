@@ -158,7 +158,156 @@ def merge(extract_dir: str, fill_out: str, frame: int, *, job_id: str | None = N
     FRAME_FILL_MISMATCH, 아무것도 쓰지 않음) → disp.npz·strain_frames.npz 끝에 프레임 f 덧붙임(이미 있으면 건드리지 않음 —
     added false) → frames.json frames_fill += {frame_index, time, at, job_id}. 반환 {frame, time, added: bool}.
     오류: FRAME_FILL_OUTPUT(채움 출력이 아님·요청 프레임 없음), FRAME_FILL_MISMATCH, FRAME_FILL_MERGE(01_extract 읽기)."""
-    raise NotImplementedError("v0.25.2 C1 — 구현 중(접점 껍데기)")
+    try:
+        return _merge(extract_dir, fill_out, int(frame), job_id=job_id)
+    except EslError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — npz 손상(BadZipFile)·KeyError·ValueError 등
+        raise EslError("FRAME_FILL_MERGE", f"병합 중 예기치 않은 오류 {type(exc).__name__}: {str(exc)[:200]}") from None
+
+
+def _fill_done(fill_out: str, frame: int) -> dict:
+    p = os.path.join(fill_out, "done.json")
+    try:
+        done = _read_json(p)
+    except (OSError, ValueError) as exc:
+        raise EslError("FRAME_FILL_OUTPUT", f"채움 추출 done.json 을 읽을 수 없음: {p}: {exc}") from None
+    if not isinstance(done, dict) or done.get("ok") is not True:
+        raise EslError("FRAME_FILL_OUTPUT", "채움 추출이 성공이 아님(done.json ok "
+                                            f"{None if not isinstance(done, dict) else done.get('ok')})")
+    if done.get("mode") != FILL_MODE:
+        raise EslError("FRAME_FILL_OUTPUT", f"채움 추출 출력이 아님(done.json mode {done.get('mode')!r})")
+    if int(frame) not in [int(f) for f in (done.get("frames") or [])]:
+        raise EslError("FRAME_FILL_OUTPUT", f"채움 추출에 요청 프레임 {frame} 이 없음(frames {done.get('frames')})")
+    return done
+
+
+def _done_time(done: dict, f: int):
+    """done.json frame_times({"<f>": t} 또는 frames+prev_frames 순 목록) → f 의 시각(없으면 None)."""
+    ft = done.get("frame_times")
+    if isinstance(ft, dict):
+        v = ft.get(str(int(f)))
+        return None if v is None else float(v)
+    if isinstance(ft, list):
+        order = [int(x) for x in (done.get("frames") or [])] + [int(x) for x in (done.get("prev_frames") or [])]
+        if int(f) in order and order.index(int(f)) < len(ft):
+            return float(ft[order.index(int(f))])
+    return None
+
+
+def _load_all(path: str) -> dict:
+    with np.load(path, allow_pickle=False) as z:
+        return {k: z[k] for k in z.files}
+
+
+def _merge(xd: str, fill_out: str, f: int, *, job_id) -> dict:
+    done = _fill_done(fill_out, f)
+    try:
+        meta = _read_json(os.path.join(xd, FRAMES_JSON))
+        with np.load(os.path.join(xd, "history.npz"), allow_pickle=False) as z:
+            h_fi = np.asarray(z["frame_index"]).astype(np.int64)
+            h_t = np.asarray(z["time"], dtype=np.float64)
+    except (OSError, ValueError, KeyError) as exc:
+        raise EslError("FRAME_FILL_MERGE", f"01_extract(frames.json·history.npz)를 읽을 수 없음: {exc}") from None
+    # 같은 h3d: 프레임 수·f·f−1 시각(history 에 있는 것) 정확 일치
+    n_x, n_f = meta.get("n_frames_h3d"), done.get("n_frames")
+    if n_x is None or n_f is None or int(n_x) != int(n_f):
+        raise EslError("FRAME_FILL_MISMATCH", f"h3d 프레임 수 {n_f} ≠ 추출 {n_x}")
+    t_of = dict(zip(h_fi.tolist(), h_t.tolist()))
+    if f not in t_of:
+        raise EslError("FRAME_FILL_MISMATCH", f"프레임 {f} 이 추출 이력(history.npz)에 없음")
+    fr, prev = fill_frames(f)
+    for g in fr + prev:
+        if g not in t_of:
+            continue
+        tn = _done_time(done, g)
+        if tn is None or tn != float(t_of[g]):
+            raise EslError("FRAME_FILL_MISMATCH", f"프레임 {g} 시각 {tn!r} ≠ 추출 {t_of[g]!r}")
+    t_f = float(t_of[f])
+    dp, sp, jp = (os.path.join(xd, n) for n in (DISP_NPZ, STRAIN_NPZ, FRAMES_JSON))
+    try:
+        dz = _load_all(dp)
+        sz = _load_all(sp)
+    except (OSError, ValueError) as exc:
+        raise EslError("FRAME_FILL_MERGE", f"01_extract disp.npz·strain_frames.npz 를 읽을 수 없음: {exc}") from None
+    d_have = f in [int(x) for x in np.asarray(dz["frame_index"]).reshape(-1)]
+    s_have = f in [int(x) for x in np.asarray(sz["frame_index"]).reshape(-1)]
+    if d_have and s_have:
+        return {"frame": f, "time": t_f, "added": False}
+    new_d = new_s = None
+    if not d_have:
+        nid = np.asarray(dz["node_id"], dtype=np.int64)
+        u = _rc._read_frame_table(os.path.join(fill_out, "disp.csv"), np.array([f], np.int64), nid, "node_id", "노드",
+                                  "disp.csv")
+        new_d = {"frame_index": np.r_[dz["frame_index"], np.asarray([f], dz["frame_index"].dtype)],
+                 "time": np.r_[np.asarray(dz["time"], np.float64), [t_f]].astype(dz["time"].dtype),
+                 "node_id": dz["node_id"], "u": np.concatenate([dz["u"], u.astype(dz["u"].dtype)], axis=0)}
+    if not s_have:
+        eid = np.asarray(sz["elem_id"], dtype=np.int64)
+        U = np.array(sorted(set(fr) | set(prev)), dtype=np.int64)
+        sv, present = _rc._read_frame_table(os.path.join(fill_out, "strain_frames.csv"), U, eid, "elem_id", "요소",
+                                            "strain_frames.csv", optional=~np.isin(U, fr))
+        i_f = int(np.flatnonzero(U == f)[0])
+        pf = prev[0] if prev else -1
+        p_ok = True
+        pv = {k: np.zeros_like(a[i_f]) for k, a in sv.items()}
+        if pf >= 0:
+            i_p = int(np.flatnonzero(U == pf)[0])
+            if present[i_p]:
+                pv = {k: a[i_p] for k, a in sv.items()}
+            else:
+                p_ok = False
+        new_s = {}
+        for k, a in sz.items():
+            if k == "frame_index":
+                new_s[k] = np.r_[a, np.asarray([f], a.dtype)]
+            elif k == "time":
+                new_s[k] = np.r_[np.asarray(a, np.float64), [t_f]].astype(a.dtype)
+            elif k == "elem_id":
+                new_s[k] = a
+            elif k == "prev_frame_index":
+                new_s[k] = np.r_[a, np.asarray([pf], a.dtype)]
+            elif k == "prev_available":
+                new_s[k] = np.r_[a, np.asarray([p_ok], a.dtype)]
+            elif k.startswith("prev_") and k[5:] in pv:
+                new_s[k] = np.concatenate([a, pv[k[5:]][None].astype(a.dtype)], axis=0)
+            elif k in sv:
+                new_s[k] = np.concatenate([a, sv[k][i_f][None].astype(a.dtype)], axis=0)
+            else:
+                raise EslError("FRAME_FILL_MERGE", f"strain_frames.npz 의 모르는 키 {k!r} — 덧붙일 수 없음")
+    ent = {"frame_index": f, "time": t_f, "at": _utc(), "job_id": job_id}
+    meta2 = dict(meta)
+    meta2[FILL_KEY] = [e for e in (meta.get(FILL_KEY) or []) if not (isinstance(e, dict) and e.get("frame_index") == f)] + [ent]
+    pid = os.getpid()
+    tmps = []
+    try:
+        writes = []
+        for path, arrs in ((dp, new_d), (sp, new_s)):
+            if arrs is None:
+                continue
+            tmp = f"{path}.tmp-{pid}"
+            tmps.append(tmp)
+            _rc.savez_stream(tmp, **arrs)
+            writes.append((tmp, path))
+        jtmp = f"{jp}.tmp-{pid}"
+        tmps.append(jtmp)
+        with open(jtmp, "w", encoding="utf-8") as fh:
+            json.dump(meta2, fh, ensure_ascii=False, indent=1)
+        writes.append((jtmp, jp))
+        bdir = os.path.join(os.path.dirname(xd), _bk.BACKUP_DIR, _bk.utc_stamp(), EXTRACT)
+        for _tmp, path in writes:                     # 이전 파일 사본(하드 링크 우선) → 교체(npz → json 마지막)
+            if os.path.isfile(path):
+                _bk.keep_copy(path, bdir)
+        for tmp, path in writes:
+            _bk.replace(tmp, path)
+    finally:
+        for t in tmps:
+            try:
+                if os.path.isfile(t):
+                    os.remove(t)
+            except OSError:
+                pass
+    return {"frame": f, "time": t_f, "added": True}
 
 
 # ====================================================================== 시도 기록

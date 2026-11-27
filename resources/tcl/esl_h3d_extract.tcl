@@ -61,6 +61,15 @@
 #   {"ok":true,"mode":"bf_only","n_frames" (subcase frames),"n_nodes","frames","frame_times","bforce",
 #   "passes":{"BF":{...}},...}; a frame >= n_frames -> H3D_MISSING_RESULT. Failure json: + "mode":"bf_only".
 #   Without bf_only (or 0) the outputs are unchanged.
+# >>> v0.25.2 fr_only
+#   v0.25.2 frame-fill mode (esl_tstar_manual_jig_force.md 2.4): fr_only (0 = off, default), fr_frames (blank separated
+#   distinct frame indices >= 0). With fr_only 1 the run writes disp.csv (frames fr_frames), strain_frames.csv (fr_frames
+#   and f-1 >= 0), bf_<kind>.csv (bf_on 1) and done.json {"ok":true,"mode":"fr_only","n_frames","n_nodes","n_elems",
+#   "frames","prev_frames","frame_times":{"<f>":t},"strain_source",...,"passes":{"FR":{...}}}; no ranking and no
+#   frames/model/elems/final/history CSV. The strain source is fixed by the request (strain_sources = one source, or
+#   strain_type); an instantaneous (dump) source -> INPUT_INVALID. fr_only 1 with bf_only 1 -> INPUT_INVALID.
+#   A frame >= n_frames -> H3D_MISSING_RESULT. Failure json: + "mode":"fr_only". Without fr_only (or 0) outputs are unchanged.
+# <<< v0.25.2 fr_only
 #   -hot_k / -top_n arguments override request.txt.
 #
 # Strain source fallback (contract esl_strain_fallback.md, v0.12.1): unless strain_type or epsp_type is given
@@ -758,6 +767,12 @@ proc ::esl::read_config {path extra} {
     set cfg [::esl::read_request $path $defaults]
     # v0.24.2 bf-only mode: the failure json carries "mode" once the request asks for it
     if {[dict get $cfg bf_only] eq "1"} { set ::esl::mode bf_only }
+    # >>> v0.25.2 fr_only
+    foreach {k v} {fr_only 0 fr_frames ""} {
+        if {![dict exists $cfg $k]} { dict set cfg $k $v }
+    }
+    if {[dict get $cfg fr_only] eq "1"} { set ::esl::mode fr_only }
+    # <<< v0.25.2 fr_only
     # strain_type / epsp_type written in request.txt -> Max_Strain only (no fallback, backward compatible)
     set ::esl::forced 0
     if {$path ne "" && [file isfile $path]} {
@@ -791,6 +806,9 @@ proc ::esl::read_config {path extra} {
     if {$bo ne "0" && $bo ne "1"} { ::esl::fail INPUT_INVALID "bf_on must be 0 or 1: $bo" }
     if {[llength [dict get $cfg bf_vec_comps]] != 3} { ::esl::fail INPUT_INVALID "bf_vec_comps needs 3 names" }
     ::esl::check_bf_only $cfg
+    # >>> v0.25.2 fr_only
+    ::esl::check_fr_only $cfg
+    # <<< v0.25.2 fr_only
     set mi [dict get $cfg cum_min_incr]
     if {![string is double -strict $mi] || $mi < 0} { ::esl::fail INPUT_INVALID "cum_min_incr must be >= 0: $mi" }
     return $cfg
@@ -1638,6 +1656,246 @@ proc ::esl::run_bf_only {out cfg spec} {
     ::esl::plog_close
 }
 
+# >>> v0.25.2 fr_only
+# v0.25.2 frame-fill request keys (esl_tstar_manual_jig_force.md 2.4): fr_only 0|1; with 1: fr_frames = distinct integers
+# >= 0 (blank separated, any order) and bf_only must not be 1. Sets ::esl::fr_frames (ascending).
+proc ::esl::check_fr_only {cfg} {
+    set fo [dict get $cfg fr_only]
+    if {$fo ne "0" && $fo ne "1"} { ::esl::fail INPUT_INVALID "fr_only must be 0 or 1: $fo" }
+    set ::esl::fr_frames {}
+    if {$fo ne "1"} { return }
+    if {[dict get $cfg bf_only] eq "1"} { ::esl::fail INPUT_INVALID "fr_only and bf_only cannot both be 1" }
+    set raw [dict get $cfg fr_frames]
+    if {[catch {llength $raw} n] || $n == 0} { ::esl::fail INPUT_INVALID "fr_frames is empty or not a list (fr_only 1): $raw" }
+    set seen {}
+    foreach f $raw {
+        if {![regexp {^[0-9]+$} $f] || [scan $f %d v] != 1} { ::esl::fail INPUT_INVALID "fr_frames: not a frame index >= 0: $f" }
+        if {[lsearch -exact -integer $seen $v] >= 0} { ::esl::fail INPUT_INVALID "fr_frames: frame $v twice" }
+        lappend seen $v
+    }
+    set ::esl::fr_frames [lsort -integer $seen]
+}
+
+# ---- v0.25.2 frame-fill mode (esl_tstar_manual_jig_force.md 2.4): request fr_only 1 + fr_frames "f ...".
+# Same session / part / subcase / selection / strain-source rules as the full extraction (the request fixes the source:
+# strain_sources = the one source of the extraction, or strain_type for the old Max_Strain-only request); no ranking,
+# no frames/model/elems/final/history CSV. Writes disp.csv (frames F), strain_frames.csv (F and P = {f-1 >= 0}),
+# bf_<kind>.csv (F, bf_on 1) and done.json {"mode":"fr_only","n_frames","n_nodes","n_elems","frames","prev_frames",
+# "frame_times":{"<f>":t},"strain_source",...}. A frame >= n_frames -> H3D_MISSING_RESULT; dump source -> INPUT_INVALID.
+proc ::esl::run_fr_only {out cfg spec} {
+    variable h3d
+    set frames $::esl::fr_frames
+    set sc [dict get $cfg subcase]
+    set csize [dict get $cfg chunk]
+    set dtype [dict get $cfg disp_type]
+    set dfields {}
+    foreach c [dict get $cfg disp_comps] { lappend dfields [list $dtype $c "" 0] }
+    ::esl::progress "open session and load model/results (can take minutes for a large h3d)"
+    set hd [::esl::open_model $h3d]
+    set post [dict get $hd C]
+    set model [dict get $hd M]
+    set res [dict get $hd R]
+    set qry [dict get $hd Q]
+    set x $::esl::sfx
+
+    set need_list [expr {$spec eq "" || ![string is integer -strict $spec]}]
+    if {[catch {::esl::list_components $model $qry 0} e]} {
+        if {$need_list} { error "component list failed at $::esl::cur_step: $e" }
+        ::esl::warn "component list failed: $e"
+    }
+    ::esl::step resolve_part
+    if {$spec eq ""} {
+        ::esl::fail INPUT_INVALID "no part given: pass -part <title or id> (e.g. -part chassis_rear); see components in done.json"
+    }
+    set pid [::esl::resolve_part $spec]
+    set ::esl::part_id $pid
+    set ptitle ""
+    foreach c $::esl::comps {
+        if {[lindex $c 0] eq $pid} { set ptitle [lindex $c 1] }
+    }
+
+    ::esl::step GetSubcaseList
+    set subcases {}
+    catch {set subcases [::esl::do GetSubcaseList {$res GetSubcaseList}]}
+    if {[llength $subcases] == 0} {
+        catch {::esl::do SetResult_retry {$model SetResult $h3d}}
+        catch {set subcases [::esl::do GetSubcaseList_retry {$res GetSubcaseList}]}
+    }
+    if {[lsearch -exact $subcases $sc] < 0} {
+        ::esl::fail H3D_MISSING_RESULT "subcase $sc not in h3d (available: $subcases)"
+    }
+    ::esl::do SetCurrentSubcase {$res SetCurrentSubcase $sc}
+    set sims [::esl::do GetSimulationList {$res GetSimulationList $sc}]
+    set nsim [llength $sims]
+    if {$nsim == 0} { ::esl::fail H3D_MISSING_RESULT "subcase $sc has no simulations" }
+    set dtypes [::esl::do GetDataTypeList {$res GetDataTypeList $sc}]
+    ::esl::step check_frames
+    foreach f $frames {
+        if {$f >= $nsim} { ::esl::fail H3D_MISSING_RESULT "fr_frames: frame $f not in subcase $sc ($nsim frames)" }
+    }
+
+    # ---- strain source fixed by the request (same rules as the full extraction, maxhold sources only)
+    ::esl::step check_results
+    set ::esl::row_map {0 1 2 3 4 5}
+    set ::esl::tried {}
+    set epsp_ok 1
+    set src [dict create source max_strain type [dict get $cfg strain_type] mode maxhold comps [dict get $cfg strain_comps] \
+        vm [dict get $cfg vm_comp]]
+    if {$::esl::forced} {
+        ::esl::check_result $res $sc $dtypes [dict get $cfg strain_type] \
+            [concat [list [dict get $cfg vm_comp]] [dict get $cfg strain_comps]] [dict get $cfg strain_layer]
+        if {[dict get $cfg epsp_type] ne ""} {
+            ::esl::check_result $res $sc $dtypes [dict get $cfg epsp_type] [list [dict get $cfg epsp_comp]] [dict get $cfg epsp_layer]
+        } else {
+            set epsp_ok 0
+            ::esl::warn "epsp_type empty: plastic strain written as 0"
+        }
+        set slayers [list [dict get $cfg strain_layer]]
+    } else {
+        set src [::esl::pick_source $res $sc $dtypes $cfg]
+        if {[dict get $src mode] ne "maxhold"} {
+            ::esl::fail INPUT_INVALID "fr_only: strain source [dict get $src source] is instantaneous (dump mode) -- frame fill needs a max-hold source"
+        }
+        set slayers [dict get $src layers]
+        set ep [::esl::pick_epsp $res $sc $dtypes $cfg]
+        if {[dict get $src source] eq "plastic_strain"} {
+            set ep [list [dict get $src type] [dict get $src scalar] [lindex $slayers 0]]
+        }
+        if {[llength $ep] == 0} {
+            set epsp_ok 0
+            dict set cfg epsp_type ""
+            ::esl::warn "H3D_NO_EPSP: no plastic strain result ([dict get $cfg names_plastic_strain]) in subcase $sc; epsp = 0"
+        } else {
+            dict set cfg epsp_type [lindex $ep 0]
+            dict set cfg epsp_comp [lindex $ep 1]
+            dict set cfg epsp_layer [lindex $ep 2]
+        }
+        dict set cfg strain_type [dict get $src type]
+        dict set cfg strain_layer [lindex $slayers 0]
+        if {[dict get $src source] ne "plastic_strain"} {
+            dict set cfg strain_comps [dict get $src comps]
+            dict set cfg vm_comp [dict get $src vm]
+        }
+    }
+    if {[dict get $src source] eq "plastic_strain"} {
+        set efields [list [list [dict get $cfg epsp_type] [dict get $cfg epsp_comp] [dict get $cfg epsp_layer] 0]]
+        set ::esl::row_map {0 z z z z 0}
+    } else {
+        set efields [::esl::elem_fields $cfg]
+        if {[llength $efields] < 6} { set ::esl::row_map {0 1 2 3 4 z} }
+    }
+    set nreal [llength $efields]
+    set epad [expr {6 - $nreal}]
+    ::esl::check_result $res $sc $dtypes $dtype [dict get $cfg disp_comps] ""
+    set con esl_con_$x
+    ::esl::do GetContourCtrlHandle {$res GetContourCtrlHandle $con}
+
+    # ---- selections: part elements / nodes, chunk sets
+    set eset esl_eset_$x
+    set nset esl_nset_$x
+    set eset_id [::esl::do AddSelectionSet_element {$model AddSelectionSet element}]
+    ::esl::do GetSelectionSetHandle_element {$model GetSelectionSetHandle $eset $eset_id}
+    ::esl::step select_part_element
+    set esel [::esl::select_part $eset $pid [dict get $cfg elem_selection]]
+    set nset_id [::esl::do AddSelectionSet_node {$model AddSelectionSet node}]
+    ::esl::do GetSelectionSetHandle_node {$model GetSelectionSetHandle $nset $nset_id}
+    ::esl::step select_part_node
+    set nsel [::esl::select_part $nset $pid [dict get $cfg node_selection]]
+    ::esl::step element_ids
+    set eids [::esl::set_ids $eset $qry $eset_id element]
+    ::esl::step node_ids
+    set nids [::esl::set_ids $nset $qry $nset_id node]
+    ::esl::progress "fr-only: part $pid ($ptitle): [llength $eids] elements, [llength $nids] nodes, $nsim frames, frames {$frames}"
+    set echunks [::esl::make_chunks $model $qry element $eids $csize $eset_id elem]
+    set nchunks [::esl::make_chunks $model $qry node $nids $csize $nset_id node]
+    set ne_ch [llength $echunks]
+    set nn_ch [llength $nchunks]
+
+    # ---- frames F (elements + nodes + boundary force) and previous frames P (elements only)
+    set P {}
+    foreach fi $frames {
+        if {$fi > 0} { lappend P [expr {$fi - 1}] }
+    }
+    set P [lsort -integer -unique $P]
+    set CF [lsort -integer -unique [concat $frames $P]]
+    set times {}
+    foreach fi $CF { lappend times "\"$fi\":[::esl::num [::esl::sim_time $sims $fi]]" }
+    set t0 [::esl::ms]
+    set fs [::esl::open_csv [file join $out strain_frames.csv] "frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp"]
+    set fds [::esl::open_csv [file join $out disp.csv] "frame_index,node_id,ux,uy,uz"]
+    lassign [::esl::bf_resolve $res $sc $dtypes $cfg] bfk bfjs
+    set bfdead [dict create]
+    set bfrows [dict create]
+    ::esl::bf_open $out $bfk bfh bfrows
+    set srows 0
+    set drows 0
+    set k 0
+    foreach fi $CF {
+        incr k
+        set isF [expr {[lsearch -exact -integer $frames $fi] >= 0}]
+        set tag [expr {$isF ? "" : " (prev)"}]
+        ::esl::set_sim $res $post $fi
+        set ci 0
+        foreach ch $echunks {
+            incr ci
+            ::esl::progress "fr-only frame $fi$tag ($k/[llength $CF]) elements chunk $ci/$ne_ch"
+            set acc [::esl::collect $con $qry [lindex $ch 0] element $efields "fr-only frame $fi chunk $ci"]
+            lassign [::esl::emit $fs "$fi," $acc $nreal $epad] n m
+            incr srows $n
+            if {$m > 0} { ::esl::note "fr-only: elements without all values skipped" $m }
+            unset acc
+        }
+        if {!$isF} { continue }
+        set ci 0
+        foreach ch $nchunks {
+            incr ci
+            ::esl::progress "fr-only frame $fi ($k/[llength $CF]) nodes chunk $ci/$nn_ch"
+            set acc [::esl::collect $con $qry [lindex $ch 0] node $dfields "fr-only frame $fi chunk $ci"]
+            lassign [::esl::emit $fds "$fi," $acc 3 0] n m
+            incr drows $n
+            if {$m > 0} { ::esl::note "fr-only: nodes without all displacement values skipped" $m }
+            unset acc
+            ::esl::bf_chunk $con $qry [lindex $ch 0] $fi $ci $bfk bfh bfdead bfrows
+        }
+    }
+    close $fs
+    close $fds
+    set bfk_js [::esl::bf_close $out $bfk $bfjs bfh bfdead bfrows]
+    set bf_extra {}
+    if {[dict get $cfg bf_on] eq "1"} {
+        set bf_extra [list bforce "\{\"on\":true,\"frames\":[::esl::jints $frames],\"kinds\":\{[join $bfk_js ,]\}\}"]
+    }
+    lappend ::esl::passes "\"FR\":\{\"frames\":[::esl::jints $frames],\"prev_frames\":[::esl::jints $P],\"rows_strain\":$srows,\"rows_disp\":$drows,\"elem_chunks\":$ne_ch,\"node_chunks\":$nn_ch,\"seconds\":[::esl::secs $t0]\}"
+    ::esl::progress "fr-only done ([::esl::secs $t0] s, strain rows $srows, disp rows $drows)"
+
+    ::esl::step CloseStack
+    catch {hwi CloseStack}
+    ::esl::step write_done
+    set ::esl::cur_step "done"
+    lappend ::esl::steps_done write_csv
+    set ch_json {}
+    dict for {k2 v2} $::esl::chunk_how { lappend ch_json "[::esl::jstr $k2]:[::esl::jstr $v2]" }
+    if {[::esl::write_done $out 1 [list mode [::esl::jstr fr_only] part_id $pid part_title [::esl::jstr $ptitle] \
+        part_spec [::esl::jstr $spec] subcase [::esl::jstr $sc] n_frames $nsim n_nodes [llength $nids] \
+        n_elems [llength $eids] elem_selection [::esl::jstr [lindex $esel 0]] node_selection [::esl::jstr [lindex $nsel 0]] \
+        chunk $csize chunks "\{[join $ch_json ,]\}" frames [::esl::jints $frames] prev_frames [::esl::jints $P] \
+        strain_frames [::esl::jints $CF] frame_times "\{[join $times ,]\}" \
+        strain_source [::esl::jstr [dict get $src source]] strain_type [::esl::jstr [dict get $cfg strain_type]] \
+        strain_layer [::esl::jstr [lindex $slayers 0]] strain_layers [::esl::jarr $slayers] \
+        epsp_type [::esl::jstr [dict get $cfg epsp_type]] epsp_layer [::esl::jstr [dict get $cfg epsp_layer]] \
+        epsp_available [expr {$epsp_ok ? "true" : "false"}] disp_type [::esl::jstr $dtype] \
+        exy [::esl::jstr "raw (as stored in h3d)"] strain_system [::esl::jstr $::esl::sys_req] \
+        strain_system_call [::esl::jstr $::esl::sys_applied] \
+        passes "\{[join $::esl::passes ,]\}" value_format [::esl::jstr $::esl::numfmt] \
+        backup_dir [::esl::jstr [::esl::fwd $::esl::backup_dir]] {*}$bf_extra]] eq ""} {
+        error "done.json could not be written"
+    }
+    set ::esl::written 1
+    ::esl::progress "extract done: fr-only mode (frames {$frames}, prev {$P}), [llength $eids] elements, [llength $nids] nodes"
+    ::esl::plog_close
+}
+
+# <<< v0.25.2 fr_only
 proc ::esl::run {arglist} {
     variable h3d
     ::esl::step args
@@ -1674,6 +1932,13 @@ proc ::esl::run {arglist} {
         ::esl::run_bf_only $out $cfg $spec
         return
     }
+    # >>> v0.25.2 fr_only
+    if {$::esl::mode eq "fr_only"} {
+        # v0.25.2 (esl_tstar_manual_jig_force.md 2.4): displacement f + element strain f, f-1 (+ boundary force f) only
+        ::esl::run_fr_only $out $cfg $spec
+        return
+    }
+    # <<< v0.25.2 fr_only
     set rtol [dict get $cfg reach_rtol]
     set top_n [dict get $cfg top_n]
     set hot_k [dict get $cfg hot_k]
@@ -2268,6 +2533,9 @@ set ::esl::part_spec ""
 set ::esl::part_id ""
 set ::esl::mode ""
 set ::esl::bf_frames {}
+# >>> v0.25.2 fr_only
+set ::esl::fr_frames {}
+# <<< v0.25.2 fr_only
 set ::esl::tried {}
 set ::esl::forced 0
 set ::esl::layer_basis ""

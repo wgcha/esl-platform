@@ -30,6 +30,8 @@ RECORD_SCHEMA = "esl/bforce_ondemand/1"
 STATUSES = ("ok", "failed", "skipped")
 CODE_OF = {"failed": "BF_EXTRACT_FAILED", "skipped": "BF_EXTRACT_SKIPPED"}   # 시도 status → 코어 요약 code
 FILL_MODE = "bf_only"                     # TCL bf 전용 done.json mode
+# v0.25.2(esl_tstar_manual_jig_force.md §2.4 — TM-C1-1): 직접 고른 t* 채움(TCL fr_only, bf_on 1)이 같은 실행에서 쓴 bf_<kind>.csv 도 병합
+FILL_MODES = (FILL_MODE, "fr_only")
 MERGE_TRIES = 3                           # 병합 직전 bforce.json 재확인이 다르면 처음부터 다시(동시성 방어, §4.4-2)
 
 
@@ -64,7 +66,7 @@ def _fill_done(fill_out: str, frames: list[int]) -> dict:
         raise EslError("BF_FILL_OUTPUT", f"bf 전용 추출 done.json 을 읽을 수 없음: {p}: {exc}") from None
     if not isinstance(done, dict) or done.get("ok") is not True:
         raise EslError("BF_FILL_OUTPUT", f"bf 전용 추출이 성공이 아님(done.json ok {None if not isinstance(done, dict) else done.get('ok')})")
-    if done.get("mode") != FILL_MODE:
+    if done.get("mode") not in FILL_MODES:
         raise EslError("BF_FILL_OUTPUT", f"bf 전용 추출 출력이 아님(done.json mode {done.get('mode')!r})")
     bfd = done.get("bforce")
     if not isinstance(bfd, dict) or not bfd.get("on"):
@@ -93,13 +95,14 @@ def _same_h3d(xd: str, done: dict, frames: list[int]) -> None:
         if isinstance(fs, list) and isinstance(ts, list):
             t_of.update({int(f): float(t) for f, t in zip(fs, ts)})
     dfr = [int(f) for f in (done.get("frames") or [])]
-    dts = list(done.get("frame_times") or [])
+    ft = done.get("frame_times")
+    dts = {str(k): v for k, v in ft.items()} if isinstance(ft, dict) else list(ft or [])   # fr_only = {"<f>": t}
     for f in frames:
         if f not in t_of:
             raise EslError("BF_FILL_MISMATCH", f"프레임 {f} 이 추출 프레임 목록에 없음")
-        if f not in dfr or dfr.index(f) >= len(dts):
+        if f not in dfr or (str(f) not in dts if isinstance(dts, dict) else dfr.index(f) >= len(dts)):
             raise EslError("BF_FILL_MISMATCH", f"bf 전용 추출 done.json 에 프레임 {f} 시간이 없음")
-        t_new = float(dts[dfr.index(f)])
+        t_new = float(dts[str(f)] if isinstance(dts, dict) else dts[dfr.index(f)])
         if t_new != t_of[f]:
             raise EslError("BF_FILL_MISMATCH", f"프레임 {f} 시간 {t_new!r} ≠ {t_of[f]!r}")
 
