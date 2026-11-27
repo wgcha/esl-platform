@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/endpoints";
 import type { FieldLayer, FieldOut, FieldSummary, StrainRef, ValidationHotspot } from "../api/types";
 import { usePolling } from "../lib/usePolling";
-import { DIVERGING, NA_COLOR, VIRIDIS, f3, gradient, lerp } from "../lib/colormap";
+import { css, cssGradient, f3, mapFor, specialCss } from "../lib/colormap";
 import { ColorLegend, autoRange, countOut, useLegendRange } from "./ColorLegend";
 import { useWidth } from "./MaxHoldChart";
 import { SectionMarks, geometry, pickAt, type Geo, type SectionMap } from "./mapshared";
@@ -33,9 +33,9 @@ export function cellColor(layer: FieldLayer, value: number | null, reason: strin
   if (isGrey(layer, value, reason)) return null;
   if (layer === "err") {
     const R = Math.max(Math.abs(range.min), Math.abs(range.max)) || 1;
-    return lerp(DIVERGING, (value! / R + 1) / 2);
+    return css(mapFor("div"), (value! / R + 1) / 2);
   }
-  return lerp(VIRIDIS, (value! - range.min) / (range.max - range.min || 1));
+  return css(mapFor("seq"), (value! - range.min) / (range.max - range.min || 1));
 }
 
 type Mode = "eps" | "err";
@@ -76,7 +76,7 @@ function draw(cv: HTMLCanvasElement | null, f: FieldOut | undefined, layer: Fiel
   ctx.clearRect(0, 0, g.W, g.H);
   const w = g.cell;
   for (const [, a, b, v, reason] of f.points) {
-    ctx.fillStyle = cellColor(layer, v, reason, range) ?? NA_COLOR;
+    ctx.fillStyle = cellColor(layer, v, reason, range) ?? specialCss("nan");
     ctx.fillRect(g.sx(a) - w / 2, g.sy(b) - w / 2, w, w);
   }
 }
@@ -333,9 +333,9 @@ export function FieldOverlay({
       </div>
       <div className="legend small" data-testid="ovl-legend">
         {mode === "err" ? (
-          <ColorLegend kind="sym" label="오차 % (ESL − Radioss)/Radioss" range={errRange} manual={errLg.manual} gradient={gradient(DIVERGING)} onApply={errLg.apply} onReset={errLg.reset} above={out.above} below={out.below} />
+          <ColorLegend kind="sym" label="오차 % (ESL − Radioss)/Radioss" range={errRange} manual={errLg.manual} gradient={cssGradient(mapFor("div"))} onApply={errLg.apply} onReset={errLg.reset} above={out.above} below={out.below} />
         ) : (
-          <ColorLegend kind="minmax" label="ε_eq (Radioss·ESL 공통 범위)" range={epsRange} manual={epsLg.manual} gradient={gradient(VIRIDIS)} onApply={epsLg.apply} onReset={epsLg.reset} above={out.above} below={out.below} />
+          <ColorLegend kind="minmax" label="ε_eq (Radioss·ESL 공통 범위)" range={epsRange} manual={epsLg.manual} gradient={cssGradient(mapFor("seq"))} onApply={epsLg.apply} onReset={epsLg.reset} above={out.above} below={out.below} />
         )}
         <span title={Object.values(REASON_LABEL).slice(1).join("\n")}>
           <span className="lg na" /> 비교 불가 <span data-testid="grey-count">{greyCount.toLocaleString()}</span>개

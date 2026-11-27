@@ -71,6 +71,47 @@ def test_outputs(tmp_path, run):
     assert png.decode_png_size(open(kp, "rb").read()) == (800, 450)
 
 
+# main(e9745958) bead_map 평면도의 구조 픽셀(바탕·외곽선·빗금 2색·주황 사각형·초록 지지·검정 글자) 라벨 마스크 sha256 —
+# 색 바꾸기 전 코드로 계산(V-0251-43: 빗금·기호·글자 픽셀 불변)
+MAIN_PLAN_MASK_SHA = "26e2b031b56afda1a2559a9787bf17b944a31877f3f4f3d06510f5491cf0eec5"
+
+
+def test_v0251_43_bead_map_colors_only(run):
+    """L12: 값 0 칸 = rainbow t0 파랑·최대 칸 = t1 빨강, 색 막대 위 = 빨강·아래 = 파랑, 구조 픽셀은 main 과 같음, 결정성."""
+    import hashlib
+
+    from esl.doe.select_render import png_rgb
+    from esl.io import colormaps as cm
+    t, kres, des, _shape, _p = run
+    m = t.mesh
+    he = 10.0 * np.clip(np.sin(np.pi * m["x0"][m["conn"][:, 0], 0] / 75.0), 0, 1)
+    W, H = 800, 450
+
+    def draw(vmax):
+        return png.render_plan(m, t.frame, values=he, vmax=vmax, hatch_mask=~des, rects=kres["rects"],
+                               supports=t.supports, size=(W, H))
+    b10 = draw(10.0)                                                       # main 골든과 같은 입력(색 막대 글자 10)
+    lab = np.zeros((H, W), np.uint8)
+    for k, c in enumerate([png.BG, png.EDGE_GRAY, png.HATCH_BG, png.HATCH_FG, png.ORANGE, png.GREEN, png.BLACK], 1):
+        lab[np.all(png_rgb(b10) == np.asarray(c, np.uint8), axis=2)] = k
+    assert hashlib.sha256(lab.tobytes()).hexdigest() == MAIN_PLAN_MASK_SHA
+    b = draw(None)                                                         # vmax 자동 = 최대값 → 최대 칸 t = 1
+    assert b == draw(None) and png.decode_png_size(b) == (W, H)            # 두 번 같은 바이트
+    img = png_rgb(b)
+    seq = cm.map_for("seq")
+    lo, hi = cm.rgb(seq, 0.0), cm.rgb(seq, 1.0)
+    assert lo.tolist() == [0, 0, 255] and hi.tolist() == [255, 0, 0]
+    plot = img[:, :W - 150]                                                # 색 막대(오른쪽 150 px) 밖 = 평면도
+    assert np.all(plot == lo, axis=2).sum() > 100                          # 값 0 칸 = 파랑
+    assert np.all(plot == hi, axis=2).sum() > 0                            # 최대 칸(vmax 자동 = 최대) = 빨강
+    lx, top, bot = W - 150 + 20, 30 + 20, H - 30 - 20
+    n = bot - top                                                          # 색 막대 위 = 빨강·아래 = 파랑(검정 테두리 안쪽 첫 줄)
+    assert img[top + 1, lx + 5].tolist() == cm.rgb(seq, 1.0 - 1.0 / (n - 1)).tolist() == [255, 3, 0]
+    assert img[bot - 2, lx + 5].tolist() == cm.rgb(seq, 1.0 / (n - 1)).tolist() == [0, 3, 255]
+    viridis_end = np.array([253, 231, 37], np.uint8)
+    assert not np.all(img == viridis_end, axis=2).any()                    # 옛 viridis 끝색 없음
+
+
 def test_shape_csv_mismatch(tmp_path, run):
     t, _, _, _, p = run
     lines = open(p).read().splitlines()

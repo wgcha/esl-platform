@@ -4376,11 +4376,15 @@ details.card.fold > .fold-body {
   align-items: center;
   gap: 0.5rem;
 }
-.v3d-legend-ov {
+.v3d-legend-wrap {
   position: absolute;
   left: 0.6rem;
   top: 0.5rem;
   z-index: 2;
+  pointer-events: none;
+}
+.v3d-legend-ov {
+  position: relative;
   max-width: 10rem;
   padding: 0.25rem 0.4rem;
   background: rgba(255, 255, 255, 0.86);
@@ -4389,6 +4393,77 @@ details.card.fold > .fold-body {
   pointer-events: none;
   display: grid;
   gap: 0.1rem;
+}
+.v3d-legend-ov.clickable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.v3d-legend-ov.clickable:hover,
+.v3d-legend-ov.open {
+  border-color: var(--accent, #2563eb);
+}
+.v3d-legend-ov-cont {
+  position: relative;
+  display: flex;
+  gap: 0.35rem;
+  line-height: 1;
+}
+.v3d-legend-ov-cont > .v3d-legend-ov-sw {
+  flex: none;
+  width: 1.1rem;
+}
+.v3d-legend-ov-ticks {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 2.5rem;
+}
+.v3d-legend-ov-tickpos {
+  position: absolute;
+  left: 0;
+  transform: translateY(50%);
+  white-space: nowrap;
+}
+.v3d-legend-ov-outsw {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  vertical-align: middle;
+  border: 1px solid var(--line);
+}
+.v3d-legend-pop {
+  position: absolute;
+  left: calc(100% + 0.4rem);
+  top: 0;
+  z-index: 5;
+  width: max-content;
+  max-width: 17rem;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+  pointer-events: auto;
+}
+.v3d-leg-ed {
+  display: grid;
+  gap: 0.4rem;
+}
+.v3d-leg-ed .v3d-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.v3d-leg-ed .v3d-pop-wrap {
+  flex-wrap: wrap;
+}
+.v3d-leg-ed .lg-input {
+  width: 6.5rem;
+}
+.v3d-pop-sec {
+  display: grid;
+  gap: 0.25rem;
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--line);
 }
 .v3d-legend-ov-title {
   font-weight: 600;
@@ -4528,4 +4603,11 @@ details.card.fold > .fold-body {
 }
 .bs-vb-line .doe-num.bs-vb-r {
   width: 6em;
+}
+.v3d-leg-ed .v3d-pop-row {
+  flex-wrap: wrap;
+}
+.v3d-leg-ed .small,
+.v3d-leg-ed .seg button {
+  white-space: nowrap;
 }

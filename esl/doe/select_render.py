@@ -5,8 +5,10 @@
 - 래스터: 내부 해상도 = (w, h) × ``supersample`` — ``png.rasterize`` 방식(오프셋 반복, 결정적)에 깊이 버퍼 추가
   (픽셀 중심 무게중심 보간 깊이, 가까운 것 유지, 동률 = 작은 삼각형 번호), 요소 법선 램버트(양면, 광원 = 시선 + 위 20°,
   주변광 ``thumb.ambient``) × 색, ``supersample``² 평균 축소 → ``png.encode_png``(결정적 바이트).
-- 색: 발산(파랑 = 깊어짐 +, 흰 = 0, 빨강 = 얕아짐 −), 범위 ±V(모든 칸 같은 V), 영향 없는 삼각형 = 회색 음영.
-  비드 경계(현재 위치) 진회색 1 px.
+- 색(v0.25.1 esl_view3d_scene_legend.md §5.7 L13): 공용 자원 ``div`` 역할 — **빨강 = 깊어짐 +**, 흰 = 0, 파랑 = 얕아짐 −
+  (t = 0.5 + c/(2V)), 범위 ±V(모든 칸 같은 V), 영향 없는 삼각형 = ``special none`` 회색 음영. 정점은
+  ``resources/colormaps.json`` 에만. 비드 경계(현재 위치) 진회색 1 px. manifest ``color`` 에 ``color_meta()`` 를 합쳐 새 그림임을 표시
+  (``map`` 없음 = v0.25.0 이전 그림 — 화면이 옛 범례를 씀, §5.9).
 """
 from __future__ import annotations
 
@@ -14,23 +16,28 @@ import math
 
 import numpy as np
 
+from esl.io import colormaps as cm
 from esl.opt.png import encode_png
 
-GRAY = np.array([200.0, 200.0, 200.0])
 BG = np.array([255.0, 255.0, 255.0])
 EDGE = (70, 70, 70)
-BLUE = np.array([33.0, 102.0, 172.0])
-RED = np.array([178.0, 24.0, 43.0])
-WHITE = np.array([247.0, 247.0, 247.0])
 _SMALL = 24
 
 
+def color_meta() -> dict:
+    """썸네일 manifest ``color`` 에 합칠 표지 {"map": <div 역할 지도 이름>}(§5.9 — 새 범례 판별)."""
+    return {"map": cm.map_for("div")["name"]}
+
+
 def diverging(t: np.ndarray) -> np.ndarray:
-    """t ∈ [−1, 1] → RGB float (−1 빨강, 0 흰, +1 파랑)."""
-    t = np.clip(np.asarray(t, dtype=np.float64), -1.0, 1.0)[..., None]
-    pos = WHITE + (BLUE - WHITE) * np.maximum(t, 0.0)
-    neg = WHITE + (RED - WHITE) * np.maximum(-t, 0.0)
-    return np.where(t >= 0, pos, neg)
+    """t ∈ [−1, 1](= c/V) → RGB float (−1 파랑, 0 흰, +1 빨강) — 자원 ``div`` 역할, 지도 t = 0.5 + t/2."""
+    t = np.clip(np.asarray(t, dtype=np.float64), -1.0, 1.0)
+    return cm.rgb(cm.map_for("div"), 0.5 + 0.5 * t).astype(np.float64)
+
+
+def none_color() -> np.ndarray:
+    """영향 없는 삼각형·공칭 칸 색(자원 ``special none``) RGB float."""
+    return np.asarray(cm.special("none"), dtype=np.float64)
 
 
 def color_values(x0, x, direction, has) -> np.ndarray:
@@ -186,14 +193,15 @@ def render(x, tris: np.ndarray, c: np.ndarray | None, has: np.ndarray | None, v:
     m = buf >= 0
     t = buf[m]
     sh = shade_t[t][:, None]
+    gray = none_color()
     if c is None or v_max <= 0:
-        col = np.broadcast_to(GRAY, (t.size, 3))
+        col = np.broadcast_to(gray, (t.size, 3))
     else:
         tv = tris[t]
         l = lam[m]
         cv = (l[:, 0] * c[tv[:, 0]] + l[:, 1] * c[tv[:, 1]] + l[:, 2] * c[tv[:, 2]]) / v_max
         aff = has[tv].any(axis=1) if has is not None else np.ones(t.size, bool)
-        col = np.where(aff[:, None], diverging(cv), GRAY)
+        col = np.where(aff[:, None], diverging(cv), gray)
     img[m] = col * sh
     out = img.reshape(H // ss, ss, W // ss, ss, 3).mean(axis=(1, 3))
     out = np.clip(np.round(out), 0, 255).astype(np.uint8)

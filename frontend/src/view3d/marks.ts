@@ -31,3 +31,13 @@ export function marksFor(values: ArrayLike<number>, kind: LegendKind): { which: 
   if (kind !== "zero" && e.min) out.push({ which: "min", ...e.min });
   return out;
 }
+
+/** v0.25.1 표식 대상 선택: 최대·최소를 각각 켜고 끈다(범례 편집의 □최대 표식 □최소 표식). 동률 = 작은 정점 번호 */
+export function marksWanted(values: ArrayLike<number>, want: { max: boolean; min: boolean }): { which: "max" | "min"; vertex: number; value: number }[] {
+  if (!want.max && !want.min) return [];
+  const e = extremes(values);
+  const out: { which: "max" | "min"; vertex: number; value: number }[] = [];
+  if (want.max && e.max) out.push({ which: "max", ...e.max });
+  if (want.min && e.min) out.push({ which: "min", ...e.min });
+  return out;
+}

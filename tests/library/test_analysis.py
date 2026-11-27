@@ -243,3 +243,38 @@ def test_report_scene_table_readable(entries, tmp_path):
         assert k in keys
     assert html.escape(ra.EXPLAIN["envelope"][0]) in doc and "비드 후보" in doc
     assert not re.search(r"(src|href)=['\"]?https?:", doc)
+
+
+def test_v0251_44_heatmap_colormap(entries, tmp_path):
+    """V-0251-44(격자 지도 L16·L17): seq = 최소(0) 칸 파랑·최대 칸 빨강(투명도 램프 없음), div = + 빨강·− 파랑·0 흰(±최대),
+    색 막대 = 같은 지도. 칸 fill = 공용 자원 css. 분석 보고서 문구 "빨강 = 늘어남, 파랑 = 줄어듦"(버전 비교 설명)."""
+    from esl.io import colormaps as cm
+    seq, div = cm.map_for("seq"), cm.map_for("div")
+    V = np.array([[0.0, 1.0], [2.0, 4.0]])
+    svg = ra.heatmap(V, None, mode="seq", title="t")
+    cells = re.findall(r'<rect class="cell"[^>]*fill="([^"]+)"', svg)
+    assert cells == [cm.css(seq, v / 4.0) for v in V.ravel()]
+    assert cells[0] == "rgb(0,0,255)" and cells[-1] == "rgb(255,0,0)"     # 최소 칸 파랑·최대 칸 빨강
+    assert "fill-opacity" not in svg and "var(--seq)" not in svg and "var(--pos)" not in svg
+    bar = re.findall(r'height="9" fill="([^"]+)"', svg)
+    assert bar == [cm.css(seq, (k + 0.5) / 24) for k in range(24)]        # 색 막대 = 같은 지도(왼쪽 파랑 → 오른쪽 빨강)
+    D = np.array([[-3.0, 0.0], [1.5, 3.0]])
+    svg = ra.heatmap(D, None, mode="div", title="d")
+    cells = re.findall(r'<rect class="cell"[^>]*fill="([^"]+)"', svg)
+    assert cells[0] == "rgb(5,48,97)" and cells[1] == "rgb(247,247,247)" and cells[3] == "rgb(103,0,31)"
+    assert cells[2] == cm.css(div, 0.75)                                   # + = 빨강 쪽
+    r, g, b = (int(x) for x in re.findall(r"\d+", cells[2]))
+    assert r > b
+    bar = re.findall(r'height="9" fill="([^"]+)"', svg)
+    assert bar == [cm.css(div, (k + 0.5) / 24) for k in range(24)]
+    assert ra.heatmap(np.zeros((2, 2)), None, mode="div").count('fill="rgb(247,247,247)"') == 4   # 최대 0 = 흰
+    assert ra.heatmap(np.zeros((2, 2)), None, mode="seq").count('fill="rgb(0,0,255)"') == 4
+    # 보고서 전체: 격자 지도 칸이 모두 자원 색(rgb(...)), 투명도 램프 없음
+    res, arr = an.run(entries, entries[0], {"n_representative": 2})
+    out = str(tmp_path / "report.html")
+    ra.write(res, out, arr, None, {"analysis_id": "A1"})
+    doc = open(out, encoding="utf-8").read()
+    fills = re.findall(r'<rect class="cell"[^>]*fill="([^"]+)"', doc)
+    assert fills and all(re.fullmatch(r"rgb\(\d{1,3},\d{1,3},\d{1,3}\)", f) for f in fills)
+    assert 'class="cell"' in doc and not re.search(r'class="cell"[^>]*fill-opacity', doc)
+    assert ra.EXPLAIN["cmp_envelope"][1][0].endswith("빨강 = 늘어남, 파랑 = 줄어듦.")

@@ -140,3 +140,37 @@ def test_json_script_escapes_script_breakers():
     body = out[len('<script type="application/json" id="d">'):-len("</script>")]
     assert not re.search(r"</script|<script|<!--", body, re.I)
     assert json.loads(body) == {"v": v}
+
+
+def test_v0251_44_case_report_colormap(case, tmp_path):
+    """V-0251-44(Case 보고서 L14·L15): 데이터 JSON 에 공용 자원 정점 묶음(cmap seq·div), JS 본문에 정점 리터럴 없음,
+    ε = seq · 오차 = div, 범례 문구 그대로. JS 보간(lerp) = 파이썬 ``colormaps.rgb``(256색 — node 가 있으면 실행 비교)."""
+    import shutil as _sh
+    import subprocess
+
+    from esl.io import colormaps as cm
+    info = case_report.write_case_report(case["out"], out_path=str(tmp_path / "r.html"))
+    doc = _html(info["path"])
+    d = _data(doc)
+    raw = json.load(open(os.path.join(ROOT, "resources", "colormaps.json"), encoding="utf-8"))
+    assert d["cmap"]["seq"]["stops"] == raw["maps"][raw["roles"]["seq"]]["stops"]
+    assert d["cmap"]["div"]["stops"] == raw["maps"][raw["roles"]["div"]]["stops"] and d["cmap"]["div"]["center"] == 0.5
+    js = re.findall(r"<script>(.*?)</script>", doc, re.S)[-1]
+    assert not re.search(r"\[\s*\[\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\]", js)   # 정점 배열 리터럴 없음
+    assert "VIR" not in js and "68,1,84" not in js
+    assert "lerp(SEQC,v/M.vmax)" in js and "lerp(DIVC,(M.err[i]/M.errR+1)/2)" in js   # ε = seq, 오차 = div(±errR)
+    assert "(범위 밖은 끝 색)" in js and "오차 % " in js                                # 범례 문구 그대로
+    node = _sh.which("node")
+    if not node:
+        return
+    lerp = re.search(r"function lerp\(c,t\)\{.*?return 'rgb\('.*?\)';\}", js, re.S).group(0)
+    code = (lerp + ";var C=JSON.parse(process.argv[1]),o={};['seq','div'].forEach(function(r){var a=[];"
+            "for(var k=0;k<256;k++)a.push(lerp(C[r].stops,k/255));a.push(lerp(C[r].stops,NaN));"
+            "a.push(lerp(C[r].stops,-1));a.push(lerp(C[r].stops,2));o[r]=a;});console.log(JSON.stringify(o));")
+    p = subprocess.run([node, "-e", code, json.dumps(d["cmap"])], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    got = json.loads(p.stdout)
+    for r in ("seq", "div"):
+        m = cm.map_for(r)
+        want = [cm.css(m, k / 255) for k in range(256)] + [cm.css(m, 0.0), cm.css(m, 0.0), cm.css(m, 1.0)]
+        assert got[r] == want, r

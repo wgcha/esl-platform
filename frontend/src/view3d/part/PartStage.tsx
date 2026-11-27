@@ -2,6 +2,7 @@
 // 비드 선택 3D(편집)·안 3D 보기·PartView 3D·3D 하중 보기(View3DCard)가 같은 칸을 쓴다. usePartScene = 고정 형상 장면(직교, 배경 회색).
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes, type MutableRefObject, type ReactNode, type RefObject } from "react";
 import { errorText } from "../../api/client";
+import type { ColorRole } from "../../lib/colormap";
 import { loadScene } from "../loadThree";
 import type { SceneApi } from "../sceneApi";
 import { ViewToolbar } from "../ViewToolbar";
@@ -17,7 +18,7 @@ export type ScenePhase = "idle" | "loading" | "ready" | "nowebgl" | "error";
 export function usePartScene(
   host: RefObject<HTMLElement | null>,
   mesh: PartMesh | null,
-  opts?: { colorMap?: "blues" | "diverging" },
+  opts?: { colorMap?: ColorRole },
 ): { sceneRef: MutableRefObject<SceneApi | null>; phase: ScenePhase; error: string | null; bbox: Bbox | null } {
   const sceneRef = useRef<SceneApi | null>(null);
   const [phase, setPhase] = useState<ScenePhase>("idle");

@@ -9262,7 +9262,7 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
     """BS-D-11 미리보기(select): 안마다 기저 모핑 → 고정·뒤집힘·품질 → 3D 썸네일 → doe/<rev>/grid/(paicad grid 와 같은 형식).
 
     grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm, fixed_viol?}],
-    nominal{thumb}, color{v_max, unit}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
+    nominal{thumb}, color{v_max, unit, map}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
     from esl import view3d as v3
     from esl.doe import bead_select as bsel
     from esl.doe import select_render as sr
@@ -9319,7 +9319,7 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
         cells.append(cell)
         c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
     man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
-           "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],
+           "color": {"v_max": V, "unit": "mm", **sr.color_meta()}, "selection_sha256": L["rev"]["selection_sha256"],
            "basis_sha256": L["rev"]["basis_sha256"], "rules": bsel.RULES,
            **({"graph_rules": _bgr().GRAPH_RULES} if L["checks"].get("outside") else {})}
     c.write_json(os.path.join(gd_rel, pio.GRID_MANIFEST), U.jsonable(man))

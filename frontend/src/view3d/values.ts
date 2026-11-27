@@ -13,8 +13,12 @@ export interface DecodedValues {
   pa: Float32Array | null;
   /** u_rel (mm), 길이 3n */
   u: Float32Array | null;
+  /** v0.25.1 C 기여도 c_n (N·mm, 부호 있음) — 씬 묶음 값 파일에만 있다(옛 자료 = null) */
+  c: Float32Array | null;
+  /** v0.25.1 C 기여도 차이 dc_n = 안 − 기준(N·mm) — 안 묶음에만 있다 */
+  dc: Float32Array | null;
   /** 배열별 배율(양자화 간격) — 표시 유효숫자 결정용 */
-  scale: { fn: number; fmag: number; pa: number; u: [number, number, number] };
+  scale: { fn: number; fmag: number; pa: number; u: [number, number, number]; c: number; dc: number };
 }
 
 const BYTES: Record<string, number> = { int16: 2, uint16: 2 };
@@ -45,14 +49,17 @@ function decodeOne(buf: ArrayBuffer, a: View3dOut["values"]["arrays"][number], n
 
 export function decodeValues(buf: ArrayBuffer, manifest: Pick<View3dOut, "n_nodes" | "values">): DecodedValues {
   const n = manifest.n_nodes;
-  const res: DecodedValues = { n, fn: null, fmag: null, pa: null, u: null, scale: { fn: 0, fmag: 0, pa: 0, u: [0, 0, 0] } };
-  for (const a of manifest.values.arrays) {
+  const res: DecodedValues = { n, fn: null, fmag: null, pa: null, u: null, c: null, dc: null, scale: { fn: 0, fmag: 0, pa: 0, u: [0, 0, 0], c: 0, dc: 0 } };
+  for (const a0 of manifest.values.arrays) {
+    const a = a0 as View3dOut["values"]["arrays"][number] & { key: string }; // 씬 묶음은 c·dc 키를 더한다(types.ts 는 F1b 몫 — 모르는 키는 무시)
     const arr = decodeOne(buf, a, n);
     const sc = Array.isArray(a.scale) ? a.scale : [a.scale];
     if (a.key === "fn") (res.fn = arr), (res.scale.fn = sc[0]);
     else if (a.key === "fmag") (res.fmag = arr), (res.scale.fmag = sc[0]);
     else if (a.key === "pa") (res.pa = arr), (res.scale.pa = sc[0]);
     else if (a.key === "u") (res.u = arr), (res.scale.u = [sc[0], sc[1] ?? sc[0], sc[2] ?? sc[0]]);
+    else if (a.key === "c") (res.c = arr), (res.scale.c = sc[0]);
+    else if (a.key === "dc") (res.dc = arr), (res.scale.dc = sc[0]);
   }
   return res;
 }

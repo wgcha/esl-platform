@@ -422,9 +422,11 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
                 "check": "8cd7426282dd1ba6dd6674e855af43d958f33fff292392fbd378d8af97eb15e6"}
   },
   "roles": {"seq": "rainbow", "div": "diverge", "region": "blues"},
-  "special": {"nan": [154,161,171], "out": [90,96,106], "none": [200,200,200]}
+  "special": {"nan": [154,161,171], "out": [90,96,106], "none": [200,200,200]},
+  "text": {"dark_lum": 0.179, "on_dark": [255,255,255], "on_light": [26,30,36]}
 }
 ```
+- (통합 INT-5) `text` = 색 칸 위 글자 대비: 배경 상대 휘도(WCAG 2) < `dark_lum` 이면 `on_dark`(흰), 아니면 `on_light`. 0.179 = 흰·검정 글자 대비가 같아지는 휘도(√(1.05·0.05) − 0.05). 읽는 곳 = 같은 두 모듈(TS `relLuminance`·`textOn`, 파이썬 `luminance`·`text_on`) — 필수 블록(없거나 형식 오류 = 파이썬 `CONFIG_INVALID`·TS 빌드 시험 실패). 지도 `check` 와 무관.
 - 정점 = 같은 간격(i/(n−1)). `kind: div` 는 `center`(0.5) 에 정점이 있어야 함(정점 수 홀수 — 읽을 때 검사).
 - **보간 규칙(TS·파이썬 같은 식 — 반올림까지)**: `s = t·(n−1)`(t 를 [0,1] 로 자름, NaN = 0), `i = min(floor(s), n−2)`, `f = s − i`, 채널 `= floor(a + (b − a)·f + 0.5)`. (파이썬 `round` 는 짝수 반올림이라 쓰지 않음.)
 - `check` = t = k/255(k = 0…255) 256색 × RGB uint8 768바이트의 sha256 — 두 언어 모듈이 각자 계산해 이 값과 같아야 함(V-0251-38). 정점을 바꾸면 `check` 도 같이 바꿈.
@@ -437,7 +439,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 파이썬 | ★`esl/io/colormaps.py`(순수 — `esl/io/messages.py` 옆, 같은 `RESOURCES` 경로 규칙) | 처음 쓸 때 1회 읽고 검사(스키마·정점 수·`center`) — 실패 = `CONFIG_INVALID` | `map_for(role)`·`rgb(map, t) → (…, 3) uint8`(numpy 배열 입력)·`css(map, t) → "rgb(r,g,b)"`·`table(map, n=256)`·`special(name)`·`as_json(roles)`(보고서 JS 에 넣을 정점 묶음) | `esl.doe`·`esl.view3d` import, 정점 리터럴 |
 
 - 파이썬 호출부: `esl/opt/png.py`(`_SEQ` 삭제 → `rgb(map_for("seq"), …)`), `esl/doe/select_render.py`(`BLUE`·`RED`·`WHITE`·`GRAY` 삭제 → div·`special("none")`), `esl/report/case_report.py`(JS 의 `VIR`·`DIV` 리터럴 삭제 → 보고서 데이터 JSON 에 `as_json` 을 넣고 JS 는 그것을 읽음 — 보고서는 지금처럼 파일 1개로 독립), `esl/library/report_analysis.py` `heatmap`(칸·색 막대 `fill` = `css(…)`, 투명도 램프 삭제. `--seq`·`--pos`·`--neg` 변수는 선 그래프용으로 남김), `esl/doe/report_doe.py` `_ratio_cell`.
-- 배포: `resources/` 는 지금도 코어·백엔드가 읽는 폴더 — 설치 스크립트 변경 없음(통합 때 배포 묶음에 새 파일이 들어가는지만 확인, V-0251-37).
+- 배포: `resources/` 는 지금도 코어·백엔드가 읽는 폴더 — ~~설치 스크립트 변경 없음~~ → **(통합 INT-3) 설치·묶음 스크립트의 자원 목록이 파일별이라 추가 필요**: `deploy/install-common.ps1` `$EslAppItems`·`collect-offline.ps1`·`collect-offline.sh` 에 `resources/colormaps.json`, 시험 `tests/deploy/test_bead_doe_deploy.py`·`test_deploy_collect.py`(V-0251-37). 빠지면 서버에서 `bead_map.png`·썸네일·보고서가 `CONFIG_INVALID`.
 - 어두운 화면(보고서 `prefers-color-scheme`): 지도 색은 밝은·어두운 화면 같은 값(값 ↔ 색 대응이 바뀌면 안 됨).
 
 ### 5.9 옛 산출물 · 새 산출물 (D-0.25.1-VL-15)
@@ -450,7 +452,8 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 프런트가 그리는 것(3D·2D·표) | 옛 결과를 열어도 **새 색**(자료는 값이고 색은 화면이 칠함) | 새 색 |
 
 - **옛 결과 바이트 불변 원칙과 충돌 없음**: 저장된 파일을 고치거나 다시 쓰지 않는다. 바뀌는 것은 "v0.25.1 로 **새로 실행·생성**한 그림의 바이트" 뿐 — §7.2 의 "같은 입력 → 같은 바이트" 목록에서 그림 3종(`report.html`·`bead_map.png`·썸네일 PNG)은 뺀다(V-0251-10 개정, 색 외 내용 불변은 V-0251-43).
-- 썸네일 표지: `select_render.color_meta() → {"map": <div 역할의 지도 이름>}` 를 `stages.py:8528` 의 `color` dict 에 합친다(1줄 — 통합 때 메인, §10). API 는 `preview.color` 를 지금도 dict 그대로 넘김(스키마 변경 없음), `types.ts` `color?: {v_max; unit; map?: string}`.
+- 썸네일 표지: `select_render.color_meta() → {"map": <div 역할의 지도 이름>}` 를 `stages.py:8528` 의 `color` dict 에 합친다(1줄 — 통합 때 메인, §10). API 는 `preview.color` 를 지금도 dict 그대로 넘김(스키마 변경 없음), `types.ts` `color?: {v_max; unit; map?: string}`. (통합 INT-2·INT-6: 넣음 — `bd_select_grid` manifest `color = {v_max, unit, **sr.color_meta()}`, 시험 `test_select_stage_flow` `map == "diverge"`. 화면 옛 판별 = `map` 키 없음(`DoeThumbGrid` `legacy = !color.map` — 지도 이름 비교 없음, 캐스트 제거).)
+- **(통합 INT-4) 바이트 골든 목록 보충**: 아래 갱신 목록 밖의 "같은 입력 → 같은 바이트" 골든 19건이 새로 만든 `report.html` 만 달라 실패(다른 파일은 바이트 동일 — C2 확인) — V-0251-10 개정과 같은 뜻으로 그 시험들의 바이트 비교 집합에서 `report.html` 을 뺌(파일 목록 단언·다른 파일 바이트 비교는 그대로, 골든 다시 기록 없음): `tests/cumulative/test_cumulative_e2e.py::test_b1_noncumulative_outputs_identical_to_v072`, `tests/doe/test_jig_grid_golden.py::test_old_snapshot_bytes`(3), `tests/doe/test_jig_move.py::test_v0244_jig_1_golden_bytes`(study·case_old_plan — 의도 차이 목록 `CASE_PLAN_CHANGED` 단언은 불변), `tests/doe/test_pos_u_golden.py`(4), `tests/doe/test_vbead_golden.py::test_no_virtual_beads_bytes`(6), `tests/pipeline/test_validate_sources.py::test_v0243_val_1_golden_full_bytes`. 보고서가 시험 주제인 `tests/pipeline/test_validate_tiers.py` V-0245-VT-6·VT-8(3)은 빼지 않고 Case 보고서 색 코드만 v0.25.0 글자로 되돌려(`vt_compat.back_color_v0250` — 데이터 JSON `cmap` 삭제 + JS 색 줄 되돌림, 새 색 코드가 정확히 한 번씩 있어야 함) 옛 골든과 **바이트 비교 유지**(통과 = Case 보고서의 차이가 색 코드뿐).
 - 골든 갱신 범위(아래 중 색 값·그림 바이트·색 문구를 실제로 고정한 단언만 — 계산·표 숫자 골든은 건드리지 않음): `tests/doe/test_select_render.py`·`tests/opt/test_post.py`(PNG 색·바이트), `tests/report/test_case_report.py`·`tests/doe/test_report_doe.py`·`tests/library/test_analysis.py`·`test_compare.py`·`tests/library/golden/**`(색 문자열·범례 문구), `tests/fake_paicad.py`(썸네일 색을 본다면), 프런트 `__tests__/view3d.test.ts`·`doe.test.tsx`·`doe_select.test.tsx`·`select_save_vars.test.tsx`(색·문구 단언). `tests/test_view3d_golden.py`(view3d 자료)는 **불변**(색이 파일에 없음).
 
 ---
@@ -689,3 +692,44 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 B1 이 C1 에 요구하는 형식(인수 메모 그대로): 사이드카 필수 키 `schema`·`entries[{entry_id, kk}]`·`packs[src]{tag, c_kind, designs{did: {dir, scenes[]}}, skipped[]}`·`budget{max_mb, est_mb}` / `pack.json` 필수 키 `geometry{name}`·`lod|null{name}`·`scenes[{entry_id, kk, manifest, values}]`(manifest·values = 파일 이름 문자열) / 씬 manifest 에 `values{name, …}` / 코어 `DEFAULTS["view3d"]["scene"]`.
 
 **설계 변경 필요 지적(고치지는 않음)**: (a) #2 — 계약 §2.3 은 `entries` 를 "전부" 라고 못 박지 않았다 → 위 C1 규칙으로 보완. (b) #3 — `detail` 이 화면에 나가므로 C1 의 실패 상세가 내부 경로를 담으면 노출됨 → C1 검토 항목. (c) 색 통일(개정 1)은 B1 에 추가 작업 없음 — `preview.color.map` 은 dict 통과, 새 API·스키마 없음. 그 밖 설계 변경 필요 없음.
+
+### 15.2 C1 코어 구현 사실 (release/v0.25.1 5d1971f4 — 계약 보정·최소 해석 VL-C1-1~12, 원문 `work/findings.md` 에서 옮김)
+
+| # | 계약 | 구현 · 판정 |
+|---|---|---|
+| VL-C1-1 | §3.2 공통 좌표 | provider `frame` = 스터디 대상 frame(`t.frame` — ①②③ design_target·④ compare_target 모두 기준) + 메시 좌표 그대로(A ESL frame 으로 되돌리면 넓은 형상 노드가 가장자리 셀로 눌림). 셀 키 = `grid_map.grid_frame`·`vox_key` 그대로 |
+| VL-C1-2 | §2.6·§10 파일 목록 | `esl/mech/grid_map.py`(목록 밖) `run_shape` keep_u 일 때 `rcfs{src:{eid:{bc, rc, fs}}}` 보관만(계산·파일 불변). 씬 C 기여도·씬 지지 표식 = 엔트리 BC, 기존 jd·js 폴더 = 첫 엔트리 BC 그대로(바이트 불변) |
+| VL-C1-3 | §2.3 ranges | `ranges.c.p01·p99`·`ranges.dc.abs_p99` = 값 ≠ 0 노드 백분위(np.percentile 선형), 모두 0 = null |
+| VL-C1-4 | §2.1·§8 분해 재사용 | 기존 3D 함수가 같은 provider 본체로 자기 폴더를 쓰고 열린 분해를 실행기에 넘김 → 씬 = 후진대입만(H5 분해 수 끔 12 = 켬 12, 시험 `test_v0251_factorization_reused`). 기존 3D 가 만들지 않은 (출처, 안)만 직접(분해 +1) |
+| VL-C1-5 | §2.1 차이 순서 | 안이 기준보다 먼저 만들어지는 출처는 안 묶음 pack.json 을 미루고 기준이 오면 `view3d.patch_scene_dc`(결과 바이트 = 처음부터 dc 를 넣은 것). 기준 실패 = dc null + `SCENE_FAILED`(detail "baseline") |
+| VL-C1-6 | §2.4 한도 | 씬 = (출처, 엔트리) 단위로 그 출처의 모든 표시 안에 같이 넣거나 뺌. 필수 = 안마다 최악 엔트리 + 이미 있는 씬, 나머지 = 베이스라인 C 큰 순. `est_mb` = 계약 식(빠진 씬 포함, MiB) |
+| VL-C1-7 | §2.6 경계력·내력 | 실행기 직접 경로는 `_ns_design` 을 부르지 않고(안 사이드카 재기록 방지) 같은 모델·지지·영역으로 풂. BD_POST 는 기존 `_ns_view3d` 가 keep_u 로 넘김(추가 풀이 없음) |
+| VL-C1-8 | §2.3 warnings | 진단 문자열 `SCENE_C_MISMATCH`·`SCENE_PIN_MISMATCH`·`SCENE_FAILED: <src> <did> <code>`(skipped 코드 밖 — 정보). 알려진 원인: v0.24.9 하중 공간 고정 스터디(기존 자동 3D 와 같은 한계), 평가 영역이 빈 격자 지그 핀, 하중 전달 없는 옛 ④ |
+| VL-C1-9 | §2.2 manifest | 씬 manifest schema = 기존 `esl/view3d/1`, `key` = `doe/scene/<tag>/<did>/e<kk>`, `esl_run_id` = entry_id. 핀 kind = ev·all·region·mask, `pins.umax` null = 노드 없음만 |
+| VL-C1-10 | §9.1-15 | 설정 거울 시험 `test_v0251_15_settings_mirrors` — B1 통합 뒤 skip 해제(통합 후 통과) |
+| VL-C1-11 | §8 실측 | H6(103,930 노드)는 이 기계(7 GB·superlu)에서 분해 메모리 초과 → H5(15,477 노드) ① same(엔트리 8·지그 2방식·묶음 4 × 출처 3): 묶음 33.4 MB(96 씬), BD_POST +20.3 s(사이드카 seconds 21.2), 분해 수 같음. 10만 노드 ≈ 196 MB(추정 195 MB 일치), 시간 ≈ 2.5 ~ 3 분(추정 0.5 ~ 1.5 분보다 김 — 지그 BC 풀이·군집). 현장 E-0251-9 로 확정 |
+| VL-C1-12 | §2.5·§7.2 | BD_POST 다시 실행 때 옛 `post/view3d_scene` 은 백업 없이 지우고 새로 씀(보기 파생 자료·크기 — 기존 백업 정리는 post/view3d 만). 쓰기는 `c.writer.guard` 안 |
+
+### 15.3 C2 파이썬 그림 색 구현 사실 (wip/v0.25.1-c2 eb5c8614)
+- 범위 = §5.7 L12~L18·§5.8 파이썬 모듈 `esl/io/colormaps.py`(load·map_for·rgb·css·table·special·as_json, 검사 = `CONFIG_INVALID`). Case 보고서 JS 는 데이터 JSON `cmap` 만 읽고 보간을 §5.8 규칙(floor(x + 0.5)·NaN = t 0)으로 — v0.25.0 JS(Math.round) 와 같은 값이 아닌 것은 의도(정점이 바뀜).
+- 계약과 다르게 된 점: (1) §5.8 "설치 스크립트 변경 없음" 이 틀림 → 통합 INT-3. (2) §5.9 골든 갱신 목록에 바이트 골든 19건이 빠짐 → 통합 INT-4. (3) `stages.py` 썸네일 `color_meta` 1줄은 C1 소유라 넣지 않음 → 통합 INT-2.
+- 독립 비교(저장소 밖 스크립트, e9745958 트리 대비): `keepout.png`·공칭 썸네일 바이트 동일, `bead_map.png`·썸네일은 크기·구조 픽셀(바탕·외곽선·빗금·기호·글자) 라벨 마스크 동일하고 바뀐 픽셀은 색 칸뿐(깊어짐 R > B 4038 px·B > R 0, 얕아짐 반대). HTML 은 색 문자열·§5.7 문구를 지우면 문자열 동일. Case 보고서 JS lerp 를 node 로 실행 = 파이썬 `css` 256색 일치(V-0251-44, node 있을 때).
+
+### 15.4 F1a·F1b·F1c 프런트 구현 사실 (wip/v0.25.1-f1a f740aa09 · f1b f29217ce · f1c 23a4b3da)
+- **F1a**: `View3DOptions` 새 키 `colorMode`(주면 `colorBy` 보다 앞섬)·`colorLabel`·`pins`(안 주면 씬 manifest `pins.umax` 를 읽음 — 호출부는 manifest 만 넘김)·`fieldOverride.role`(기본 `region` — 옛 하중 영역 호출 그대로). `range` 를 안 주면 저장소(`useViewerSync`)가 쌍 자동 범위 합집합 + 직접 입력 공유로 정함(§5.3 "두 카드 맞춤"의 구현 방식 — 옛 호출부의 `range` 는 그대로 동작). 값 파일에 c/dc 배열이 없으면 칠하지 않고 안내(`v3d-no-c`), 버튼 비활성은 호출부 몫(`sceneExtras`). `@deprecated` 옛 상수(VIRIDIS·DIVERGING·NA_COLOR·lerp·gradient·DIVERGING_GRADIENT)는 F1c 병합에서 삭제(V-0251-37 TS 0건).
+- **F1b**: `api/types.ts` 는 §15.1 #1 대로 `View3dSceneOut`·`DoeSceneViewOut`·`DoeSceneAddOut`(`check:api` 통과). 씬 상태는 결과 화면 1곳(스터디 id 가 바뀌면 자동), 문구 표 `SCENE_TEXT`·버튼 표 `COLOR_SEL_BUTTONS` 한 곳(`pages/doe/doeScene.ts`). c·dc 범위는 `range` 를 넘기지 않고 저장소가 정함(F1a 방식). 개선율 칸 색 `css(mapFor("div"), …)`·`PER_ESL_HEAT_SPAN` 0.5. 높이 측정 스크립트 `scripts/screenshots-v0251-f1b.mjs`(V-0251-29 — 실측은 e2e). 계약과 다른 점 없음.
+- **F1c**: DispOverlay·FieldOverlay·library/common = `css`/`cssGradient(mapFor(seq|div))`, NaN = `specialCss("nan")`. `HeightLegend` legacy = 옛 문구 + 반전 띠. 계약과 다른 점: `DoeThumbGrid` 옛 판별을 `color.map !== "diverge"`(지도 이름 비교)로 했음 → 통합 INT-6 에서 §5.9 규칙(`map` 키 없음)으로.
+
+### 15.5 통합 보정 (release/v0.25.1 통합 — INT-n)
+
+| # | 내용 | 근거 · 시험 |
+|---|---|---|
+| INT-1 | 병합 b1 → c2 → f1a → f1c → f1b(f1b 는 b1·f1a·release 를 품음) — 글자 충돌 0. 의미 충돌 점검: F1b 는 F1c 전 F1a 위에서 만들었지만 삭제된 옛 상수를 쓰지 않음(V-0251-37 TS 0건), 인수 메모(handoff 6개)는 이 절·decisions 로 옮기고 삭제 | `view3d_v0251_color.test.ts` 37 |
+| INT-2 | `stages.py` select 썸네일 manifest `color` 에 `color_meta()` 합침(§5.9) | `test_select_stage_flow` `map == "diverge"` |
+| INT-3 | 배포 묶음 자원 목록에 `resources/colormaps.json`(§5.8 보정) | `test_bead_doe_deploy`·`test_deploy_collect` |
+| INT-4 | 바이트 골든 19건 비교 집합에서 `report.html` 제외 + VT-6·8 색 코드 되돌림 바이트 비교(§5.9 보정) | 19건 통과 |
+| INT-5 | 진한 색 칸 글자 대비 — 자원 `text{dark_lum 0.179, on_dark, on_light}`(§5.8 보정), 파이썬 `luminance`·`text_on`, TS `relLuminance`·`textOn`(`view3d/colors.luminance` 는 위임 — 식 한 곳). 화면 `heatStyle` → `{background, color}`, 보고서 `_ratio_cell` span `color:`. 옅은 칸도 글자 색을 명시(보고서 어두운 테마에서 `--fg` 가 밝아 옅은 칸 글자가 안 보이던 것 방지). 0 칸(무색) = 기본 글자 | `test_report_doe::test_v0251_45`·`doe_v0251_scene.test.tsx` — 같은 (개선율, 기대) 표 8개 + 지도 2개 256칸 전부 규칙 일치, 자원 검사(`test_colormaps` 39·`view3d_v0251_color` 39) |
+| INT-6 | `api/types.ts` `DoePreviewOut.color.map?`, `DoeThumbGrid` 캐스트 제거·옛 판별 `!color.map`(지도 이름 하드코딩 제거) | `color_f1c.test.tsx`·typecheck |
+| INT-7 | 문서·버전: `user.md`(결과 3D 절 — 씬 선택 3곳·C 기여도·차이·umax 핀·범례 편집·색 의미 표, 썸네일 문구 :307)·`bead_doe_check.md:91`·`admin.md` §4.11(`view3d.scene`·colormaps.json 배포)·CHANGELOG [0.25.1]·`field_check_v0251.md`(E-0251-1~14)·VERSION 0.25.1·OpenAPI info·버전 시험 2곳 | `test_menu_deploy`·`test_p3_ux_hardening` |
+| INT-9 | 통합 시험(2026-11-27, ae07292e): tests/ 1954 passed·192 skipped·실패 4 = 허용 3(test_large_model_cad_share·test_v0160_bytes_skip_policy[h8]·[h5open]) + `test_source_exclusion::test_v0245_vt_16_time_saving`(벽시계 시간 비교 — 전체 실행 부하에서 흔들림, 단독 2회 통과: off 1.11/1.10 s < on 1.59/1.73 s). `pytest packages/beadgraph`(저장소 루트) 117 passed·2 skipped, backend 1340 passed, 설정 거울 `tests/doe/test_view3d_scene.py::test_v0251_15_settings_mirrors` 는 B1 병합 뒤 skip 해제·통과, worker 416 passed·6 skipped, frontend typecheck·build·check:api 통과, vitest 82 파일 1013 passed. /tmp 여유 확보 = 옛 `sg_perf_*`(test_step_graph_perf mkdtemp 잔여 약 1.5 GB) 삭제 → 22.9 GB | — |
+| INT-8 | (남음 — 고치지 않음) 개선율 칸 세기 기준 `PER_ESL_HEAT_SPAN` 0.5 는 화면(`DoePerEslTable.tsx`)·보고서(`report_doe.py`) 언어마다 1개 — 두 시험이 각각 0.5 를 단언. 색 지도 값이 아니라 표 표시 기준이라 자원으로 옮기지 않음(바꿀 때 두 곳 + 두 시험) | — |

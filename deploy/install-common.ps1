@@ -25,7 +25,9 @@ $EslTaskNames = @('ESL-Backend', 'ESL-Worker')
 #   git 폴더 설치는 <git>\deploy\wheels 를 그대로 읽고, 오프라인 묶음은 collect-offline 이 deploy\ 째(→ 묶음 deploy\wheels)와 묶음 wheels\ 에 넣는다.
 # v0.11.0(계약 esl_scx_relay.md §5.2·§13): resources/scx_messages.json = SCX 릴레이 오류 → 사용자 문구(백엔드·워커·화면 공용 원본).
 #   deploy/wheels 의 simdash_adapters wheel(동봉)은 paicad 와 같이 venv 에 pip 로 넣는다(Install-EslScxAdapters — app 복사 대상 아님).
-$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'resources/scx_messages.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
+# v0.25.1(계약 esl_view3d_scene_legend.md §5.8·V-0251-37): resources/colormaps.json = 색 지도 정점 원본(esl/io/colormaps.py 가 읽음 —
+#   없으면 bead_map.png·비드 선택 썸네일·보고서 생성이 CONFIG_INVALID). 프런트는 빌드 때 같은 파일을 넣는다.
+$EslAppItems = @('esl', 'backend/esl_platform', 'worker/esl_worker', 'migrations', 'resources/tcl', 'resources/opt_method_sources.json', 'resources/doe_messages.json', 'resources/doe_method_sources.json', 'resources/scx_messages.json', 'resources/colormaps.json', 'alembic.ini', 'pyproject.toml', 'VERSION', 'CHANGELOG.md')   # '/'는 Windows·pwsh 모두 구분자
 $EslActiveJobsSql = "SELECT count(*) FROM jobs WHERE state IN ('QUEUED','RUNNING')"
 
 function Write-EslStep([string]$Message) {

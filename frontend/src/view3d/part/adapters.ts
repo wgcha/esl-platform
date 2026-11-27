@@ -155,7 +155,7 @@ export function designViewData(o: {
       design: { u: o.u, c: o.c, vmax: o.vmax, scale: o.scale },
       markers: o.markers,
       selectionBbox: o.selectionBbox,
-      colorMap: "diverging",
+      colorMap: "div",
       hostTestId: "bs-design-host",
       ariaLabel: `안 ${o.did} 3D`,
     },

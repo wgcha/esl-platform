@@ -17,7 +17,7 @@
 #   v0.17.0 beadgraph(계약 esl_beadgraph.md §8.3 — 저장소 안 순수 파이썬 패키지 packages/beadgraph, PyPI 에 없음): pip download 대상에서
 #   빼고(requirements.lock 의 beadgraph== 줄) 저장소 경로에서 pip wheel --no-deps 로 빌드해 wheels/ 에 넣는다 — 휠 판 ≠ lock 판이면 중단.
 # 산출 구조: wheels/*.whl(win_amd64 cp312, deploy/requirements.lock — pypardiso·MKL·OCP·gmsh 포함 + paicad-<ver>-py3-none-any.whl), frontend/(vite build, base /esl/),
-#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json·doe_messages.json·doe_method_sources.json·scx_messages.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
+#   app/(esl, backend/esl_platform, worker/esl_worker, migrations, resources(tcl·opt_method_sources.json·doe_messages.json·doe_method_sources.json·scx_messages.json·colormaps.json), alembic.ini, pyproject.toml, VERSION, CHANGELOG.md, BUILD.json, esl_service.py),
 #   config/(esl_platform.prod.example.yaml, esl_platform.example.yaml, esl.example.yaml, library.example.yaml, ista6.yaml), deploy/
 # 시연 모드(deploy/demo)는 합성 Case를 스스로 만들므로 추가 자원이 없다.
 set -euo pipefail
@@ -114,7 +114,7 @@ run "cp -r backend/esl_platform '$OUTDIR/app/backend/esl_platform'"
 run "cp -r worker/esl_worker '$OUTDIR/app/worker/esl_worker'"
 run "cp -r migrations '$OUTDIR/app/migrations'"
 run "mkdir -p '$OUTDIR/app/resources'"
-run "cp -r resources/tcl resources/opt_method_sources.json resources/doe_messages.json resources/doe_method_sources.json resources/scx_messages.json '$OUTDIR/app/resources/'"
+run "cp -r resources/tcl resources/opt_method_sources.json resources/doe_messages.json resources/doe_method_sources.json resources/scx_messages.json resources/colormaps.json '$OUTDIR/app/resources/'"
 run "cp alembic.ini pyproject.toml VERSION CHANGELOG.md '$OUTDIR/app/'"
 # 코드 스냅샷 버전 기록(계약 esl_p3_ux.md §3): BUILD.json {version, commit, built_at}
 APP_VER="$(tr -d ' \r\n' < VERSION)"
