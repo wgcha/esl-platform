@@ -527,50 +527,43 @@ def _p99(v: np.ndarray) -> float | None:
 SUPPORT_EXTRA_KEYS = ("kind", "dirs", "val")   # 지지 표식 일반형 필드(esl.mech.jig_bc.support_marks_full — 계약 esl_bead_pos_u.md §10.2)
 
 
-def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports=(), cfg: dict[str, Any] | None = None,
-               key: str = "", esl_run_id: str = "", units: dict[str, str] | None = None,
-               created_at: str | None = None) -> dict[str, Any]:
-    """out_dir 에 part.glb·(part_lod.glb)·values.bin·manifest.json 을 쓰고 manifest dict 를 돌려준다.
-
-    supports = [{"node_id", "dof", …}] (03_bc/support.json 또는 run.supports). x0 는 model.npz 에서 취한다.
-    """
-    c = {**DEFAULTS, **(cfg or {})}
+def _check_inputs(node_id, x0, conn, f, u_rel) -> tuple:
+    """build_view·build_scene_pack 공용 입력 검사 → (nid, x0, conn) 배열."""
     nid = np.asarray(node_id, np.int64)
     x0 = np.asarray(x0, np.float64)
-    f = np.asarray(f, np.float64)
-    u_rel = np.asarray(u_rel, np.float64)
     conn = np.asarray(conn, np.int64)
     n = nid.size
     if x0.shape != (n, 3) or f.shape != (n, 3) or u_rel.shape != (n, 3):
         raise EslError("OUTPUT_INCONSISTENT", "node_id·x0·f·u_rel 크기가 서로 다릅니다")
     if not (np.isfinite(f).all() and np.isfinite(u_rel).all() and np.isfinite(x0).all()):
         raise EslError("OUTPUT_INVALID", "x0·f_eq·u_rel 에 NaN/inf 가 있습니다")
-    units = {"length": "mm", "force": "N", "pressure": "MPa", **(units or {})}
-    os.makedirs(out_dir, exist_ok=True)
+    return nid, x0, conn
 
+
+def _part(x0, conn, elem_type) -> dict:
+    """형상 공용(씬과 무관): 노드 기하·삼각형·bbox·양자화 위치."""
     geom = node_geometry(x0, conn, elem_type)
-    fn, p = face_values(f, geom)
-    mag = np.linalg.norm(f, axis=1)
-    umag = np.linalg.norm(u_rel, axis=1)
     tris = triangulate(conn, elem_type)
-
     lo, hi = x0.min(axis=0), x0.max(axis=0)
     center, half = (lo + hi) / 2.0, (hi - lo) / 2.0
-    q = quantize_positions(x0, center, half)
-    extras = {"units": units["length"], "up": "Z", "generator": f"esl view3d {BUILDER_VERSION}"}
-    gbytes = write_glb(os.path.join(out_dir, GEOMETRY), q, center, half, "_NODE_ID", nid.astype(np.uint32), tris, extras)
-    lod = None
-    if n > int(c["lod_min_nodes"]):
-        src, ltris = lod_grid(x0, tris, p, int(c["lod_target_vertices"]))
-        lbytes = write_glb(os.path.join(out_dir, GEOMETRY_LOD), q[src], center, half, "_SRC", src.astype(np.uint32),
-                           ltris, extras)
-        lod = {"name": GEOMETRY_LOD, "bytes": lbytes, "n_vertices": int(src.size)}
+    return {"geom": geom, "tris": tris, "lo": lo, "hi": hi, "center": center, "half": half,
+            "q": quantize_positions(x0, center, half)}
 
-    vbytes, arrays = pack_values(p, fn, mag, u_rel)
-    with open(os.path.join(out_dir, VALUES), "wb") as fh:
-        fh.write(vbytes)
 
-    # 지지점 → 정점
+def _extras(units: dict) -> dict:
+    return {"units": units["length"], "up": "Z", "generator": f"esl view3d {BUILDER_VERSION}"}
+
+
+def _write_lod(out_dir: str, P: dict, x0, p, c: dict, units: dict) -> dict:
+    src, ltris = lod_grid(x0, P["tris"], p, int(c["lod_target_vertices"]))
+    lbytes = write_glb(os.path.join(out_dir, GEOMETRY_LOD), P["q"][src], P["center"], P["half"], "_SRC",
+                       src.astype(np.uint32), ltris, _extras(units))
+    return {"name": GEOMETRY_LOD, "bytes": lbytes, "n_vertices": int(src.size)}
+
+
+def _support_rows(nid, x0, supports) -> tuple[list, list]:
+    """지지점 → 정점 행(manifest supports)·지지 노드 ID."""
+    n = nid.size
     order = np.argsort(nid, kind="stable")
     sup_rows, sup_ids = [], []
     for s in supports or ():
@@ -584,7 +577,11 @@ def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports
             if k in s:
                 row[k] = s[k]
         sup_rows.append(row)
+    return sup_rows, sup_ids
 
+
+def _load_fields(x0, f, p, fn, mag, umag, n: int) -> tuple[dict, list, list, list]:
+    """(ranges, sum_f, sum_m, moment_center) — manifest 값 범위·합력."""
     loaded = mag > 0
     mc = x0.mean(axis=0)                           # 코어 esl_summary moment_center 와 같은 정의(X0 평균)
     sum_f = f.sum(axis=0)
@@ -593,6 +590,47 @@ def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports
               "fn_abs": {"max": float(np.abs(fn).max()) if n else 0.0,
                          "p99": _p99(np.abs(fn)[loaded]) if loaded.any() else None},
               "fmag_max": float(mag.max()) if n else 0.0, "u_max": float(umag.max()) if n else 0.0}
+    return ranges, sum_f.tolist(), sum_m.tolist(), mc.tolist()
+
+
+def _now(created_at: str | None) -> str:
+    return created_at or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports=(), cfg: dict[str, Any] | None = None,
+               key: str = "", esl_run_id: str = "", units: dict[str, str] | None = None,
+               created_at: str | None = None) -> dict[str, Any]:
+    """out_dir 에 part.glb·(part_lod.glb)·values.bin·manifest.json 을 쓰고 manifest dict 를 돌려준다.
+
+    supports = [{"node_id", "dof", …}] (03_bc/support.json 또는 run.supports). x0 는 model.npz 에서 취한다.
+    v0.25.1: 본문을 씬 묶음(``build_scene_pack``)과 같은 내부 함수로 나눔 — 출력 바이트 불변(tests/test_view3d_golden.py).
+    """
+    c = {**DEFAULTS, **(cfg or {})}
+    f = np.asarray(f, np.float64)
+    u_rel = np.asarray(u_rel, np.float64)
+    nid, x0, conn = _check_inputs(node_id, x0, conn, f, u_rel)
+    n = nid.size
+    units = {"length": "mm", "force": "N", "pressure": "MPa", **(units or {})}
+    os.makedirs(out_dir, exist_ok=True)
+
+    P = _part(x0, conn, elem_type)
+    geom, tris = P["geom"], P["tris"]
+    fn, p = face_values(f, geom)
+    mag = np.linalg.norm(f, axis=1)
+    umag = np.linalg.norm(u_rel, axis=1)
+    lo, hi = P["lo"], P["hi"]
+    gbytes = write_glb(os.path.join(out_dir, GEOMETRY), P["q"], P["center"], P["half"], "_NODE_ID", nid.astype(np.uint32),
+                       tris, _extras(units))
+    lod = None
+    if n > int(c["lod_min_nodes"]):
+        lod = _write_lod(out_dir, P, x0, p, c, units)
+
+    vbytes, arrays = pack_values(p, fn, mag, u_rel)
+    with open(os.path.join(out_dir, VALUES), "wb") as fh:
+        fh.write(vbytes)
+
+    sup_rows, sup_ids = _support_rows(nid, x0, supports)
+    ranges, sum_f, sum_m, mc = _load_fields(x0, f, p, fn, mag, umag, n)
     manifest = {
         "schema": SCHEMA, "builder_version": BUILDER_VERSION, "key": key, "esl_run_id": esl_run_id,
         "n_nodes": int(n), "n_elems": int(conn.shape[0]), "n_tris": int(tris.shape[0]),
@@ -601,12 +639,158 @@ def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports
         "plate_normal": geom.n_p.tolist(),
         "geometry": {"name": GEOMETRY, "bytes": gbytes}, "lod": lod,
         "values": {"name": VALUES, "bytes": len(vbytes), "arrays": arrays},
-        "ranges": ranges, "sum_f": sum_f.tolist(), "sum_m": sum_m.tolist(), "moment_center": mc.tolist(),
+        "ranges": ranges, "sum_f": sum_f, "sum_m": sum_m, "moment_center": mc,
         "supports": sup_rows,
         "top": top_rows(nid, x0, f, fn, p, sup_ids, int(c["top_max"])),
         "clusters": clusters(nid, x0, f, u_rel, int(c["cluster_k_max"]), int(c["kmeans_max_iter"])),
-        "created_at": created_at or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "created_at": _now(created_at),
     }
     with open(os.path.join(out_dir, MANIFEST), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, allow_nan=False)
     return manifest
+
+
+# ====================================================================== v0.25.1 씬 묶음 — esl_view3d_scene_legend.md §2.2·§2.3
+SCENE_SCHEMA = "esl/view3d_scene/1"
+SCENE_BUILDER_VERSION = 1
+PACK_JSON = "pack.json"
+C_UNIT = "N·mm"
+
+
+def scene_files(kk: int) -> tuple[str, str]:
+    """씬 순번 kk(스냅샷 엔트리 순서) → (manifest, values) 파일 이름 e<kk>.json·e<kk>.bin."""
+    return f"e{int(kk):02d}.json", f"e{int(kk):02d}.bin"
+
+
+def _q16(v: np.ndarray) -> tuple[bytes, float]:
+    """int16 부호 양자화(``pack_values`` 의 fn 규칙): s = max|v|/32767(전부 0 이면 0·q 0). 복원 오차 ≤ s/2."""
+    a = np.asarray(v, np.float64).reshape(-1)
+    s = float(np.abs(a).max()) / 32767 if a.size else 0.0
+    q = np.clip(np.rint(a / (s if s > 0 else 1.0)), -32767, 32767).astype("<i2")
+    return q.tobytes(), s
+
+
+def pack_scene_values(p, fn, fmag, u, c, dc=None) -> tuple[bytes, list[dict[str, Any]]]:
+    """씬 값 파일 e<kk>.bin: ``pack_values`` 배열(pa·fn·fmag·u — 같은 바이트) 뒤에 c(int16)·dc(int16, 있을 때만), 4바이트 정렬."""
+    buf, arrays = pack_values(p, fn, fmag, u)
+    buf = bytearray(buf)
+    for key, v in (("c", c), ("dc", dc)):
+        if v is None:
+            continue
+        b, s = _q16(v)
+        buf += b"\x00" * (-len(buf) % 4)
+        arrays.append({"key": key, "dtype": "int16", "comps": 1, "offset": len(buf), "scale": s})
+        buf += b
+    buf += b"\x00" * (-len(buf) % 4)
+    return bytes(buf), arrays
+
+
+def _pct(v: np.ndarray, q: float) -> float | None:
+    return float(np.percentile(v, q)) if v.size else None
+
+
+def scene_ranges(c, dc=None) -> tuple[dict, dict | None]:
+    """색 범위 자료(§2.3): c{min, max, p01, p99}·dc{abs_max, abs_p99} — 백분위는 값이 0 이 아닌 노드(하중 없는 노드 0 이 대부분이라
+    전 노드 백분위는 0 에 붙음 — pa·fn 범위가 하중 노드만 쓰는 것과 같은 규칙). 없으면 None."""
+    a = np.asarray(c, np.float64).reshape(-1)
+    nz = a[a != 0]
+    rc = {"min": float(a.min()) if a.size else 0.0, "max": float(a.max()) if a.size else 0.0,
+          "p01": _pct(nz, 1.0), "p99": _pct(nz, 99.0)}
+    rd = None
+    if dc is not None:
+        d = np.abs(np.asarray(dc, np.float64).reshape(-1))
+        rd = {"abs_max": float(d.max()) if d.size else 0.0, "abs_p99": _pct(d[d != 0], 99.0)}
+    return rc, rd
+
+
+def build_scene_pack(out_dir: str, *, node_id, x0, conn, elem_type, scenes, cfg: dict[str, Any] | None = None,
+                     key: str = "", src: str = "", did: str = "", units: dict[str, str] | None = None,
+                     created_at: str | None = None, existing: dict | None = None) -> dict[str, Any]:
+    """씬 묶음(계약 §2.2): out_dir 에 part.glb(``build_view`` 와 같은 바이트 규칙)·씬마다 e<kk>.bin·e<kk>.json·(part_lod.glb)·pack.json
+    (마지막 — 없으면 미완성)을 쓰고 pack dict 를 돌려준다.
+
+    scenes = 씬 dict 반복자(한 번에 하나씩 만들어도 됨 — 메모리 = 씬 1개): {entry_id, kk, f (N,3), u (N,3) 화면 변위, supports,
+    c (N,) C 기여도, c_meta{kind, sum, offset, value, parts{W_F, W_v, W_g}}, dc (N,) | None, dc_meta | None, pins{umax{…}}}.
+    existing = 같은 형상의 이전 pack.json(보충 — 그 씬·part 파일은 그대로 두고 새 씬만 더함). LOD 대표 값 = 씬별 면압의 노드별 최댓값."""
+    c = {**DEFAULTS, **(cfg or {})}
+    nid = np.asarray(node_id, np.int64)
+    x0 = np.asarray(x0, np.float64)
+    conn = np.asarray(conn, np.int64)
+    n = nid.size
+    if x0.shape != (n, 3) or not np.isfinite(x0).all():
+        raise EslError("OUTPUT_INCONSISTENT", "node_id·x0 크기가 서로 다르거나 NaN/inf 가 있습니다")
+    units = {"length": "mm", "force": "N", "pressure": "MPa", **(units or {})}
+    os.makedirs(out_dir, exist_ok=True)
+    P = _part(x0, conn, elem_type)
+    geom, tris = P["geom"], P["tris"]
+    lo, hi = P["lo"], P["hi"]
+    old = existing if isinstance(existing, dict) and existing.get("builder_version") == SCENE_BUILDER_VERSION \
+        and int(existing.get("n_nodes", -1)) == n and os.path.isfile(os.path.join(out_dir, GEOMETRY)) else None
+    if old is not None:
+        gbytes = int(old["geometry"]["bytes"])
+    else:
+        gbytes = write_glb(os.path.join(out_dir, GEOMETRY), P["q"], P["center"], P["half"], "_NODE_ID",
+                           nid.astype(np.uint32), tris, _extras(units))
+    p_max = np.zeros(n)
+    docs: list[tuple[str, dict]] = []
+    rows = list((old or {}).get("scenes") or [])
+    for s in scenes:
+        f = np.asarray(s["f"], np.float64)
+        u = np.asarray(s["u"], np.float64)
+        _check_inputs(nid, x0, conn, f, u)
+        kk = int(s["kk"])
+        mname, vname = scene_files(kk)
+        fn, p = face_values(f, geom)
+        np.maximum(p_max, p, out=p_max)
+        mag = np.linalg.norm(f, axis=1)
+        umag = np.linalg.norm(u, axis=1)
+        cv = np.asarray(s["c"], np.float64).reshape(-1)
+        dv = None if s.get("dc") is None else np.asarray(s["dc"], np.float64).reshape(-1)
+        if cv.size != n or (dv is not None and dv.size != n) or not np.isfinite(cv).all() \
+                or (dv is not None and not np.isfinite(dv).all()):
+            raise EslError("OUTPUT_INCONSISTENT", "C 기여도·차이 배열 크기가 노드 수와 다르거나 NaN/inf 가 있습니다")
+        vbytes, arrays = pack_scene_values(p, fn, mag, u, cv, dv)
+        with open(os.path.join(out_dir, vname), "wb") as fh:
+            fh.write(vbytes)
+        sup_rows, sup_ids = _support_rows(nid, x0, s.get("supports") or ())
+        ranges, sum_f, sum_m, mc = _load_fields(x0, f, p, fn, mag, umag, n)
+        rc, rd = scene_ranges(cv, dv)
+        ranges["c"] = rc
+        ranges["dc"] = rd
+        man = {
+            "schema": SCHEMA, "builder_version": BUILDER_VERSION, "key": f"{key}/e{kk:02d}", "esl_run_id": str(s["entry_id"]),
+            "n_nodes": int(n), "n_elems": int(conn.shape[0]), "n_tris": int(tris.shape[0]),
+            "units": units["length"], "force_unit": units["force"], "pressure_unit": units["pressure"], "up": "Z",
+            "bbox": {"min": lo.tolist(), "max": hi.tolist(), "diag": float(np.linalg.norm(hi - lo))},
+            "plate_normal": geom.n_p.tolist(),
+            "geometry": {"name": GEOMETRY, "bytes": gbytes}, "lod": None,
+            "values": {"name": vname, "bytes": len(vbytes), "arrays": arrays},
+            "ranges": ranges, "sum_f": sum_f, "sum_m": sum_m, "moment_center": mc,
+            "supports": sup_rows,
+            "top": top_rows(nid, x0, f, fn, p, sup_ids, int(c["top_max"])),
+            "clusters": clusters(nid, x0, f, u, int(c["cluster_k_max"]), int(c["kmeans_max_iter"])),
+            "created_at": _now(created_at),
+            "c": {**dict(s["c_meta"]), "unit": C_UNIT},
+            "dc": None if dv is None else dict(s.get("dc_meta") or {}),
+            "pins": dict(s.get("pins") or {}),
+        }
+        docs.append((mname, man))
+        rows = [r for r in rows if int(r["kk"]) != kk] + [{"entry_id": str(s["entry_id"]), "kk": kk, "manifest": mname,
+                                                           "values": vname}]
+    lod = (old or {}).get("lod")
+    if n > int(c["lod_min_nodes"]) and docs and (old is None or lod is None
+                                                 or not os.path.isfile(os.path.join(out_dir, GEOMETRY_LOD))):
+        lod = _write_lod(out_dir, P, x0, p_max, c, units)
+    for mname, man in docs:
+        man["lod"] = lod
+        with open(os.path.join(out_dir, mname), "w", encoding="utf-8") as fh:
+            json.dump(man, fh, ensure_ascii=False, allow_nan=False)
+    rows.sort(key=lambda r: int(r["kk"]))
+    pack = {"schema": SCENE_SCHEMA, "builder_version": SCENE_BUILDER_VERSION, "key": key, "src": src, "did": did,
+            "n_nodes": int(n), "n_elems": int(conn.shape[0]), "n_tris": int(tris.shape[0]),
+            "bbox": {"min": lo.tolist(), "max": hi.tolist(), "diag": float(np.linalg.norm(hi - lo))},
+            "plate_normal": geom.n_p.tolist(), "geometry": {"name": GEOMETRY, "bytes": gbytes}, "lod": lod,
+            "scenes": rows, "created_at": _now(created_at)}
+    with open(os.path.join(out_dir, PACK_JSON), "w", encoding="utf-8") as fh:
+        json.dump(pack, fh, ensure_ascii=False, allow_nan=False)
+    return pack

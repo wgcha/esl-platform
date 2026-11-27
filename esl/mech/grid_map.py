@@ -770,6 +770,7 @@ def run_shape(mesh_S, sup321_idx, loads: dict, skel: dict, field: dict, GF: dict
     values = [{"key", "loads": {src: [(eid, F)]}, "field", "GF"}] — 같은 BC 패턴(분해 재사용)에 다른 크기의 하중·3-2-1 값(수렴 진단).
     반환 {methods{src: {status, code, err, rows{eid: {C_mix, E, W_F, W_g, R_sum, umax, umax_ev?, aux_reaction_rel}}, pattern_sha, shared}},
     map{tie, sample, frame_shift_mm, sup_shift_mm}, factor{n, seconds}, u?{src: {eid: (N,3)}}, bc{src: BC(첫 엔트리)},
+    rcfs?{src: {eid: {bc, rc, fs}}}(keep_u 일 때 — v0.25.1 씬 C 기여도: 엔트리 BC 값·구속 반력·스프링 힘),
     values?{key: {src: {eid: {C_mix, E, umax, u}}}}}. 실패는 방식 행(status failed·code) — 예외 대신."""
     t0 = time.monotonic()
     p = {**params, "sample_nbr": cfg["sample_nbr"], "sample_normal_deg": cfg["sample_normal_deg"]}
@@ -849,6 +850,9 @@ def run_shape(mesh_S, sup321_idx, loads: dict, skel: dict, field: dict, GF: dict
                 rows_of[src][eid] = row
                 if keep_u:
                     out["u"].setdefault(src, {})[eid] = u3
+                    # v0.25.1 씬 3D C 기여도(esl_view3d_scene_legend.md §2.6): 그 엔트리 BC(값·바닥)·반력·스프링 힘(계산 불변 — 보관만)
+                    out.setdefault("rcfs", {}).setdefault(src, {})[eid] = {"bc": BC, "rc": np.asarray(r["rc"], dtype=np.float64),
+                                                                          "fs": np.asarray(r["fs"], dtype=np.float64)}
                 for v in values or []:
                     Fv = dict((v["loads"].get(src) or [])).get(eid)
                     if Fv is None:
