@@ -31,6 +31,13 @@ for p in (DOE_T, os.path.join(DOE_T, "golden_v0249_c1"), os.path.join(DOE_T, "go
         sys.path.insert(0, p)
 
 NEW_PREFIX = ("post/view3d_scene/", "post/scene_view.json")
+# 계약 개정 1(§5.9·§7.2·V-0251-10): 그림 3종(report.html·bead_map.png·썸네일 PNG + 썸네일 manifest color.map)은 바이트 불변 목록 밖 —
+# 색 통일(C2)이 새로 만드는 그림의 색을 바꿈(색 외 내용은 V-0251-43). 이 골든 비교는 그 파일을 뺀다.
+PICTURE_SUFFIX = ("report.html", ".png", "grid/grid_manifest.json")
+
+
+def is_picture(rel: str) -> bool:
+    return rel.endswith(PICTURE_SUFFIX)
 EV = {"mode": "exclude_free_edges", "free_edge_mm": 15.0, "boxes": []}
 
 
@@ -126,7 +133,7 @@ def compute(case: str, tmp: str, mp, cfg_over: dict | None = None) -> dict:
 
 def split_new(got: dict) -> tuple[dict, list]:
     """(기존 파일, 새 파일 목록 — 계약 §2.2 새 경로만)."""
-    old = {k: v for k, v in got.items() if not k.startswith(NEW_PREFIX)}
+    old = {k: v for k, v in got.items() if not k.startswith(NEW_PREFIX) and not is_picture(k)}
     return old, sorted(k for k in got if k.startswith(NEW_PREFIX))
 
 

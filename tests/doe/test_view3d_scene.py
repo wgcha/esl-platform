@@ -389,6 +389,7 @@ def test_v0251_10_existing_files_bytes(tmp_path, monkeypatch, case):
     for k in gold["unstable"].get(case, []):
         got.pop(k, None)
     old, new = GV.split_new(got)
+    exp = {k: v for k, v in exp.items() if not GV.is_picture(k)}       # 개정 1: 그림 3종은 목록 밖(V-0251-43)
     assert sorted(old) == sorted(exp)
     diff = [k for k in exp if old[k] != exp[k]]
     assert not diff, diff
@@ -402,8 +403,9 @@ def test_v0251_13_disabled_file_set_equals_main(tmp_path, monkeypatch, case):
     got = GV.compute(case, str(tmp_path), monkeypatch, cfg_over={"view3d": {"scene": {"enabled": False}}})
     for k in gold["unstable"].get(case, []):
         got.pop(k, None)
-    assert sorted(got) == sorted(gold["cases"][case])
-    assert not [k for k in got if got[k] != gold["cases"][case][k]]
+    exp = gold["cases"][case]
+    assert sorted(got) == sorted(exp)                                   # 파일 집합 = main(그림 포함 — 같은 이름)
+    assert not [k for k in got if got[k] != exp[k] and not GV.is_picture(k)]
 
 
 # ---------------------------------------------------------------- V-0251-11 한도
@@ -436,6 +438,10 @@ def test_v0251_11_budget(tmp_path):
     got = set().union(*[set(v["scenes"]) for v in pk["designs"].values()])
     assert got == worst                                            # 한도가 아주 작으면 각 안의 최악만
     sk = [x for x in pk["skipped"] if x["code"] == "SCENE_BUDGET"]
+    assert side["entries"] == [{"entry_id": f"F{k}", "kk": k} for k in range(4)]     # 못 만든 씬도 entries 에(§15.1 #2)
+    for x in pk["skipped"]:                                            # §15.1 #3: detail = 화면 문구 — 경로·예외 원문 없음
+        assert x["code"] in stg.SCENE_SKIP_CODES and len(x.get("detail") or "") <= 80
+        assert not re.search(r"[/\\]|Traceback|\.py", x.get("detail") or "")
     assert {x["entry_id"] for x in sk} == {f"F{k}" for k in range(4)} - worst
     b = side["budget"]
     assert b["max_mb"] == 0.0001 and b["est_mb"] > b["max_mb"] and b["n_scenes"] == 4 * len(shown)
@@ -479,6 +485,7 @@ def test_v0251_12_supplement_old_study(tmp_path, monkeypatch):
     assert {k: after[k] for k in before} == before                 # 기존 파일 바이트 불변
     side = _side(out)
     assert side["source"] == "regen" and set(side["packs"]) == {r_["key"] for r_ in stg.SCENE_SOURCES}
+    assert side["entries"] == [{"entry_id": e["id"], "kk": k} for k, e in enumerate(snap["entries"])]   # §15.1 #2 전부·같은 순서
     # 두 번째 실행 = 다시 쓰지 않음(파일·바이트·mtime 그대로)
     mt = {k: os.stat(os.path.join(out, k)).st_mtime_ns for k in new}
     r2 = stg.run_stage({"stage": "bd_post", "out": out, "doe": {**snap, "post_mode": "scene"}}, lambda s: None)

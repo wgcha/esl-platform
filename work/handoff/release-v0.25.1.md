@@ -60,11 +60,29 @@
 - 색 모드 `c`·`dc` 가능 여부 = manifest `values.arrays` 에 c/dc 키 존재(dc 는 안 카드만 — 기준 묶음엔 없음), 범위 = `ranges.c`·`ranges.dc`.
 - 씬 요약 값 = manifest `c.value`(C)·`pins.umax.value`(umax) — 표 값과 같음.
 
+## 코어 구조(통합·독립 검증용)
+- 순수 계산 `esl/mech/cfield.py`: `nodal_c(F, u3, bc, rc, fs)`·`umax_pin(u3, mask)`·`conserve_map(c_src, X_src, X_dst, GF)`·`diff` (import =
+  numpy·grid_map(grid_frame·vox_key)·errors — 정적 시험 V-0251-14).
+- 파일 `esl/view3d.py`: `build_scene_pack(…, scenes=반복자, existing=옛 pack, write_pack)`·`write_pack_json`·`patch_scene_dc`·
+  `pack_scene_values`·`scene_ranges`·`scene_files(kk)`. `build_view` 는 같은 내부 함수(`_part`·`_support_rows`·`_load_fields`)로 나눔 — 바이트
+  불변(tests/test_view3d_golden.py).
+- 실행기 `esl/doe/stages.py`: 계획 표 `SCENE_SOURCES`(열 key·tag·provider·ready·c_kind·c_key·pin·values) + `_scn_begin`(계획·한도) →
+  기존 3D 함수가 provider 를 넘김 `_scn_feed`(`_view3d`·`_jig_v3d_build`·`_ns_view3d`·`_jg_view3d_src` — 같은 분해, 후진대입만) →
+  `_scn_finish`(넘겨받지 못한 (출처, 안) provider 직접·늦은 차이 patch·사이드카). BD_POST·④ BD_POST·`post_mode view3d`·`post_mode scene`
+  모두 이 한 벌. provider 본체 `_scn_full_p`·`_scn_jig_p`·`_scn_jig_grid_p`·`_scn_nodal_p`(+ 직접 호출 `_scn_full`·`_scn_jig`·`_scn_nodal`).
+- `_view3d` 의 `ev.evaluate` → `_scn_full_p`(같은 지지 점검·쉘 모델·분해 — 같은 u), `_jig_resp_rows(…, keep=)`(연 분해를 남김, 옛 npz =
+  `jig.factor`+`jig.respond` = design_response), `_ns_view3d` 는 씬이 원하면 `_ns_design(keep_u = 전 씬)`. `_view3d_input` = 입력부.
+- `esl/mech/grid_map.run_shape` keep_u 일 때 `rcfs{src:{eid:{bc, rc, fs}}}` 보관(VL-C1-2).
+- 옛 골든 시험(golden_v0247·0248·0249 tree_sha)은 새 씬 파일을 비교에서 뺌(`SCENE_NEW` — 새 파일 확인은 V-0251-10).
+
 ## 진행 상태
 - [x] 골든 기록(main 97a0e358 코드) tests/doe/golden_v0251_c1 — 세계 6(same_lt·same_all6·sel_case_jig·step_old·cmp_lt·cmp_grid)
-- [x] cfield.py(nodal_c·umax_pin·conserve_map·diff) · view3d.build_scene_pack(build_view 내부 함수 분리 — 바이트 불변)
-- [x] stages: SCENE_SOURCES·_scene_post(실행기 1개)·provider 4개(_scn_full·_scn_jig(·_scn_jig_grid)·_scn_nodal)·사이드카·post_mode scene·
-      _post_view3d 끝 보충·_cmp_post 훅, _view3d 입력부 분리(_view3d_input)
+- [x] cfield.py · view3d.build_scene_pack · stages 실행기(begin/feed/finish)·provider·사이드카·post_mode scene·_post_view3d 보충·_cmp_post
 - [x] DEFAULTS view3d.scene + check_view3d_scene
-- [x] 시험 V-0251-1~15(tests/doe/test_view3d_scene.py — 15 의 거울 확인은 B1 뒤)
-- [ ] tests/ 전체 1회 + pytest packages/beadgraph · 실측(H5) — 결과는 아래 "결과"
+- [x] 시험 V-0251-1~15 + 분해 재사용(tests/doe/test_view3d_scene.py — 15 의 거울 확인은 B1 뒤 skip 해제)
+- [x] 실측(H5 15,477 노드 — H6 은 superlu 메모리 초과): 묶음 33.4 MB(96 씬), BD_POST +20.3 s(사이드카 seconds 21.2), 분해 수 불변(12)
+      → 10만 노드 ≈ 196 MB(계약 195 MB), 시간 ≈ 2.5~3 분 추정(VL-C1-11)
+- [ ] tests/ 전체 1회 + pytest packages/beadgraph — 결과는 아래 "결과"
+
+## 결과
+(전체 시험 결과 기록 예정)
