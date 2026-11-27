@@ -475,9 +475,10 @@ def render_compare(ctx: dict) -> str:
             S.append(f"<p class='warn'><b>{H.esc(code)}</b> — {H.esc(msg or _msg(code))}</p>")
     rk = res.get("ranking") or []
     if rk:
-        b = rk[0]
+        b = best_row(rk, ctx.get("best"))                   # 통합 INT-10: 요약 카드도 result.best(§4 와 같은 값)
         S.append(H.cards([("최적 형상", H.esc(names.get(b["id"], b["id"]))), ("score", H.esc(_f(b["score"]))),
                           ("개선율", H.esc(_pct(b["improvement"]))), ("성공 형상", H.esc(res.get("n_ok")))]))
+        S.extend(n for n in [best_ref_note(rk, b)] if n)
     pairs = [("시나리오", "④ 형상 직접 비교"),
              ("기준", f"{names.get('d000', 'd000')} ({'첫 ESL Case 메시' if case_ref else '기준 STEP'})"),
              ("인치", ip.get("inch")), ("gmsh 버전", ver.get("gmsh"))]
@@ -633,10 +634,11 @@ def render(ctx: dict) -> str:
          f"<p class='muted small'>연구 {H.esc(st.get('id'))} · {H.esc(st.get('created_at'))} · ESL "
          f"{len(st.get('entry_ids') or [])}개</p>"]
     if res.get("ranking"):
-        b = res["ranking"][0]
+        b = best_row(res["ranking"], ctx.get("best"))       # 통합 INT-10: 요약 카드도 result.best(§4 와 같은 값)
         S.append(H.cards([("최적 안", H.esc(b["id"])), ("score", H.esc(_f(b["score"]))),
                           ("개선율", H.esc(_pct(b["improvement"]))), ("성공 안", H.esc(res.get("n_ok"))),
                           ("경계 경고", H.esc(len(bd.get("warnings") or [])))]))
+        S.extend(n for n in [best_ref_note(res["ranking"], b)] if n)
         if b.get("warn"):                        # v0.16.1 Q1 = A: 순위 그대로 + 경고 없는 최상위 1줄
             bc = (ctx.get("selection") or {}).get("best_clean")
             if not ctx.get("selection"):         # v0.16.2 AD-D-8 다른 시나리오(극단 요소 ⚠): 순위에서 경고 없는 최상위
@@ -787,6 +789,12 @@ COUNT_SHOWN_MAIN = ("ok", "collision", "fixed", "geom", "morph", "mesh", "solve"
 
 
 REF_MARK = "참고"                                          # 통합 INT-10 순위표 "참고" 열 칸(화면 꼬리표와 같은 글자)
+
+
+def best_row(ranking: list, best) -> dict:
+    """요약 카드용 행: ctx.best(INT-10 최적 = 참고 아닌 최상위) 의 순위 행. best 없거나 순위에 없으면 1위(옛 스냅샷 그대로)."""
+    bid = (best or {}).get("id")
+    return next((x for x in ranking if x.get("id") == bid), ranking[0])
 
 
 def best_ref_note(ranking: list, best: dict) -> str:

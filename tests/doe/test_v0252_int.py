@@ -149,6 +149,10 @@ def test_int11_shift_warning_ref_and_int10_best(mixed):
     assert "<th>참고</th>" in html
     assert res["ranking"][0]["id"] == "d002" and res["ranking"][0]["rank"] == 1           # 비드 형상(참고)이 1위 — 순위 그대로
     assert "순위 1위 d002 는 지그 순위가 참고용" in html                                    # 최적에서 건너뛴 안내
+    # 요약 카드(맨 위) 도 result.best — 참고 1위(d002) 가 아니라 d001, 안내 줄이 카드 바로 뒤에도 있음
+    head = html.split("<h2", 1)[0]
+    assert res["best"]["id"] == "d001" and "d001" in head and "순위 1위 d002 는 지그 순위가 참고용" in head
+    assert html.count("순위 1위 d002 는 지그 순위가 참고용") >= 2
     with open(os.path.join(out, "post", "ranking.csv"), encoding="utf-8") as fh:
         rr = list(csv.DictReader(io.StringIO(fh.read())))
     by = {r["id"]: r for r in rr}
