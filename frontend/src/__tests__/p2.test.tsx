@@ -7,6 +7,7 @@ import { REPORT_MISSING } from "../components/ReportLink";
 import { describe, expect, it } from "vitest";
 import { renderApp } from "../test/render";
 import { NO_PERMISSION } from "../app/AppContext";
+import { css, mapFor } from "../lib/colormap";
 import { cellColor, isGrey } from "../components/FieldOverlay";
 import { DEFAULT_FORM, validateForm } from "../pages/library/AnalysisNew";
 import { resolveForm } from "../pages/library/ComparisonNew";
@@ -64,11 +65,11 @@ describe("⑤ 겹쳐보기 색·회색 규칙", () => {
     expect(cellColor("rad", 0.1, "OK", rng)).toMatch(/^rgb\(/);
     expect(cellColor("rad", 0.1, "HOLD", rng)).toBeNull();
   });
-  it("err: OK 외(LOW 포함) 전부 회색, 0% 는 발산 색 중앙(노랑)", () => {
+  it("err: OK 외(LOW 포함) 전부 회색, 0% 는 발산 색 중앙(흰)", () => {
     expect(isGrey("err", 5, "LOW")).toBe(true);
-    expect(cellColor("err", 0, "OK", { min: -20, max: 20 })).toBe("rgb(240,228,140)");
+    expect(cellColor("err", 0, "OK", { min: -20, max: 20 })).toBe(css(mapFor("div"), 0.5));
     // 범위 밖은 끝 색
-    expect(cellColor("err", 99, "OK", { min: -20, max: 20 })).toBe("rgb(165,0,38)");
+    expect(cellColor("err", 99, "OK", { min: -20, max: 20 })).toBe(css(mapFor("div"), 1));
     // 공통 범위: 같은 값이면 같은 색
     expect(cellColor("rad", 0.15, "OK", rng)).toBe(cellColor("esl", 0.15, "OK", rng));
   });

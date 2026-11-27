@@ -3,8 +3,6 @@ import { LUT_SIZE, buildLut, mapFor, specialLinear, srgbToLinear } from "../lib/
 import type { RGB } from "../lib/colormap";
 
 export { LUT_SIZE, srgbToLinear };
-/** @deprecated shim — F1c(BeadSelectCard) 병합 때 삭제. lib/colormap.ts 의 deprecated 블록과 같이 지운다 */
-export { DIVERGING_GRADIENT } from "../lib/colormap";
 
 /** 값 → 0~1 (범위 밖은 끝색). 범위가 퇴화(max ≤ min)면 0. 비유한 값은 NaN */
 export function normalize(v: number, min: number, max: number): number {

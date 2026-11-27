@@ -8,7 +8,7 @@ import { ApiError, errorText } from "../api/client";
 import type { DoeWarning, DoeFixedViol, DoeBasisMeta, DoeDeriveOut, DoeElemSet, DoeSelectionAny, DoeSelectionOut, DoeSelectViewManifest, DoeSettingsOut, DoeShapeRules, DoeVbBlock, DoeVirtualBeadDerived, VirtualBeadIn } from "../api/types";
 import { fetchBinary } from "../view3d/fetchFiles";
 import { parseGlb, type ParsedGlb } from "../view3d/glb";
-import { DIVERGING_GRADIENT } from "../view3d/colors";
+import { cssGradient, mapFor } from "../lib/colormap";
 import { boundaryEdges, buildTopo, ringStep, type MeshTopo } from "../view3d/select/adjacency";
 import { grow } from "../view3d/select/grow";
 import { History, type Patch } from "../view3d/select/history";
@@ -1529,16 +1529,16 @@ function EraserIcon() {
   );
 }
 
-/** 높이 변화 범례 1개(파랑 = 깊어짐 · 빨강 = 얕아짐, 모든 칸 같은 ±V) */
-export function HeightLegend({ vmax, unit = "mm" }: { vmax: number; unit?: string }) {
+/** 높이 변화 범례 1개(빨강 = 깊어짐 · 파랑 = 얕아짐, 모든 칸 같은 ±V). legacy = 옛 썸네일(manifest color.map 없음) — 옛 띠·옛 문구 */
+export function HeightLegend({ vmax, unit = "mm", legacy = false }: { vmax: number; unit?: string; legacy?: boolean }) {
   const v = vmax.toFixed(vmax < 10 ? 1 : 0);
   return (
     <div className="bs-legend small" data-testid="height-legend">
       <span>공칭 대비 높이 변화</span>
       <span className="mono">−{v}</span>
-      <i style={{ background: DIVERGING_GRADIENT }} aria-hidden="true" />
+      <i style={{ background: cssGradient(mapFor("div"), { reversed: legacy }) }} aria-hidden="true" />
       <span className="mono">+{v} {unit}</span>
-      <span className="muted">빨강 = 얕아짐 · 파랑 = 깊어짐</span>
+      <span className="muted">{legacy ? "빨강 = 얕아짐 · 파랑 = 깊어짐" : "빨강 = 깊어짐 · 파랑 = 얕아짐"}</span>
     </div>
   );
 }

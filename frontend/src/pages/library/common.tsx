@@ -2,7 +2,7 @@
 import type { AnalysisFilters, EntryOut, IneligibleReason, OptdeckCases } from "../../api/types";
 import { Badge } from "../../components/ui";
 import { entryStatus, isPassing, STATUS_LABEL } from "../../components/VerdictStatus";
-import { VIRIDIS, f3, gradient, lerp } from "../../lib/colormap";
+import { css, cssGradient, f3, mapFor } from "../../lib/colormap";
 
 export const DROP_TYPES = ["Corner", "Edge", "Face"] as const;
 export const DROP_LABEL: Record<string, string> = { Corner: "꼭지점", Edge: "모서리", Face: "면" };
@@ -197,7 +197,7 @@ export function EnvelopeMap({ env }: { env: EnvelopeGrid }) {
       <svg viewBox={`0 0 ${W} ${H}`} width={Math.min(W, 520)} role="img" aria-label="셀 합력 포락 미니맵">
         {env.mag.map((col, i) =>
           col.map((v, j) => (
-            <rect key={`${i}-${j}`} x={i * c} y={H - (j + 1) * c} width={c} height={c} fill={lerp(VIRIDIS, v / (env.max || 1))}>
+            <rect key={`${i}-${j}`} x={i * c} y={H - (j + 1) * c} width={c} height={c} fill={css(mapFor("seq"), v / (env.max || 1))}>
               <title>{`셀 (${i}, ${j}): ${f3(v)} N`}</title>
             </rect>
           )),
@@ -207,7 +207,7 @@ export function EnvelopeMap({ env }: { env: EnvelopeGrid }) {
       <div className="legend small">
         <span>셀 합력 최대 |F| (N)</span>
         <span className="mono">0</span>
-        <span className="ramp" style={{ background: gradient(VIRIDIS) }} />
+        <span className="ramp" style={{ background: cssGradient(mapFor("seq")) }} />
         <span className="mono">{f3(env.max)}</span>
         <span className="muted">
           격자 {env.nx}×{env.ny} (ξ 가로 · η 세로)
