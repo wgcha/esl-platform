@@ -119,6 +119,16 @@ describe("V-0251-37·38·39 자원 하나 · 정점 일치 · 보간 규칙 (TS 
     noRole.roles.seq = "nope";
     expect(() => validateColormaps(noRole)).toThrow();
     expect(() => validateColormaps({ schema: "x" })).toThrow();
+    // 색 칸 글자 대비 블록(통합 INT)
+    const noText = JSON.parse(JSON.stringify(CM));
+    delete noText.text;
+    expect(() => validateColormaps(noText)).toThrow(/text/);
+    const badLum = JSON.parse(JSON.stringify(CM));
+    badLum.text.dark_lum = 1.5;
+    expect(() => validateColormaps(badLum)).toThrow(/dark_lum/);
+    const badRgb = JSON.parse(JSON.stringify(CM));
+    badRgb.text.on_dark = [0, 0];
+    expect(() => validateColormaps(badRgb)).toThrow(/on_dark/);
   });
   it("37(TS): colormaps.json 을 가져오는 곳 = lib/colormap.ts 1개(시험·목 제외), 옛 정점 상수는 F1c 파일·deprecated 블록에만", () => {
     const src = path.resolve(__dirname, "..");

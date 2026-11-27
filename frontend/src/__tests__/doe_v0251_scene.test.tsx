@@ -51,7 +51,8 @@ import { NO_C_TEXT } from "../view3d/View3DCard";
 import { PER_ESL_HEAT_SPAN, heatStyle, perEslNote } from "../components/DoePerEslTable";
 import { COLOR_SEL_BUTTONS, SCENE_TEXT, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene } from "../pages/doe/doeScene";
 import { sceneManifest } from "../mock/scenemock";
-import { css, mapFor } from "../lib/colormap";
+import { css, mapFor, relLuminance, table, textOn } from "../lib/colormap";
+import CM from "../../../resources/colormaps.json";
 import type { DoeMock } from "../mock/doedata";
 import type { DoeResultOut } from "../api/types";
 
@@ -122,6 +123,22 @@ describe("V-0251-45 ESL 개선율 칸 색(L10)", () => {
     expect(heatStyle(0.5).background).toBe(css(mapFor("div"), 0));       // 끝 = 지도 −끝(파랑)
     expect(heatStyle(-0.5).background).toBe(css(mapFor("div"), 1));
     expect(heatStyle(5).background).toBe(css(mapFor("div"), 0));         // 자름
+  });
+  it("진한 칸 흰 글자(통합 INT): 배경 상대 휘도 < 자원 text.dark_lum → on_dark, 아니면 on_light — 보고서와 같은 표·같은 기대값", () => {
+    const tx = (CM as unknown as { text: { dark_lum: number; on_dark: number[]; on_light: number[] } }).text;
+    const white = `rgb(${tx.on_dark.join(",")})`;
+    const dark = `rgb(${tx.on_light.join(",")})`;
+    // tests/doe/test_report_doe.py::test_v0251_45_per_esl_cell_colors 와 같은 (개선율, 기대) 표
+    const TEXT_CASES: [number, string][] = [[0.5, white], [0.4, white], [0.3, dark], [0.05, dark], [-0.05, dark], [-0.3, dark], [-0.4, white], [-0.5, white]];
+    for (const [imp, want] of TEXT_CASES) expect(heatStyle(imp).color, String(imp)).toBe(want);
+    expect(heatStyle(0).color).toBeUndefined();
+    for (const role of ["div", "seq"] as const) {
+      const tb = table(mapFor(role));
+      for (let k = 0; k < 256; k++) {
+        const c: [number, number, number] = [tb[k * 3], tb[k * 3 + 1], tb[k * 3 + 2]];
+        expect(textOn(c)).toBe(relLuminance(c) < tx.dark_lum ? white : dark);
+      }
+    }
   });
   it("표 설명 문구", () => {
     const r = { esl: [{ entry_id: "e1" }], ranking: [] } as unknown as DoeResultOut;

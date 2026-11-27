@@ -23,6 +23,7 @@ SCHEMA = "esl/colormaps/1"
 INTERP = "srgb-linear"
 KINDS = ("seq", "div", "class")
 SPECIALS = ("nan", "out", "none")
+TEXT_RGB = ("on_dark", "on_light")
 
 _CACHE: dict[str, dict] = {}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -70,7 +71,13 @@ def _validate(doc) -> dict:
     if not isinstance(sp, dict) or any(k not in sp for k in SPECIALS):
         _bad(f"special 은 {', '.join(SPECIALS)} 를 모두 가짐")
     special = {str(k): _rgb_list(v, f"special.{k}") for k, v in sp.items()}
-    return {"schema": SCHEMA, "interp": INTERP, "maps": out_maps, "roles": dict(roles), "special": special}
+    tx = doc.get("text")                           # 색 칸 위 글자 대비(v0.25.1 통합 INT — 화면 lib/colormap.ts 와 같은 자원 값)
+    lum = tx.get("dark_lum") if isinstance(tx, dict) else None
+    if (not isinstance(tx, dict) or isinstance(lum, bool) or not isinstance(lum, (int, float)) or not 0.0 < float(lum) < 1.0
+            or any(k not in tx for k in TEXT_RGB)):
+        _bad("text 는 {dark_lum: 0..1 사이 수, on_dark: [r, g, b], on_light: [r, g, b]}")
+    text = {"dark_lum": float(lum), **{k: _rgb_list(tx[k], f"text.{k}") for k in TEXT_RGB}}
+    return {"schema": SCHEMA, "interp": INTERP, "maps": out_maps, "roles": dict(roles), "special": special, "text": text}
 
 
 def load(path: str | None = None) -> dict:
@@ -130,6 +137,23 @@ def special(name: str, path: str | None = None) -> tuple[int, int, int]:
         _bad(f"special {name!r} 없음")
     r, g, b = sp[name]
     return (r, g, b)
+
+
+def luminance(c) -> float:
+    """상대 휘도(WCAG 2 — sRGB 정수 0..255 → 선형 가중합, 0..1). TS ``relLuminance`` 와 같은 식."""
+    def lin(v) -> float:
+        x = float(v) / 255.0
+        return x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(v) for v in c)
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
+def text_on(c, path: str | None = None) -> str:
+    """색 칸 배경 sRGB → 글자 색 'rgb(r,g,b)'. 상대 휘도 < 자원 ``text.dark_lum`` = ``on_dark``(흰), 아니면 ``on_light`` —
+    화면(TS ``textOn``)과 같은 규칙·같은 자원 값(보고서 어두운 테마에서도 칸 글자가 읽히도록 두 쪽 다 명시)."""
+    tx = load(path)["text"]
+    r, g, b = tx["on_dark"] if luminance(c) < tx["dark_lum"] else tx["on_light"]
+    return f"rgb({r},{g},{b})"
 
 
 def as_json(roles=("seq", "div"), path: str | None = None) -> dict:

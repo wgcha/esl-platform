@@ -1,4 +1,6 @@
 """보고서 HTML(§11): 자체 완결·이스케이프·방법·출처·한계 절, 민감도 null 사유, 평면도 SVG."""
+import pytest
+
 from esl.doe import load_method_sources
 from esl.doe import report_doe as rd
 
@@ -96,7 +98,7 @@ def test_v0251_45_per_esl_cell_colors():
     div = cm.map_for("div")
 
     def bg(cell):
-        return re.search(r"background:([^']+)'", cell).group(1)
+        return re.search(r"background:([^;']+)[;']", cell).group(1)
 
     better, worse, same = rd._ratio_cell(0.8), rd._ratio_cell(1.2), rd._ratio_cell(1.0)
     assert ">+20.0 %<" in better and ">-20.0 %<" in worse and ">+0.0 %<" in same          # 칸 숫자 = 개선율 그대로
@@ -109,6 +111,22 @@ def test_v0251_45_per_esl_cell_colors():
     assert bg(rd._ratio_cell(1.5)) == "rgb(103,0,31)" and bg(rd._ratio_cell(3.0)) == "rgb(103,0,31)"
     assert rd._ratio_cell(None) == "–" and rd.PER_ESL_HEAT_SPAN == 0.5
     assert "rgba(" not in better + worse
+    # 진한 칸 글자 대비(v0.25.1 통합 INT): 배경 상대 휘도 < 자원 text.dark_lum → 흰 글자(on_dark), 아니면 on_light — 화면 heatStyle 과
+    # 같은 자원·같은 식(프런트 doe_v0251_scene.test.tsx 의 같은 표 TEXT_CASES 와 같은 기대값)
+    tx = cm.load()["text"]
+    white, dark = ("rgb({},{},{})".format(*tx[k]) for k in ("on_dark", "on_light"))
+
+    def fg(cell):
+        m = re.search(r";color:([^']+)'", cell)
+        return m.group(1) if m else None
+    for imp, want in ((0.5, white), (0.4, white), (0.3, dark), (0.05, dark), (-0.05, dark), (-0.3, dark), (-0.4, white),
+                      (-0.5, white)):
+        assert fg(rd._ratio_cell(1.0 - imp)) == want, imp
+    assert fg(same) is None and fg(rd._ratio_cell(float("nan"))) is None                # 무색 칸 = 기본 글자
+    for m in (div, cm.map_for("seq")):                                                  # 규칙 = 휘도 기준 하나(256칸 전부)
+        for c in cm.table(m):
+            assert cm.text_on(c) == (white if cm.luminance(c) < tx["dark_lum"] else dark)
+    assert cm.luminance((255, 255, 255)) == pytest.approx(1.0) and cm.luminance((0, 0, 0)) == 0.0
     rk = [{"id": "d001", "per_esl": [{"entry_id": "E1", "ratio": 0.9}, {"entry_id": "E2", "ratio": 1.1}]}]
     h = rd.per_esl_html(rk, [{"entry_id": "E1", "label": "a"}, {"entry_id": "E2", "label": "b"}], 10)
     assert "파랑 개선(C 감소) · 빨강 악화(C 증가)" in h and "초록" not in h

@@ -172,6 +172,11 @@ def test_e2_same_run_without_state_include_warns(cum, tmp_path, capsys):
 
 
 # ------------------------------------------------------------------ V-CI-B1 비누적 산출물 = v0.7.2
+# v0.25.1(계약 esl_view3d_scene_legend.md V-0251-10 개정·§5.9 INT): 새로 만든 report.html 은 색·범례 문구만 바뀜 — 바이트 비교에서 뺌
+# (파일 목록에는 그대로 있어야 함, 색 외 내용 = V-0251-43·44). 다른 파일 바이트 비교는 그대로.
+PICTURE_V0251 = ("report.html",)
+
+
 def test_b1_noncumulative_outputs_identical_to_v072(tmp_path):
     gold = _j(FIX, "golden_v072.json")
     got = make_golden.run_case(str(tmp_path))
@@ -181,7 +186,7 @@ def test_b1_noncumulative_outputs_identical_to_v072(tmp_path):
     for k in solver_free:
         assert got[k] == gold["files"][k], k
     if env == gold["env"]:
-        diff = [k for k in gold["files"] if got[k] != gold["files"][k]]
+        diff = [k for k in gold["files"] if got[k] != gold["files"][k] and not k.endswith(PICTURE_V0251)]
         assert diff == [], diff
     else:
         pytest.skip(f"솔버 의존 산출물 비교는 골든 환경({gold['env']})에서만 — 현재 {env}")

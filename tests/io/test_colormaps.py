@@ -79,6 +79,11 @@ def test_v0251_39_interp_rules():
     lambda d: d["roles"].__setitem__("seq", "viridis"),                   # roles → 없는 지도
     lambda d: d["special"].pop("none"),
     lambda d: d["maps"]["rainbow"].__setitem__("check", "x"),
+    lambda d: d.pop("text"),                                              # 색 칸 글자 대비(통합 INT)
+    lambda d: d["text"].__setitem__("dark_lum", 1.5),
+    lambda d: d["text"].__setitem__("dark_lum", True),
+    lambda d: d["text"].__setitem__("on_dark", [0, 0]),
+    lambda d: d["text"].pop("on_light"),
 ])
 def test_v0251_39_invalid_resource(tmp_path, mut):
     d = copy.deepcopy(_raw())

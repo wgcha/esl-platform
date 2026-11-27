@@ -11,5 +11,6 @@
                 "check": "8cd7426282dd1ba6dd6674e855af43d958f33fff292392fbd378d8af97eb15e6"}
   },
   "roles": {"seq": "rainbow", "div": "diverge", "region": "blues"},
-  "special": {"nan": [154,161,171], "out": [90,96,106], "none": [200,200,200]}
+  "special": {"nan": [154,161,171], "out": [90,96,106], "none": [200,200,200]},
+  "text": {"dark_lum": 0.179, "on_dark": [255,255,255], "on_light": [26,30,36]}
 }

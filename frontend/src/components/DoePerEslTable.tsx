@@ -8,7 +8,7 @@ import type { DoePerEsl, DoeResultOut, EntryOut } from "../api/types";
 import { errorText } from "../api/client";
 import { entryKey } from "./ModeSelect";
 import { Empty, ErrorLine } from "./ui";
-import { css, mapFor } from "../lib/colormap";
+import { css, mapFor, srgb, textOn } from "../lib/colormap";
 import { ShapeNameCell } from "./DoeInputs";
 
 export const PER_ESL_TOP_N = 10;
@@ -16,11 +16,13 @@ export const PER_ESL_TOP_N = 10;
 /** 색 세기 기준: |C 변화율| 이 이 값일 때 색이 끝(파랑·빨강) — 한 곳(계약 §5.7 L10·L18) */
 export const PER_ESL_HEAT_SPAN = 0.5;
 
-/** 개선율 → 배경색. 색 값 = C 변화율(C_안/C_기준 − 1 = −개선율): 발산 지도(자원 colormaps.json) — − 파랑(개선) · 0 무색 · + 빨강(악화) */
-export function heatStyle(imp: number | null | undefined): { background?: string } {
+/** 개선율 → 배경색. 색 값 = C 변화율(C_안/C_기준 − 1 = −개선율): 발산 지도(자원 colormaps.json) — − 파랑(개선) · 0 무색 · + 빨강(악화).
+ *  글자 색 = 배경 상대 휘도로(textOn — 진한 칸 흰 글자, 보고서 report_doe._ratio_cell 과 같은 규칙) */
+export function heatStyle(imp: number | null | undefined): { background?: string; color?: string } {
   if (imp == null || !Number.isFinite(imp) || imp === 0) return {};
-  const change = -imp;
-  return { background: css(mapFor("div"), (change / PER_ESL_HEAT_SPAN + 1) / 2) };
+  const map = mapFor("div");
+  const t = (-imp / PER_ESL_HEAT_SPAN + 1) / 2;
+  return { background: css(map, t), color: textOn(srgb(map, t)) };
 }
 
 /** v0.23.1 표 설명 1줄 — ⓘ 지표 정의 안으로 옮김(esl_doe_ui_tidy.md §4.1). ESL 열이 없으면 null */

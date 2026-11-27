@@ -10,12 +10,17 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "golden_v0249_c1"))
 import golden_pu as G  # noqa: E402
 
+# v0.25.1(계약 esl_view3d_scene_legend.md V-0251-10 개정·§5.9 INT): 새로 만든 report.html 은 색·범례 문구만 바뀜 — 바이트 비교에서 뺌
+# (파일 목록에는 그대로 있어야 함, 색 외 내용 = V-0251-43·44). 다른 파일 바이트 비교는 그대로.
+PICTURE_V0251 = ("report.html",)
+
+
 def _cmp(exp, got, unstable, allow=()):
     for k in unstable:
         got.pop(k, None)
         exp = {kk: v for kk, v in exp.items() if kk != k}
     assert sorted(got) == sorted(exp)
-    diff = [k for k in exp if got[k] != exp[k] and not any(k.endswith(a) for a in allow)]
+    diff = [k for k in exp if got[k] != exp[k] and not any(k.endswith(a) for a in allow) and not k.endswith(PICTURE_V0251)]
     assert not diff, diff
 
 

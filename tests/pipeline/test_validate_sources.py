@@ -157,6 +157,11 @@ def golden_runs(tmp_path_factory):
     return runs
 
 
+# v0.25.1(계약 esl_view3d_scene_legend.md V-0251-10 개정·§5.9 INT): 새로 만든 report.html 은 색·범례 문구만 바뀜 — 바이트 비교에서 뺌
+# (파일 목록에는 그대로 있어야 함, 색 외 내용 = V-0251-43·44). 다른 파일 바이트 비교는 그대로.
+PICTURE_V0251 = ("report.html",)
+
+
 def test_v0243_val_1_golden_full_bytes(golden_runs):
     """V-0243-VAL-1: full 결과(05_val 루트·06_export·07_report 기존 부분·단계 요약 기존 키) = v0.24.2 기록값."""
     cur = {name: snapshot(r["out"], r["root"]) for name, r in golden_runs.items()}
@@ -169,7 +174,9 @@ def test_v0243_val_1_golden_full_bytes(golden_runs):
     with open(GOLDEN, encoding="utf-8") as fh:
         gold = json.load(fh)["cases"]
     for name in GOLDEN_CASES:
-        assert cur[name]["files"] == gold[name]["files"], name
+        assert set(cur[name]["files"]) == set(gold[name]["files"]), name
+        assert {k: v for k, v in cur[name]["files"].items() if not k.endswith(PICTURE_V0251)} == \
+            {k: v for k, v in gold[name]["files"].items() if not k.endswith(PICTURE_V0251)}, name
         assert cur[name]["summary"] == gold[name]["summary"], name
     assert set(gold["bf"]["files"]) >= {f"{pipeline.D_VAL}/{f}" for f in VAL_FILES}
     assert f"{pipeline.D_VAL}/compare_disp.npz" not in gold["never"]["files"]

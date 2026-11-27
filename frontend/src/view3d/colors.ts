@@ -1,5 +1,5 @@
 // 색표 보조(v0.25.1 §5.5): 정규화·띠 위치·휘도·정점 색 채우기. 색 정점은 여기 없다 — lib/colormap.ts 가 자원(resources/colormaps.json)에서만 읽는다.
-import { LUT_SIZE, buildLut, mapFor, specialLinear, srgbToLinear } from "../lib/colormap";
+import { LUT_SIZE, buildLut, mapFor, relLuminance, specialLinear, srgbToLinear } from "../lib/colormap";
 import type { RGB } from "../lib/colormap";
 
 export { LUT_SIZE, srgbToLinear };
@@ -43,7 +43,7 @@ function defaultLut(): Float32Array {
   return (_lut ??= buildLut(mapFor("seq"), { linear: true }));
 }
 
-/** 상대 휘도(sRGB 입력) */
+/** 상대 휘도(sRGB 입력) — 식 한 곳(lib/colormap.ts relLuminance) */
 export function luminance(c: RGB): number {
-  return 0.2126 * srgbToLinear(c[0]) + 0.7152 * srgbToLinear(c[1]) + 0.0722 * srgbToLinear(c[2]);
+  return relLuminance(c);
 }

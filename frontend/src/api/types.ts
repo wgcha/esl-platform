@@ -3138,8 +3138,9 @@ export interface DoePreviewOut {
   cells?: DoePreviewCell[];
   /** v0.15.0 select: 미리보기를 만든 선택 sha(BS-D-3) */
   selection_sha256?: string | null;
-  /** v0.15.0 select: 썸네일 색 범위(grid_manifest.color — 모든 칸 같은 ±v_max) */
-  color?: { v_max: number; unit: string } | null;
+  /** v0.15.0 select: 썸네일 색 범위(grid_manifest.color — 모든 칸 같은 ±v_max).
+   *  v0.25.1 map = 썸네일을 그린 색 지도 이름(select_render.color_meta — 계약 esl_view3d_scene_legend.md §5.9). 없음 = 옛 썸네일(옛 범례) */
+  color?: { v_max: number; unit: string; map?: string } | null;
   /** v0.16.1 경고 READY 수(§6 counts.warn) */
   warn?: number | null;
   /** v0.16.1 판정 규칙 판이 옛 미리보기(grid_manifest.rules 없음, §7.4) */

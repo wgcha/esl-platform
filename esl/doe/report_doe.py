@@ -61,13 +61,18 @@ PER_ESL_NOTE = "파랑 개선(C 감소) · 빨강 악화(C 증가)"
 
 
 def _ratio_cell(r) -> str:
-    """ESL별 개선율 % 셀(배경 = C 변화율 발산 색: 파랑 개선(C 감소)·빨강 악화(C 증가), 0 = 무색, ±50 % 에서 끝색)."""
+    """ESL별 개선율 % 셀(배경 = C 변화율 발산 색: 파랑 개선(C 감소)·빨강 악화(C 증가), 0 = 무색, ±50 % 에서 끝색).
+    글자 색 = 배경 상대 휘도로 고름(``colormaps.text_on`` — 진한 칸 흰 글자, 화면 DoePerEslTable 과 같은 규칙)."""
     if r is None:
         return "–"
     imp = 1.0 - float(r)
     x = float(r) - 1.0
-    col = "transparent" if x == 0 or not math.isfinite(x) else _cm.css(_cm.map_for("div"), 0.5 + x / (2.0 * PER_ESL_HEAT_SPAN))
-    return f"<span style='display:inline-block;min-width:4.5em;padding:0 4px;background:{col}'>{H.esc(_pct(imp))}</span>"
+    if x == 0 or not math.isfinite(x):
+        col, fg = "transparent", ""
+    else:
+        cmap, t = _cm.map_for("div"), 0.5 + x / (2.0 * PER_ESL_HEAT_SPAN)
+        col, fg = _cm.css(cmap, t), f";color:{_cm.text_on(_cm.rgb(cmap, t))}"
+    return f"<span style='display:inline-block;min-width:4.5em;padding:0 4px;background:{col}{fg}'>{H.esc(_pct(imp))}</span>"
 
 
 def per_esl_html(rk: list, esl: list, top_n: int) -> str:

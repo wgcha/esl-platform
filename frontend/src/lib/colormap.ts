@@ -32,6 +32,8 @@ interface RawResource {
   maps: Record<string, RawMap>;
   roles: Record<string, string>;
   special: Record<string, number[]>;
+  /** 색 칸 위 글자 대비(v0.25.1 통합 INT): 배경 상대 휘도 < dark_lum → on_dark(흰), 아니면 on_light — 파이썬 colormaps.text_on 과 같은 값 */
+  text: { dark_lum: number; on_dark: number[]; on_light: number[] };
 }
 
 /** 자원 검사(계약 §5.8): 스키마·정점 수·정점 값·div 의 center. 틀리면 throw — 빌드 시험(V-0251-39)이 잡는다 */
@@ -54,6 +56,12 @@ export function validateColormaps(raw: unknown): RawResource {
     if (!r.roles || !r.maps[r.roles[role]]) throw new Error(`colormaps.json: 역할 ${role} 의 지도가 없음`);
   }
   for (const s of ["nan", "out", "none"]) if (!r.special || !Array.isArray(r.special[s]) || r.special[s].length !== 3) throw new Error(`colormaps.json: special.${s} 없음`);
+  const tx = r.text;
+  if (!tx || typeof tx.dark_lum !== "number" || !(tx.dark_lum > 0 && tx.dark_lum < 1)) throw new Error("colormaps.json: text.dark_lum 은 0..1 사이 수");
+  for (const k of ["on_dark", "on_light"] as const) {
+    const c = tx[k];
+    if (!Array.isArray(c) || c.length !== 3 || c.some((v) => !Number.isInteger(v) || v < 0 || v > 255)) throw new Error(`colormaps.json: text.${k} 형식 오류`);
+  }
   return r;
 }
 
@@ -94,6 +102,18 @@ export const srgbToLinear = (c8: number): number => {
   const c = c8 / 255;
   return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 };
+
+/** 상대 휘도(WCAG 2 — sRGB 정수 → 선형 가중합, 0..1). 파이썬 colormaps.luminance 와 같은 식 */
+export function relLuminance(c: RGB): number {
+  return 0.2126 * srgbToLinear(c[0]) + 0.7152 * srgbToLinear(c[1]) + 0.0722 * srgbToLinear(c[2]);
+}
+
+/** 색 칸 배경 sRGB → 글자 색 CSS. 상대 휘도 < 자원 text.dark_lum = on_dark(흰), 아니면 on_light — 보고서(colormaps.text_on)와 같은 규칙 */
+export function textOn(bg: RGB): string {
+  const tx = RES.text;
+  const c = relLuminance(bg) < tx.dark_lum ? tx.on_dark : tx.on_light;
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
 
 export const LUT_SIZE = 256;
 
