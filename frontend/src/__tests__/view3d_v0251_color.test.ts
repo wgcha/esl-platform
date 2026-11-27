@@ -133,7 +133,7 @@ describe("V-0251-37·38·39 자원 하나 · 정점 일치 · 보간 규칙 (TS 
       }
     };
     walk(src);
-    const rel = (p: string) => path.relative(src, p).replace(/\\/g, "/");
+    const rel = (p: string) => p.slice(src.length + 1).replace(/\\/g, "/");
     const importers = files.filter((f) => /from\s+["'][^"']*colormaps\.json["']/.test(readFileSync(f, "utf8"))).map(rel);
     expect(importers).toEqual(["lib/colormap.ts"]);
     const legacy = files.filter((f) => /\b(VIRIDIS|DIVERGING|BLUES9|RDBU11)\b/.test(readFileSync(f, "utf8"))).map(rel).sort();
