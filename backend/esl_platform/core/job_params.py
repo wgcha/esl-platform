@@ -7,6 +7,7 @@ API 는 `ctx.config.core`, 일괄 실행 워커 훅은 체인 행의 `core_setti
 from __future__ import annotations
 
 import copy
+import os
 from typing import Any
 
 from sqlalchemy.engine import Connection
@@ -31,9 +32,24 @@ def core_settings_for(core_cfg: dict[str, Any] | None, case: dict[str, Any], *, 
     return cfg
 
 
+def _fill_ok(cdir: str, case: dict[str, Any], ts: dict[str, Any] | None, frame: Any, settings: Any) -> bool:
+    """v0.25.2 TM(§6.1): 변위가 없어도 직접 고른 t*(tstar.manual 있음, 그 프레임)이고 채움이 가능(코어 DECIDE: block 아님)이면 통과 —
+    워커가 ESL 단계 앞에서 채운다. 코어를 못 부르면 거절(= 지금 409 disp_frame)."""
+    if not isinstance(ts, dict) or not ts.get("manual") or frame != ts.get("frame_index"):
+        return False
+    from esl_worker import core_adapter, frame_fill
+
+    try:
+        dec = core_adapter.frame_fill_decide(frame_fill.facts(case, os.path.join(cdir, co.D_EXTRACT), int(frame), settings))
+    except core_adapter.CoreError:
+        return False
+    return dec["action"] in ("have", "fill")
+
+
 def esl_solve_params(conn: Connection, core_cfg: dict[str, Any] | None, cdir: str, case: dict[str, Any], *,
                      frame_index: int | None = None, support_set_id: str | None = None,
-                     material_override: dict | None = None) -> dict[str, Any]:
+                     material_override: dict | None = None, fill_settings: Any = None) -> dict[str, Any]:
+    """fill_settings = 플랫폼 Settings(API 가 줌 — hw·TCL 있는지 판정 표 행 5 에 씀). None = 그 점검 생략(워커가 다시 판정)."""
     missing: list[str] = []
     if not case.get("extract_summary") or extract_stale(case):
         missing.append("extract")
@@ -45,7 +61,7 @@ def esl_solve_params(conn: Connection, core_cfg: dict[str, Any] | None, cdir: st
     if sup is None or sup["case_id"] != case["id"]:
         missing.append("support_set")
     frame = frame_index if frame_index is not None else (ts or {}).get("frame_index")
-    if not missing and frame not in co.disp_frames(cdir):
+    if not missing and frame not in co.disp_frames(cdir) and not _fill_ok(cdir, case, ts, frame, fill_settings):
         missing.append("disp_frame")
     if missing:
         # v0.10.0 MR-D-4: ② 지지점 자동 선택이 품질 검사에 걸렸으면 support_blocked + 사유

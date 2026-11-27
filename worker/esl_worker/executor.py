@@ -57,7 +57,7 @@ from sqlalchemy.exc import IntegrityError
 
 from esl_platform.core.job_types import DOE_JOB_TYPES, SCX_JOB_TYPES, VERIFY_JOB_TYPES
 
-from . import bf_ondemand, core_adapter, doe_jobs, esl_snapshot, h3d, inproc, jig_prep, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
+from . import bf_ondemand, core_adapter, doe_jobs, esl_snapshot, frame_fill, h3d, inproc, jig_prep, limiter, opt_jobs, register, scx_fetch, scx_verify, verify_post
 from .child import child_entry
 from . import lib_jobs  # noqa: E402,I001 - Case 없는 라이브러리 작업 준비 디스패치(LIB_COMPARE, §12.2)
 
@@ -354,16 +354,20 @@ class Executor:
                 with self._tx() as conn:
                     jobs_repo.patch_result(conn, self.job["id"], self.token, {st["core_stage"]: {"status": "done"}})
             elif st["core_stage"]:
-                bfd = jpd = None
+                bfd = jpd = ffd = None
                 if st["core_stage"] == "esl" and self.job["job_type"] == "ESL_SOLVE":
+                    ffd = self._frame_fill(st, log_path)       # v0.25.2 직접 고른 t* D 밖 프레임 채움(경계력 보충 바로 앞, 실패 = 단계 실패)
                     bfd = self._bf_ondemand(st, log_path)      # v0.24.2 경계력 원자료 보충(코어 자식 시작 전)
                     jpd = self._jig_prep(st, log_path)         # v0.24.4 지그 tie(paicad fixed-scan) 준비(코어 자식 시작 전)
-                extras = {**({"bf_ondemand": bfd} if bfd else {}), **({"jig_prep": jpd} if jpd else {})}
+                extras = {**({"frame_fill": ffd} if ffd else {}), **({"bf_ondemand": bfd} if bfd else {}),
+                          **({"jig_prep": jpd} if jpd else {})}
                 self._run_core(st, log_path, extra_outputs=extras or None)
                 outputs = {"core_stage": st["core_stage"], **extras}
                 rels = [self._stage_dir(st["core_stage"]), "run.json", log_rel]
                 if st["core_stage"] == "esl":
                     rels.insert(0, "03_bc")
+                    if ffd:        # v0.25.2 채움을 시도했으면(status 무관) 존재하는 01_extract 기록 등록(변위 npz 는 크기라 등록 안 함)
+                        rels += [r for r in ("01_extract/frame_fill.json",) if os.path.isfile(os.path.join(self.cdir, r))]
                     if bfd:        # 기록을 남겼으면(status 무관) 존재하는 01_extract 산물 등록
                         rels += [r for r in ("01_extract/bforce.npz", "01_extract/bforce.json",
                                              "01_extract/bforce_ondemand.json")
@@ -566,6 +570,163 @@ class Executor:
             state["cancel"] = now
             if self._cancel_requested():
                 raise _Canceled()
+
+    # ---------------------------------------------------------------- ESL 전 D 밖 프레임 채움(v0.25.2, esl_tstar_manual_jig_force.md §2.4)
+    def _frame_fill(self, st: dict[str, Any], log_path: str) -> dict[str, Any] | None:
+        """③ ESL 때 선택 프레임의 변위가 01_extract(disp.npz)에 없으면 hw(TCL fr_only 1회)로 그 프레임만 읽어 병합.
+        이미 있음(후보·D 안·이미 채운 프레임) = hw 0·None. 불가·실패 = ESL 단계 실패 TSTAR_FRAME_FILL_FAILED(detail = 기록 detail).
+        반환 = step outputs·result 의 frame_fill{status, frame, seconds, cause?, detail?}."""
+        p = self.job["params"] or {}
+        frame = p.get("frame_index")
+        if frame is None or self.case is None:
+            return None
+        frame = int(frame)
+        extract_dir = os.path.join(self.cdir, "01_extract")
+        try:
+            if frame in core_adapter_disp_frames(extract_dir):
+                return None                     # 변위 있음 — 옛 경로 그대로(채움 판정 생략)
+        except OSError:
+            return None
+
+        def echo(msg: str) -> None:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(msg + "\n")
+
+        settings = p.get("settings") or {}
+        facts = frame_fill.facts(self.case, extract_dir, frame, self.settings)
+        dec = core_adapter.frame_fill_decide(facts)
+        if dec["action"] == "have":
+            return None
+        s = self.settings
+        t0 = time.time()
+        cause: str | None = None
+        detail = ""
+        blocked = dec["action"] == "block"
+        merge = None
+        if blocked:
+            cause, detail = dec["code"], str(dec["text"] or "")
+        else:
+            try:
+                cause, detail, merge = self._ff_run(st, frame, settings, extract_dir, echo, log_path)
+            except (_Canceled, LeaseLost, _StepFailed):
+                raise
+            except Exception as exc:  # noqa: BLE001 - 채움 오류는 ESL 단계 실패로 보고(§2.4)
+                log.exception("작업 %s 프레임 채움 오류", self.job["id"])
+                cause = "HW_FAILED"
+                detail = frame_fill.detail_text(cause, msg=f"{type(exc).__name__}: {exc}"[:200])
+        seconds = None if blocked else time.time() - t0
+        attempt = frame_fill.attempt_record(frame=frame, job_id=self.job["id"], cause=cause, detail=detail,
+                                            seconds=seconds, blocked=blocked)
+        try:
+            inproc.call(self, lambda: core_adapter.frame_fill_record(extract_dir, attempt), label="프레임 채움 기록")
+        except (core_adapter.CoreError, OSError) as exc:
+            self._bf_warn(f"FRAME_FILL_RECORD_FAILED: 프레임 채움 기록을 쓰지 못함({getattr(exc, 'code', '')}: {exc})")
+        summary = frame_fill.summary_of(attempt)
+        if cause is None:
+            echo(frame_fill.LOG["ok"].format(frame=frame, sec=seconds or 0.0,
+                                             added="추가" if (merge or {}).get("added") else "이미 있음"))
+        else:
+            echo(frame_fill.LOG["blocked" if blocked else "failed"].format(cause=cause, detail=detail))
+        with self._tx() as conn:
+            jobs_repo.step_update(conn, self.job["id"], self.token, st["step_no"],
+                                  outputs={"frame_fill": summary, "hw_acquired": False})
+            jobs_repo.patch_result(conn, self.job["id"], self.token, {"frame_fill": summary})
+        if cause is not None:
+            raise _StepFailed(frame_fill.CODE_FAILED, detail[:500])
+        return summary
+
+    def ff_args(self) -> dict[str, Any]:
+        a = self.settings.altair
+        return {"limit": a.max_concurrent_hw, "wait": float(a.frame_fill_wait_s), "timeout": float(a.frame_fill_timeout_s),
+                "msg": ""}
+
+    def _ff_run(self, st: dict[str, Any], frame: int, settings: dict[str, Any], extract_dir: str, echo, log_path: str):
+        """채움 실행 1회: 요청 → hw → 평가 → 병합(+같은 출력의 경계력 병합). 반환 (cause|None, detail, merge). 세마포어는 항상 해제."""
+        from esl_platform.core.config import default_extract_tcl
+        from esl_platform.core.paths import h3d_work_dir
+
+        s = self.settings
+        no = st["step_no"]
+        h3d_path = self.case["h3d_path"]
+        tcl = default_extract_tcl()
+        args = self.ff_args()
+
+        def fail(cause: str, msg: str = ""):
+            return cause, frame_fill.detail_text(cause, **{**args, "msg": msg}), None
+
+        try:
+            meta = core_adapter.frame_fill_read_meta(extract_dir)
+            work = os.path.join(h3d_work_dir(s, self.case["folder_name"]), frame_fill.WORK_SUB)
+            out_dir = os.path.join(work, frame_fill.RAW_SUB)
+            os.makedirs(out_dir, exist_ok=True)
+            prev = h3d.backup_previous(out_dir)
+            if prev:
+                echo(f"[esl-worker] 이전 채움 산출물을 옮김: {prev}")
+            warn: list[str] = []
+            extra = frame_fill.request_extra(settings, meta, frame, warn)
+            for w in warn:
+                echo(f"[esl-worker] 경고: {w}")
+            request = os.path.join(work, "request.txt")
+            h3d.write_request(request, part=self.case["part_title"], hot_k=1, top_n=1, extra=extra)
+            argv = h3d.build_argv(list(s.commands.h3d_extract), h3d.values_for(
+                hw=s.altair.hw_exe_path, tcl=tcl, h3d=h3d_path, request=request, out_dir=out_dir,
+                part=self.case["part_title"], hot_k=1, top_n=1))
+        except core_adapter.CoreError as exc:
+            return fail("SETTINGS", f"{exc.code}: {exc.message}"[:200])
+        except (h3d.H3dError, DomainError, OSError) as exc:
+            return fail("HW_FAILED", str(getattr(exc, "message", exc))[:200])
+        t = frame_fill.frame_time(extract_dir, frame)
+        echo(frame_fill.LOG["start"].format(frame=frame, t=f"(t={t:g})" if t is not None else "", h3d=h3d_path,
+                                            out=out_dir))
+        limit, wait_s, timeout_s = args["limit"], args["wait"], args["timeout"]
+        env = dict(os.environ)
+        env.update({"ESL_INPUT": h3d.fwd(h3d_path), "ESL_OUTPUT": h3d.fwd(out_dir),
+                    "ESL_PART": str(self.case["part_title"]), "ESL_CONFIG": h3d.fwd(request)})
+        t0 = time.time()
+        try:
+            res = self._hw_session(
+                argv, work=work, out_dir=out_dir, step_no=no, h3d_path=h3d_path, env=env, echo=echo,
+                log_path=log_path, limit=limit,
+                wait_msg=frame_fill.LOG["wait"].format(limit=limit, wait=wait_s),
+                got_msg=frame_fill.LOG["got"],
+                head=lambda: echo("[esl-worker] argv: " + json.dumps(argv, ensure_ascii=False)),
+                pid_msg=lambda pid, applied: frame_fill.LOG["pid"].format(pid=pid, applied=applied, timeout=timeout_s),
+                beat=lambda t00, trk, last: frame_fill.LOG["beat"].format(
+                    min=(time.time() - t00) / 60, step=f", 마지막 단계 {last}" if last else ""),
+                wait_s=wait_s, timeout_s=timeout_s, write_pct=False,
+                running_outputs={"frame_fill": {"status": "running", "frame": frame}})
+        except _StepFailed as exc:
+            self._bf_release(no)
+            return fail("HW_FAILED", f"{exc.code}: {exc.message}"[:200])
+        except BaseException:
+            self._bf_release(no, quiet=True)
+            raise
+        self._bf_release(no)
+        if res["status"] == "wait":
+            return fail("WAIT")
+        if res["status"] == "timeout":
+            return fail("TIMEOUT")
+        hw_text = bf_ondemand.read_hw_text(log_path, res.get("log_start", 0))
+        ok, cause, detail, done = frame_fill.evaluate(res["code"], out_dir, frame, hw_text)
+        if not ok:
+            return cause, frame_fill.detail_text(cause, msg=detail), None
+        try:
+            merge = inproc.call(self, lambda: core_adapter.frame_fill_merge(
+                extract_dir, out_dir, frame, job_id=self.job["id"]), label="프레임 채움 병합")
+        except core_adapter.CoreError as exc:
+            return fail("MISMATCH" if exc.code == "FRAME_FILL_MISMATCH" else "MERGE", f"{exc.code}: {exc.message}"[:200])
+        except OSError as exc:
+            return fail("MERGE", str(exc)[:200])
+        # 같은 실행의 경계력·내력 원자료(bf_on 1 이었으면)도 병합 → 뒤따르는 경계력 보충이 "있음"(실패해도 채움은 성공)
+        if isinstance(done, dict) and isinstance(done.get("bforce"), dict):
+            try:
+                names = bf_ondemand.names_from(settings)
+                bm = inproc.call(self, lambda: core_adapter.bforce_merge(
+                    self.cdir, out_dir, [frame], tag=self.job["id"], names=names), label="채움 경계력 병합")
+                echo(frame_fill.LOG["bf"].format(kinds=bf_ondemand.kinds_text(dict((bm or {}).get("kinds") or {}))))
+            except (core_adapter.CoreError, OSError) as exc:
+                echo(frame_fill.LOG["bf_skip"].format(detail=f"{getattr(exc, 'code', '')}: {exc}"[:200]))
+        return None, "", merge
 
     # ---------------------------------------------------------------- ESL 경계력 원자료 보충(v0.24.2, esl_bforce_ondemand.md §1·§3)
     def _bf_facts(self, p: dict[str, Any], frame: int, extract_dir: str, settings: dict[str, Any]):
@@ -989,6 +1150,20 @@ class Executor:
         self._renew()
         return {"status": "timeout" if timed_out else "done", "code": code, "log_start": log_start}
 
+
+
+def core_adapter_disp_frames(extract_dir: str) -> list[int]:
+    """01_extract/disp.npz 의 프레임 번호(없으면 []) — 채움 필요 판정(변위 없음)용. 배열은 frame_index 만 읽음."""
+    import numpy as np
+
+    p = os.path.join(extract_dir, "disp.npz")
+    if not os.path.isfile(p):
+        return []
+    try:
+        with np.load(p, allow_pickle=False) as z:
+            return [int(x) for x in np.asarray(z["frame_index"]).reshape(-1)]
+    except (KeyError, ValueError):
+        return []
 
 
 def is_revalidate(job: dict[str, Any]) -> bool:

@@ -11,6 +11,7 @@
   (FAKE_HW_BF_NFRAMES·FAKE_HW_BF_TIMES·FAKE_HW_BF_TYPE·FAKE_HW_BF_NOFRAMES 로 조정)
 - FAKE_HW_TCL_DATA(+FAKE_HW_TCL_MOCK·FAKE_HW_TCL_SCRIPT, `write_tcl_bf_env`): bf_only 요청을 실제 TCL 을 tclsh+hwmock 으로
   돌려 처리(done.json·bf_<k>.csv 가 실제 TCL 출력 — v0.24.2 통합)
+- request fr_only 1(v0.25.2): 요청 프레임의 disp.csv·strain_frames.csv·done.json(mode fr_only) (FAKE_HW_FR_MODE·FAKE_HW_FR_NFRAMES·FAKE_HW_FR_BF)
 - FAKE_HW_DELAY=<초>: 시작 시 대기(동시 실행 한도 시험)
 argv 는 <output>/../argv_<pid>.json 에 남긴다.
 """
@@ -99,6 +100,32 @@ if opt("-config") and os.path.isfile(opt("-config")):
         if "\t" in ln and not ln.startswith("#"):
             k, v = ln.rstrip("\n").split("\t", 1)
             req[k] = v
+if req.get("fr_only") == "1":
+    # 프레임 채움 흉내(v0.25.2 계약 §2.4): 요청 프레임 f 의 disp.csv(f 만)·strain_frames.csv(f, f-1), done.json mode fr_only.
+    # FAKE_HW_FR_MODE=ok(기본)|nofiles(csv 안 씀)|wrongmode(mode≠fr_only) · FAKE_HW_FR_NFRAMES · FAKE_HW_FR_BF=1(done.json bforce 추가)
+    frs = [int(x) for x in req["fr_frames"].split()]
+    fmode = os.environ.get("FAKE_HW_FR_MODE", "ok")
+    prevs = [f - 1 for f in frs if f > 0]
+    if fmode != "nofiles":
+        with open(os.path.join(out, "disp.csv"), "w", encoding="utf-8") as fh:
+            fh.write("frame_index,node_id,ux,uy,uz\n")
+            for f in frs:
+                for n in range(1, 10):
+                    fh.write("%d,%d,%r,0.0,0.0\n" % (f, n, 0.001 * f * n))
+        with open(os.path.join(out, "strain_frames.csv"), "w", encoding="utf-8") as fh:
+            fh.write("frame_index,elem_id,vm_hv,exx,eyy,ezz,exy,epsp\n")
+            for f in prevs + frs:
+                for e in (101, 102):
+                    fh.write("%d,%d,0.001,0.0,0.0,0.0,0.0,0.0\n" % (f, e))
+    done = {{"ok": True, "mode": "fr_only" if fmode != "wrongmode" else "full", "h3d": opt("-input"),
+            "n_frames": int(os.environ.get("FAKE_HW_FR_NFRAMES", "10")), "n_nodes": 9, "n_elems": 2, "frames": frs,
+            "prev_frames": prevs, "frame_times": {{str(f): f * 0.001 for f in prevs + frs}},
+            "strain_source": req.get("strain_sources"), "passes": {{"FR": {{"seconds": 0.0}}}}, "warnings": []}}
+    if os.environ.get("FAKE_HW_FR_BF") == "1":
+        done["bforce"] = {{"on": True, "frames": frs, "kinds": {{}}}}
+    json.dump(done, open(os.path.join(out, "done.json"), "w"))
+    print("ESL fr-only done", flush=True)
+    sys.exit(0)
 if req.get("bf_only") == "1" and os.environ.get("FAKE_HW_TCL_DATA"):
     # 실제 TCL(esl_h3d_extract.tcl) 을 tclsh + 가짜 hwi(tests/io/fixtures/hwmock.tcl)로 실행 — 출력은 실제 TCL 형식 그대로
     tclsh = os.environ.get("ESL_TCLSH") or shutil.which("tclsh") or shutil.which("tclsh8.6")

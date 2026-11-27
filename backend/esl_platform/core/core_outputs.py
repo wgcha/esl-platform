@@ -89,6 +89,19 @@ def disp_frame(case_dir: str, frame_index: int) -> np.ndarray | None:
     return np.asarray(d["u"][int(hit[0])], np.float64)
 
 
+def history_frames(case_dir: str) -> list[dict[str, Any]]:
+    """01_extract/history.npz 의 프레임 전부 [{frame_index, time}](파일 순서) — ② 에서 고를 수 있는 프레임(v0.25.2 §2.2). 없거나 읽을 수 없으면 []."""
+    try:
+        h = load_npz(case_dir, D_EXTRACT, "history.npz")
+        fi = np.asarray(h["frame_index"]).reshape(-1)
+        tm = np.asarray(h["time"], np.float64).reshape(-1)
+    except (OutputMissing, OSError, ValueError, KeyError):
+        return []
+    if fi.size != tm.size:
+        return []
+    return [{"frame_index": int(a), "time": float(b)} for a, b in zip(fi.tolist(), tm.tolist())]
+
+
 def disp_frames(case_dir: str) -> list[int]:
     try:
         d = load_npz(case_dir, D_EXTRACT, "disp.npz")
