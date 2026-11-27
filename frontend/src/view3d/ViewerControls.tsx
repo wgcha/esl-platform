@@ -1,7 +1,8 @@
 // v0.24.6 시점 막대의 [경계조건][하중] 칩 + ⚙ 팝오버(esl_viewer_hv.md §2·§3).
 // 칩 = 글자 토글(aria-pressed, 켬 = 지금 .on 색). ⚙ 팝오버는 막대 아래 절대 위치(레이아웃 영향 0) — Esc·바깥 클릭 닫힘, 키보드 순회.
 import { useEffect, useId, useRef, useState } from "react";
-import { LEVEL_CHOICES, planOf, type ViewerLayer } from "./viewerPlan";
+import { LegendEditor, type LegendEditorProps } from "./legend/LegendEditor";
+import { planOf, type ViewerLayer } from "./viewerPlan";
 import type { ViewerStore } from "./viewerSync";
 
 export const NO_BC_TITLE = "이 보기에 경계조건 표식이 없습니다";
@@ -19,6 +20,8 @@ export interface ViewerControlsProps {
   compact?: boolean;
   /** v0.24.9 [경계조건] 칩 툴팁 범례 줄(기호별 한 줄 뜻 — supportMarks.markLegend). 없으면 지금 툴팁 그대로 */
   bcLegend?: string[] | null;
+  /** v0.25.1 범례 편집 내용(범례를 누르면 뜨는 팝오버와 같은 컴포넌트). null = 편집 없음(분류 표시) */
+  legendEditor?: LegendEditorProps | null;
 }
 
 export function ViewerChips({ store, hasBc, hasLoad, compact, bcLegend }: ViewerControlsProps) {
@@ -59,7 +62,7 @@ const GearIcon = () => (
   </svg>
 );
 
-export function ViewerGear({ store, deformOn }: ViewerControlsProps) {
+export function ViewerGear({ store, deformOn, legendEditor }: ViewerControlsProps) {
   const plan = planOf(store.planKey);
   const { state, set } = store;
   const [open, setOpen] = useState(false);
@@ -96,7 +99,7 @@ export function ViewerGear({ store, deformOn }: ViewerControlsProps) {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
-        title="뷰어 설정 — 원형 겹쳐 보기 · 최대 표식 · 범례 구간"
+        title="뷰어 설정 — 원형 겹쳐 보기 · 최대 표식 · 범례 편집"
         data-testid="v3d-gear"
         onClick={() => setOpen((x) => !x)}
       >
@@ -116,17 +119,13 @@ export function ViewerGear({ store, deformOn }: ViewerControlsProps) {
               <span>최대 표식</span>
             </label>
           )}
-          <div className="v3d-pop-row">
-            <span className="small">범례</span>
-            <div className="seg" role="group" aria-label="범례 구간" data-testid="v3d-opt-levels">
-              {LEVEL_CHOICES.map((l) => (
-                <button key={l} type="button" className={state.levels === l ? "on" : ""} aria-pressed={state.levels === l} data-levels={l} onClick={() => set({ levels: l })}>
-                  {l === 0 ? "연속" : l}
-                </button>
-              ))}
+          {legendEditor && (
+            <div className="v3d-pop-sec" data-testid="v3d-opt-legend">
+              <div className="small muted">범례</div>
+              <LegendEditor {...legendEditor} marksRow="extra" testPrefix="v3d-gleg" />
             </div>
-          </div>
-          <div className="small muted">이 브라우저에 기억됩니다</div>
+          )}
+          {!legendEditor && <div className="small muted">이 브라우저에 기억됩니다</div>}
         </div>
       )}
     </span>

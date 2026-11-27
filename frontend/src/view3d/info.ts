@@ -17,6 +17,9 @@ export interface ProbeExtra {
   uStep?: [number, number, number] | null;
   /** 기준 위치 x0(3n, 변형 전) */
   xyz?: ArrayLike<number> | null;
+  /** v0.25.1 C 기여도 c_n·차이 dc_n(N·mm) — 씬 묶음 값에 있을 때. step = 양자화 간격(values.bin) */
+  cc?: { values: ArrayLike<number>; step: number | null } | null;
+  dc?: { values: ArrayLike<number>; step: number | null } | null;
 }
 
 /** 색 범례 문구에서 단위 괄호를 뺀 짧은 이름: "목표 변위 |u_tgt| (mm)" → "목표 변위 |u_tgt|" */
@@ -49,6 +52,8 @@ function vertexLine(nodeId: number, vertex: number, v: DecodedValues | null, mag
     const x = c.values[vertex];
     parts.push(`${c.short} ${c.step ? fmtQuant(x, c.step) : f3(x)} ${c.unit}`);
   }
+  if (extra?.cc && vertex < extra.cc.values.length) parts.push(`C 기여도 ${extra.cc.step ? fmtQuant(extra.cc.values[vertex], extra.cc.step) : f3(extra.cc.values[vertex])} N·mm`);
+  if (extra?.dc && vertex < extra.dc.values.length) parts.push(`차이 ${extra.dc.step ? fmtQuant(extra.dc.values[vertex], extra.dc.step) : f3(extra.dc.values[vertex])} N·mm`);
   const u = extra?.u;
   if (u && vertex * 3 + 2 < u.length) {
     const q = (i: number) => (extra?.uStep ? fmtQuant(u[vertex * 3 + i], extra.uStep[i]) : f3(u[vertex * 3 + i]));
