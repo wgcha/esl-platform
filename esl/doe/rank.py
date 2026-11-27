@@ -278,6 +278,24 @@ COUNT_LABELS = {"mesh": "메시", "size": "크기/정렬", "solve": "해석", "m
                 "bf": "경계력 없음", "fi": "내력 없음", "sm": "강성 지표 없음", "ref": "참고용"}
 
 
+JIG_METRIC_KEYS = ("C_jig", "C_jd", "C_js")       # v0.25.2 §7.2: 지그 출처 순위(참고용 꼬리표 jig_ref 가 붙는 순위 — 전 노드·경계력·내력 아님)
+
+
+def mark_ref(R: dict, metric_key: str, ref_ids) -> dict:
+    """참고용 형상 표시(§3.4·§4.1 — 순위 값·정렬 불변): metric_key 가 지그 출처 순위면 ref_ids 안의 행에 jig_ref True(참일 때만 키),
+    R["n_ref"] = 그 수(> 0 일 때만 키). R 을 바꾸고 돌려준다."""
+    if metric_key in JIG_METRIC_KEYS:
+        refs = set(ref_ids or ())
+        n = 0
+        for x in R.get("ranking") or []:
+            if x.get("id") in refs:
+                x["jig_ref"] = True
+                n += 1
+        if n:
+            R["n_ref"] = n
+    return R
+
+
 def count_items(R: dict) -> list[dict]:
     """결과 개수(§4.1): [{key, label, n}] = 성공(n_ok, 항상) + n_skipped·n_failed 의 0 이 아닌 모든 키(COUNT_LABELS 순서) +
     참고용(n_ref > 0 일 때만). 같은 키가 n_skipped·n_failed 양쪽에 있으면 합. 순수 함수(보고서·결과 문서 공용)."""

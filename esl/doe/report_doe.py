@@ -535,10 +535,10 @@ def render_compare(ctx: dict) -> str:
         inner += (f"<p class='small muted'>C_ref(기준 형상 최악) {H.esc(_f(res.get('C_ref')))} · 기준 umax "
                   f"{H.esc(_f((res.get('baseline') or {}).get('umax')))} · 전체는 ranking.csv</p>")
     else:
-        inner = f"<p>{H.esc(_msg('NO_FEASIBLE_DESIGNS'))}</p>"
+        inner = f"<p>{H.esc(_msg('NO_FEASIBLE_DESIGNS'))}</p>" + other_views_html(ctx)
     nf = res.get("n_failed") or {}
     inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 실패 메시 {H.esc(nf.get('mesh', 0))}·크기/정렬 "
-              f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
+              f"{H.esc(nf.get('size', 0))}·해석 {H.esc(nf.get('solve', 0))}{count_tail(res, COUNT_SHOWN_COMPARE)}</p>")
     S.append(H.section("ranking", "3. 순위(기준 형상 대비)", inner))
     sm_html = stiffness_html(ctx.get("stiffness"), res, names, jig=ctx.get("jig"))
     if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
@@ -724,12 +724,12 @@ def render(ctx: dict) -> str:
         if res.get("noise_floor") is not None:
             inner += f"<p class='small'>③ 메시 잡음 바닥 {H.esc(_pct(res['noise_floor']))}(공칭 BREP 왕복 재메시 score 차)</p>"
     else:
-        inner = f"<p>{H.esc(_msg('NO_FEASIBLE_DESIGNS'))}</p>"
+        inner = f"<p>{H.esc(_msg('NO_FEASIBLE_DESIGNS'))}</p>" + other_views_html(ctx)
     nf = res.get("n_failed") or {}
     ns = res.get("n_skipped") or {}
     inner += (f"<p class='small'>성공 {H.esc(res.get('n_ok', 0))} · 스킵 충돌 {H.esc(ns.get('collision', 0))}·고정 "
               f"{H.esc(ns.get('fixed', 0))}·형상 {H.esc(ns.get('geom', 0))} · 실패 모핑 {H.esc(nf.get('morph', 0))}·메시 "
-              f"{H.esc(nf.get('mesh', 0))}·해석 {H.esc(nf.get('solve', 0))}</p>")
+              f"{H.esc(nf.get('mesh', 0))}·해석 {H.esc(nf.get('solve', 0))}{count_tail(res, COUNT_SHOWN_MAIN)}</p>")
     S.append(H.section("ranking", "4. 순위", inner))
     sm_html = stiffness_html(ctx.get("stiffness"), res, {}, jig=ctx.get("jig"))
     if sm_html:                                             # v0.20.0 SM-7(새 스냅샷만)
@@ -775,6 +775,32 @@ def render(ctx: dict) -> str:
             + list(ms.get("limits_ko") or [])) + "</ul>"))
     title = f"강성 평가 스터디 {st.get('title') or st.get('id') or ''}".strip()
     return H.page(title, "\n".join(S), extra_css=EXTRA_CSS, version="doe")
+
+
+# v0.25.2 결과 개수 줄(esl_tstar_manual_jig_force.md §4.1 — D-0.25.2-14): 지금 줄이 이미 찍는 키 — 나머지 0 아닌 키(rank.count_items)를 뒤에
+# " · 라벨 n" 으로 덧붙임(덧붙일 키가 없으면 지금 줄과 글자까지 같음)
+COUNT_SHOWN_COMPARE = ("ok", "mesh", "size", "solve")
+COUNT_SHOWN_MAIN = ("ok", "collision", "fixed", "geom", "morph", "mesh", "solve")
+
+
+def count_tail(res: dict, shown) -> str:
+    from esl.doe import rank as rk
+    return "".join(f" · {H.esc(it['label'])} {H.esc(it['n'])}" for it in rk.count_items(res) if it["key"] not in shown)
+
+
+def other_views_html(ctx: dict) -> str:
+    """§4.2 보고서: 주 순위가 비고 다른 하중 출처 보기에 순위가 있으면 출처 표 순서 첫 보기의 순위 표 1개(ctx other_view = {label, view}
+    — 호출부가 그때만 넣음, 없으면 빈 문자열 = 지금 보고서 그대로)."""
+    ov = ctx.get("other_view")
+    if not ov:
+        return ""
+    v = ov["view"]
+    names = {x["id"]: ((x.get("shape") or {}).get("name") or x["id"]) for x in v.get("ranking") or []}
+    rows = [[x["rank"], x["id"], names.get(x["id"], x["id"]), x["score"], _pct(x["improvement"]), x.get("worst_entry_id") or "",
+             x["umax"], x["epsmax"]] for x in (v.get("ranking") or [])[:int(ctx.get("ranking_rows") or 20)]]
+    title = _msg("RANK_OTHER_SOURCE_TITLE").format(source=ov["label"])
+    return (f"<h3>{H.esc(title)}</h3>"
+            + H.table(["순위", "id", "이름", "score", "개선율", "최악 ESL", "umax", "εmax"], rows, num=(0, 3, 6, 7)))
 
 
 def write(path: str, ctx: dict) -> str:

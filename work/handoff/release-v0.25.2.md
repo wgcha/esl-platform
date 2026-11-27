@@ -88,14 +88,21 @@ in_D, have}` — 자동 = `02_tstar/tstar.json metrics[metric].tstar`. 오류 FR
 - `prep/compare.json` 형상 행: `double_sheet{frac, gap_mm}`(경고 날 때만). 경고 코드 `SHAPE_DOUBLE_SHEET`.
 - 3D manifest(지그 응답 3D): `supports[].via`("force" — 강제 노드만), `tie_marks`(= map.tie.marks).
 - 경고 코드(doe_messages.json): JIG_GRID_TIE_FORCED · JIG_GRID_TIE_FAR · JIG_GRID_TIE_UNPLACED · JIG_GRID_TIE_HINT · SHAPE_DOUBLE_SHEET.
+  결과 warnings(grid) 행 = {code, message, + 필드}(기존 _jg_warn_rows 규칙). 스터디 요약은 최악 형상 1건씩 + HINT(참고용 형상 ≥ 1).
+- 구현 사실(접점 보충): marks 항목에 `to`(force 만 — 붙인 노드 면적 가중 중심, 형상 전역) 추가 — 3D 선 = x → to.
+  `counts`·`n_ref` = 격자 지그 ∧ 스냅샷 rank.jig_grid 에 tie_force 있을 때만(TM-C1-2 — ①②③ base 모드는 jig_grid 블록을 무시하는
+  v0.24.8 불변 때문). 그 밖 결과는 화면이 n_failed + COUNT_LABELS 거울로 같은 표시를 계산. 보고서 개수 줄은 모든 결과에 count_items.
+  RANK_SOURCES 새 열 `label`(지그 고정·지그 변위·지그 스프링·전 노드·경계력·내력 — 보고서 "다른 하중 출처 순위: {label}").
 
 ## 2. 진행 (C1)
 
 - [x] 접점 껍데기(이 커밋)
-- [ ] 골든(release/v0.25.1 393789a8 코드 — git archive 로 /tmp 에 풀어 기록)
-- [ ] A: frame_fill.merge · TCL fr_only · _select_frame/stage_esl · 경고·보고서 · 시험 1~9
-- [ ] B: CAPTURE_STAGES·force · LEGACY_ABSENT · 경고·map.tie · 시험 10~18
-- [ ] C: count_items 보고서 · 다른 출처 순위 · 3D 표식 자료 · double_sheet · 시험 19~23 · #96 재현
+- [x] 골든(release/v0.25.1 393789a8 코드 — git archive 로 /tmp/g0252src 에 풀어 기록 → tests/doe/golden_v0252_c1/golden.json,
+  비교 = tests/doe/test_v0252_golden.py: 파이프라인 자동·후보 2 + 스터디 세계 6(옛 스냅샷 — tie_force 없음))
+- [x] A(4737a446): frame_fill.merge · TCL fr_only · _select_frame/stage_esl · 경고·보고서 · 시험 1~9
+  (tests/pipeline/test_tstar_manual.py · tests/io/test_tcl_fr_only.py)
+- [x] B: CAPTURE_STAGES·force · LEGACY_ABSENT · 경고·map.tie · 3D via·tie_marks · 시험 10~18(tests/mech/test_grid_force.py)
+- [x] C: count_items 보고서 · 다른 출처 순위 · double_sheet · 시험 19~23 · #96 재현(tests/doe/test_v0252_c.py · synth_tm.py)
 - [ ] tests/ 전체 · packages/beadgraph
 
 ## 3. 발견 (TM-C1-n — work/findings.md 에도)

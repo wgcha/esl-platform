@@ -54,7 +54,8 @@ CAPTURE_STAGES = (
 ELEM_PT, ELEM_SEG, ELEM_TRI = 0, 1, 2
 # 해시 밖 키(경고 임계·수렴 진단 크기·표시 판정 — 계산 결과(per_esl)를 바꾸지 않음, 계약 §7.1)
 HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min",
-                "noise_floor_mismatch", "mesh_h_ratio_warn", "mesh_tri_frac_warn")    # v0.24.8 fix JG-23: 메시 차이 표시 판정(해시 밖)
+                "noise_floor_mismatch", "mesh_h_ratio_warn", "mesh_tri_frac_warn",    # v0.24.8 fix JG-23: 메시 차이 표시 판정(해시 밖)
+                "tie_force_far_warn_mm")                     # v0.25.2 먼 강제 표시 임계(§3.6 — 경고·참고용·3D 색만)
 # 해시에서 빼는 고정 키(백엔드 rank_snapshot 이 블록 안에 넣는 schema: 1 — 값 고정, 키 유무로 해시가 갈리지 않게)
 HASH_FIXED = ("schema", "enabled")
 # 격자 npz 키(§1.2 — stages 가 g<k>.npz 로 저장). 접미 <frame>·<src> 는 METHODS.frame·src 열 값
@@ -385,29 +386,70 @@ def _shape_h(mesh_S, Xs, near: np.ndarray | None) -> float:
     return float(np.median(np.linalg.norm(Xs[E[:, 0]] - Xs[E[:, 1]], axis=1)))
 
 
-def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: float, normal_deg: float) -> dict:
+def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: float, normal_deg: float,
+            force: dict | None = None) -> dict:
     """tie 잡기(§1.3-2): 형상 노드 ŷ(A 좌표)의 골격 거리 d = min(점·변·면 정확 거리). r_cap = capture_rel·max(h_T, h_S),
     band = d ≤ r_cap ∧ 법선 맞음(형상 법선 R_plᵀ m 의 최근접 골격 점 구속 방향 부분공간 사영 ≥ cos(normal_deg)), 띠 0 클러스터 =
     법선 맞는 최근접 1노드(≤ snap_rel·max(h_T, h_S) — snap), 그래도 0 = miss. 반환 Cap{idx (m,) 정렬, elem_kind, elem, pts (m,3),
-    w (m,3)(골격 점 보간 — 면 = 무게중심, 변 = 선형, 점·snap = 그 점), dist, via, q (m,), clusters[…], n_reject_normal, r_cap, h_S}."""
+    w (m,3)(골격 점 보간 — 면 = 무게중심, 변 = 선형, 점·snap = 그 점), dist, via, q (m,), clusters[…], n_reject_normal, r_cap, h_S}.
+
+    v0.25.2(esl_tstar_manual_jig_force.md §3.1·§3.2): 단계는 CAPTURE_STAGES 표를 위에서부터 돈다(열 pick 으로 함수 선택 — 이름 분기
+    없음). force = 스냅샷 rank.jig_grid.tie_force{enabled, max_dist_mm, normal_deg}(None = v0.25.1 코드 경로 그대로 — 결과 바이트 불변).
+    강제 단계 묶음 기록 = via "force"·dist·shift, Cap 에 force(설정 사본)·r_snap·force_limit 추가(force 가 있을 때만)."""
+    S = _cap_init(skel, mesh_S, Xs_A, R_pl, capture_rel=capture_rel, snap_rel=snap_rel, normal_deg=normal_deg, force=force)
+    on = {"always": True, "force": bool(force and force.get("enabled"))}
+    for row in CAPTURE_STAGES:
+        if not on[row["on"]]:
+            continue
+        _PICK[row["pick"]](S, row)
+    return _cap_finish(S)
+
+
+def _cap_init(skel, mesh_S, Xs_A, R_pl, *, capture_rel, snap_rel, normal_deg, force) -> dict:
     Xs = np.asarray(Xs_A, dtype=np.float64)
     R = np.asarray(R_pl, dtype=np.float64).reshape(3, 3)
-    NS = Xs.shape[0]
     wS = jig.node_weights(mesh_S)
     mA = np.asarray(wS["normal"], dtype=np.float64) @ R          # 형상 법선 → A 좌표(행 벡터: v_A = v_S R)
     aS = np.asarray(wS["area"], dtype=np.float64)
-    P, Xp = skel["idx"], skel["x"]
-    nP = P.size
+    Xp = skel["x"]
     tP = cKDTree(Xp)
     h_T = float(skel["h_T"])
     dn, _ = tP.query(Xs, k=1, distance_upper_bound=2.0 * h_T if h_T > 0 else np.inf)
     h_S = _shape_h(mesh_S, Xs, np.isfinite(dn))
     href = max(h_T, h_S)
-    r_cap = float(capture_rel) * href
-    r_snap = float(snap_rel) * href
+    seg = skel["seg"]
+    return {"skel": skel, "Xs": Xs, "NS": Xs.shape[0], "mA": mA, "aS": aS, "tP": tP, "tS": None, "h_S": h_S,
+            "r_cap": float(capture_rel) * href, "r_snap": float(snap_rel) * href,
+            "Lmax": float(np.linalg.norm(Xp[seg[:, 0]] - Xp[seg[:, 1]], axis=1).max()) if seg.size else 0.0,
+            "cosv": float(np.cos(np.radians(float(normal_deg)))), "force": None if force is None else dict(force),
+            "taken": np.zeros(Xs.shape[0], bool), "parts": [], "n_rej": 0, "cl_extra": {}}
+
+
+def _cap_have(S) -> np.ndarray:
+    """묶음별 지금까지 잡힌 노드 수."""
+    nq = S["skel"]["n_q"]
+    have = np.zeros(nq, np.int64)
+    for p in S["parts"]:
+        if p["q"].size:
+            have += np.bincount(p["q"], minlength=nq)
+    return have
+
+
+def _cap_put(S, idx, kind, elem, dist, pts, w, qn, via: int) -> None:
+    S["parts"].append({"idx": np.asarray(idx, np.int64), "kind": np.asarray(kind, np.int64), "elem": np.asarray(elem, np.int64),
+                       "dist": np.asarray(dist, np.float64), "pts": np.asarray(pts, np.int64).reshape(-1, 3),
+                       "w": np.asarray(w, np.float64).reshape(-1, 3), "q": np.asarray(qn, np.int64),
+                       "via": np.full(np.asarray(idx).size, via, np.int64)})
+    S["taken"][np.asarray(idx, np.int64)] = True
+
+
+def _pick_within(S, row) -> None:
+    """band(표 행 1 — v0.25.1 코드 그대로): 후보 × 골격 원소(점·변·면) 정확 거리 ≤ r_cap ∧ 법선 맞음, 대상 = 전 묶음."""
+    skel, Xs, mA = S["skel"], S["Xs"], S["mA"]
+    Xp, tP = skel["x"], S["tP"]
+    nP = skel["idx"].size
+    r_cap, Lmax, cosv = S["r_cap"], S["Lmax"], S["cosv"]
     seg, tri = skel["seg"], skel["tri"]
-    Lmax = float(np.linalg.norm(Xp[seg[:, 0]] - Xp[seg[:, 1]], axis=1).max()) if seg.size else 0.0
-    cosv = float(np.cos(np.radians(float(normal_deg))))
     dc, _ = tP.query(Xs, k=1, distance_upper_bound=r_cap + Lmax + 1e-12)
     cand = np.flatnonzero(np.isfinite(dc))
     # 후보 × 골격 원소 쌍(점·변·면) — 원소 = 후보 공 안 점에 닿는 것
@@ -446,21 +488,24 @@ def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: flo
         ok = _proj_ok(mA[cidx], skel["dir"][near_pt], skel["rank"][near_pt], cosv)
         inb = cols[3] <= r_cap
         band = inb & ok
-        n_rej = int(np.sum(inb & ~ok))
+        S["n_rej"] = int(np.sum(inb & ~ok))
         sel = np.flatnonzero(band)
-        idx, kind, elem, dist = cidx[sel], cols[1][sel].astype(np.int64), cols[2][sel].astype(np.int64), cols[3][sel]
-        pts, w, qn = PT[sel], W[sel], skel["q"][near_pt[sel]]
+        _cap_put(S, cidx[sel], cols[1][sel].astype(np.int64), cols[2][sel].astype(np.int64), cols[3][sel], PT[sel], W[sel],
+                 skel["q"][near_pt[sel]], int(row["via"]))
     else:
-        n_rej = 0
-        idx = kind = elem = qn = np.zeros(0, np.int64)
-        dist = np.zeros(0)
-        pts = np.zeros((0, 3), np.int64)
-        w = np.zeros((0, 3))
-    via = np.full(idx.size, VIA_BAND, np.int64)
-    have = np.bincount(qn, minlength=skel["n_q"]) if qn.size else np.zeros(skel["n_q"], np.int64)
-    taken = np.zeros(NS, bool)
-    taken[idx] = True
-    tS = cKDTree(Xs)
+        _cap_put(S, np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0), np.zeros((0, 3), np.int64),
+                 np.zeros((0, 3)), np.zeros(0, np.int64), int(row["via"]))
+
+
+def _pick_nearest1(S, row) -> None:
+    """snap(표 행 2 — v0.25.1 코드 그대로): 노드 0 묶음마다 법선 맞는 최근접 1노드(≤ r_snap), 값 = 그 골격 점."""
+    skel, Xs, mA, taken = S["skel"], S["Xs"], S["mA"], S["taken"]
+    Xp = skel["x"]
+    r_snap, cosv = S["r_snap"], S["cosv"]
+    have = _cap_have(S)
+    if S["tS"] is None:
+        S["tS"] = cKDTree(Xs)
+    tS = S["tS"]
     add = []
     for q in np.flatnonzero(have == 0).tolist():                # snap(클러스터 순 — 결정적)
         Pq = np.flatnonzero(skel["q"] == q)
@@ -480,15 +525,160 @@ def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: flo
             add.append((n, ELEM_PT, pi, d, pi, q))
     if add:
         a_ = np.asarray(add, dtype=np.float64)
-        idx = np.r_[idx, a_[:, 0].astype(np.int64)]
-        kind = np.r_[kind, a_[:, 1].astype(np.int64)]
-        elem = np.r_[elem, a_[:, 2].astype(np.int64)]
-        dist = np.r_[dist, a_[:, 3]]
         pp_ = a_[:, 4].astype(np.int64)
-        pts = np.concatenate([pts, np.stack([pp_, pp_, pp_], axis=1)], axis=0)
-        w = np.concatenate([w, np.tile([1.0, 0.0, 0.0], (pp_.size, 1))], axis=0)
-        qn = np.r_[qn, a_[:, 5].astype(np.int64)]
-        via = np.r_[via, np.full(len(add), VIA_SNAP, np.int64)]
+        _cap_put(S, a_[:, 0].astype(np.int64), a_[:, 1].astype(np.int64), a_[:, 2].astype(np.int64), a_[:, 3],
+                 np.stack([pp_, pp_, pp_], axis=1), np.tile([1.0, 0.0, 0.0], (pp_.size, 1)), a_[:, 5].astype(np.int64),
+                 int(row["via"]))
+
+
+def _closest_cluster(skel: dict, X, Pq, segq, triq):
+    """점들 X (M,3) → 묶음 골격(점 Pq·변 segq 행·면 triq 행 — 골격 전역 번호) 최근접: (kind, elem, dist, pts (M,3), w (M,3)),
+    동률 = 거리 → kind(점 우선) → 원소 번호(band 와 같은 규칙). 외삽 없음(클립 — 변 t ∈ [0,1], 면 = Ericson 최근접)."""
+    Xp, seg, tri = skel["x"], skel["seg"], skel["tri"]
+    M = X.shape[0]
+    rows = []
+    pc = np.repeat(np.arange(M), Pq.size)
+    pp = np.tile(Pq, M)
+    rows.append((pc, np.full(pc.size, ELEM_PT), pp, np.linalg.norm(X[pc] - Xp[pp], axis=1), np.ones(pc.size),
+                 np.zeros(pc.size), np.zeros(pc.size), pp, pp, pp))
+    if segq.size:
+        pc = np.repeat(np.arange(M), segq.size)
+        e_ = np.tile(segq, M)
+        a, b = seg[e_, 0], seg[e_, 1]
+        d1, t = _closest_seg(X[pc], Xp[a], Xp[b])
+        rows.append((pc, np.full(pc.size, ELEM_SEG), e_, d1, 1 - t, t, np.zeros(t.size), a, b, a))
+    if triq.size:
+        pc = np.repeat(np.arange(M), triq.size)
+        e_ = np.tile(triq, M)
+        a, b, c = tri[e_, 0], tri[e_, 1], tri[e_, 2]
+        d2, bc = _closest_tri(X[pc], Xp[a], Xp[b], Xp[c])
+        rows.append((pc, np.full(pc.size, ELEM_TRI), e_, d2, bc[:, 0], bc[:, 1], bc[:, 2], a, b, c))
+    cols = [np.concatenate([r[i] for r in rows]) for i in range(10)]
+    o = np.lexsort((cols[2], cols[1], cols[3], cols[0]))
+    cols = [x[o] for x in cols]
+    first = np.r_[True, cols[0][1:] != cols[0][:-1]]
+    cols = [x[first] for x in cols]
+    return (cols[1].astype(np.int64), cols[2].astype(np.int64), cols[3], np.stack(cols[7:10], axis=1).astype(np.int64),
+            np.stack(cols[4:7], axis=1))
+
+
+FORCE_K0 = 16                                       # 강제 단계 KD 최근접 질의 첫 k(배증 — 결과와 무관, 속도만)
+
+
+def _pick_area_fill(S, row) -> None:
+    """강제 부여(표 행 3 — §3.2): 앞 단계 뒤에도 노드 0 인 묶음 q 마다(묶음 번호 순), 안 잡힌 형상 노드를 묶음 골격까지 정확 거리 d
+    (점·변·면 최근접 — 클립)로 (d, 노드 번호) 오름차순 → 면적 합 ≥ 묶음 면적 A_q 인 첫 노드까지(최소 1, 모자라면 있는 만큼).
+    거리 한도 = force.max_dist_mm(None = 없음, 값 = max(값, r_snap)), 법선 조건 = force.normal_deg(≥ 90 = 없음, 아니면 band 와 같은
+    _proj_ok). 형상 전체를 정렬하지 않음: 묶음 골격 점에서 형상 KD 최근접 k 배증 + 정확 거리 하한 d ≥ d_점 − L_q(L_q = 묶음 변 최대
+    길이) — 고른 마지막 거리 + L_q 가 k 번째 이웃 거리보다 작으면 완결."""
+    skel, Xs, aS, mA, taken, NS = S["skel"], S["Xs"], S["aS"], S["mA"], S["taken"], S["NS"]
+    fc = S["force"] or {}
+    md = fc.get("max_dist_mm")
+    lim = None if md is None else max(float(md), S["r_snap"])
+    nd = float(fc.get("normal_deg", 90.0))
+    use_n = nd < 90.0
+    cosf = float(np.cos(np.radians(nd)))
+    Xp, seg, tri = skel["x"], skel["seg"], skel["tri"]
+    Aq = np.bincount(skel["q"], weights=skel["area"], minlength=skel["n_q"])
+    have = _cap_have(S)
+    if S["tS"] is None:
+        S["tS"] = cKDTree(Xs)
+    tS = S["tS"]
+    S["force_limit"] = lim
+    for q in np.flatnonzero(have == 0).tolist():
+        Pq = np.flatnonzero(skel["q"] == q)
+        segq = np.flatnonzero(skel["q"][seg[:, 0]] == q) if seg.size else np.zeros(0, np.int64)
+        triq = np.flatnonzero(skel["q"][tri[:, 0]] == q) if tri.size else np.zeros(0, np.int64)
+        Lq = float(np.linalg.norm(Xp[seg[segq, 0]] - Xp[seg[segq, 1]], axis=1).max()) if segq.size else 0.0
+        tQ = cKDTree(Xp[Pq])
+        k = FORCE_K0
+        pick = None
+        while True:
+            kk = min(k, NS)
+            dk, ik = tS.query(Xp[Pq], k=kk)
+            dk, ik = np.asarray(dk).reshape(Pq.size, -1), np.asarray(ik).reshape(Pq.size, -1)
+            complete = kk >= NS
+            r_k = np.inf if complete else float(dk[:, -1].min())      # 이 밖의 노드는 d_점 ≥ r_k → d ≥ r_k − L_q
+            cand = np.unique(ik[ik < NS])
+            cand = cand[~taken[cand]]
+            res = _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq, float(Aq[q]), lim, use_n, cosf)
+            if res is not None:
+                sel, d_need = res
+                if complete or d_need < r_k:
+                    pick = sel
+                    break
+            elif complete:
+                break
+            k *= 2
+        if pick is None or pick[0].size == 0:
+            continue                                         # 못 붙임(miss) — 한도·법선 조건 밖이거나 남은 노드 없음
+        n_, kd_, el_, ds_, pt_, w_ = pick
+        _cap_put(S, n_, kd_, el_, ds_, pt_, w_, np.full(n_.size, q, np.int64), int(row["via"]))
+        a_s = aS[n_]
+        xs = (a_s @ Xs[n_]) / a_s.sum() if a_s.sum() > 0 else Xs[n_].mean(axis=0)
+        a_p = skel["area"][Pq]
+        xa = (a_p @ Xp[Pq]) / a_p.sum() if a_p.sum() > 0 else Xp[Pq].mean(axis=0)
+        S["cl_extra"][q] = {"dist": float(ds_.max()), "shift": float(np.linalg.norm(xs - xa))}
+
+
+def _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq: float, A: float, lim, use_n: bool, cosf: float):
+    """후보 cand(KD 최근접 합집합 — 안 잡힌 노드) 안에서 강제 선택. 반환 None(후보 없음) 또는 (선택 (n, kind, elem, dist, pts, w),
+    완결에 필요한 거리 d_need — 이 거리 안의 형상 노드가 모두 cand 에 있어야 선택이 정확). 정확 거리는 점 거리 d_점 ≤ T 인 풀에만
+    계산(T = 점 거리로 면적이 차는 거리 + L_q, 모자라면 배증 — 정확 거리 ≤ d 인 노드는 d_점 ≤ d + L_q)."""
+    if cand.size == 0:
+        return None
+    d_pt, _j = tQ.query(Xs[cand], k=1)
+    d_pt = np.asarray(d_pt, dtype=np.float64).reshape(-1)
+    if lim is not None:
+        keep = d_pt - Lq <= lim
+        cand, d_pt = cand[keep], d_pt[keep]
+        if cand.size == 0:
+            return (np.zeros(0, np.int64),) * 6, lim + Lq
+    o = np.lexsort((cand, d_pt))
+    cs = np.cumsum(aS[cand[o]])
+    h = np.flatnonzero(cs >= A)
+    T = (float(d_pt[o[h[0]]]) if h.size else np.inf) + Lq
+    while True:
+        pool = np.flatnonzero(d_pt <= T) if np.isfinite(T) else np.arange(cand.size)
+        kind, elem, dist, pts, w = _closest_cluster(skel, Xs[cand[pool]], Pq, segq, triq)
+        ok = np.ones(pool.size, bool)
+        if use_n:
+            near_pt = pts[np.arange(pts.shape[0]), np.argmax(w, axis=1)]
+            ok &= _proj_ok(mA[cand[pool]], skel["dir"][near_pt], skel["rank"][near_pt], cosf)
+        if lim is not None:
+            ok &= dist <= lim
+        oo = np.flatnonzero(ok)
+        oo = oo[np.lexsort((cand[pool][oo], dist[oo]))]
+        csum = np.cumsum(aS[cand[pool][oo]])
+        hit = np.flatnonzero(csum >= A)
+        if hit.size:
+            m_ = int(hit[0]) + 1
+            d_last = float(dist[oo[m_ - 1]])
+            if not np.isfinite(T) or d_last + Lq <= T:          # 풀 밖 노드는 정확 거리 > T − L_q ≥ d_last
+                sel = oo[:m_]
+                return (cand[pool][sel], kind[sel], elem[sel], dist[sel], pts[sel], w[sel]), d_last + Lq
+        elif not np.isfinite(T) or pool.size == cand.size:
+            sel = oo                                         # 면적 모자람 — 있는 만큼(한도 안 전부)
+            need = (lim + Lq) if lim is not None else np.inf
+            return (cand[pool][sel], kind[sel], elem[sel], dist[sel], pts[sel], w[sel]), need
+        T = np.inf if not np.isfinite(T) or T <= 0 else 2.0 * T
+
+
+_PICK = {"within": _pick_within, "nearest1": _pick_nearest1, "area_fill": _pick_area_fill}
+
+
+def _cap_finish(S) -> dict:
+    skel, Xs, aS = S["skel"], S["Xs"], S["aS"]
+    parts = S["parts"]
+    cat = {k: (np.concatenate([p[k] for p in parts]) if parts else None) for k in ("idx", "kind", "elem", "dist", "q", "via")}
+    idx = cat["idx"] if parts else np.zeros(0, np.int64)
+    kind = cat["kind"] if parts else np.zeros(0, np.int64)
+    elem = cat["elem"] if parts else np.zeros(0, np.int64)
+    dist = cat["dist"] if parts else np.zeros(0)
+    qn = cat["q"] if parts else np.zeros(0, np.int64)
+    via = cat["via"] if parts else np.zeros(0, np.int64)
+    pts = np.concatenate([p["pts"] for p in parts], axis=0) if parts else np.zeros((0, 3), np.int64)
+    w = np.concatenate([p["w"] for p in parts], axis=0) if parts else np.zeros((0, 3))
     o = np.argsort(idx, kind="stable")
     idx, kind, elem, dist, pts, w, qn, via = idx[o], kind[o], elem[o], dist[o], pts[o], w[o], qn[o], via[o]
     w_clip, pts_clip = w.copy(), pts.copy()
@@ -499,13 +689,20 @@ def capture(skel: dict, mesh_S, Xs_A, R_pl, *, capture_rel: float, snap_rel: flo
     ns = np.bincount(qn, minlength=skel["n_q"]) if qn.size else np.zeros(skel["n_q"], np.int64)
     as_ = np.bincount(qn, weights=aS[idx], minlength=skel["n_q"]) if qn.size else np.zeros(skel["n_q"])
     snapq = set(qn[via == VIA_SNAP].tolist())
+    forceq = set(qn[via == VIA_FORCE].tolist())
     for q in range(skel["n_q"]):
-        v = VIA_SNAP if q in snapq else (VIA_BAND if ns[q] else VIA_MISS)
-        cl.append({"q": q, "n_a": int(na[q]), "n_s": int(ns[q]), "area_a": float(aa[q]), "area_s": float(as_[q]),
-                   "via": VIA_NAMES[v], "miss": v == VIA_MISS})
-    return {"idx": idx, "elem_kind": kind, "elem": elem, "pts": pts, "w": w, "w_clip": w_clip, "pts_clip": pts_clip, "dist": dist,
-            "via": via, "q": qn,
-            "clusters": cl, "n_reject_normal": n_rej, "r_cap": r_cap, "h_S": h_S, "normal_A": mA, "area_S": aS}
+        v = VIA_FORCE if q in forceq else (VIA_SNAP if q in snapq else (VIA_BAND if ns[q] else VIA_MISS))
+        rec = {"q": q, "n_a": int(na[q]), "n_s": int(ns[q]), "area_a": float(aa[q]), "area_s": float(as_[q]),
+               "via": VIA_NAMES[v], "miss": v == VIA_MISS}
+        if v == VIA_FORCE:
+            rec.update(S["cl_extra"][q])
+        cl.append(rec)
+    out = {"idx": idx, "elem_kind": kind, "elem": elem, "pts": pts, "w": w, "w_clip": w_clip, "pts_clip": pts_clip, "dist": dist,
+           "via": via, "q": qn,
+           "clusters": cl, "n_reject_normal": S["n_rej"], "r_cap": S["r_cap"], "h_S": S["h_S"], "normal_A": S["mA"], "area_S": aS}
+    if S["force"] is not None:                       # v0.25.2: 강제 부여 설정이 있는 스냅샷만(옛 = 키 없음)
+        out.update(force=S["force"], r_snap=S["r_snap"], force_limit=S.get("force_limit"))
+    return out
 
 
 def _extrapolate(skel: dict, Xs, idx, kind, dist, via, pts, w):
@@ -756,7 +953,7 @@ def _umax(u3, mask) -> float:
     return float(np.linalg.norm(uu, axis=1).max()) if uu.size else 0.0
 
 
-def _tie_diag(cap: dict, ksp: dict) -> dict:
+def _tie_diag0(cap: dict, ksp: dict) -> dict:
     cl = cap["clusters"]
     ratios = [c["area_s"] / c["area_a"] for c in cl if not c["miss"] and c["area_a"] > 0]
     ks_min = [v["k_scale_min"] for v in ksp.values() if v.get("k_scale_min") is not None]
@@ -766,6 +963,59 @@ def _tie_diag(cap: dict, ksp: dict) -> dict:
             "r_cap_mm": float(cap["r_cap"]), "h_S": float(cap["h_S"]), "n_captured": int(cap["idx"].size),
             "area_ratio_min": float(min(ratios)) if ratios else None, "area_ratio_max": float(max(ratios)) if ratios else None,
             "k_scale_min": float(min(ks_min)) if ks_min else None, "k_scale_max": float(max(ks_max)) if ks_max else None}
+
+
+def force_diag(cap: dict, skel: dict, Xs_A, X_S, R_pl, *, far_mm: float, frac_max: float, marks_max: int | None) -> dict:
+    """강제 부여 진단(§3.4·§4.3·§6.3 — 스냅샷에 tie_force 가 있을 때만 map.tie 에 더함): n_force, n_far(옮긴 거리 > far_mm — 표시
+    임계), force{dist_min_mm, dist_med_mm, dist_max_mm, shift_max_mm, far_mm, limit_mm(설정 max_dist_mm — null = 없음)}, ref(참고용 =
+    (강제 + 못 붙임)/묶음 > frac_max ∨ n_far ≥ 1), marks[{q, via: force|miss, x (Case 체결부 중심 — 형상 전역 좌표), to(force — 붙인
+    노드 면적 가중 중심, 형상 전역), dist, n, far}](묶음 번호 순, marks_max 넘으면 dist 큰 순으로 남김 — 못 붙임 = 가장 큼, marks_truncated).
+    A 좌표 → 형상 전역: 가장 가까운 형상 노드 n0 기준 x_S = X_S[n0] + (x_A − ŷ[n0])·R_plᵀ(배치가 강체면 정확)."""
+    cl = cap["clusters"]
+    n_cl = len(cl)
+    fcl = [c for c in cl if c["via"] == VIA_NAMES[VIA_FORCE]]
+    mcl = [c for c in cl if c["miss"]]
+    far = float(far_mm)
+    d = sorted(float(c["dist"]) for c in fcl)
+    n_far = sum(1 for x in d if x > far)
+    fc = cap.get("force") or {}
+    fd = {"dist_min_mm": d[0] if d else None, "dist_med_mm": float(np.median(d)) if d else None,
+          "dist_max_mm": d[-1] if d else None,
+          "shift_max_mm": max(float(c["shift"]) for c in fcl) if fcl else None, "far_mm": far,
+          "limit_mm": None if fc.get("max_dist_mm") is None else float(fc["max_dist_mm"])}
+    ref = bool((n_cl and (len(fcl) + len(mcl)) / n_cl > float(frac_max)) or n_far >= 1)
+    Xs = np.asarray(Xs_A, dtype=np.float64)
+    XS = np.asarray(X_S, dtype=np.float64)
+    R = np.asarray(R_pl, dtype=np.float64).reshape(3, 3)
+    marks = []
+    sel = fcl + mcl
+    if sel and Xs.shape[0]:
+        tS = cKDTree(Xs)
+        aS = np.asarray(cap["area_S"], dtype=np.float64)
+        Xp, ar = skel["x"], skel["area"]
+
+        def to_S(xa):
+            _d, n0 = tS.query(xa, k=1)
+            return (XS[int(n0)] + (xa - Xs[int(n0)]) @ R.T).tolist()
+        for c in sorted(sel, key=lambda c: c["q"]):
+            Pq = np.flatnonzero(skel["q"] == c["q"])
+            a_p = ar[Pq]
+            xa = (a_p @ Xp[Pq]) / a_p.sum() if a_p.sum() > 0 else Xp[Pq].mean(axis=0)
+            mk = {"q": int(c["q"]), "via": c["via"], "x": to_S(xa)}
+            if c["via"] == VIA_NAMES[VIA_FORCE]:
+                nn = cap["idx"][(cap["q"] == c["q"]) & (cap["via"] == VIA_FORCE)]
+                w_ = aS[nn]
+                xs = (w_ @ XS[nn]) / w_.sum() if w_.sum() > 0 else XS[nn].mean(axis=0)
+                mk.update(to=xs.tolist(), dist=float(c["dist"]), n=int(nn.size), far=bool(float(c["dist"]) > far))
+            else:
+                mk.update(dist=None, n=0, far=False)
+            marks.append(mk)
+    out = {"n_force": len(fcl), "n_far": int(n_far), "force": fd, "ref": ref, "marks": marks}
+    if marks_max is not None and len(marks) > int(marks_max):
+        keep = sorted(marks, key=lambda m: (-(np.inf if m["dist"] is None else m["dist"]), m["q"]))[:int(marks_max)]
+        out["marks"] = sorted(keep, key=lambda m: m["q"])
+        out["marks_truncated"] = True
+    return out
 
 
 def frame_shift(Xs_A, X_S, nodes, frame_A: dict, frame_dst: dict) -> float:
@@ -780,7 +1030,7 @@ def frame_shift(Xs_A, X_S, nodes, frame_A: dict, frame_dst: dict) -> float:
 
 def run_shape(mesh_S, sup321_idx, loads: dict, skel: dict, field: dict, GF: dict, R_pl, Xs_A, *, methods, entries,
               params: dict, cfg: dict, solver_cfg: dict | None, spring: dict | None = None, omega=None, ev_mask=None,
-              keep_u: bool = False, values: list | None = None) -> dict:
+              keep_u: bool = False, values: list | None = None, marks_max: int | None = None) -> dict:
     """공용 실행기(형상 1개 · 묶음 1개): 잡기 → BC → 패턴 묶음마다 분해 1 → 엔트리마다 응답. loads = {src: [(eid, F (N_S,3))]}
     (entries 순 — 격자 u 의 k), cfg = 격자 설정(tie_capture_rel·tie_snap_rel·tie_normal_deg·tie_miss_frac_max·sample_nbr·
     sample_normal_deg), params = {tie_dofs, kink_deg, dup_deg(+ frame_A·frame_dst·X_S 진단 — 선택, sup_x — A 3-2-1 점)}.
@@ -792,12 +1042,21 @@ def run_shape(mesh_S, sup321_idx, loads: dict, skel: dict, field: dict, GF: dict
     t0 = time.monotonic()
     p = {**params, "sample_nbr": cfg["sample_nbr"], "sample_normal_deg": cfg["sample_normal_deg"]}
     cap = capture(skel, mesh_S, Xs_A, R_pl, capture_rel=float(cfg["tie_capture_rel"]), snap_rel=float(cfg["tie_snap_rel"]),
-                  normal_deg=float(cfg["tie_normal_deg"]))
+                  normal_deg=float(cfg["tie_normal_deg"]), force=cfg.get("tie_force"))
     srcs = [jig_bc.METHODS[m]["src"] for m in methods]
     out: dict[str, Any] = {"methods": {}, "factor": {"n": 0, "seconds": 0.0}, "bc": {}}
+    if cap.get("force") is not None:                   # v0.25.2: 강제로 붙인 형상 노드(3D 지지 표식 via force — 강제 설정 스냅샷만)
+        out["force_nodes"] = cap["idx"][cap["via"] == VIA_FORCE].copy()
     n_cl = len(cap["clusters"])
     n_miss = sum(1 for c in cap["clusters"] if c["miss"])
     XS = np.asarray(mesh_S["x0"], dtype=np.float64)
+
+    def _tie_diag(cap_, ksp_):                         # v0.25.2: 강제 부여 설정 스냅샷이면 map.tie 에 강제 진단 키(§6.3)
+        d_ = _tie_diag0(cap_, ksp_)
+        if cap_.get("force") is not None:
+            d_.update(force_diag(cap_, skel, Xs_A, XS, R_pl, far_mm=float(cfg["tie_force_far_warn_mm"]),
+                                 frac_max=float(cfg["tie_miss_frac_max"]), marks_max=marks_max))
+        return d_
 
     def fail_all(code, err, tie_d, samp):
         for s in srcs:

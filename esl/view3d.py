@@ -524,7 +524,7 @@ def _p99(v: np.ndarray) -> float | None:
 
 
 # ====================================================================== 전체 생성
-SUPPORT_EXTRA_KEYS = ("kind", "dirs", "val")   # 지지 표식 일반형 필드(esl.mech.jig_bc.support_marks_full — 계약 esl_bead_pos_u.md §10.2)
+SUPPORT_EXTRA_KEYS = ("kind", "dirs", "val", "via")   # v0.25.2 via = "force"(강제로 붙인 지지 — esl_tstar_manual_jig_force.md §4.3)   # 지지 표식 일반형 필드(esl.mech.jig_bc.support_marks_full — 계약 esl_bead_pos_u.md §10.2)
 
 
 def _check_inputs(node_id, x0, conn, f, u_rel) -> tuple:
@@ -599,7 +599,7 @@ def _now(created_at: str | None) -> str:
 
 def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports=(), cfg: dict[str, Any] | None = None,
                key: str = "", esl_run_id: str = "", units: dict[str, str] | None = None,
-               created_at: str | None = None) -> dict[str, Any]:
+               created_at: str | None = None, tie_marks: list | None = None) -> dict[str, Any]:
     """out_dir 에 part.glb·(part_lod.glb)·values.bin·manifest.json 을 쓰고 manifest dict 를 돌려준다.
 
     supports = [{"node_id", "dof", …}] (03_bc/support.json 또는 run.supports). x0 는 model.npz 에서 취한다.
@@ -645,6 +645,8 @@ def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports
         "clusters": clusters(nid, x0, f, u_rel, int(c["cluster_k_max"]), int(c["kmeans_max_iter"])),
         "created_at": _now(created_at),
     }
+    if tie_marks is not None:                          # v0.25.2 §4.3: 강제·못 붙인 체결부 자리(격자 지그 강제 부여 스냅샷만 — 옛 manifest 불변)
+        manifest["tie_marks"] = tie_marks
     with open(os.path.join(out_dir, MANIFEST), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, allow_nan=False)
     return manifest
