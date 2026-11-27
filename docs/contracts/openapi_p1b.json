@@ -19147,7 +19147,7 @@
   },
   "info": {
     "title": "ESL Platform API",
-    "version": "0.25.1"
+    "version": "0.25.2"
   },
   "openapi": "3.1.0",
   "paths": {
