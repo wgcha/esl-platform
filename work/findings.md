@@ -60,3 +60,42 @@
   시스템 사용 856 MB(다른 무거운 프로세스 없음 — 이 작업의 pytest 도 돌리지 않음) 상태에서 단독 실행(h 1.5 칸 최대 ≈ 3.9 GB). ps 확인은
   하지 않았으나 사용 메모리로 보아 다른 시험 없음.
 - VB-C1-21 (§19.5-5) acc_hint 준 r(0 아님): 고른 칸 r 의 1/1.25..1.25 배 밖이면 null. 행 acc_hint += r(칸 값).
+
+# v0.25.2 C1 findings — 계약 보정·메인 결정 필요(esl_tstar_manual_jig_force.md 개정 1, TM-C1-n)
+
+- TM-C1-1 (§2.4·§11) 경계력 보충 병합 `esl/io/bforce_ondemand.py`(§11 소유표에 없음 — 코어라 C1)가 done.json mode `bf_only` 만 받음 →
+  "fr_only 와 같은 실행에서 함께 읽은 경계력이 보충에서 '있음'" 이 되려면 `fr_only` 도 받아야 함. 최소 해석: `FILL_MODES = (bf_only,
+  fr_only)` + frame_times 가 dict(`{"<f>": t}` — fr_only 형식)여도 읽음. 옛 bf_only 경로 불변(기존 시험 통과).
+- TM-C1-2 (§4.1·§6.3·§8.2) `counts` 는 "새 결과만" 인데 v0.25.2 새 결과를 가리는 표식이 계약에 없음. ①②③ base 모드는 스냅샷 jig_grid
+  블록을 무시해야 하는 v0.24.8 불변(test_base_mode_ignores_grid)이 있어, 표식 = **격자 지그 ∧ 스냅샷 rank.jig_grid 에 tie_force 키**
+  (`stages._jg_force_on` + `_jg_kind == grid`)일 때만 `counts`·`n_ref` 를 씀. 그 밖 결과(①②③·옛 ④)는 화면이 n_failed + COUNT_LABELS
+  거울로 같은 표시를 계산(계약 §8.2 C 의 옛 결과 경로). 보고서 개수 줄은 모든 결과에 `count_items` 로 덧붙임(덧붙일 키 없으면 글자 불변).
+- TM-C1-3 (§10.2-14 ②) 합성 세계의 Case 맞춤 하중은 자기평형(ΣF ≈ 0)이라 "반력 합력 차 / 반력 합력" 은 0/0 에 가까움 → 분모를
+  옮기지 않은 형상의 반력 크기 합 Σ‖R_n‖ 로(스프링 방식은 반력 = 구속 반력 + 스프링 힘 f_s·d̂). 측정(구멍 반지름 = 와셔 9 + snap 3.75
+  + 요소 3 + δ, 강제 거리 14.1~14.4·18.7~19.1 mm): ① 평형 F ≤ 2e-13·M ≤ 6e-14 ② ΔΣR ≤ 2.5e-11 ③ ΔM ≤ 4e-7 ≪ 한계 Σ|R_q|·δ_q(1.5e4~1.6e5)
+  ④ C_mix 차(옮기지 않은 판 대비): 강제 변위 δ3 −272.8 %·δ8 −361.7 %, 스프링 δ3 −40.2 %·δ8 −52.2 %. **강제 변위 방식은 멀리 옮긴
+  지지에서 C_mix 가 크게 바뀜**(구멍 + 지지 이동 효과 섞임) — 참고용 표시가 필요한 근거. 1 % 초안 문턱(②)은 평형 때문에 항상 성립.
+- TM-C1-4 (§10.2-14) "체결부 면을 δ 옮긴 판" 을 평판 세계에서 만들 수 없어(판이 어디나 면이라 band 가 잡음) 볼트 둘레 요소를 뺀 판
+  (구멍 = snap 밖)으로 대신함. δ = 구멍 반지름 추가분, 실제 옮긴 거리는 시험 출력(GRIDFORCE phys)에 기록. V-0252-15(50·200 mm)는
+  "좌표 통째 어긋남" 꼴(형상 A 좌표를 판 법선으로 δ) — 전부 force·dist ∈ [δ, √(δ²+(2h)²)]·한도 20 mm = 전부 miss·형상 제외 확인.
+- TM-C1-5 (§4.3) marks.x(Case 체결부 중심 — 형상 전역 좌표): A 좌표 → 형상 좌표 = 가장 가까운 형상 노드 n0 기준 X_S[n0] + (x_A −
+  ŷ[n0])·R_plᵀ(배치가 강체면 정확, frame 정규화 배치는 근사). 3D 선 끝점용으로 marks(force)에 `to`(붙인 노드 면적 가중 중심 — 형상
+  전역) 키를 더함(계약 키 목록 밖 추가 — F1 선 그리기용).
+- TM-C1-6 (§3.1) tie_force.normal_deg 90 = "조건 없음" 을 _proj_ok(cos 90° ≈ 6e-17)로 하면 법선 0 노드(고립)를 거름 → normal_deg ≥ 90 이면
+  법선 판정을 아예 하지 않음(< 90 일 때만 band 와 같은 _proj_ok).
+- TM-C1-7 (§2.3) D 안 비후보 프레임(--frame)의 옛 레코드(elem_id·value null)가 직접 고른 t* 레코드(frame_point 값 + manual)로 바뀜(계약
+  의도). 후보 ∧ D = 옛 레코드 그대로(골든 pipe_cand). 후보인데 D 밖(채운 프레임) = 직접 고른 t* 레코드(D 시각이 없어 옛 레코드 불가).
+- TM-C1-8 (§2.5) 경고 4종 중 TSTAR_MANUAL_LOW 만 run.json 단계 warnings(경고 수준), 나머지(정보)는 echo + esl_summary.tstar_manual.notes
+  [{code, level, text}]. ESL 단계 요약(run.json stages.esl.summary)에도 tstar_manual(notes 제외) — B1 작업 결과용.
+- TM-C1-9 (§2.4) TCL fr_only 의 변형률 출처 고정 = 요청 키 `strain_sources <추출 source 하나>`(frame_fill.request_keys) 또는 옛
+  `strain_type`(Max_Strain 고정). 덤프 source 가 골라지면 INPUT_INVALID(판정 표 행 3 이 먼저 막음). done.json frame_times = {"<f>": t}.
+  fr_only 블록은 `# >>> v0.25.2 fr_only` 표식 구간 — 빼면 393789a8 파일과 같은 글자(정적 시험 sha 고정).
+- TM-C1-10 (#96 재현 합성) 비대칭으로 구멍을 내면 PCA frame 이 기울어 SHAPE_SIZE_MISMATCH(6 % > 5 %)가 먼저 빼므로 네 모서리 볼트
+  자리(대칭)에 구멍. 두 장 형상은 band 가 두 장 다 잡아 잡힌 면적비 = 2.0(두께 두 번 — 정황이 JIG_GRID_AREA_RATIO 경계값에도 드러남).
+  요소 수 비 1.96(#96 1.97). 강제 켬 결과: 4/6 강제, 거리 7.14 mm, 참고용, score 0.971.
+- TM-C1-11 (§4.3, 범위 판단) v0.25.1 씬 3D 묶음(post/view3d_scene — `_scn_jig_grid_p`)의 지지 행에는 via·tie_marks 를 넣지 않음(계약은
+  지그 응답 3D manifest 만 지정). 필요하면 후속.
+- TM-C1-12 (§9 성능 실측 — 합성) 형상 노드 112,601(h 0.5 mm 판)·묶음 6: 구멍 4곳 강제 0.63 s · 30 mm 어긋남 전부 강제 0.81 s · 200 mm 0.66→
+  1.66 s(형상 전체 capture). 먼 묶음은 완결 조건(k 번째 이웃 거리 > 고른 거리 + L_q + ρ) 때문에 KD 질의 반경이 옮긴 거리만큼 커져 묶음당
+  비용이 거리에 비례(정확 거리 메모·묶음 중심 1점 질의·첫 k = 면적 어림 ×2 로 줄임). 228 묶음이 모두 수백 mm 어긋난 극단은 형상당 수십 초
+  가능 — 현장 E-0252-10 에서 실측 필요.

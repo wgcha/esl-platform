@@ -223,6 +223,11 @@ def test_v0252_15_distance_independent(world, delta, capsys):
     assert f["limit_mm"] is None and len(t["marks"]) == nq and all(mk["far"] and mk["via"] == "force" for mk in t["marks"])
     for mk in t["marks"]:                                                       # 선 = 형상 좌표: Case 자리 x → 붙인 곳 to
         assert np.linalg.norm(np.subtract(mk["to"], mk["x"])) == pytest.approx(delta, rel=0.05)
+    cap = _cap(world, S, Xs=Xs)                                                # KD 배증 경로 = 정의(형상 전 노드 정렬)와 같은 노드
+    for q in range(nq):
+        Sx = {**S, "x0": Xs}
+        exp, _d = _brute(world, Sx, cap, q)
+        assert np.array_equal(np.sort(cap["idx"][(cap["q"] == q) & (cap["via"] == gm.VIA_FORCE)]), exp), q
     w = stg._jg_force_warns("d001", t, CFG_STG)
     codes = [x.split(":", 1)[0] for x in w]
     assert codes == ["JIG_GRID_TIE_FORCED", "JIG_GRID_TIE_FAR"]

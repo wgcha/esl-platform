@@ -569,8 +569,8 @@ def _pick_area_fill(S, row) -> None:
     """강제 부여(표 행 3 — §3.2): 앞 단계 뒤에도 노드 0 인 묶음 q 마다(묶음 번호 순), 안 잡힌 형상 노드를 묶음 골격까지 정확 거리 d
     (점·변·면 최근접 — 클립)로 (d, 노드 번호) 오름차순 → 면적 합 ≥ 묶음 면적 A_q 인 첫 노드까지(최소 1, 모자라면 있는 만큼).
     거리 한도 = force.max_dist_mm(None = 없음, 값 = max(값, r_snap)), 법선 조건 = force.normal_deg(≥ 90 = 없음, 아니면 band 와 같은
-    _proj_ok). 형상 전체를 정렬하지 않음: 묶음 골격 점에서 형상 KD 최근접 k 배증 + 정확 거리 하한 d ≥ d_점 − L_q(L_q = 묶음 변 최대
-    길이) — 고른 마지막 거리 + L_q 가 k 번째 이웃 거리보다 작으면 완결."""
+    _proj_ok). 형상 전체를 정렬하지 않음: 묶음 골격 중심 c 에서 형상 KD 최근접 k 배증 + 정확 거리 하한 d ≥ ‖n − c‖ − ρ − L_q(ρ = 묶음
+    점의 중심 반지름, L_q = 묶음 변 최대 길이) — 고른 마지막 거리 + L_q + ρ 가 k 번째 이웃 거리보다 작으면 완결."""
     skel, Xs, aS, mA, taken, NS = S["skel"], S["Xs"], S["aS"], S["mA"], S["taken"], S["NS"]
     fc = S["force"] or {}
     md = fc.get("max_dist_mm")
@@ -591,20 +591,24 @@ def _pick_area_fill(S, row) -> None:
         triq = np.flatnonzero(skel["q"][tri[:, 0]] == q) if tri.size else np.zeros(0, np.int64)
         Lq = float(np.linalg.norm(Xp[seg[segq, 0]] - Xp[seg[segq, 1]], axis=1).max()) if segq.size else 0.0
         tQ = cKDTree(Xp[Pq])
-        k = FORCE_K0
+        cq = Xp[Pq].mean(axis=0)                             # 묶음 중심 1점 KD 질의(점마다보다 |Pq| 배 가벼움)
+        rho = float(np.linalg.norm(Xp[Pq] - cq, axis=1).max())
+        a_pos = aS[aS > 0]
+        k = max(FORCE_K0, 2 * int(np.ceil(float(Aq[q]) / float(a_pos.mean()))) if a_pos.size else FORCE_K0)   # 면적 채움 노드 수 어림 ×2
         pick = None
+        memo: dict = {}                                       # 정확 거리 계산 결과(노드 → 행) — k 배증 사이 재사용
         while True:
             kk = min(k, NS)
-            dk, ik = tS.query(Xp[Pq], k=kk)
-            dk, ik = np.asarray(dk).reshape(Pq.size, -1), np.asarray(ik).reshape(Pq.size, -1)
+            dk, ik = tS.query(cq, k=kk)
+            dk, ik = np.asarray(dk).reshape(-1), np.asarray(ik).reshape(-1)
             complete = kk >= NS
-            r_k = np.inf if complete else float(dk[:, -1].min())      # 이 밖의 노드는 d_점 ≥ r_k → d ≥ r_k − L_q
+            r_k = np.inf if complete else float(dk[-1])           # 이 밖의 노드: ‖n − c‖ ≥ r_k → d_점 ≥ r_k − ρ → d ≥ r_k − ρ − L_q
             cand = np.unique(ik[ik < NS])
             cand = cand[~taken[cand]]
-            res = _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq, float(Aq[q]), lim, use_n, cosf)
+            res = _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq, float(Aq[q]), lim, use_n, cosf, memo)
             if res is not None:
                 sel, d_need = res
-                if complete or d_need < r_k:
+                if complete or d_need + rho < r_k:
                     pick = sel
                     break
             elif complete:
@@ -621,7 +625,27 @@ def _pick_area_fill(S, row) -> None:
         S["cl_extra"][q] = {"dist": float(ds_.max()), "shift": float(np.linalg.norm(xs - xa))}
 
 
-def _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq: float, A: float, lim, use_n: bool, cosf: float):
+def _closest_memo(skel, Xs, nodes, Pq, segq, triq, memo: dict):
+    """_closest_cluster 를 노드별로 한 번만(memo = {"n": 정렬 노드, "r": (kind, elem, dist, pts, w)}) — 결과는 노드마다 같은 값."""
+    if "n" in memo:
+        new = nodes[~np.isin(nodes, memo["n"])]
+    else:
+        new = nodes
+    if new.size:
+        r = _closest_cluster(skel, Xs[new], Pq, segq, triq)
+        if "n" in memo:
+            n_all = np.r_[memo["n"], new]
+            r_all = tuple(np.concatenate([a, b], axis=0) for a, b in zip(memo["r"], r))
+        else:
+            n_all, r_all = new, r
+        o = np.argsort(n_all, kind="stable")
+        memo["n"], memo["r"] = n_all[o], tuple(a[o] for a in r_all)
+    pos = np.searchsorted(memo["n"], nodes)
+    return tuple(a[pos] for a in memo["r"])
+
+
+def _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq: float, A: float, lim, use_n: bool, cosf: float,
+                   memo: dict | None = None):
     """후보 cand(KD 최근접 합집합 — 안 잡힌 노드) 안에서 강제 선택. 반환 None(후보 없음) 또는 (선택 (n, kind, elem, dist, pts, w),
     완결에 필요한 거리 d_need — 이 거리 안의 형상 노드가 모두 cand 에 있어야 선택이 정확). 정확 거리는 점 거리 d_점 ≤ T 인 풀에만
     계산(T = 점 거리로 면적이 차는 거리 + L_q, 모자라면 배증 — 정확 거리 ≤ d 인 노드는 d_점 ≤ d + L_q)."""
@@ -640,7 +664,7 @@ def _area_fill_one(skel, Xs, aS, mA, cand, tQ, Pq, segq, triq, Lq: float, A: flo
     T = (float(d_pt[o[h[0]]]) if h.size else np.inf) + Lq
     while True:
         pool = np.flatnonzero(d_pt <= T) if np.isfinite(T) else np.arange(cand.size)
-        kind, elem, dist, pts, w = _closest_cluster(skel, Xs[cand[pool]], Pq, segq, triq)
+        kind, elem, dist, pts, w = _closest_memo(skel, Xs, cand[pool], Pq, segq, triq, {} if memo is None else memo)
         ok = np.ones(pool.size, bool)
         if use_n:
             near_pt = pts[np.arange(pts.shape[0]), np.argmax(w, axis=1)]

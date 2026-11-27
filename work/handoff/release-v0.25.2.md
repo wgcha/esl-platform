@@ -103,7 +103,15 @@ in_D, have}` — 자동 = `02_tstar/tstar.json metrics[metric].tstar`. 오류 FR
   (tests/pipeline/test_tstar_manual.py · tests/io/test_tcl_fr_only.py)
 - [x] B: CAPTURE_STAGES·force · LEGACY_ABSENT · 경고·map.tie · 3D via·tie_marks · 시험 10~18(tests/mech/test_grid_force.py)
 - [x] C: count_items 보고서 · 다른 출처 순위 · double_sheet · 시험 19~23 · #96 재현(tests/doe/test_v0252_c.py · synth_tm.py)
-- [ ] tests/ 전체 · packages/beadgraph
+- [x] tests/ 전체 1회(2026-11-27 23:02~23:34, B·C wip be5ab88d 코드): 2027 passed · 192 skipped · 3 failed = 허용 3개
+  (test_large_model_cad_share · test_v0160_bytes_skip_policy[h8]·[h5open]), vt_16 통과. packages/beadgraph 통과(rc 0).
+  그 뒤 강제 단계 속도 개선(정확 거리 메모·중심 1점 KD 질의) → 영향 시험 다시: test_grid_force·test_grid_map·test_v0252_c·
+  test_v0252_golden 165 통과.
+- 물리 실측: V-0252-4 임의 프레임(D 밖 5 채움) F_eq = 알려진 하중 상대 < 1e-6·평형 ≤ 1e-6·④ PASS(MAC 1.0, RMS 2.8e-12), V-0252-5 채움 =
+  처음부터 추출(u_rel·f_eq 배열 정확 일치), V-0252-13 Σk/K_q−1 ≤ 4.4e-16, V-0252-14 평형 ≤ 2e-13·ΔΣR ≤ 2.5e-11·ΔM 4e-7 ≪ 한계,
+  C_mix 차 강제 변위 −273 %/−362 %·스프링 −40 %/−52 %(δ 3/8 — TM-C1-3), V-0252-15 50·200 mm 전부 force·순위 진입·한도 20 = 전부 miss.
+- #96 재현(test_v0252_c): 끔 = 지그 순위 0·n_failed.jd 1·전 노드 보기 1행·보고서 "· 지그 매핑 제외 1"·"다른 하중 출처 순위: 전 노드"·
+  SHAPE_DOUBLE_SHEET(마주 보는 면 94 %·간격 2 mm). 켬 = 4/6 강제(7.14 mm)·참고용·n_ref 1·counts·3D via force·tie_marks.
 
 ## 3. 발견 (TM-C1-n — work/findings.md 에도)
 
