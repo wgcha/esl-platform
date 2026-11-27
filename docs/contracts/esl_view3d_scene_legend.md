@@ -1,14 +1,16 @@
 # 계약: 강성 스터디 3D 낙하 씬별 보기 + 컴플라이언스(C 기여도·차이·umax 핀) 표시 + 컨투어 색·범례(HyperView 참조) (VL, v0.25.1)
 
-- 상태: **초안 → 구현 기준**(2026-11-27). 브랜치 `release/v0.25.1`(main 97a0e358 v0.25.0 에서 분기). 구현 코드 없음 — 이 문서가 원본.
+- 상태: **초안 → 구현 기준**(2026-11-27). 브랜치 `release/v0.25.1`(main 97a0e358 v0.25.0 에서 분기). 이 문서가 원본.
+- **개정 1(2026-11-27, 사용자 답)**: Q-VL-1 = "전부 통일"(연속값 색을 쓰는 모든 곳 — §0.5·§5.7~§5.9), Q-VL-2 = 스터디당 1 GB(`max_mb` 1024 확정). 구현 분할에 C2·F1c 추가(§10), 시험 V-0251-37~48(§9.5), 결정 D-0.25.1-VL-13~19, B1 구현 사실(§15.1). 개정 전 문장과 다르면 개정 1 이 우선.
 - 관계: `esl_3d_load.md`(view3d 형식·색·성능 §11), `esl_viewer_hv.md`(v0.24.6 뷰어 — 층·범례 구간·쌍 동기·계획 표 `VIEWER_PLANS`), `esl_view3d_sources.md`(출처 탭·자료 만들기), `esl_jig_view.md`(사이드카·3D 다시 만들기), `esl_jig_case.md`(지그 3방식 C_mix), `esl_jig_grid_map.md`(다른 메시 격자), `esl_stiffness_metric.md`·`esl_load_transfer.md`(④ LT-9 같은 ESL 기준). 충돌하면 이 문서 범위에서 이 문서가 우선.
-- DB migration **없음**. 새 설정 블록 1개(`bead_doe.view3d.scene` — §7). 계산 결과(순위·per_esl·input_sha256) **불변** — 보기 자료만 추가.
+- DB migration **없음**. 새 설정 블록 1개(`bead_doe.view3d.scene` — §7). 새 공용 자원 1개(`resources/colormaps.json` — §5.8). 계산 결과(순위·per_esl·input_sha256) **불변** — 보기 자료·그림 색만 바뀜.
 - ID: 결정 `D-0.25.1-VL-n`, 시험 `V-0251-n`, 후속 `R-VL-n`, 미결 `Q-VL-n`, 현장 확인 `E-0251-n`.
 
 ### 사용자 요청 (원문, 변경 금지)
 1. "강성스터디 결과에서 낙하씬 선택해도 하중씬 비교 3d형상비교가 업데이트안돼"
 2. "컴플라이언스 좋아졌다하는데 왜 umax는 증가하는거야?? 컴플라이언스가 증가했다는걸 3d컨투어에서 어떻게 보여줘?"
 3. (2026-11-27 결정) "그렇게 해. 거기다 컨투어 색 컨셉을 하이퍼뷰어 처럼 높은게 빨간색 낮은게 파란색. 컨투어 레전드도 편집도 벤치마킹해서 넣어바"
+4. (2026-11-27 답) Q-VL-1 = "전부 통일" — 높음 = 빨강·낮음 = 파랑을 3D 결과 컨투어뿐 아니라 ④ 검증 비교 2D·비드 높이 변화 색·보고서·썸네일·그 밖에 연속값 색을 쓰는 모든 곳에. Q-VL-2 = 스터디당 1 GB.
 
 사용자 원칙(공통): 사용성 > 유연성 · 필수 요소만 · 정보 삭제 금지 · 2560×1440·1920×1080 세로 높이 증가 없음 · 하드코딩 금지 · 같은 기능은 공용 모듈 하나 · 서버 결과 기존 파일 바이트 불변(새 파일 추가는 허용) · SPDM·입력 폴더 쓰기 금지.
 
@@ -60,6 +62,33 @@ C 는 "하중이 한 일(하중 가중 변위)", umax 는 "한 점의 최대 변
 
 한 폴더 ≈ 48 B/노드: 3만 노드 1.5 MB · 10만 4.8 MB · 30만 14.4 MB. 형상(36)은 씬과 무관하고 씬마다 달라지는 것은 값(12)뿐 → §2.2 묶음 형식의 근거.
 
+### 0.5 연속값 색을 쓰는 곳 전수 (개정 1 — 97a0e358 grep: `viridis|Blues|RdBu|DIVERGING|lerp|gradient|colorMap|heat|_SEQ|diverging|--seq|--pos|--neg|rgba(`)
+
+| # | 곳 (파일:줄) | 값 | 지금 색 | 지금 뜻 |
+|---|---|---|---|---|
+| L1 | 결과 3D 표면 — `view3d/colors.ts:5`(BLUES9) → `scene.ts:205-244`, 범례 `LegendOverlay.tsx:47`·`View3DCard.tsx:466` | ‖u‖·면압(·새 C 기여도) | Blues 9 | 진할수록 큼 |
+| L2 | 결과 3D 차이(새 — §4.3) | dc = 안 − 기준 | (새) | — |
+| L3 | 3D 하중 영역 — `pages/doe/DoeStudy.tsx:864·932` `regionField` | **분류**(접촉 0.62~1.0·패치 0.2~0.42·밖 NaN)를 Blues 색표에 얹음 | Blues | 진한 파랑 접촉·옅은 파랑 패치 |
+| L4 | 2D 변위 겹쳐 보기 — `components/DispOverlay.tsx:28·184` | 변위 크기(min~max) | viridis 10 | 노랑 = 큼 |
+| L5 | ④ 검증 비교 2D ε — `components/FieldOverlay.tsx:38·338` | ε_eq(0~공통 최대) | viridis 10 | 노랑 = 큼 |
+| L6 | ④ 검증 비교 2D 오차 — `FieldOverlay.tsx:36·336` | 오차 % (ESL − Radioss)/Radioss, ±R | 발산 7점(`lib/colormap.ts:8`) | 파랑 = 과소(−)·빨강 = 과대(+) |
+| L7 | 라이브러리 셀 포락 지도 — `pages/library/common.tsx:200·210` | 셀 max\|F\|(0~최대) | viridis 10 | 노랑 = 큼 |
+| L8 | 비드 설계 3D 높이 변화 — `view3d/part/adapters.ts:158`(`colorMap: "diverging"`) → `colors.ts:95-117`(RDBU11) | c = (x_d − x0)·n̂_b, **깊어짐 +**, ±V | RdBu 11 | **빨강 = 얕아짐(−)**·파랑 = 깊어짐(+) |
+| L9 | 높이 변화 범례 — `components/BeadSelectCard.tsx:1533-1541` `HeightLegend`(미리보기 카드 `:1518`·`DoeThumbGrid.tsx:104`), 목 `mock/selectmock.ts:736` | 같음 | `DIVERGING_GRADIENT` | 문구 "빨강 = 얕아짐 · 파랑 = 깊어짐" |
+| L10 | ESL별 개선율 표 칸 — `components/DoePerEslTable.tsx:16-20` `heatStyle`(문구 `:25`) | 개선율 1 − C_안/C_기준(부호 있음, 세기 \|x\|/0.5) | 초록·빨강 투명도 | 초록 = 개선·빨강 = 악화 |
+| L11 | 비드 단(tier) 색 — `view3d/part/PartPlan.tsx:152`·`view3d/select/layers.ts:507` | **순서 단계**(단 번호) | 파랑 명도 단계 | 1 = 가장 진함 |
+| L12 | 최적화 평면도 PNG `bead_map.png` — `esl/opt/png.py:18`(`_SEQ`)·`:59`·`:193`·`:225`, 호출 `esl/opt/post.py:128` | 비드 높이 \|h\|(0~vmax) | viridis 근사 5점 | 노랑 = 큼 |
+| L13 | 비드 선택 썸네일 PNG — `esl/doe/select_render.py:22-33`(`diverging`)·`:196`, 범위 `stages.py:8528` `color{v_max, unit}` | L8 과 같은 c, ±V | 파랑·흰·빨강 3점 | **빨강 = 얕아짐(−)**·파랑 = 깊어짐(+) |
+| L14 | Case 보고서 지도 ε — `esl/report/case_report.py:637`(JS `VIR`)·`:654` | ε(0~vmax) | viridis 10 | 노랑 = 큼 |
+| L15 | Case 보고서 지도 오차 — `case_report.py:638`(JS `DIV`)·`:653` | 오차, ±errR | 발산 7점 | 파랑 = 과소·빨강 = 과대 |
+| L16 | 보고서 격자 지도(순차) — `esl/library/report_analysis.py:226` `heatmap(mode="seq")`: 분석 보고서 `:577·639`, 버전 비교 `esl/library/compare.py:568`, 최적화 보고서 `esl/opt/report_opt.py:221` | 셀 포락 max\|F\|·비드 높이 \|h\|(0~최대) | 한 색(`--seq` 파랑) 투명도 | 진할수록 큼 |
+| L17 | 보고서 격자 지도(발산) — `heatmap(mode="div")`: 모드 형상 `report_analysis.py:611`, 버전 차이 `compare.py:566`(문구 `:565`·`report_analysis.py:142`) | 부호 있는 값(모드 성분·신 − 구) | `--pos` 파랑·`--neg` 주황 투명도 | **파랑 = 증가(+)**·주황 = 감소(−) |
+| L18 | 스터디 보고서 ESL별 개선율 칸 — `esl/doe/report_doe.py:54-61` `_ratio_cell` | L10 과 같음 | 초록·빨강 투명도 | 초록 = 개선·빨강 = 악화 |
+| L19 | ① paicad 미리보기 썸네일 — `esl/doe/matrix.py:255` `thumb_options.colormap: "turbo16"` | 변위 크기 `disp_range_mm` | turbo 16(paicad 가 그림) | 파랑 = 작음·빨강 = 큼(이미 같은 방향) |
+
+- 연속값 색이 **아닌 것**(대상 아님 — 확인만): 계열·상태 색(`--c1..8`·`--s1..4`·`--ok`·`--bad`·`--pass`·`--fail`, 민감도 막대 SRC 파랑·ρ 주황 `report_doe.py:85`), 세그먼트 12색(`select/graph.ts:210`), 강조 점·핀·경고선, 평면도 빗금·지지 기호(`png.py` 회색·주황·초록).
+- matplotlib·d3-scale 사용 **없음**(파이썬 그림 = 순수 numpy PNG `esl/opt/png.py` + 손으로 쓴 SVG·inline JS).
+
 ---
 
 ## 1. 범위 · 비범위 · 용어
@@ -67,13 +96,15 @@ C 는 "하중이 한 일(하중 가중 변위)", umax 는 "한 점의 최대 변
 ### 1.1 범위
 - **A. 씬별 3D**: 3D 비교 대상(베이스라인 + 순위 상위 k)마다 **모든 낙하 씬(ESL 엔트리)** 의 3D 자료, 결과 화면 씬 선택 3곳 ↔ 3D 연결. 전 노드·지그(고정·변위·스프링·격자)·경계력·내력·④ 형상 비교·다른 메시 모두 **같은 규칙 한 벌**.
 - **B. 컴플라이언스 표시**: 색 모드 `C 기여도`·`차이` 추가(기존 `응답 변위`·`하중` 유지), umax 위치 핀(두 카드), 씬 요약 한 줄(C·umax 기준 → 안).
-- **C. 색·범례**: 결과 3D 컨투어 색 = 레인보우(낮음 파랑 → 높음 빨강), 차이 = 0 중심 발산(− 파랑 · + 빨강), 범례 편집(§5.3), 공용 모듈 한 곳.
+- **C. 색·범례**: 연속값 색 **전부**(§5.7 표 19곳 중 16곳 적용·3곳 예외) = 레인보우(낮음 파랑 → 높음 빨강), 부호 있는 값 = 0 중심 발산(− 파랑 · + 빨강). 색 정점 원본 = `resources/colormaps.json` 한 곳, 읽는 모듈 = TS 1개·파이썬 1개(§5.8). 범례 편집(§5.3)은 결과 3D.
 - **D. 호환**: 옛 결과·옛 view3d 자료로 화면이 깨지지 않음, 기존 결과 파일 바이트 불변.
 
 ### 1.2 비범위 (이번에 안 함)
 | 항목 | 이유 | 후속 |
 |---|---|---|
-| ④ 검증 비교 2D 겹쳐 보기(viridis)·비드 편집 3D 의 높이 변화 색(빨강 = 얕아짐)·보고서 HTML·썸네일의 색 | 3D 결과 컨투어가 아님(다른 그리기 경로) — 최소 해석 | Q-VL-1 · R-VL-1 |
+| 분류·순서 단계 색(하중 영역 L3·비드 단 L11)·paicad 가 그리는 ① 썸네일(L19) | 값의 크기 색이 아님 / 외부 엔진 그림(이미 파랑 → 빨강) — §5.7 예외 | — |
+| 이미 저장된 그림(옛 보고서·옛 썸네일·옛 `bead_map.png`) 다시 만들기 | 옛 결과 바이트 불변 — 새로 만드는 것만 새 색(§5.9) | — |
+| 2D·보고서·썸네일의 범례 편집(레벨 수·로그 등) | 범례 편집은 결과 3D 만(§5.3) — 색 의미 통일만 요청됨 | R-VL-6 |
 | 순위 상위 k 밖 안의 3D | 지금도 없음(`view3d.top_k`) — 불변 | — |
 | 변위 차이(Δ‖u‖)·변형 에너지 밀도 컨투어 | C 기여도·umax 핀으로 질문 2 에 답함 — 필수 아님 | R-VL-2 |
 | 범례 설정 서버 저장(사용자 계정별) | 브라우저 기억으로 충분, DB migration 필요 | R-VL-3 |
@@ -144,7 +175,7 @@ post/scene_view.json   # 사이드카(§2.3)
 - `<src>` = 순위 보기 키(`full`·`jig`·`jig_disp`·`jig_spring`·`bforce`·`fint`) — 출처 표 `RANK_SOURCES` 행과 같은 키.
 - result.json·ranking.csv·per_esl.json·jig_view.json·`post/view3d/**` 는 **바이트 불변**(시험 V-0251-10).
 
-### 2.4 용량 한도 (D-0.25.1-VL-2)
+### 2.4 용량 한도 (D-0.25.1-VL-2 · **확정** D-0.25.1-VL-17: 스터디당 1 GB = `max_mb` 1024, 사용자 답 2026-11-27)
 - 추정 = Σ_묶음 (36·N + E·16·N) + 씬 수 × 40 KB. `view3d.scene.max_mb`(기본 1024) 초과면: 씬을 **베이스라인 C 큰 순**(동률 = 엔트리 순번)으로 넣되 각 표시 안의 최악 ESL 은 항상 포함, 한도 안에서 들어가는 만큼만. 빠진 씬 = `skipped SCENE_BUDGET`(화면 안내 §4.4).
 - 근거: 실제 스터디 크기에서 기본값으로는 한도에 닿지 않고(§8), 큰 메시·씬 50개에서만 디스크를 지킴.
 
@@ -281,20 +312,23 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 
 ---
 
-## 5. C — 컨투어 색 · 범례 (모든 결과 3D 공통)
+## 5. C — 색 지도(모든 연속값 색) · 범례 편집(결과 3D)
 
 ### 5.1 적용 대상
-`View3DCard` 를 쓰는 보기 전부 = 계획 표 `VIEWER_PLANS` 5행(case_load·case_disp·study_design·study_jigdiag·study_recon): Case ③ 3D, 스터디 설계 비교, 지그 진단, 재현 진단. 한 곳(§5.5)만 고치면 모두 바뀐다. 비드 편집 3D·2D 겹쳐 보기는 비범위(§1.2).
+- **색 지도**(§5.2·§5.7·§5.8): 연속값 색을 쓰는 모든 곳 — 프런트 3D·2D·표·썸네일 범례, 파이썬이 만드는 PNG·보고서(§5.7 표).
+- **범례 편집**(§5.3~§5.6): `View3DCard` 를 쓰는 보기 전부 = 계획 표 `VIEWER_PLANS` 5행(case_load·case_disp·study_design·study_jigdiag·study_recon): Case ③ 3D, 스터디 설계 비교, 지그 진단, 재현 진단. 한 곳(§5.5)만 고치면 모두 바뀐다.
 
-### 5.2 색 지도 (D-0.25.1-VL-8)
+### 5.2 색 지도 (D-0.25.1-VL-8 · 개정 1 D-0.25.1-VL-13·14) — 정점 원본 = `resources/colormaps.json`(§5.8)
 | 이름 | 정의 | 쓰임 |
 |---|---|---|
-| `rainbow` | sRGB 정점 5개 선형 보간: t 0 파랑(0,0,255) → 0.25 청록(0,255,255) → 0.5 초록(0,255,0) → 0.75 노랑(255,255,0) → 1 빨강(255,0,0). **낮음 = 파랑, 높음 = 빨강** | 모든 크기·값 컨투어(기본) |
-| `diverge` | 기존 RdBu 11 을 **뒤집은 순서**: −V 파랑 → 0 흰색(247,247,247) → +V 빨강 | 차이(0 중심, 범위 대칭 ±V) |
+| `rainbow` | sRGB 정점 5개 선형 보간: t 0 파랑(0,0,255) → 0.25 청록(0,255,255) → 0.5 초록(0,255,0) → 0.75 노랑(255,255,0) → 1 빨강(255,0,0). **낮음 = 파랑, 높음 = 빨강** | 크기·양(부호 없는 값, 또는 0 이 특별하지 않은 값) — 순차 |
+| `diverge` | 기존 RdBu 11 을 **뒤집은 순서**: −V 파랑(5,48,97) → 0 흰색(247,247,247) → +V 빨강(103,0,31). t = 0.5 + v/(2V) | **부호 있는 값 전부**(0 중심, 범위 대칭 ±V) — **값이 클수록(+) 빨강** |
+| `blues` | 기존 Blues 9 그대로 | **분류 표시 전용**(하중 영역 L3) — 값 컨투어에 쓰지 않음 |
 | NaN(계산 불가) | 회색(154,161,171) — 지금 그대로 | — |
 | 범위 밖(선택) | 짙은 회색(90,96,106) | §5.3 |
 
-- 기존 Blues 는 결과 3D 에서 쓰지 않는다. `colors.ts` 의 `RDBU11`·`LUT_DIV_LINEAR`(비드 높이 변화)는 그대로 둔다.
+- 기존 Blues 는 값 컨투어에서 쓰지 않는다(분류 L3 만). `colors.ts` 의 `BLUES9`·`RDBU11`·`LUT_*`·`*_GRADIENT`, `lib/colormap.ts` 의 `VIRIDIS`·`DIVERGING` 상수는 **없앤다** — 정점은 자원 파일에서만 온다(§5.8). (개정 전 "RDBU11 은 그대로" 는 폐기 — 비드 높이 변화도 `diverge`.)
+- **부호 규칙(모든 곳 공통)**: 화면·보고서가 말하는 값 정의 그대로 **+ = 빨강, − = 파랑**. 값 정의의 부호를 색에 맞추려고 뒤집지 않는다 — 뜻이 뒤집히는 곳은 범례 문구를 바꾼다(§5.7 `문구` 열).
 - 띠(레벨) 색 = 띠 중앙값의 색(지금 규칙 `bandT`). 셰이더는 색표 텍스처만 바꿔 끼운다(GPU 경로 유지).
 
 ### 5.3 범례 편집 — 넣는 것 / 안 넣는 것 (D-0.25.1-VL-9)
@@ -322,16 +356,16 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 - 겹침 범례(왼쪽 위)는 **항상 표시**(연속이면 매끄러운 띠 + 눈금 5개). 범례를 **클릭**하면 `범례 편집` 팝오버(⚙ 팝오버의 `범례` 절과 같은 컴포넌트 — 진입 2곳, 내용 1개). 새 막대 버튼 없음 → 높이 영향 0.
 - 팝오버 항목(위에서 아래): `레벨 [9] □연속` · `최대 [자동|값]` · `최소 [자동|값]` · `눈금 (선형|로그)` · `숫자 (자동|고정|지수) 자릿수 [3]` · `범위 밖 (끝색|회색)` · `□색 순서 뒤집기` · `□최대 표식 □최소 표식 □umax 위치` · `[기본값으로]` · "이 브라우저에 기억됩니다". Esc·바깥 클릭 닫힘(기존 팝오버 규칙).
 - 도구 줄의 기존 범위 입력(`ColorLegend`)은 그대로 두고 같은 상태를 본다(정보·조작 삭제 없음).
-- 계획 표 `VIEWER_PLANS` 열 추가(모든 행 필수): `layers` 에 `upin`(핀 자료가 있는 보기만 의미), `legendSync: "pair" | "none"`(study_* = pair). 색 모드 표 `COLOR_MODES`(한 곳): 행 = 모드(disp·load·c·dc·field) × 열 `map`(rainbow|diverge)·`signed`·`logOk`·`sym`·`pairRange`(차이 = false).
+- 계획 표 `VIEWER_PLANS` 열 추가(모든 행 필수): `layers` 에 `upin`(핀 자료가 있는 보기만 의미), `legendSync: "pair" | "none"`(study_* = pair). 색 모드 표 `COLOR_MODES`(한 곳): 행 = 모드(disp·load·c·dc·field) × 열 `role`(자원 `roles` 키 — seq|div|region)·`signed`·`logOk`·`sym`·`pairRange`(차이 = false). 행 `region`(하중 영역 L3) 추가 — role `region`, 범례 편집 비활성(분류).
 
 ### 5.5 공용 모듈 (프런트 — 새 = ★)
 | 파일 | 내용 | 금지 |
 |---|---|---|
-| ★`view3d/legend/colormaps.ts` | `rainbowSrgb`·`divergeSrgb`·`buildLut(map, reversed, linear)`·`bandedCss` | three·api·React import |
+| `lib/colormap.ts`(기존 파일 — **TS 쪽 색 지도 모듈 1개**, §5.8. 개정 전 `view3d/legend/colormaps.ts` 는 만들지 않음) | `mapFor(role)`·`srgb(map, t)`·`css(map, t)`·`cssGradient(map, {reversed, levels})`·`buildLut(map, {reversed, linear})`·`special(name)` + 기존 `f3` | three·api·React import, RGB 숫자 리터럴(정점) |
 | ★`view3d/legend/legendModel.ts` | 순수 함수: `toT(v, range, scale)`(선형·로그)·`ticks`·`formatValue(fmt, digits)`·`countOut`·`effectiveRange`(로그 최소 보정)·`COLOR_MODES`·`LEGEND_DEFAULTS` | 같음 |
 | ★`view3d/legend/legendPrefs.ts` | 읽기·쓰기·v1 이행(§5.6) | three |
 | ★`view3d/legend/LegendEditor.tsx` | 팝오버 내용 | three |
-| `LegendOverlay.tsx`·`ViewerControls.tsx`·`View3DCard.tsx`·`viewerPlan.ts`·`viewerSync.ts`·`scene.ts`·`colors.ts`·`values.ts`·`marks.ts` | 위 모듈만 사용하도록 고침. `scene.ts` uniform 추가 `uLog`·`uOutMode`·`uOutColor`(범례 변경 = uniform·색표 교체만) | 결과 3D 경로에서 `bluesSrgb`·`BLUES_GRADIENT` 직접 사용 |
+| `LegendOverlay.tsx`·`ViewerControls.tsx`·`View3DCard.tsx`·`viewerPlan.ts`·`viewerSync.ts`·`scene.ts`·`colors.ts`·`values.ts`·`marks.ts`·`part/*`(`colorMap` 값 = 자원 역할 이름) | 위 모듈만 사용하도록 고침. `scene.ts` uniform 추가 `uLog`·`uOutMode`·`uOutColor`(범례 변경 = uniform·색표 교체만). `colors.ts` 는 색표 보조(`normalize`·`bandT`·`srgbToLinear`·`luminance`)만 남김 | 정점 상수(`BLUES9`·`RDBU11` 등)·`bluesSrgb`·`BLUES_GRADIENT`·`DIVERGING_GRADIENT` |
 
 표시 기본값(`LEGEND_DEFAULTS` = {levels 9, scale linear, format auto, digits 3, out clamp, reversed false, minMark false, upin true, logDecades 3})은 **이 표 한 곳**(v0.24.6 `VIEWER_PLANS` 관례 — 프런트 표시 기본은 서버 설정이 아님, D-0.25.1-VL-10).
 
@@ -340,6 +374,84 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 - v1 → v2: 처음 읽을 때 v1 의 planKey 별 bc·load·ghost·marks 를 옮기고, levels 는 버린다(새 기본 9). v1 키는 지우지 않음(이전 버전으로 되돌려도 동작).
 - 범위 직접 입력값·로그 선택은 **기억하지 않음**(값 종류·씬마다 뜻이 달라 다음에 잘못 적용됨 — 화면을 떠나면 자동).
 - 형식 오류·저장소 없음 = 기본값(오류 표시 없음 — 기존 규칙).
+
+### 5.7 색 적용 위치 확정 표 (개정 1, D-0.25.1-VL-13·14·15·16) — 번호 = §0.5
+
+| # | 곳 | 값 뜻(큰 값이) | 부호 | **지도** | 범위 | 범례 문구(바뀌면 **굵게**) | 묶음 |
+|---|---|---|---|---|---|---|---|
+| L1 | 결과 3D 값(변위·하중·C 기여도) | 큼 = 나쁨(변위)·중립(하중·기여도) | 없음(C 기여도는 음수 가능 — 0 이 중심 아님) | `rainbow` | §4.3 | §4.3 | F1a |
+| L2 | 결과 3D 차이 dc | + = 나빠짐(C 증가) | 있음 | `diverge` | ±abs_p99 | §4.3 | F1a |
+| L3 | 3D 하중 영역 | 분류(접촉·패치) | — | **예외** `blues`(분류) | 0~1 고정 | 그대로("진한 파랑 접촉 · 옅은 파랑 패치") | F1a(색표)·F1b(문구 불변) |
+| L4 | 2D 변위 겹쳐 보기 | 큼 = 나쁨 | 없음 | `rainbow` | 지금 그대로(min~max) | 값 이름 그대로 | F1c |
+| L5 | ④ 검증 비교 2D ε_eq | 큼 = 나쁨 | 없음 | `rainbow` | 그대로 | 그대로 | F1c |
+| L6 | ④ 검증 비교 2D 오차 % | + = 과대 | 있음 | `diverge` | ±R 그대로 | 그대로(이미 파랑 과소·빨강 과대) — 가운데 색만 노랑 → 흰 | F1c |
+| L7 | 라이브러리 셀 포락 max\|F\| | 큼 = 하중 큼 | 없음 | `rainbow` | 0~최대 | 그대로 | F1c |
+| L8 | 비드 설계 3D 높이 변화 | + = 깊어짐(중립) | 있음 | `diverge` — **뜻 뒤집힘** | ±V 그대로 | (범례 = L9) | F1a |
+| L9 | 높이 변화 범례 `HeightLegend` + 목 썸네일 | 같음 | 있음 | `diverge` | ±V | **"빨강 = 깊어짐 · 파랑 = 얕아짐"**(왼쪽 −V 파랑 → 오른쪽 +V 빨강). 옛 썸네일(`color.map` 없음 — §5.9)은 옛 띠·옛 문구 "빨강 = 얕아짐 · 파랑 = 깊어짐" | F1c |
+| L10 | ESL별 개선율 표 칸 | 색 값 = **C 변화율** C_안/C_기준 − 1(= −개선율): + = 악화 | 있음 | `diverge` | ±0.5(지금 세기 기준 그대로 — `PER_ESL_HEAT_SPAN` 한 곳) | 칸 숫자는 개선율 그대로. 표 설명 **"파랑 개선(C 감소) · 빨강 악화(C 증가)"** | F1b |
+| L11 | 비드 단 색 | 순서 단계 | — | **예외**(그대로) | — | 그대로 | — |
+| L12 | `bead_map.png` 비드 높이 \|h\| | 큼 = 높음 | 없음 | `rainbow` | 0~vmax 그대로 | PNG 안 색 막대(숫자 그대로) | C2 |
+| L13 | 비드 선택 썸네일 PNG | + = 깊어짐 | 있음 | `diverge` — **뜻 뒤집힘** | ±V | L9 + manifest `color.map: "diverge"`(§5.9) | C2 |
+| L14 | Case 보고서 지도 ε | 큼 = 나쁨 | 없음 | `rainbow` | 그대로 | 그대로 | C2 |
+| L15 | Case 보고서 지도 오차 | + = 과대 | 있음 | `diverge` | ±errR | 그대로 | C2 |
+| L16 | 보고서 격자 지도(순차) | 큼 = 큼 | 없음 | `rainbow`(투명도 → 불투명 색) | 0~최대 | 색 막대 그대로(0 … 최대) | C2 |
+| L17 | 보고서 격자 지도(발산) | + = 증가 | 있음 | `diverge` — **뜻 뒤집힘** | ±최대 | **"차이 = 신 − 구 (빨강 증가, 파랑 감소)"**(`compare.py:565`)·**"빨강 = 늘어남, 파랑 = 줄어듦"**(`report_analysis.py:142`) | C2 |
+| L18 | 스터디 보고서 개선율 칸 | L10 과 같음 | 있음 | `diverge` | ±0.5 | 표 머리 설명 L10 과 같은 문구 | C2 |
+| L19 | paicad ① 썸네일(`turbo16`) | 큼 = 큼 | 없음 | **예외**(외부 엔진 — 정점은 못 맞춤, 방향은 이미 파랑 → 빨강) | — | 그대로 | — |
+
+요약: **19곳 = 순차 7(L1·4·5·7·12·14·16) + 발산 9(L2·6·8·9·10·13·15·17·18) + 예외 3(L3·11·19)**. 뜻이 뒤집히는 곳 = L8·L9·L13(높이 변화: 빨강 = 얕아짐 → **빨강 = 깊어짐**), L17(파랑 = 증가 → **빨강 = 증가**), L10·L18(초록 = 개선 → **파랑 = 개선**, 빨강 = 악화는 그대로).
+
+- 순차/발산 판정 규칙(새 곳이 생겨도 같은 규칙): 값 정의에 부호가 있고 0 이 "변화 없음·오차 없음" 이면 `diverge`(범위 ±V 대칭), 그 밖은 `rainbow`. C 기여도처럼 음수가 나올 수 있어도 0 이 기준점이 아니면 `rainbow`.
+- L10·L18 은 색에 쓰는 값만 C 변화율로 바꾼다(3D `차이` 와 같은 뜻 — 파랑 = C 감소 = 개선). 표에 적는 숫자·정렬·`per_esl.json` 은 불변.
+- 문서 문구(통합 때 메인): `docs/manual/user.md:307`(썸네일 "파랑 깊어짐·빨강 얕아짐" → 반대)·`docs/manual/bead_doe_check.md:91`("깊어짐 파랑" → "깊어짐 빨강").
+
+### 5.8 색 지도 공용 자원 · 읽는 모듈 (D-0.25.1-VL-14) — 정의 한 곳
+
+`resources/colormaps.json`(새 — **아래 내용 그대로**, 원본 1곳. 기존 `resources/doe_messages.json` 과 같은 읽기 관례):
+```json
+{
+  "schema": "esl/colormaps/1",
+  "interp": "srgb-linear",
+  "maps": {
+    "rainbow": {"kind": "seq", "stops": [[0,0,255],[0,255,255],[0,255,0],[255,255,0],[255,0,0]],
+                "check": "3ccedddc80e5c02cae9b0bd7932fbadd3d94ebf77d7da56ee46b30e0c2ffa74a"},
+    "diverge": {"kind": "div", "center": 0.5,
+                "stops": [[5,48,97],[33,102,172],[67,147,195],[146,197,222],[209,229,240],[247,247,247],[253,219,199],[244,165,130],[214,96,77],[178,24,43],[103,0,31]],
+                "check": "30ef5f031ef175840578d6c6df9182497fb061db9b3b731d1c2afd081620237c"},
+    "blues":   {"kind": "class", "stops": [[247,251,255],[222,235,247],[198,219,239],[158,202,225],[107,174,214],[66,146,198],[33,113,181],[8,81,156],[8,48,107]],
+                "check": "8cd7426282dd1ba6dd6674e855af43d958f33fff292392fbd378d8af97eb15e6"}
+  },
+  "roles": {"seq": "rainbow", "div": "diverge", "region": "blues"},
+  "special": {"nan": [154,161,171], "out": [90,96,106], "none": [200,200,200]}
+}
+```
+- 정점 = 같은 간격(i/(n−1)). `kind: div` 는 `center`(0.5) 에 정점이 있어야 함(정점 수 홀수 — 읽을 때 검사).
+- **보간 규칙(TS·파이썬 같은 식 — 반올림까지)**: `s = t·(n−1)`(t 를 [0,1] 로 자름, NaN = 0), `i = min(floor(s), n−2)`, `f = s − i`, 채널 `= floor(a + (b − a)·f + 0.5)`. (파이썬 `round` 는 짝수 반올림이라 쓰지 않음.)
+- `check` = t = k/255(k = 0…255) 256색 × RGB uint8 768바이트의 sha256 — 두 언어 모듈이 각자 계산해 이 값과 같아야 함(V-0251-38). 정점을 바꾸면 `check` 도 같이 바꿈.
+- `roles` = 호출부가 쓰는 이름(seq·div·region). 호출부는 **역할**로 고르고 지도 이름·정점을 적지 않는다 → 나중에 지도를 바꿔도 자원 1줄.
+- `special`: nan = 계산 불가, out = 범위 밖(§5.3 회색), none = 영향 없음(썸네일 회색 — 지금 `select_render.GRAY`).
+
+| 쪽 | 모듈(1개씩) | 읽는 법 | 내보냄 | 금지 |
+|---|---|---|---|---|
+| TS | `frontend/src/lib/colormap.ts`(기존 파일을 바꿈) | `import CM from "../../../resources/colormaps.json"`(빌드에 포함 — 기존 `mock/graphmock.ts:9` 와 같은 방식, `resolveJsonModule`) | §5.5 표 | 다른 TS 파일이 자원을 직접 import, RGB 정점 리터럴 |
+| 파이썬 | ★`esl/io/colormaps.py`(순수 — `esl/io/messages.py` 옆, 같은 `RESOURCES` 경로 규칙) | 처음 쓸 때 1회 읽고 검사(스키마·정점 수·`center`) — 실패 = `CONFIG_INVALID` | `map_for(role)`·`rgb(map, t) → (…, 3) uint8`(numpy 배열 입력)·`css(map, t) → "rgb(r,g,b)"`·`table(map, n=256)`·`special(name)`·`as_json(roles)`(보고서 JS 에 넣을 정점 묶음) | `esl.doe`·`esl.view3d` import, 정점 리터럴 |
+
+- 파이썬 호출부: `esl/opt/png.py`(`_SEQ` 삭제 → `rgb(map_for("seq"), …)`), `esl/doe/select_render.py`(`BLUE`·`RED`·`WHITE`·`GRAY` 삭제 → div·`special("none")`), `esl/report/case_report.py`(JS 의 `VIR`·`DIV` 리터럴 삭제 → 보고서 데이터 JSON 에 `as_json` 을 넣고 JS 는 그것을 읽음 — 보고서는 지금처럼 파일 1개로 독립), `esl/library/report_analysis.py` `heatmap`(칸·색 막대 `fill` = `css(…)`, 투명도 램프 삭제. `--seq`·`--pos`·`--neg` 변수는 선 그래프용으로 남김), `esl/doe/report_doe.py` `_ratio_cell`.
+- 배포: `resources/` 는 지금도 코어·백엔드가 읽는 폴더 — 설치 스크립트 변경 없음(통합 때 배포 묶음에 새 파일이 들어가는지만 확인, V-0251-37).
+- 어두운 화면(보고서 `prefers-color-scheme`): 지도 색은 밝은·어두운 화면 같은 값(값 ↔ 색 대응이 바뀌면 안 됨).
+
+### 5.9 옛 산출물 · 새 산출물 (D-0.25.1-VL-15)
+
+| 산출물 | 옛 결과(이미 저장됨) | 새로 만드는 것 |
+|---|---|---|
+| `report.html`(Case·스터디·최적화·라이브러리 분석·버전 비교) | **다시 만들지 않음** — 파일 그대로(옛 색·옛 문구가 파일 안에 같이 있어 스스로 맞음) | 새 색·새 문구 |
+| `bead_map.png` | 그대로(색 막대가 그림 안에 있음) | 새 색 |
+| 비드 선택 썸네일 PNG | 그대로 — 화면 범례가 따로라 **표지 필요**: manifest `color` 에 `map` 키 없음 = 옛 그림 → 범례를 옛 띠(`diverge` 뒤집기)·옛 문구로 | manifest `color: {v_max, unit, map: "diverge"}` → 새 범례 |
+| 프런트가 그리는 것(3D·2D·표) | 옛 결과를 열어도 **새 색**(자료는 값이고 색은 화면이 칠함) | 새 색 |
+
+- **옛 결과 바이트 불변 원칙과 충돌 없음**: 저장된 파일을 고치거나 다시 쓰지 않는다. 바뀌는 것은 "v0.25.1 로 **새로 실행·생성**한 그림의 바이트" 뿐 — §7.2 의 "같은 입력 → 같은 바이트" 목록에서 그림 3종(`report.html`·`bead_map.png`·썸네일 PNG)은 뺀다(V-0251-10 개정, 색 외 내용 불변은 V-0251-43).
+- 썸네일 표지: `select_render.color_meta() → {"map": <div 역할의 지도 이름>}` 를 `stages.py:8528` 의 `color` dict 에 합친다(1줄 — 통합 때 메인, §10). API 는 `preview.color` 를 지금도 dict 그대로 넘김(스키마 변경 없음), `types.ts` `color?: {v_max; unit; map?: string}`.
+- 골든 갱신 범위(아래 중 색 값·그림 바이트·색 문구를 실제로 고정한 단언만 — 계산·표 숫자 골든은 건드리지 않음): `tests/doe/test_select_render.py`·`tests/opt/test_post.py`(PNG 색·바이트), `tests/report/test_case_report.py`·`tests/doe/test_report_doe.py`·`tests/library/test_analysis.py`·`test_compare.py`·`tests/library/golden/**`(색 문자열·범례 문구), `tests/fake_paicad.py`(썸네일 색을 본다면), 프런트 `__tests__/view3d.test.ts`·`doe.test.tsx`·`doe_select.test.tsx`·`select_save_vars.test.tsx`(색·문구 단언). `tests/test_view3d_golden.py`(view3d 자료)는 **불변**(색이 파일에 없음).
 
 ---
 
@@ -361,7 +473,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 ```
 - `src` = 화이트리스트(출처 표 키), `did` = 기존 `DID_RE`, `entry_id` = 스냅샷 엔트리에 있는 것만 → 서버가 `kk` 로 바꿈(클라이언트는 파일 이름을 만들지 않음).
 - 권한: 읽기 = 스터디 조회 권한(기존 `_viewable`), 만들기 = 실행 권한 ∧ (관리자 ∨ 작성자).
-- OpenAPI: `View3dOut` 선택 필드·새 스키마 `DoeSceneViewOut`·`DoeSceneAddOut`·새 경로 3개를 `schemas.py` 에 선언(`response_model`) — 생성 OpenAPI 와 `types.ts` 가 `check:api` 로 일치. `skipped.text` 문구 원본 = `resources/doe_messages.json`(새 코드 `SCENE_BUDGET`·`SCENE_FAILED`·`SCENE_NO_SOURCE`·`SCENE_DIFF_NO_FRAME`).
+- OpenAPI: `View3dOut` 선택 필드·새 스키마 `DoeSceneViewOut`·`DoeSceneAddOut`·새 경로 3개를 `schemas.py` 에 선언(`response_model`) — 생성 OpenAPI 와 `types.ts` 가 `check:api` 로 일치. `skipped.text` 문구 원본 = `resources/doe_messages.json`(새 코드 `SCENE_BUDGET`·`SCENE_FAILED`·`SCENE_NO_SOURCE`·`SCENE_DIFF_NO_FRAME` + B1 추가 `SCENE_VIEW_INVALID`·`SCENE_UNAVAILABLE_DISABLED`). B1 구현이 이 절과 다르게 한 점 = §15.1(그쪽이 우선).
 
 ---
 
@@ -372,7 +484,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 키 | 기본 | 범위 | 뜻 |
 |---|---|---|---|
 | `enabled` | true | bool | 끄면 씬 묶음·사이드카를 만들지 않음(= v0.25.0 과 같은 파일 집합) |
-| `max_mb` | 1024 | 0~65536 | 스터디당 씬 묶음 추정 용량 한도(§2.4). 0 = 한도 없음 |
+| `max_mb` | 1024(**확정** — 사용자 결정 2026-11-27, D-0.25.1-VL-17) | 0~65536 | 스터디당 씬 묶음 추정 용량 한도(§2.4). 0 = 한도 없음 |
 | `diff_cell_h_mult` | 2.0 | 0.5~8 | 차이 격자 셀 = max(`rank.jig_grid.cell_mm`, 이 값 × 변 길이 중앙값) |
 
 - 해시 밖: `view3d` 블록은 지금도 `_cfg_hash` 에 없음 → `input_sha256`·이어하기 캐시 불변(V-0251-12). 스냅샷에 넣지 않음(보기 설정 — 실행 시점 설정 사용).
@@ -383,7 +495,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 옛 스터디(사이드카 없음) | 결과 화면 = 지금과 같음 + 씬 선택 칸(자동만 자료 있음) + 안내·[씬 3D 만들기](§4.4). API `scene_view: null` |
 | 옛 view3d 폴더(c 배열 없음) | 그대로 읽힘(프런트는 모르는 배열 키 무시 — 지금 규칙). C 기여도·차이 비활성 + 사유 |
 | 옛 프런트 캐시 + 새 서버 | 새 키는 모두 선택 키 — 옛 화면 동작 불변 |
-| 기존 파일 | result.json·ranking.csv·per_esl.json·jig_view.json·bforce/fint 사이드카·`post/view3d/**`·report.html **바이트 불변**(같은 입력, 시간 키 제외 — 기존 골든 규칙). 새 파일 = `post/view3d_scene/**`·`post/scene_view.json` 만 |
+| 기존 파일 | **저장된 옛 결과 파일은 어떤 것도 다시 쓰지 않음.** 같은 입력으로 새로 실행하면 result.json·ranking.csv·per_esl.json·jig_view.json·bforce/fint 사이드카·`post/view3d/**` **바이트 불변**(시간 키 제외 — 기존 골든 규칙). 그림 3종(report.html·`bead_map.png`·비드 선택 썸네일 PNG + 그 manifest `color.map`)은 **새 실행에서 색·범례 문구만 바뀜**(§5.9 — 개정 1). 새 파일 = `post/view3d_scene/**`·`post/scene_view.json` 만 |
 | 결과 받기(zip) | 새 폴더는 묶음에 **넣지 않음**(보기 파생 자료 — 용량). 기존 묶음 목록 불변 |
 | 스터디 삭제·복제 | 삭제 = 스터디 폴더째(기존). 복제 = 사본에 씬 묶음 없음(실행하면 생김) |
 | SPDM·입력 폴더 | 쓰기 없음 — 모든 쓰기는 `c.writer`(스터디 `post/` 안, 기존 guard) |
@@ -425,7 +537,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 7 | umax 핀 | 값 == per_esl `umax_ev`(없으면 그 출처 umax) **같은 값**(==), 핀 노드 ∈ 평가 영역, 동률 = 작은 인덱스, 출처 6행 모두 |
 | 8 | 양자화 | 복원 오차 ≤ scale/2, manifest `c.sum` = 양자화 전 float64 |
 | 9 | `build_view` 불변 | 기존 골든(`tests/test_view3d_golden.py`) 그대로 통과, 씬 묶음 `part.glb` == 같은 메시 `build_view` 의 `part.glb` 바이트 |
-| 10 | 기존 파일 바이트 불변 | main 97a0e358 과 같은 입력으로 ① same·select·③ step·④ compare(LT)·격자 지그: §7.2 목록 파일 바이트 동일(시간 키 제외), 새 파일은 `post/view3d_scene/**`·`post/scene_view.json` 뿐 |
+| 10 | 기존 파일 바이트 불변 | main 97a0e358 과 같은 입력으로 ① same·select·③ step·④ compare(LT)·격자 지그: §7.2 목록 파일 바이트 동일(시간 키 제외 — 개정 1: 그림 3종 report.html·`bead_map.png`·썸네일 PNG·manifest `color.map` 은 목록에서 빼고 V-0251-43 이 봄), 새 파일은 `post/view3d_scene/**`·`post/scene_view.json` 뿐 |
 | 11 | 한도 | `max_mb` 작게 → 베이스라인 C 큰 순·각 안 최악 포함·`SCENE_BUDGET` 기록·`budget` 값 |
 | 12 | 보충 실행(post_mode scene) | 옛 스터디 사본: 새 파일만 생김, 두 번째 실행은 다시 쓰지 않음, `input_sha256`·이어하기 캐시 적중, 기존 `post_mode view3d` 도 씬 묶음을 만듦 |
 | 13 | `enabled: false` | 새 파일 0(파일 집합 = main) |
@@ -443,7 +555,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 ### 9.3 프런트 단위
 | # | 내용 |
 |---|---|
-| 20 | 레인보우: t 0·0.25·0.5·0.75·1 = 파랑·청록·초록·노랑·빨강(정확한 RGB), 띠 색 = 띠 중앙, 뒤집기, 선형 색표 변환 |
+| 20 | 레인보우: t 0·0.25·0.5·0.75·1 = 파랑·청록·초록·노랑·빨강(정확한 RGB — 기대값은 자원 파일에서 읽음), 띠 색 = 띠 중앙, 뒤집기, 선형 색표 변환 |
 | 21 | 발산: 0 = 흰색, −V 파랑·+V 빨강, 대칭 |
 | 22 | `legendModel`: 선형·로그 `toT`, 로그 최소 보정·부호 모드 비활성, 눈금, 숫자 형식(자동·고정·지수 × 자릿수), 범위 밖 끝색/회색·개수 |
 | 23 | 기억: v1 → v2 이행, 깨진 JSON = 기본값, 범위·로그는 저장 안 함 |
@@ -453,7 +565,7 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 27 | C 기여도·차이 비활성 사유(배열 없음·`dc` null) |
 | 28 | umax 핀: 라벨·두 카드·끄기·최대 표식과 같은 정점일 때 겹침 규칙 |
 | 29 | 높이: 2560×1440·1920×1080 에서 3D 바 1줄, 3D 칸·카드 높이 = v0.25.0(픽셀 차 0), 범례 팝오버는 겹침(레이아웃 영향 0) |
-| 30 | 공용 확인(정적): 결과 3D 경로(`View3DCard`·`LegendOverlay`·`scene.ts`)에 `bluesSrgb`·`BLUES_GRADIENT` import 없음, `VIEWER_PLANS`·`COLOR_MODES` 모든 열 채움 |
+| 30 | 공용 확인(정적): `frontend/src/view3d/**` 에 `bluesSrgb`·`BLUES_GRADIENT`·`BLUES9`·`RDBU11`·`DIVERGING_GRADIENT` 없음(Blues 는 `COLOR_MODES` 행 `region` 의 role 로만), `VIEWER_PLANS`·`COLOR_MODES` 모든 열 채움 |
 | 31 | 성능: 범례 편집 때 `fillVertexColors`(CPU 루프) 호출 0, 30만 정점 mock |
 | 32 | 옛 view3d 자료(`tests/fixtures/view3d/small`) 렌더 — c 없음 |
 
@@ -465,19 +577,39 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 35 | 옛 결과 회귀: v0.25.0 으로 만든 스터디 폴더를 그대로 열어 화면 정상 → [씬 3D 만들기] → 끝난 뒤 씬 전환 동작, 기존 파일 해시 불변 |
 | 36 | Case ③ 3D·지그 진단·재현 진단이 레인보우·같은 범례 편집(공용 확인) |
 
+### 9.5 색 통일 (개정 1)
+| # | 묶음 | 내용 | 기준 |
+|---|---|---|---|
+| 37 | C2·F1a | **자원 하나에서 읽음(정적)**: 저장소 전체에서 색 정점을 가진 곳 = `resources/colormaps.json` 뿐. 파이썬 `esl/**`·`backend/**`·`worker/**` 에 `_SEQ`·`VIR=`·`DIV=`·`BLUE =`·`RED =`·viridis 정점 리터럴 없음, 자원을 여는 곳 = `esl/io/colormaps.py` 1개. TS `frontend/src/**`(시험·목 제외) 에 `VIRIDIS`·`DIVERGING`·`BLUES9`·`RDBU11` 없음, `colormaps.json` import = `lib/colormap.ts` 1개 | grep 0건 / 1건. 배포 묶음 목록에 `resources/colormaps.json` 있음 |
+| 38 | C2·F1a | **정점 일치 TS = 파이썬**: 각 모듈이 `table(map, 256)` 768바이트 sha256 을 계산 → 자원의 `check` 와 같음(지도 3개 × 언어 2개). 같은 `check` 를 두 쪽이 통과 = 두 쪽 색이 바이트로 같음 | == |
+| 39 | C2·F1a | 보간 규칙: t = 0·0.5·1 정확한 정점, `diverge` t 0.5 = (247,247,247), 범위 밖 t 자름, NaN = t 0, 반올림 = floor(x + 0.5)(경계값 x.5 사례 포함), `kind div` 인데 정점 짝수·`center` 없음 = 파이썬 `CONFIG_INVALID`·TS 는 빌드 시험 실패 | 값 일치 |
+| 40 | F1a | 비드 설계 3D 높이 변화(L8): c > 0(깊어짐) 정점 = 빨강 쪽, c < 0 = 파랑 쪽, 0 = 흰. `part/*` 의 `colorMap` 이 역할 이름 | 색표 값 |
+| 41 | F1c | 2D(L4·L5·L7): 최소값 칸 = `rainbow` t 0(파랑), 최대값 칸 = t 1(빨강), 범례 띠 = `cssGradient(seq)`. L6 오차: −R 파랑·0 흰·+R 빨강, 범례 문구 불변 | fill·style 값 |
+| 42 | F1c | 높이 변화 범례(L9): `color.map == "diverge"` → 띠 왼쪽 −V 파랑·오른쪽 +V 빨강, 문구 "빨강 = 깊어짐 · 파랑 = 얕아짐". `color.map` 없음(옛 썸네일) → 옛 띠·문구 "빨강 = 얕아짐 · 파랑 = 깊어짐". 미리보기 카드·`DoeThumbGrid` 둘 다. 목 썸네일 색 = 새 뜻 | DOM 문구·띠 |
+| 43 | C2 | 파이썬 그림 **색만 바뀜**: 썸네일 PNG — c > 0 삼각형 픽셀 = 빨강 쪽(R > B), c < 0 = 파랑 쪽, 영향 없음 = `special none` 음영, 크기·시점·경계선 픽셀은 main 과 같음. `bead_map.png` — 값 0 칸 = 파랑·vmax 칸 = 빨강, 색 막대 위 = 빨강, 빗금·기호·글자 픽셀 main 과 같음. 두 번 실행 바이트 동일(결정성). `color_meta()` = `{"map": "diverge"}` | 픽셀 비교 |
+| 44 | C2 | 보고서: Case 보고서 데이터 JSON 에 정점 묶음이 있고 JS 본문에 정점 리터럴 없음, ε = seq·오차 = div. 격자 지도 `heatmap` seq = 최소 칸 파랑·최대 칸 빨강(투명도 램프 없음), div = + 빨강·− 파랑·0 흰, 색 막대 같은 지도. 문구 "빨강 증가, 파랑 감소"·"빨강 = 늘어남, 파랑 = 줄어듦". 색·문구 밖의 HTML(표 숫자·구조)은 main 과 같음(색 문자열을 지운 뒤 비교) | 문자열 |
+| 45 | C2·F1b | ESL별 개선율 칸(L10·L18): 개선(C 감소) = 파랑 쪽·악화 = 빨강 쪽·0 = 무색, 세기 기준 ±0.5, 화면과 보고서가 **같은 색**(같은 입력 → 같은 rgb — 자원 `check` 경유), 칸 숫자 불변, 설명 문구 "파랑 개선(C 감소) · 빨강 악화(C 증가)" | 색·문구 |
+| 46 | F1a·F1b | 하중 영역(L3): 색 = `blues`(v0.25.0 과 같은 색), 문구 불변, 범례 편집 비활성 | 색표 값 |
+| 47 | 통합 | 옛 결과 회귀: v0.25.0 으로 만든 스터디·Case 폴더를 열어 화면 정상(3D·2D 새 색, 옛 썸네일 + 옛 범례), **폴더 안 파일 해시 불변**(report.html·PNG 포함 — 다시 만들지 않음) | 해시 |
+| 48 | 통합(e2e) | 화면 범례 문구 한 바퀴: Case ③ 3D·④ 검증 비교 2D(ε·오차)·변위 겹쳐 보기·라이브러리 포락·비드 미리보기 썸네일·설계 3D·스터디 결과 ESL 표 — 각 화면에서 가장 큰 값 칸이 빨강 쪽·가장 작은 값이 파랑 쪽이고 범례 문구가 §5.7 과 같음 | 화면별 1 단언 |
+
 ---
 
 ## 10. 구현 분할 (파일 소유 겹침 없음 — 병행 후 통합)
 
 | 묶음 | 모델 | 소유 파일 | 내용 | 시험 |
 |---|---|---|---|---|
-| **C1 코어** | opus | `esl/mech/cfield.py`(새) · `esl/view3d.py` · `esl/doe/stages.py` · `esl/doe/__init__.py`(DEFAULTS) · `tests/**`(코어) | §2·§3·§7.1 코어 기본값. 기존 3D 함수의 입력부 분리(바이트 불변), 실행기·계획 표·사이드카, post_mode scene | 1~15 |
+| **C1 코어**(진행 중 — 범위 **불변**) | opus | `esl/mech/cfield.py`(새) · `esl/view3d.py` · `esl/doe/stages.py` · `esl/doe/__init__.py`(DEFAULTS) · `tests/**` 중 씬·cfield·view3d 시험 | §2·§3·§7.1 코어 기본값. 기존 3D 함수의 입력부 분리(바이트 불변), 실행기·계획 표·사이드카, post_mode scene. **색 작업 없음** | 1~15 |
+| **C2 파이썬 그림 색**(새 — C1 과 파일 겹침 0) | sonnet | ★`esl/io/colormaps.py` · `esl/opt/png.py` · `esl/doe/select_render.py` · `esl/report/case_report.py` · `esl/library/report_analysis.py` · `esl/library/compare.py`(문구) · `esl/doe/report_doe.py` · 그 시험(`tests/io/test_colormaps.py` 새 · §5.9 골든 목록의 파이썬 쪽) | §5.7 L12~L18 · §5.8 파이썬 모듈 · §5.9. `stages.py`·`esl/view3d.py`·`esl/opt/post.py`·`report_opt.py` 는 **안 건드림**(호출 모양 불변 — `heatmap`·`render_plan`·`render` 인수 그대로) | 37~39(파이썬 쪽)·43·44·45(보고서 쪽) |
 | **B1 백엔드** | sonnet | `backend/esl_platform/**`(config pydantic·services/doe.py·routers/doe.py·schemas.py) · `config/*.yaml` 2개 · `resources/doe_messages.json` · `backend/tests/**` · OpenAPI 스냅샷 | §6·§7.1 거울. C1 의 사이드카·묶음 **형식(§2.2·§2.3)만** 읽음 — 코어 함수 호출 없음 | 16~19 |
-| **F1a 프런트 공용 뷰어** | sonnet | `frontend/src/view3d/**`(legend/* 새 4개 포함) · `components/ColorLegend.tsx` · 뷰어 스타일 · 해당 단위 시험 | §5 전부 + 색 모드 c·dc·umax 핀 그리기(`View3DOptions` 확장) | 20~24·28·30~32·36 |
-| **F1b 프런트 스터디 화면** | sonnet | `frontend/src/pages/doe/**` · `components/DoePerEslTable.tsx`·`DoeRanking.tsx` · `api/types.ts`·`api/doe.ts` · e2e | §4 — 씬 상태·선택 3곳·3D 바·요약·안내. F1a 가 정한 `View3DOptions` 만 사용 | 25~27·29·33~35 |
+| **F1a 프런트 공용 뷰어 + 색 모듈** | sonnet | `frontend/src/lib/colormap.ts` · `frontend/src/view3d/**`(legend/* 새 3개 — `legendModel`·`legendPrefs`·`LegendEditor`, `part/*` 포함) · `components/ColorLegend.tsx` · 뷰어 스타일 · 해당 단위 시험(`view3d.test.ts` 등) | §5.2~§5.6 + §5.8 TS 모듈 + L1·L2·L3(색표)·L8 + 색 모드 c·dc·umax 핀 그리기(`View3DOptions` 확장). `lib/colormap.ts` 에서 `VIRIDIS`·`DIVERGING` 을 없애므로 **F1c 가 쓰는 새 내보내기(§5.5)를 먼저 올림** — 옛 상수는 F1c 병합 때까지 `@deprecated` 로 남겨도 됨(통합 때 V-0251-37 이 0건 확인) | 20~24·28·30~32·36·37~39(TS 쪽)·40·46(색표) |
+| **F1b 프런트 스터디 화면** | sonnet | `frontend/src/pages/doe/**` · `components/DoePerEslTable.tsx`·`DoeRanking.tsx` · `api/types.ts`·`api/doe.ts` · e2e · `__tests__/doe.test.tsx` | §4 — 씬 상태·선택 3곳·3D 바·요약·안내. F1a 가 정한 `View3DOptions` 만 사용. + L10(개선율 칸 색·설명 문구) · `types.ts` `color.map?` | 25~27·29·33~35·45(화면 쪽)·46(문구) |
+| **F1c 프런트 2D·썸네일 색**(새 — F1a 의 `lib/colormap.ts` 새 내보내기가 올라온 뒤) | sonnet | `components/DispOverlay.tsx` · `components/FieldOverlay.tsx` · `components/BeadSelectCard.tsx`(`HeightLegend` 와 그 호출부만) · `components/DoeThumbGrid.tsx` · `pages/library/common.tsx` · `mock/selectmock.ts` · `__tests__/doe_select.test.tsx`·`select_save_vars.test.tsx` 와 2D 시험 | L4~L7·L9 — 상수 `VIRIDIS`·`DIVERGING`·`DIVERGING_GRADIENT` 사용을 `lib/colormap.ts` 역할 호출로 바꿈, 높이 변화 범례 문구·옛 썸네일 분기 | 41·42 |
 
-- 접점(먼저 고정 — 이 문서가 원본): C1↔B1 = §2.2·§2.3 파일 형식, B1↔F1b = §6 응답 키, F1a↔F1b = `View3DOptions` 새 선택 키 `colorMode: "disp"|"load"|"c"|"dc"`·`pins`·`legendSync`. F1a 는 F1b 보다 먼저 접점 타입을 올린다.
-- 통합(메인): `VERSION`·`CHANGELOG.md`·`docs/e2e-checklist.md`(§11 항목)·사용자 매뉴얼 한 절, 독립 검증(불변 시험 10·물리 1~7 재실행).
+- 접점(먼저 고정 — 이 문서가 원본): C1↔B1 = §2.2·§2.3 파일 형식(+ §15.1), B1↔F1b = §6 응답 키, F1a↔F1b = `View3DOptions` 새 선택 키 `colorMode: "disp"|"load"|"c"|"dc"`·`pins`·`legendSync`. F1a 는 F1b 보다 먼저 접점 타입을 올린다. **C2↔F1a = `resources/colormaps.json`(§5.8 내용 그대로)**, F1a↔F1c = `lib/colormap.ts` 내보내기(§5.5), C2↔F1c = manifest `color.map`(§5.9).
+- **선행 커밋(메인, 구현 전에 `release/v0.25.1` 에)**: `resources/colormaps.json` 을 §5.8 내용 그대로 1개 커밋 — C2·F1a 가 같은 파일을 각자 만들지 않게(두 묶음 다 **읽기만**, 정점을 바꿔야 하면 계약 개정).
+- 순서: 선행 커밋 → {C1(진행 중) ∥ C2 ∥ F1a} → {F1b ∥ F1c}. 파일 소유 겹침 0: `stages.py` = C1 만, `lib/colormap.ts`·`view3d/**` = F1a 만, `BeadSelectCard.tsx`·`DoeThumbGrid.tsx` = F1c 만, `DoePerEslTable.tsx`·`pages/doe/**`·`types.ts` = F1b 만. B1 = 완료(색 작업 없음 — `preview.color` 는 dict 통과).
+- 통합(메인): `VERSION`·`CHANGELOG.md`·`docs/e2e-checklist.md`(§11 항목)·사용자 매뉴얼 한 절 + §5.7 문서 문구 2곳, 독립 검증(불변 시험 10·물리 1~7 재실행 + 37·38·47·48). **`stages.py:8528` 1줄**(`color` 에 `select_render.color_meta()` 합치기)은 C1·C2 병합 뒤 메인이 넣음(C1 작업 중 파일이라 C2 가 건드리지 않음) — 빠지면 새 썸네일에 옛 범례가 붙음(V-0251-42·43 이 잡음).
 
 ---
 
@@ -496,10 +628,13 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | 9 | 실제 스터디 1개의 `post/view3d_scene` 폴더 크기·BD_POST 추가 시간(사이드카 `seconds`)을 적어 §8 추정과 비교 |
 | 10 | 2560×1440·1920×1080 에서 결과 화면 세로 길이가 늘지 않았는가(3D 바 1줄) |
 | 11 | ④ 형상 비교(다른 메시)에서 차이 그림이 나오고 얼룩이 심하지 않은가(심하면 `diff_cell_h_mult` 조정) |
+| 12 | (개정 1) ④ 검증 비교 2D·변위 겹쳐 보기·라이브러리 포락: 큰 값 빨강·작은 값 파랑, 오차는 과소 파랑·과대 빨강 |
+| 13 | (개정 1) 비드 미리보기 썸네일·설계 3D: **깊어진 곳 빨강·얕아진 곳 파랑**, 범례 문구가 그렇게 적혀 있는가. v0.25.0 때 만든 미리보기를 열면 옛 그림 + 옛 문구(빨강 = 얕아짐)로 서로 맞는가 |
+| 14 | (개정 1) 새로 만든 보고서(Case·스터디·최적화·라이브러리)·`bead_map.png` 가 같은 색 규칙인가. ESL별 개선율 표: 개선 파랑·악화 빨강(화면 = 보고서). 예전에 만든 보고서 파일은 그대로인가 |
 
 ---
 
-## 12. 결정 근거 (요약 — 전문 `docs/decisions.md` 2026-11-27 D-0.25.1-VL-1~12)
+## 12. 결정 근거 (요약 — 전문 `docs/decisions.md` 2026-11-27 D-0.25.1-VL-1~19)
 
 | # | 결정 | 근거 1줄 |
 |---|---|---|
@@ -514,14 +649,43 @@ dc_n = c^안_n − ĉ^기준_n          (안 메시 노드에 놓음)
 | VL-9 | 범례 기능 9개 넣음 · 7개 안 넣음(§5.3) | 사용성 > 유연성, 필수만 |
 | VL-10 | 범례 모양 = 브라우저 기억 1벌(모든 3D 공통), 서버 저장 없음, 기본 레벨 9 | DB 변경 없이 충분, 보기마다 다시 맞추지 않게 |
 | VL-11 | 기존 파일 바이트 불변 — 새 자료는 새 폴더·사이드카, zip 묶음 제외 | 서버 결과 불변 원칙 |
-| VL-12 | 적용 = `View3DCard` 결과 3D 전부, 2D·비드 편집·보고서 색은 비범위 | 최소 해석(Q-VL-1) |
+| VL-12 | 범례 **편집** 적용 = `View3DCard` 결과 3D 전부. (색 적용 범위 부분은 VL-13 이 대체) | 최소 해석 → 사용자 답으로 개정 |
+| VL-13 | (사용자 결정 — Q-VL-1 답 "전부 통일") 연속값 색 19곳 중 16곳 = 순차 `rainbow` 7 · 발산 `diverge` 9, 예외 3(분류 L3·단계 L11·paicad L19) | 화면마다 색 뜻이 다르면 읽을 때마다 범례를 다시 봐야 함 |
+| VL-14 | 정점 원본 = `resources/colormaps.json` 1개, 읽는 모듈 = TS `lib/colormap.ts`·파이썬 `esl/io/colormaps.py` 1개씩, 호출부는 역할(seq·div·region)로 고름, `check` 해시로 두 언어 일치 검증 | 하드코딩 금지·같은 기능 공용 모듈 하나 — 지금은 정점이 5곳에 흩어져 있음 |
+| VL-15 | 부호 있는 값 = **+ 빨강·− 파랑**(값 정의는 그대로, 뜻이 뒤집히는 곳은 문구를 바꿈): 높이 변화 빨강 = 깊어짐, 보고서 차이 빨강 = 증가 | "높은 게 빨강" 을 부호 있는 값에 그대로 적용 — 값 부호를 색에 맞춰 뒤집으면 표 숫자와 어긋남 |
+| VL-16 | ESL별 개선율 칸 색 = C 변화율 발산(파랑 개선·빨강 악화), 숫자는 개선율 그대로 | 3D `차이`(파랑 = C 감소)와 같은 뜻 — 초록·빨강을 남기면 "전부 통일" 에 어긋남(확인 Q-VL-3) |
+| VL-17 | (사용자 결정 — Q-VL-2 답) 씬 3D 저장 한도 = 스터디당 1 GB(`max_mb` 1024) | 가정 그대로 확정 |
+| VL-18 | 옛 그림은 다시 만들지 않음 — 새로 만드는 보고서·PNG 만 새 색. 옛 썸네일은 manifest `color.map` 없음으로 가려 옛 범례 | 옛 결과 바이트 불변 원칙 유지 + 그림과 범례가 어긋나지 않게 |
+| VL-19 | 구현 분할: 파이썬 그림 색 = 새 C2, 프런트 2D·썸네일 = 새 F1c, 색 모듈·3D = F1a, 개선율 칸 = F1b. C1·B1 범위 불변, 자원 파일은 메인 선행 커밋 | C1 진행 중·B1 완료 — 파일 소유 겹침 0 |
 
-## 13. 미결 (기본 가정으로 진행 — 답이 오면 개정)
-- **Q-VL-1** 레인보우 적용 범위: 가정 = 3D 결과 컨투어만. ④ 검증 비교 2D(viridis)·비드 높이 변화 색(지금 빨강 = 얕아짐)·보고서·썸네일도 "높음 = 빨강"으로 맞출까?
-- **Q-VL-2** 저장 용량: 가정 = 상위 3안 × 전 씬 미리 생성, 스터디당 약 0.2 GB(10만 노드·8씬·출처 3) 증가·한도 1 GB. 디스크가 부담이면 한도를 낮추거나 전 노드 출처만 미리 만들 수 있음.
+## 13. 질문에 대한 결정 (2026-11-27 사용자 답) · 남은 확인
+
+| 질문 | 답 | 결정 | 반영 |
+|---|---|---|---|
+| Q-VL-1 레인보우 적용 범위 | **"전부 통일"** — 3D 결과 컨투어 + ④ 검증 비교 2D + 비드 높이 변화 색 + 보고서 + 썸네일 + 그 밖에 연속값 색을 쓰는 모든 곳 | D-0.25.1-VL-13·14·15·16·18·19 | §0.5·§5.2·§5.7~§5.9·§9.5·§10 |
+| Q-VL-2 저장 용량 | **스터디당 1 GB** | D-0.25.1-VL-17 — `bead_doe.view3d.scene.max_mb` = 1024(계약 가정 그대로 — 코드·설정 변경 없음) | §2.4·§7.1 |
+
+남은 확인(가정대로 진행 — 답이 다르면 L10·L18 두 곳만 되돌림):
+- **Q-VL-3** ESL별 개선율 표 칸 색: 가정 = **파랑 개선·빨강 악화**(3D `차이` 와 같은 뜻). 지금의 초록 개선·빨강 악화(좋음·나쁨 판정 색)를 이 표에서만 남길까?
 
 ## 14. 후속 (R-VL-n)
-- R-VL-1 2D 겹쳐 보기·비드 편집·보고서 색 통일(Q-VL-1 답에 따라). R-VL-2 변위 차이·변형 에너지 밀도 컨투어. R-VL-3 범례 설정 서버 저장(계정별). R-VL-4 색각 보정 색 지도 선택. R-VL-5 상위 k 밖 안의 씬 3D 요청 생성.
+- R-VL-2 변위 차이·변형 에너지 밀도 컨투어. R-VL-3 범례 설정 서버 저장(계정별). R-VL-4 색각 보정 색 지도 선택(자원 `roles` 1줄로 바꿀 수 있게 됨). R-VL-5 상위 k 밖 안의 씬 3D 요청 생성. R-VL-6 2D·보고서 그림의 범례 편집. (R-VL-1 색 통일 = 개정 1 로 이번 범위에 들어옴.)
 
 ## 15. 구현 메모
 (구현 때 채움 — 실측 용량·시간, 접점 불일치, 독립 검증 결과)
+
+### 15.1 B1 구현 사실 (wip/v0.25.1-b1 2475896d — 완료, 시험 V-0251-16~19 `backend/tests/test_doe_v0251_b1_api.py`)
+
+§6 과 다르게 구현된 점 — **구현이 기준**(계약을 여기에 맞춤, 다른 묶음은 이 표를 따름):
+
+| # | 계약(§6·§2) | B1 구현 | 판정 · 다른 묶음이 지킬 것 |
+|---|---|---|---|
+| 1 | 씬 manifest = `View3dOut` + 선택 키 | `View3dOut` 의 **하위형 `View3dSceneOut`**(새 키 c·dc·pins·ranges.c·ranges.dc 는 하위형에만) | 수용 — 기존 `View3dOut` 응답 스키마 불변이라 더 안전. F1b `types.ts` 는 `View3dSceneOut` 이름으로 받음(`check:api`) |
+| 2 | `entry_id` = 스냅샷 엔트리에 있는 것만 | **사이드카 `entries`** 로 검사 → `kk` | 수용. **C1 이 지킬 것**: 사이드카 `entries` 에 스냅샷 `doe.entries` **전부**를 같은 순서로 적는다(자료를 못 만든 씬도 — 빠지면 그 씬이 "자료 없음" 이 아니라 형식 오류 404 가 됨). V-0251-12·17 에 단언 추가 |
+| 3 | `skipped[].text` = 코드 문구 | `text` = **코드 문구 + 상세**(사이드카 `detail`) | 수용 — 화면은 `text` 를 그대로 보임(§4.4). C1 의 `detail` 은 사용자에게 보이는 글이 됨 → 경로·예외 원문을 넣지 않고 짧은 사유만 |
+| 4 | 새 문구 4개 | + `SCENE_VIEW_INVALID`(사이드카를 못 읽음 → `scene_view: null` + 경고)·`SCENE_UNAVAILABLE_DISABLED`(설정 끔 → 409 `VIEW3D_SCENE_UNAVAILABLE` 사유) | 수용 — §6·V-0251-16·18 에 반영 |
+| 5 | `DOE_RUN` 큐 + `post_mode: "scene"` | 작업 `params.kind = "VIEW3D"`(워커 `POST_ONLY_KINDS` 그대로) + `doe.post_mode = "scene"`, resume `BD_POST` | 수용(기존 3D 다시 만들기와 같은 kind). **C1 이 지킬 것**: 코어 dispatch 가 kind `VIEW3D` 에서 `post_mode` 값 `"view3d"`·`"scene"` 을 구분 |
+
+B1 이 C1 에 요구하는 형식(인수 메모 그대로): 사이드카 필수 키 `schema`·`entries[{entry_id, kk}]`·`packs[src]{tag, c_kind, designs{did: {dir, scenes[]}}, skipped[]}`·`budget{max_mb, est_mb}` / `pack.json` 필수 키 `geometry{name}`·`lod|null{name}`·`scenes[{entry_id, kk, manifest, values}]`(manifest·values = 파일 이름 문자열) / 씬 manifest 에 `values{name, …}` / 코어 `DEFAULTS["view3d"]["scene"]`.
+
+**설계 변경 필요 지적(고치지는 않음)**: (a) #2 — 계약 §2.3 은 `entries` 를 "전부" 라고 못 박지 않았다 → 위 C1 규칙으로 보완. (b) #3 — `detail` 이 화면에 나가므로 C1 의 실패 상세가 내부 경로를 담으면 노출됨 → C1 검토 항목. (c) 색 통일(개정 1)은 B1 에 추가 작업 없음 — `preview.color.map` 은 dict 통과, 새 API·스키마 없음. 그 밖 설계 변경 필요 없음.
