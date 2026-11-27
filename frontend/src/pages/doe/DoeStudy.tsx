@@ -37,12 +37,13 @@ import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoePa
 import { DoeThumbGrid, previewSummary, valuesText } from "../../components/DoeThumbGrid";
 import { BestCleanChip, ChipDetail, BestCleanMqChip, DoeRanking, JigLine, JigNoneChip } from "../../components/DoeRanking";
 import { DoePerEslTable, perEslNote } from "../../components/DoePerEslTable";
+import { COLOR_SEL_BUTTONS, SCENE_TEXT, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene, type ColorSel } from "./doeScene";
 import { Sensitivity } from "../../components/Sensitivity";
 import { JobProgress } from "../../components/JobProgress";
 import { BundleButton } from "../../components/BundleButton";
 import { openReport } from "../../components/ReportLink";
 import type { Range } from "../../components/ColorLegend";
-import { View3DCard, type View3DOptions } from "../../view3d/View3DCard";
+import { NO_C_TEXT, NO_DC_TEXT, View3DCard, type View3DOptions } from "../../view3d/View3DCard";
 import { useViewerSync } from "../../view3d/viewerSync";
 import type { LoadView } from "../../view3d/useLoadView";
 import { buildArrow, nearestEnabledStage, stageEnabled, stageMode, type ArrowSpec } from "../../view3d/arrows";
@@ -574,7 +575,8 @@ function CompareMeshAdvanced({ st, check, form, setForm, allowed, showMesh, same
 }
 
 // ================================================================ 3D 비교(기존 view3d 재사용)
-function useDoeView(studyId: string, did: string | null): LoadView | null {
+/** scene = v0.25.1 씬 묶음 자료(출처 키·엔트리) — 주면 씬 manifest API, 아니면 기존 폴더 manifest */
+function useDoeView(studyId: string, did: string | null, scene: { src: string; entry: string } | null = null): LoadView | null {
   const [manifest, setManifest] = useState<View3dOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -590,7 +592,7 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
     if (!did) return;
     let alive = true;
     setLoading(true);
-    request<View3dOut>("GET", doe.view3dPath(studyId, did))
+    request<View3dOut>("GET", scene ? doe.sceneManifestPath(studyId, scene.src, did, scene.entry) : doe.view3dPath(studyId, did))
       .then((m) => {
         if (!alive) return;
         setManifest(m);
@@ -602,7 +604,7 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
     return () => {
       alive = false;
     };
-  }, [studyId, did, nonce]);
+  }, [studyId, did, nonce, scene?.src, scene?.entry]); // eslint-disable-line react-hooks/exhaustive-deps
   const mode = useMemo(() => stageMode(stage), [stage]);
   const setStage = useCallback(
     (i: number) => {
@@ -617,7 +619,7 @@ function useDoeView(studyId: string, did: string | null): LoadView | null {
   const setSelection = useCallback((s: Selection) => setSelectionRaw(s), []);
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   const requestFocus = useCallback((p: V3) => setFocusReq((r) => ({ point: p, seq: (r?.seq ?? 0) + 1 })), []);
-  const runId = did ? `doe:${studyId}:${did}` : null;
+  const runId = did ? `doe:${studyId}:${did}${scene ? `:${scene.src}:${scene.entry}` : ""}` : null;
   return useMemo(
     () => (runId ? { runId, src: null, rangeKey: runId, manifest, error, fallback: null, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload } : null),
     [runId, manifest, error, loading, stage, setStage, mode, selection, setSelection, focusReq, requestFocus, reload],
@@ -884,10 +886,10 @@ export function regionArrows(e: DoeJigDiagEntryOut, d: DoeJigDiagOut, diag: numb
   return out;
 }
 
-function JigDiag({ studyId, result, lead, pick, addBtn = null }: { studyId: string; result: DoeResultOut; lead: ReactNode; pick: string | null; addBtn?: ReactNode }) {
+function JigDiag({ studyId, result, lead, pick, addBtn = null, scene = null }: { studyId: string; result: DoeResultOut; lead: ReactNode; pick: string | null; addBtn?: ReactNode; scene?: string | null }) {
   const d = result.jig_diag ?? null;
   const ents = d?.entries ?? [];
-  const def = (pick && result.view3d_jig_esl?.[pick]) || (pick && result.ranking.find((r) => r.id === pick)?.worst_entry_id) || ents[0]?.entry_id || null;
+  const def = (scene && ents.some((x) => x.entry_id === scene) ? scene : null) || (pick && result.view3d_jig_esl?.[pick]) || (pick && result.ranking.find((r) => r.id === pick)?.worst_entry_id) || ents[0]?.entry_id || null;
   const [chosen, setChosen] = useState<string | null>(null);
   const cur = ents.find((x) => x.entry_id === (chosen ?? def)) ?? ents[0] ?? null;
   const [view, setView] = useState<DiagView>("tf");
@@ -998,11 +1000,11 @@ function JigDiag({ studyId, result, lead, pick, addBtn = null }: { studyId: stri
 /** v0.24.1 재현 진단 3D(§6.2) — 출처 행 recon.kind == "sidecar": 결과 키(reconKey) = 엔트리 → 폴더(recon.json·recon.bin).
  *  [목표·재현 | 오차] 두 카드(왼쪽 목표 또는 오차, 오른쪽 재현 — JigDiag 와 같은 배치·변형 공유), 데이터 = 그 폴더 manifest·glb·values + recon.bin(dispOverride) */
 type ReconView = "tf" | "err";
-function ReconDiag({ studyId, result, src, reconKey, lead, pick, addBtn = null }: { studyId: string; result: DoeResultOut; src: LoadSource; reconKey: "view3d_bf_recon" | "view3d_fi_recon"; lead: ReactNode; pick: string | null; addBtn?: ReactNode }) {
+function ReconDiag({ studyId, result, src, reconKey, lead, pick, addBtn = null, scene = null }: { studyId: string; result: DoeResultOut; src: LoadSource; reconKey: "view3d_bf_recon" | "view3d_fi_recon"; lead: ReactNode; pick: string | null; addBtn?: ReactNode; scene?: string | null }) {
   const map = (result[reconKey] ?? null) as Record<string, string> | null;
   const entryIds = Object.keys(map ?? {});
   const labelOf = (e: string) => result.esl?.find((x) => x.entry_id === e)?.label ?? e.slice(0, 8);
-  const worst = pick && src.pairKeys ? result[src.pairKeys.esl]?.[pick] ?? null : null;
+  const worst = scene && entryIds.includes(scene) ? scene : pick && src.pairKeys ? result[src.pairKeys.esl]?.[pick] ?? null : null;
   const [chosen, setChosen] = useState<string | null>(null);
   const eid = (chosen && entryIds.includes(chosen) ? chosen : worst && entryIds.includes(worst) ? worst : entryIds[0]) ?? null;
   const dir = eid && map ? map[eid] ?? null : null;
@@ -1077,7 +1079,7 @@ const euro = (w: string): string => {
   return c >= 0 && c < 11172 && c % 28 !== 0 && c % 28 !== 8 ? "으로" : "로";
 };
 
-function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = null, nodal = null, src = null, tie = null, gridMm = null, onRegen, noView = false }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; gridMm?: number | null; onRegen?: () => void; noView?: boolean }) {
+function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, setScene, kind = null, pairKeys = null, nodal = null, src = null, tie = null, gridMm = null, onRegen, noView = false }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; scene?: string | null; setScene?: (eid: string | null) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; gridMm?: number | null; onRegen?: () => void; noView?: boolean }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
@@ -1093,38 +1095,55 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
   const jigAvail = pairTab && !!jigDir && !!jigRef;
   const [jmode, setJmode] = useState<"design" | "diag">("design");
   const vsync = useViewerSync("study_design");   // v0.24.6 F1↔F2 계약면: 기준·안 두 카드가 시점·변형·층·범례 레벨을 공유
-  const jigMode = jigAvail && (kind === "pair" || jmode === "design");
+  // v0.25.1 낙하 씬(계약 §4.1): scene 은 사이드카가 있는 결과에서만 의미(옛 결과 = null 취급 → 기존 폴더)
+  const srcKey = src?.key ?? null;
+  const scene = result.scene_view ? sceneProp : null;
+  const designView = !pairTab || kind === "pair" || jmode === "design";
+  const autoEid = (pairTab ? jigEsl : did ? result.view3d_esl?.[did] ?? null : null) ?? (did ? result.ranking.find((r) => r.id === did)?.worst_entry_id ?? null : null);
+  const eid = scene ?? autoEid;
+  const sceneOn = designView && hasScenePair(result, srcKey, did, eid);
+  const sceneSel = sceneOn && srcKey && eid ? { src: srcKey, entry: eid } : null;
+  const jigMode = (jigAvail || (sceneOn && pairTab)) && designView;
   const bfMode = jigMode && kind === "pair";
   // v0.20.0(LT-9): 좌측 = 선택 형상 최악 ESL 의 기준 view3d_ref, 없으면(legacy) d000
   const eslId = did ? result.view3d_esl?.[did] ?? null : null;
   const refId = eslId ? result.view3d_ref?.[eslId] ?? null : null;
   const labelOf = (e: string | null | undefined) => (e ? result.esl?.find((x) => x.entry_id === e)?.label ?? e.slice(0, 8) : null);
-  const eslLabel = jigMode ? labelOf(jigEsl) : refId && eslId ? labelOf(eslId) : null;
+  const eslLabel = sceneOn ? labelOf(eid) : jigMode ? labelOf(jigEsl) : refId && eslId ? labelOf(eslId) : null;
   const showFull = !pairTab;
-  const base = useDoeView(studyId, jigMode ? jigRef : showFull ? refId ?? (result.view3d.includes("d000") ? "d000" : null) : null);
-  const cand = useDoeView(studyId, jigMode ? jigDir : showFull ? did : null);
+  const base = useDoeView(studyId, sceneOn ? "d000" : jigMode ? jigRef : showFull ? refId ?? (result.view3d.includes("d000") ? "d000" : null) : null, sceneSel);
+  const cand = useDoeView(studyId, sceneOn ? did : jigMode ? jigDir : showFull ? did : null, sceneSel);
   const [manual, setManual] = useState<Range | null>(null);
   const autoMax = Math.max(base?.manifest?.ranges.u_max ?? 0, cand?.manifest?.ranges.u_max ?? 0);
   const range: Range | null = manual ?? (autoMax > 0 ? { min: 0, max: autoMax } : null);
   const linMode = isLinResult(result) || isCrossMesh(result) || result.rank?.metric_effective != null; // 새 스냅샷 3D = 강체 제거(주 지표 무관)
   const dispLabel = jigMode && pk ? pk.disp : linMode ? "변위 |u| (mm) — 강체 제거" : null;
   // v0.24.1 하중 색(§6.2): [응답 변위 | 하중] — 모든 출처·두 카드 공통. 하중 범위 = 두 manifest 선택 성분 p99(없으면 max) 중 큰 값
-  const [colorSel, setColorSel] = useState<"disp" | "load">("disp");
+  const [colorSel, setColorSel] = useState<ColorSel>("disp");
   const [manualL, setManualL] = useState<Range | null>(null);
   const loadTops = [base?.manifest, cand?.manifest].filter((m): m is View3dOut => !!m).map((m) => loadRangeTop(m.ranges, null, loadUnitOf(m)));
   const rangeL: Range | null = manualL ?? (loadTops.length ? { min: 0, max: Math.max(...loadTops) } : null);
-  const loadColor = colorSel === "load";
-  const opts = (title: string): View3DOptions =>
-    loadColor
+  // v0.25.1 C 기여도·차이(§4.3): 값 파일에 배열이 없으면 비활성(사유 = title), 비활성인 모드가 골라져 있으면 응답 변위로
+  const offReason = (k: ColorSel) => colorDisabled(k, NO_C_TEXT, NO_DC_TEXT, base?.manifest, cand?.manifest);
+  const effSel: ColorSel = offReason(colorSel) ? "disp" : colorSel;
+  const loadColor = effSel === "load";
+  const opts = (title: string, role: "base" | "cand" = "cand"): View3DOptions =>
+    effSel === "c" || effSel === "dc"
+      ? { title: effSel === "dc" && role === "base" ? `${title}${SCENE_TEXT.refCNote}` : title, colorMode: effSel === "dc" && role === "cand" ? "dc" : "c", plan: "study_design", viewerSync: vsync }
+      : loadColor
       ? { title, colorBy: "load" as const, range: rangeL, rangeManual: !!manualL, onRangeChange: setManualL, plan: "study_design", viewerSync: vsync }
       : { title, colorBy: "disp" as const, range, rangeManual: !!manual, onRangeChange: setManual, plan: "study_design", viewerSync: vsync, ...(dispLabel ? { dispLabel } : {}) };
+  const COLOR_TITLE: Record<ColorSel, string> = { disp: "색 = 변위 |u| (mm)", load: "색 = 하중 면압 |Fn|/A (MPa) — 두 그림 같은 범위", c: SCENE_TEXT.cTitle, dc: `${SCENE_TEXT.dcTitle} — ${SCENE_TEXT.cTitle}` };
   const colorSeg = (
     <div className="seg" role="group" aria-label="3D 색" data-testid="v3d-color">
-      {([["disp", "응답 변위"], ["load", "하중"]] as const).map(([k, l]) => (
-        <button key={k} type="button" className={colorSel === k ? "on" : ""} aria-pressed={colorSel === k} data-color={k} title={k === "disp" ? "색 = 변위 |u| (mm)" : "색 = 하중 면압 |Fn|/A (MPa) — 두 그림 같은 범위"} onClick={() => setColorSel(k)}>
-          {l}
-        </button>
-      ))}
+      {COLOR_SEL_BUTTONS.map(({ key: k, label: l }) => {
+        const off = offReason(k);
+        return (
+          <button key={k} type="button" className={effSel === k ? "on" : ""} aria-pressed={effSel === k} data-color={k} disabled={!!off} title={off ?? COLOR_TITLE[k]} onClick={() => setColorSel(k)}>
+            {l}
+          </button>
+        );
+      })}
     </div>
   );
   if (!others.length && !pairTab) return <Empty>3D 비교 자료가 없습니다</Empty>;
@@ -1145,7 +1164,7 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
   // v0.24.1 자료 만들기 버튼은 활성 탭 3D 의 빈 칸 안에만(§6.3 — 다른 출처 버튼을 머리에 두지 않음, D-0.23.3-8 ② 개정)
   const addBtn = src ? <SourceAddButton studyId={studyId} result={result} src={src} onQueued={onRegen} noView={noView} /> : null;
   if (sideRecon && src && jmode === "diag")
-    return <ReconDiag studyId={studyId} result={result} src={src} reconKey={sideRecon.key} pick={did} lead={modeSeg} addBtn={addBtn} />;
+    return <ReconDiag studyId={studyId} result={result} src={src} reconKey={sideRecon.key} pick={did} lead={modeSeg} addBtn={addBtn} scene={scene} />;
   if (jigTab && jmode === "diag")
     return (
       <JigDiag
@@ -1154,8 +1173,27 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
         pick={did}
         lead={modeSeg}
         addBtn={addBtn}
+        scene={scene}
       />
     );
+  // v0.25.1 낙하 씬 선택 칸·씬 요약·자료 없음 안내(§4.1~§4.4). 3D 바는 1줄 유지 — 긴 문구는 한 칸에 모아 말줄임(전문 = title)
+  const choices = sceneChoices(result, srcKey, did);
+  const showSceneSel = !!result.scene_view && !!src && designView && !!setScene;
+  const picked = scene != null;
+  const missingPick = picked && !sceneOn && designView && !!src;
+  const skip = missingPick ? skippedFor(result, srcKey, did, eid) : null;
+  const summary = sceneOn && base?.manifest && cand?.manifest ? sceneSummary({ label: eslLabel ?? "–", base: base.manifest, cand: cand.manifest }) : null;
+  const oldNote = !result.scene_view && !!src && designView && !(pairTab && !jigAvail);
+  const noteText = (() => {
+    if (pairTab && !jigMode) return "";
+    if (bfMode) return `색 = 변위 |u| · 화살표 = ${pk?.load ?? ""} 하중 · ESL ${eslLabel ?? "–"}(${pk?.load ?? ""} 기준 ${picked ? "선택한 씬" : "최악"}), 두 그림 같은 하중·같은 범위`;
+    if (jigMode) return `색 = 변위 |u| · ESL ${eslLabel ?? "–"}(지그 기준 ${picked ? "선택한 씬" : "최악"}), 두 그림 같은 지그·같은 하중·같은 범위`;
+    const b0 = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(${picked ? "선택한 씬" : "선택 형상의 최악"}), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
+    return linMode ? `${b0} · 강체 제거, 해석값(순위와 무관)` : b0;
+  })();
+  const barTitle = [summary, oldNote ? (result.scene_add?.ok ? SCENE_TEXT.oldNote : SCENE_TEXT.oldNoteNoAdd) : null, !pairTab || jigMode ? cond : null, noteText].filter(Boolean).join(" · ");
+  const showAddInBar = !!src && designView && !(pairTab && !jigAvail) && !missingPick && (oldNote ? !!result.scene_add?.ok : false);
+  const sceneBtn = (inBar: boolean) => <SceneAddButton studyId={studyId} result={result} onQueued={onRegen} inBar={inBar} budget={skip?.code === "SCENE_BUDGET"} />;
   return (
     <div className="doe-compare">
       <div className="inline-actions">
@@ -1169,28 +1207,74 @@ function Compare3D({ studyId, result, pick, setPick, kind = null, pairKeys = nul
             </option>
           ))}
         </select>
+        {showSceneSel && (
+          <select aria-label={SCENE_TEXT.selectLabel} data-testid="v3d-scene-select" value={scene ?? ""} onChange={(e) => setScene!(e.target.value || null)}>
+            <option value="">{SCENE_TEXT.autoLabel(labelOf(autoEid))}</option>
+            {choices.map((c) => (
+              <option key={c.entry_id} value={c.entry_id}>
+                {c.label}
+                {c.missing ? SCENE_TEXT.noDataTail : ""}
+              </option>
+            ))}
+          </select>
+        )}
         {modeSeg}
         {colorSeg}
-        {(!pairTab || jigMode) && <span className="small" data-testid="v3d-cond">{cond}</span>}
-        <span className="small muted">{(() => {
-          if (pairTab && !jigMode) return "";
-          if (bfMode) return `색 = 변위 |u| · 화살표 = ${pk?.load ?? ""} 하중 · ESL ${eslLabel ?? "–"}(${pk?.load ?? ""} 기준 최악), 두 그림 같은 하중·같은 범위`;
-          if (jigMode) return `색 = 변위 |u| · ESL ${eslLabel ?? "–"}(지그 기준 최악), 두 그림 같은 지그·같은 하중·같은 범위`;
-          const base = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(선택 형상의 최악), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
-          return linMode ? `${base} · 강체 제거, 해석값(순위와 무관)` : base;
-        })()}</span>
+        <span className="small" data-testid="v3d-barline" title={barTitle} style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+          {summary && <span data-testid="v3d-scene-summary">{summary} · </span>}
+          {oldNote && <span className="muted" data-testid="v3d-scene-oldnote">{result.scene_add?.ok ? SCENE_TEXT.oldNote : SCENE_TEXT.oldNoteNoAdd} · </span>}
+          {(!pairTab || jigMode) && <span data-testid="v3d-cond">{cond}</span>} <span className="muted">{noteText}</span>
+        </span>
+        {showAddInBar && sceneBtn(true)}
       </div>
-      {pairTab && !jigAvail ? (
+      {missingPick ? (
+        <div className="empty" data-testid="v3d-scene-missing" role="status">
+          {skip ? `ESL ${eslLabel ?? "–"} — ${skip.text}` : SCENE_TEXT.missing(eslLabel ?? "–")} {(!skip || skip.code === "SCENE_BUDGET" || skip.code === "SCENE_FAILED") && sceneBtn(false)}
+        </div>
+      ) : pairTab && !jigAvail && !sceneOn ? (
         <Empty>
           {pk?.load ?? ""} 응답 3D 가 없습니다{addBtn && src?.add ? ` — [${src.add.label}]${euro(src.add.label)} 만드세요` : ""} {addBtn}
         </Empty>
       ) : (
         <div className="doe-compare-grid">
-          {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
-          {cand && <View3DCard view={cand} options={opts(`${named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`}${eslLabel ? ` · ESL ${eslLabel}` : ""}`)} />}
+          {base && <View3DCard view={base} options={opts(`${named ? `기준: ${result.baseline.shape?.name ?? "d000"}` : "베이스라인 d000"}${eslLabel ? ` · ESL ${eslLabel}` : ""}`, "base")} />}
+          {cand && <View3DCard view={cand} options={opts(`${named ? `${did} ${nameOf(did ?? "") ?? ""}`.trim() : `안 ${did}`}${eslLabel ? ` · ESL ${eslLabel}` : ""}`, "cand")} />}
         </div>
       )}
     </div>
+  );
+}
+
+/** v0.25.1 [씬 3D 만들기](계약 §4.4) — 결과 scene_add 만 읽음: ok → 버튼(누르면 작업 요청), 아니면 사유 문구(inBar 이면 숨김) */
+function SceneAddButton({ studyId, result, onQueued, inBar, budget = false }: { studyId: string; result: DoeResultOut; onQueued?: () => void; inBar: boolean; budget?: boolean }) {
+  const a = result.scene_add;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!a) return null;
+  if (!a.ok) return inBar ? null : <span className="small muted" data-testid="v3d-scene-add-why">{a.blocked ?? SCENE_TEXT.createHint}</span>;
+  return (
+    <span className="primary-wrap" title={budget ? SCENE_TEXT.budgetHint : undefined}>
+      <button
+        type="button"
+        className="btn small"
+        data-testid="v3d-scene-add"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr(null);
+          try {
+            await doe.addScenes(studyId);
+            onQueued?.();
+          } catch (x) {
+            setErr(errorText(x));
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? SCENE_TEXT.creating : SCENE_TEXT.createLabel}
+      </button>
+      {err && <span className="small error-text"> {err}</span>}
+    </span>
   );
 }
 
@@ -1572,6 +1656,9 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pick, setPick] = useState<string | null>(null);
+  // v0.25.1 낙하 씬(계약 §4.1 — 결과 화면 한 곳, null = 자동). 직접 고른 씬은 안·하중 정의 탭을 바꿔도 유지, 스터디가 바뀌면 자동으로
+  const [scene, setScene] = useState<string | null>(null);
+  useEffect(() => setScene(null), [id]);
   const [vdOpen, setVdOpen] = useState(false);
   const [activeVar, setActiveVar] = useState<string | null>(null);
   const [openDid, setOpenDid] = useState<string | null>(null);
@@ -2075,7 +2162,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} gridMm={gridOf(result.data)?.cell_mm ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} scene={scene} setScene={setScene} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} gridMm={gridOf(result.data)?.cell_mm ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} />
                     </div>
                     <div className="doe-row-tables" data-testid="doe-row-tables">
                       <div className="doe-col-rank">
@@ -2086,6 +2173,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                           entries={entries}
                           selected={pick}
                           onSelect={setPick}
+                          scene={scene}
+                          onScene={r.scene_view ? (eid, did) => { setPick(did); setScene(eid); } : undefined}
                           varNames={varNames}
                           rankCfg={st}
                           shapeRules={s?.inputs.shape_rules ?? null}
@@ -2096,7 +2185,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                       </div>
                       <div className="doe-col-pe">
                         <div className="sub-title">ESL별 개선율</div>
-                        <DoePerEslTable key={`pe-${curTab}`} studyId={id} result={r} entries={entries} pick={pick} view={curSrc && (result.data?.rank_views as Record<string, unknown> | null | undefined)?.[curTab] ? curTab : null} />
+                        <DoePerEslTable key={`pe-${curTab}`} studyId={id} result={r} entries={entries} pick={pick} scene={scene} onScene={r.scene_view ? (eid, did) => { if (did) { setPick(did); setScene(eid); } else setScene(toggleScene(scene, eid)); } : undefined} view={curSrc && (result.data?.rank_views as Record<string, unknown> | null | undefined)?.[curTab] ? curTab : null} />
                       </div>
                     </div>
                     <div className="doe-row-sens" data-testid="doe-row-sens">

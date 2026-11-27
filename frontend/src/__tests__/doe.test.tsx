@@ -403,8 +403,10 @@ describe("ESL별 개선 지표(v0.10.0 §11.4)", () => {
     expect(sortRanking(rows, "geo_mean_improvement").map((r) => r.id)).toEqual(["d001", "d002", "d003", "d004"]);
     expect(sortRanking(rows, "n_worsened").map((r) => r.id)).toEqual(["d002", "d003", "d001", "d004"]);
     expect(sortRanking(rows, "pareto").map((r) => r.id)).toEqual(["d001", "d002", "d004", "d003"]);
-    expect(heatStyle(0.2).background).toMatch(/^rgba\(22, 163, 74/);
-    expect(heatStyle(-0.2).background).toMatch(/^rgba\(220, 38, 38/);
+    // v0.25.1 L10: 개선(C 감소) = 파랑 쪽(R<B) · 악화 = 빨강 쪽(R>B)
+    const rgb = (b: string | undefined) => (b ?? "").match(/\d+/g)!.map(Number);
+    expect(rgb(heatStyle(0.2).background)[0]).toBeLessThan(rgb(heatStyle(0.2).background)[2]);
+    expect(rgb(heatStyle(-0.2).background)[0]).toBeGreaterThan(rgb(heatStyle(-0.2).background)[2]);
     expect(heatStyle(null)).toEqual({});
   });
 

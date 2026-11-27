@@ -1926,6 +1926,18 @@ export interface View3dOut {
   lod_url?: string | null;
   values_url: string;
 }
+/** v0.25.1 씬 manifest 범위(View3dRanges + 선택 키 c·dc — 새 키는 씬 manifest 에만) */
+export interface View3dSceneRanges extends View3dRanges {
+  c?: Record<string, unknown> | null;
+  dc?: Record<string, unknown> | null;
+}
+/** GET /doe/studies/{sid}/view3d-scene/{src}/{did}/{entry_id}/manifest.json — View3dOut + 선택 키 c·dc·pins·ranges.c·ranges.dc(계약 §2.3·§15.1 #1) */
+export interface View3dSceneOut extends View3dOut {
+  c?: Record<string, unknown> | null;
+  dc?: Record<string, unknown> | null;
+  pins?: Record<string, unknown> | null;
+  ranges: View3dSceneRanges;
+}
 
 /** v0.24.3 ④ 검증 출처(esl_validate_sources.md §7.2) — GET /validations/{id}/sources · /cases/{id}/validations/sources */
 export interface ValidationSourceRow {
@@ -3748,7 +3760,39 @@ export interface DoeResultOut {
   view3d_fi_recon?: Record<string, string> | null;
   /** v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2) */
   eval_region?: DoeEvalRegionOut | null;
+  /** v0.25.1 씬별 3D 사이드카 요약(post/scene_view.json — 없으면 null = 옛 결과) */
+  scene_view?: DoeSceneViewOut | null;
+  /** v0.25.1 [씬 3D 만들기] 가능 여부 */
+  scene_add?: DoeSceneAddOut | null;
   warnings: DoeWarning[];
+}
+export interface DoeSceneEntryOut {
+  entry_id: string;
+  kk: number | string;
+}
+export interface DoeSceneSkippedOut {
+  code: string;
+  did?: string | null;
+  entry_id?: string | null;
+  text: string;
+}
+export interface DoeScenePackOut {
+  c_kind?: "fu" | "mixed" | null;
+  designs: Record<string, string[]>;
+  skipped?: DoeSceneSkippedOut[];
+}
+export interface DoeSceneBudgetOut {
+  max_mb: number;
+  est_mb: number;
+}
+export interface DoeSceneViewOut {
+  entries: DoeSceneEntryOut[];
+  packs: Record<string, DoeScenePackOut>;
+  budget?: DoeSceneBudgetOut | null;
+}
+export interface DoeSceneAddOut {
+  ok: boolean;
+  blocked?: string | null;
 }
 /** v0.24.0 평가 영역(보조 지표 umax(평가 영역)) */
 export interface DoeEvalRegionOut {
