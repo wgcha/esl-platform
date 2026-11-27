@@ -187,6 +187,7 @@ def test_select_stage_flow(tmp_path, G):
     gm = U.read_json(str(gd / pio.GRID_MANIFEST))
     assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png" and gm["rules"] == 3
     assert gm["color"]["unit"] == "mm" and gm["color"]["v_max"] > 0
+    assert gm["color"]["map"] == sr.color_meta()["map"] == "diverge"
     assert (gd / "cells" / "nominal" / "thumb.png").is_file()
     nomp = sr.png_rgb((gd / "cells" / "nominal" / "thumb.png").read_bytes())
     assert np.all(nomp[..., 0] == nomp[..., 1])

@@ -215,6 +215,7 @@ def test_install_common_bead_doe_function():
     t = _text(DEPLOY / "install-common.ps1")
     items = re.search(r"\$EslAppItems = @\(([^)]*)\)", t).group(1)
     assert "'resources/doe_messages.json'" in items and "'resources/doe_method_sources.json'" in items
+    assert "'resources/colormaps.json'" in items        # v0.25.1 색 지도 자원(계약 esl_view3d_scene_legend.md §5.8·V-0251-37)
     pk = _fn(t, "Install-EslPackages")
     assert "(Get-EslLockPackages -LockFile $LockFile).Core" in pk and "'-r'" not in pk   # 기본 의존성만(OCP·gmsh 실패가 기존 설치를 막지 않음)
     f = _fn(t, "Install-EslBeadDoe")
@@ -250,6 +251,7 @@ def test_collect_scripts_paicad_and_resources():
     sh = _text(DEPLOY / "collect-offline.sh")
     assert "'resources\\doe_messages.json', 'resources\\doe_method_sources.json'" in ps
     assert "resources/doe_messages.json resources/doe_method_sources.json" in sh
+    assert "'resources\\colormaps.json'" in ps and "resources/colormaps.json" in sh   # v0.25.1(V-0251-37)
     assert "'paicad_wheel.py'), 'collect', '--lock', 'deploy/paicad.lock', '--out-dir', 'dist/bundle/wheels'" in ps
     assert "deploy/paicad_wheel.py collect --lock deploy/paicad.lock --out-dir '$OUTDIR/wheels'" in sh
     for k in ("[switch]$NoPaicad", "[string]$PhysicsaiRepo", "[string]$PaicadWheel"):

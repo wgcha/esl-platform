@@ -63,6 +63,7 @@ def test_bundle_structure_and_runs_from_bundle(tmp_path, fake_frontend):
     need += ["app/VERSION", "app/CHANGELOG.md", "app/BUILD.json"]                  # 버전 표기(계약 esl_p3_ux.md §3)
     need += ["app/resources/scx_messages.json", "deploy/simdash_adapters.lock",       # v0.11.0 SCX 릴레이(V-SR-1)
              "wheels/simdash_adapters-0.1.0-py3-none-any.whl"]
+    need += ["app/resources/colormaps.json"]                                       # v0.25.1 색 지도 자원(V-0251-37)
     for n in need:
         assert n in names, n
     build = json.loads(zipfile.ZipFile(z).read("app/BUILD.json"))
