@@ -269,6 +269,61 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     return out
 
 
+# v0.25.2 결과 개수 줄(esl_tstar_manual_jig_force.md §4.1 — D-0.25.2-14): n_skipped·n_failed 키 → 라벨(한 곳 — 화면 거울
+# frontend pages/doe COUNT_LABELS, API counts 가 없을 때만 씀). 표에 없는 키 = 키 그대로. 순서 = 이 표 순서(표에 없는 키는 뒤, 이름순).
+COUNT_OK = {"key": "ok", "label": "성공"}
+COUNT_LABELS = {"mesh": "메시", "size": "크기/정렬", "solve": "해석", "morph": "모핑",
+                "collision": "스킵(충돌)", "fixed": "스킵(고정)", "geom": "스킵(형상)",
+                "jig": "지그 매핑 제외", "jd": "지그 매핑 제외", "js": "지그 매핑 제외",
+                "bf": "경계력 없음", "fi": "내력 없음", "sm": "강성 지표 없음", "ref": "참고용"}
+
+
+JIG_METRIC_KEYS = ("C_jig", "C_jd", "C_js")       # v0.25.2 §7.2: 지그 출처 순위(참고용 꼬리표 jig_ref 가 붙는 순위 — 전 노드·경계력·내력 아님)
+
+
+def best_order(ranking: list) -> tuple[list, bool]:
+    """최적 후보 순서(v0.25.2 통합 메인 결정 D-0.25.2-INT-10 — 사용자 확인 대기): 참고(jig_ref)가 아닌 행(순위 순) 다음 참고 행(순위 순).
+    순위 번호·정렬은 바꾸지 않는다(최적·산출물 대상만). 둘째 값 = 첫 후보가 참고(= 모든 행이 참고 → 경고 BEST_IS_REF).
+    jig_ref 가 없는 결과(옛 스냅샷·base 모드) = 순위 순서 그대로."""
+    ok = [x["id"] for x in ranking or [] if not x.get("jig_ref")]
+    ref = [x["id"] for x in ranking or [] if x.get("jig_ref")]
+    order = ok + ref
+    return order, bool(order) and not ok
+
+
+def mark_ref(R: dict, metric_key: str, ref_ids) -> dict:
+    """참고용 형상 표시(§3.4·§4.1 — 순위 값·정렬 불변): metric_key 가 지그 출처 순위면 ref_ids 안의 행에 jig_ref True(참일 때만 키),
+    R["n_ref"] = 그 수(> 0 일 때만 키). R 을 바꾸고 돌려준다."""
+    if metric_key in JIG_METRIC_KEYS:
+        refs = set(ref_ids or ())
+        n = 0
+        for x in R.get("ranking") or []:
+            if x.get("id") in refs:
+                x["jig_ref"] = True
+                n += 1
+        if n:
+            R["n_ref"] = n
+    return R
+
+
+def count_items(R: dict) -> list[dict]:
+    """결과 개수(§4.1): [{key, label, n}] = 성공(n_ok, 항상) + n_skipped·n_failed 의 0 이 아닌 모든 키(COUNT_LABELS 순서) +
+    참고용(n_ref > 0 일 때만). 같은 키가 n_skipped·n_failed 양쪽에 있으면 합. 순수 함수(보고서·결과 문서 공용)."""
+    out = [{**COUNT_OK, "n": int(R.get("n_ok") or 0)}]
+    acc: dict[str, int] = {}
+    for blk in ("n_skipped", "n_failed"):
+        for k, v in (R.get(blk) or {}).items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) != 0:
+                acc[str(k)] = acc.get(str(k), 0) + int(v)
+    order = list(COUNT_LABELS)
+    for k in sorted(acc, key=lambda k: (order.index(k) if k in order else len(order), k)):
+        out.append({"key": k, "label": COUNT_LABELS.get(k, k), "n": acc[k]})
+    nr = R.get("n_ref")
+    if isinstance(nr, (int, float)) and not isinstance(nr, bool) and int(nr) > 0:
+        out.append({"key": "ref", "label": COUNT_LABELS["ref"], "n": int(nr)})
+    return out
+
+
 def attach_shapes(R: dict, shapes: dict[str, dict]) -> dict:
     """④ 형상 이름(v0.14.0 SC-D-4): 순위 행·베이스라인에 shape{name, file_name, reference}. shapes = {id: {name, file_name,
     reference, source?}}. 민감도는 변수가 없어 생략(COMPARE_NO_PARAMS — 호출자)."""

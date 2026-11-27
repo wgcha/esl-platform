@@ -354,7 +354,8 @@ def test_openapi_v0248_keys():
     sc = spec["components"]["schemas"]
     assert {"transfer", "grid"} <= set(sc["DoeJigOut"]["properties"])
     assert "grid" in sc["DoeJigMethodOut"]["properties"]
-    assert set(sc["DoeJigGridOut"]["properties"]) == set(GRID)
+    # v0.25.2 JF(§6.3): n_forced_shapes·n_ref_shapes = 스냅샷 tie_force 가 있을 때만 생기는 선택 키(옛 결과 GRID 에는 없음 — 응답에도 없음)
+    assert set(sc["DoeJigGridOut"]["properties"]) == set(GRID) | {"n_forced_shapes", "n_ref_shapes"}
     assert set(sc["DoeJigGridMethodOut"]["properties"]) == set(GRID_M)
     assert set(sc["DoeJigGridConvOut"]["properties"]) == {"cell_mm", "dpi_max", "dumax_max", "mac_min"}
     jp = sc["DoeResultOut"]["properties"]["jig_plan"]

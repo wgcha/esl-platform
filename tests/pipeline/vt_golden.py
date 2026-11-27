@@ -49,6 +49,8 @@ def cfg_text(reenable: bool = True) -> str:
     """골든 설정 = 예시 yaml(float64) + disp_rms_rel_max 0.01 명시(기록 당시 예시 값) + (reenable) v0.24.5 끈 출처 다시 켬."""
     t = _read(os.path.join(ROOT, "config", "esl.example.yaml")).replace("disp_precision: float32",
                                                                          "disp_precision: float64")
+    # v0.25.2 새 선택 키(tstar.manual_ratio_warn — 기본값과 같은 값, 경고 임계만) 줄은 뺀다: 기록 때 설정 그대로(설정 sha256 불변)
+    t = "".join(ln for ln in t.splitlines(keepends=True) if "manual_ratio_warn" not in ln)
     t2, n = re.subn(r"(\n  disp_rms_rel_max: )[0-9.eE+-]+", r"\g<1>0.01", t)
     assert n == 1
     return t2 + (REENABLE_V0244 if reenable else "")

@@ -25,7 +25,7 @@ import { writeProjection, type Projection } from "./projection";
 import { selectionFromPick, sceneSelection } from "./selection";
 import type { SceneApi } from "./sceneApi";
 import { PartStage } from "./part/PartStage";
-import { buildSupportSpecs } from "./supports";
+import { buildSupportSpecs, buildTieMarks } from "./supports";
 import { markLegend } from "./supportMarks";
 import type { LoadView } from "./useLoadView";
 import { fallbackAllowed, sourceRow, type LoadComp } from "./sources";
@@ -368,6 +368,14 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   useEffect(() => {
     if (data && sceneRef.current) sceneRef.current.setSupports(supports);
   }, [data, supports]);
+  // v0.25.2 §4.3 강제 부여 표식(빈 고리 + 선 · ✕) — 지지 표식 층에 딸림. tie_marks 없는 옛 manifest = 표식 없음
+  const tieSpec = useMemo(
+    () => (manifest?.tie_marks?.length ? buildTieMarks(manifest.tie_marks, supports, manifest.bbox.diag, manifest.plate_normal) : null),
+    [manifest, supports],
+  );
+  useEffect(() => {
+    if (data && sceneRef.current?.setTieMarks) sceneRef.current.setTieMarks(tieSpec);
+  }, [data, tieSpec]);
 
   // ---- 선택 강조 (화살표를 다시 만든 뒤에 실행되도록 아래에 선언)
   useEffect(() => {
@@ -378,7 +386,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   }, [data, manifest, arrows, selection, lay.load]);
   // 경계조건 층을 끄면 지지 선택 해제
   useEffect(() => {
-    if (!lay.bc && selection?.kind === "support") view.setSelection(null);
+    if (!lay.bc && (selection?.kind === "support" || selection?.kind === "tie")) view.setSelection(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lay.bc, selection]);
 
@@ -476,7 +484,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   const info = manifest ? infoLine(selection, manifest, data?.vals ?? null, data?.glb.nodeIds ?? null, probe) : null;
   const fref = arrows.reduce((a, r) => Math.max(a, r.mag), 0);
   const failed = !manifest && !!error;
-  const hasBc = (manifest?.supports.length ?? 0) > 0;
+  const hasBc = (manifest?.supports.length ?? 0) > 0 || !!manifest?.tie_marks?.length;
   const hasLoad = arrows.length > 0;
   const compact = hostBox.w > 0 && hostBox.w < COMPACT_PX;
   const legendLabel = fo
@@ -499,7 +507,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   };
   const maxLine = extLine("max");
   const minLine = extLine("min");
-  const bcLegend = manifest && hasBc ? markLegend(manifest.supports, sourceRow(view.src)?.group === "jig") : null;
+  const bcLegend = manifest && hasBc ? markLegend(manifest.supports, sourceRow(view.src)?.group === "jig", manifest.tie_marks, manifest.tie_far_mm) : null;
   // 범례 편집(범례 클릭 팝오버 · ⚙ 팝오버의 `범례` 절 — 같은 컴포넌트). 분류 표시(하중 영역)·직접 준 영역 색은 편집 없음
   const [legendOpen, setLegendOpen] = useState(false);
   const editorProps: LegendEditorProps | null =

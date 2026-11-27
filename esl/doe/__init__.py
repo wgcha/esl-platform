@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 
 from esl.errors import EslError
@@ -85,8 +86,9 @@ DEFAULTS: dict = {
     # v0.25.1 scene(esl_view3d_scene_legend.md §7.1 — D-0.25.1-VL-1·2·5·11, 해시·스냅샷 밖 보기 설정): 3D 비교 대상 × 전 낙하 씬 묶음
     # post/view3d_scene/·post/scene_view.json(enabled 끔 = v0.25.0 파일 집합), max_mb 스터디당 추정 한도(0 = 없음), diff_cell_h_mult 차이
     # 격자 셀 = max(rank.jig_grid.cell_mm, 이 값 × 안 메시 변 길이 중앙값). pydantic BeadDoeView3dSceneCfg·yaml 2개 거울(같은 이름·값)
+    # v0.25.2 jig_force_marks_max(esl_tstar_manual_jig_force.md §4.3 — 해시 밖): 3D 강제·못 붙인 체결부 표식 상한(넘으면 먼 순)
     "view3d": {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1,
-               "recon": True, "scene": {"enabled": True, "max_mb": 1024, "diff_cell_h_mult": 2.0}},
+               "recon": True, "scene": {"enabled": True, "max_mb": 1024, "diff_cell_h_mult": 2.0}, "jig_force_marks_max": 512},
     # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6 — pydantic BeadDoeRankCfg·두 yaml 거울). metric·lin_form·lin_valid·
     # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일).
@@ -117,7 +119,12 @@ DEFAULTS: dict = {
                           "load_resid_warn": 1.0e-6, "noise_floor_min": 0.03,
                           # v0.24.8 fix(D-0.24.8-JG-23): 기준 d000 과 형상의 메시(변 길이 중앙값 h 비·삼각 비율 차)가 다르면 격자 순위
                           # noise_floor 를 noise_floor_mismatch 이상으로(표시 판정 — 해시 밖)
-                          "noise_floor_mismatch": 0.05, "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2}},
+                          "noise_floor_mismatch": 0.05, "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2,
+                          # v0.25.2(esl_tstar_manual_jig_force.md §3.6·§8.1 — pydantic BeadDoeRankJigGridForceCfg·yaml 2개 거울): 체결부 아닌
+                          # 곳 강제 부여(snap 뒤에도 0 인 묶음 — 거리 무관, 해시 안·새 스냅샷만, 옛 스냅샷 = 끔 grid_map.LEGACY_ABSENT),
+                          # max_dist_mm null = 한도 없음(관리자 선택), normal_deg 90 = 법선 조건 없음. 먼 강제 표시 임계(해시 밖 — HASH_EXCLUDE)
+                          "tie_force": {"enabled": True, "max_dist_mm": None, "normal_deg": 90.0},
+                          "tie_force_far_warn_mm": 10.0}},
     # v0.24.4 Case ③ 지그 3방식(esl_jig_case.md §5.1·§11): 워커가 ESL 단계 전에 tie(paicad fixed-scan)를 Case 폴더에 준비.
     # enabled false = 준비 호출 0, timeout_s null = bead_doe.paicad.timeout_s.fixed_scan(pydantic BeadDoeCaseJigCfg·yaml 2개 거울)
     "case_jig": {"enabled": True, "timeout_s": None},
@@ -132,6 +139,9 @@ DEFAULTS: dict = {
     # 없음), holes table → defeature, criteria → quality(기준별 warn·fail, Fail 비율 상한 max_fail_ratio — 경고만).
     "compare": {"enabled": True, "max_shapes": 20, "total_max_mb": 1000, "align_tol": 0.05, "align_deg": 5.0,
                 "min_ready_shapes": 1,   # v0.17.4 C2-D-41 BD_MESH0 성공에 필요한 비교 형상 READY 수(0 = 안 막음)
+                # v0.25.2 판 앞뒷면 두 장 경고(esl_tstar_manual_jig_force.md §4.4 — 해시·스냅샷 밖, 경고만): esl.mesh.double_sheet
+                "double_sheet": {"enabled": True, "gap_min_t": 0.3, "gap_max_t": 3.0, "normal_deg": 15.0, "frac_warn": 0.5,
+                                 "sample_max": 2000},
                 "mesh": {"size_mm": 3.0, "curvature_n": 0, "min_size_factor": 0.8, "extend_from_boundary": 0,
                          "occ_fix_small": 1, "feature_angle": 10.0,
                          "occ_import_labels": 0,   # v0.16.3 C2-D-31 STEP 라벨 안 읽음(수천 면 STEP 가져오기 초선형 시간 회피)
@@ -376,10 +386,71 @@ def settings(cfg: dict | None = None) -> dict:
             return copy.deepcopy(DEFAULTS)
         if not isinstance(sect, dict):
             raise EslError("CONFIG_INVALID", "bead_doe 절은 매핑이어야 함")
-        return check_view3d_scene(check_virtual_bead(_deep_merge(DEFAULTS, sect)))
+        return check_v0252(check_view3d_scene(check_virtual_bead(_deep_merge(DEFAULTS, sect))))
     if any(k in cfg for k in ("opt_run", "commands", "upload", "worker")):
         return copy.deepcopy(DEFAULTS)              # 전체 설정인데 bead_doe 절 없음 → 비활성
-    return check_view3d_scene(check_virtual_bead(_deep_merge(DEFAULTS, cfg)))
+    return check_v0252(check_view3d_scene(check_virtual_bead(_deep_merge(DEFAULTS, cfg))))
+
+
+def _num_ok(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
+
+
+def check_tie_force(tf, where: str = "rank.jig_grid.tie_force") -> dict:
+    """v0.25.2 §3.6 강제 부여 블록 검증(설정·스냅샷 공용 — pydantic BeadDoeRankJigGridForceCfg 와 같은 범위): {enabled bool,
+    max_dist_mm null 또는 > 0, normal_deg (0, 90]}. 빠진 키 = DEFAULTS. 어기면 CONFIG_INVALID. 반환 = 채운 사본."""
+    if not isinstance(tf, dict):
+        raise EslError("CONFIG_INVALID", f"{where} 는 매핑이어야 함 (값 {tf!r})")
+    unk = sorted(set(tf) - set(DEFAULTS["rank"]["jig_grid"]["tie_force"]))
+    if unk:
+        raise EslError("CONFIG_INVALID", f"{where}: 알 수 없는 키 {unk}")
+    out = {**DEFAULTS["rank"]["jig_grid"]["tie_force"], **tf}
+    if not isinstance(out["enabled"], bool):
+        raise EslError("CONFIG_INVALID", f"{where}.enabled 는 true|false (값 {out['enabled']!r})")
+    md = out["max_dist_mm"]
+    if md is not None and not (_num_ok(md) and float(md) > 0):
+        raise EslError("CONFIG_INVALID", f"{where}.max_dist_mm 는 null 또는 > 0 (값 {md!r})")
+    nd = out["normal_deg"]
+    if not (_num_ok(nd) and 0.0 < float(nd) <= 90.0):
+        raise EslError("CONFIG_INVALID", f"{where}.normal_deg ∉ (0, 90] (값 {nd!r})")
+    return {"enabled": out["enabled"], "max_dist_mm": None if md is None else float(md), "normal_deg": float(nd)}
+
+
+DOUBLE_SHEET_RANGES = {"gap_min_t": (0.0, None), "gap_max_t": (0.0, None), "normal_deg": (0.0, 90.0), "frac_warn": (0.0, 1.0)}
+
+
+def check_v0252(st: dict) -> dict:
+    """v0.25.2 §8.1 설정 범위: rank.jig_grid.tie_force(check_tie_force)·tie_force_far_warn_mm > 0, view3d.jig_force_marks_max 정수 ≥ 1,
+    compare.double_sheet{enabled bool, gap_min_t > 0, gap_max_t > gap_min_t, normal_deg (0, 90), frac_warn (0, 1], sample_max 정수 ≥ 1}.
+    어기면 CONFIG_INVALID. 블록이 없으면(옛 설정 사본) 그대로."""
+    if not isinstance(st, dict):
+        return st
+    jg = (st.get("rank") or {}).get("jig_grid") if isinstance(st.get("rank"), dict) else None
+    if isinstance(jg, dict):
+        if "tie_force" in jg:
+            jg["tie_force"] = check_tie_force(jg["tie_force"])
+        fw = jg.get("tie_force_far_warn_mm")
+        if "tie_force_far_warn_mm" in jg and not (_num_ok(fw) and float(fw) > 0):
+            raise EslError("CONFIG_INVALID", f"rank.jig_grid.tie_force_far_warn_mm > 0 (값 {fw!r})")
+    v3 = st.get("view3d")
+    if isinstance(v3, dict) and "jig_force_marks_max" in v3:
+        mm = v3["jig_force_marks_max"]
+        if isinstance(mm, bool) or not isinstance(mm, int) or mm < 1:
+            raise EslError("CONFIG_INVALID", f"view3d.jig_force_marks_max 는 정수 ≥ 1 (값 {mm!r})")
+    ds = (st.get("compare") or {}).get("double_sheet") if isinstance(st.get("compare"), dict) else None
+    if ds is not None:
+        if not isinstance(ds, dict) or not isinstance(ds.get("enabled"), bool):
+            raise EslError("CONFIG_INVALID", "compare.double_sheet.enabled 는 true|false")
+        for k, (lo, hi) in DOUBLE_SHEET_RANGES.items():
+            v = ds.get(k)
+            if not _num_ok(v) or float(v) <= lo or (hi is not None and float(v) > hi) or (k == "normal_deg" and float(v) >= 90.0):
+                raise EslError("CONFIG_INVALID", f"compare.double_sheet.{k} 범위 밖 (값 {v!r})")
+        if float(ds["gap_max_t"]) <= float(ds["gap_min_t"]):
+            raise EslError("CONFIG_INVALID", "compare.double_sheet.gap_max_t ≤ gap_min_t")
+        sm = ds.get("sample_max")
+        if isinstance(sm, bool) or not isinstance(sm, int) or sm < 1:
+            raise EslError("CONFIG_INVALID", f"compare.double_sheet.sample_max 는 정수 ≥ 1 (값 {sm!r})")
+    return st
 
 
 # v0.25.1 view3d.scene 범위(계약 §7.1 표 — pydantic BeadDoeView3dSceneCfg 와 같은 값): 키 → (하한, 상한)

@@ -230,6 +230,28 @@ def scan_reach(time, v, centroids, top_n, top_k, min_dist, rtol, time_window=(No
     return {"tstar": dict(t0), "candidates": cands, "hotspots": hots, "history": {"time": time.copy(), "m": m}}
 
 
+# ====================================================================== 직접 고른 t* (esl_tstar_manual_jig_force.md §2.3, D-0.25.2-2)
+def point_at(series, frame_pos: int, exclude_mask=None) -> dict:
+    """그 프레임(이력 위치 frame_pos)에서 지표가 가장 큰 H 요소(동률 = 작은 인덱스, exclude_mask (H,) 참인 요소 뺌, NaN = −inf).
+    series (F,H) = 자동 t* 와 같은 계열(누적 씬 = 누적 계열). 반환 {elem_pos, value}. 남는 요소가 없으면 INPUT_INVALID."""
+    v = np.asarray(series, dtype=np.float64)
+    if v.ndim != 2 or v.shape[0] == 0 or v.shape[1] == 0:
+        raise EslError("INPUT_INVALID", "series 는 (F,H), F·H ≥ 1")
+    f = int(frame_pos)
+    if not 0 <= f < v.shape[0]:
+        raise EslError("INPUT_INVALID", f"frame_pos {f} ∉ [0, {v.shape[0]})")
+    row = np.where(np.isfinite(v[f]), v[f], -np.inf)
+    if exclude_mask is not None:
+        ex = np.asarray(exclude_mask, dtype=bool)
+        if ex.shape != (v.shape[1],):
+            raise EslError("INPUT_INVALID", "exclude_mask 는 (H,)")
+        row = np.where(ex, -np.inf, row)
+    if not np.isfinite(row).any():
+        raise EslError("INPUT_INVALID", "제외 후 남는 이력 요소가 없음")
+    e = int(np.argmax(row))                       # 동률 = 첫(작은) 인덱스
+    return {"elem_pos": e, "value": float(row[e])}
+
+
 # ====================================================================== 누적 씬 (esl_cumulative_input.md §6.4, CI-D-9)
 def scan_reach_cum(time, cum, inc, centroids, top_n, top_k, min_dist, rtol, time_window=(None, None),
                    exclude_mask=None, min_increment: float = 1e-5):

@@ -2187,6 +2187,11 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
            "view3d": [str(v) for v in r.get("view3d") or [] if v], "best": best, "noise_floor": r.get("noise_floor"),
            "ratio_tol": r.get("ratio_tol"), "per_esl_inline": bool(r.get("per_esl_inline")),
            "esl": [e for e in r.get("esl") or [] if isinstance(e, dict)], "sort": sort, "warnings": warns}
+    # v0.25.2 DS(§4.1·§6.3): 참고용 형상 수(> 0 일 때만)·결과 개수 줄 counts(새 결과만) — 코어 값 그대로(없으면 키 없음)
+    if isinstance(r.get("n_ref"), int) and not isinstance(r.get("n_ref"), bool) and r["n_ref"] > 0:
+        out["n_ref"] = int(r["n_ref"])
+    if isinstance(r.get("counts"), list):
+        out["counts"] = [c_ for c_ in r["counts"] if isinstance(c_, dict)]
     # v0.16.1 select(SR-D-11): 경고 없는 최상위 안(코어 결과 summary.best_clean — 있을 때만). 순위 행 warn 은 행 그대로
     rs = r.get("summary") if isinstance(r.get("summary"), dict) else {}
     if "best_clean" in rs or "best_clean" in r:

@@ -138,6 +138,10 @@ def _sec_inputs(c: _Case) -> str:
                                        f"{sel.get('metric', '—')} · {sel.get('source', '—')}"),
         ("설정 sha256", H.Raw(f"<code>{H.esc(cfg.get('sha256', '—'))}</code>")),
     ]
+    tm = (c.summ or {}).get("tstar_manual")
+    if isinstance(tm, dict):                             # v0.25.2 직접 고른 t*(esl_tstar_manual_jig_force.md §2.5 — 그때만 1줄)
+        txt = next((n.get("text") for n in tm.get("notes") or [] if n.get("code") == "TSTAR_MANUAL"), None)
+        pairs.insert(13, ("직접 고른 t*", str(txt or "—").split(": ", 1)[-1]))
     from esl.io import strain_source_of
     if strain_source_of(fr) != "max_strain":            # 대체일 때만 표시(source 1 은 표시 없음, §7)
         pairs.insert(12, ("변형률 결과", strain_source_text(fr)))

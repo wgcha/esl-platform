@@ -216,6 +216,79 @@ def bforce_no_types_before(extract_dir: str, names: dict) -> dict | None:
     return _wrap(_attr("esl.io.bforce_ondemand", "no_types_before"), extract_dir, names)
 
 
+# ---------------------------------------------------------------- v0.25.2 TM 직접 고른 t* — D 밖 프레임 채움(계약 esl_tstar_manual_jig_force.md §2.3·§2.4)
+# 코어 접점 = esl.io.frame_fill(DECIDE·Facts·merge·기록 — 워커·백엔드 공용 독립 모듈)·esl.pipeline.frame_point. 판정·사실 모으기는
+# worker/esl_worker/frame_fill.py 가 하고, 코어 호출은 이 래퍼만 거친다(코어 오류 = CoreError).
+def frame_point(out_dir: str, cfg: dict | None, metric: str, frame_index: int) -> dict:
+    """직접 고른 t* 의 값(§2.3): {frame_index, time, elem_id, value, auto{…}, ratio, rel, in_D, have}. 오류 FRAME_NOT_FOUND·PREREQUISITE_MISSING."""
+    return _wrap(_attr("esl.pipeline", "frame_point"), out_dir, cfg or {}, metric, int(frame_index))
+
+
+def frame_fill_facts_cls():
+    """esl.io.frame_fill.Facts 클래스."""
+    return _attr("esl.io.frame_fill", "Facts")
+
+
+def frame_fill_decide(facts) -> dict:
+    """판정 표 DECIDE(§2.4): {row, action: have|block|fill, code, text}."""
+    return _wrap(_attr("esl.io.frame_fill", "decide"), facts)
+
+
+def frame_fill_extract_facts(extract_dir: str, frame: int) -> dict:
+    """01_extract 로 알 수 있는 사실 {have, dump_mode}."""
+    return _wrap(_attr("esl.io.frame_fill", "extract_facts"), extract_dir, int(frame))
+
+
+def frame_fill_frames_have(extract_dir: str) -> list[int]:
+    """disp.npz·strain_frames.npz 둘 다에 있는 프레임(API frames_have)."""
+    return [int(x) for x in _wrap(_attr("esl.io.frame_fill", "frames_have"), extract_dir)]
+
+
+def frame_fill_request_keys(meta: dict, frame: int) -> dict:
+    """TCL 채움 요청 키 {fr_only, fr_frames, strain_sources}."""
+    return _wrap(_attr("esl.io.frame_fill", "request_keys"), meta, int(frame))
+
+
+def frame_fill_merge(extract_dir: str, fill_out: str, frame: int, *, job_id: str | None = None) -> dict:
+    """채움 출력 → 01_extract 병합 {frame, time, added}. 오류 FRAME_FILL_OUTPUT·FRAME_FILL_MISMATCH·FRAME_FILL_MERGE."""
+    return _wrap(_attr("esl.io.frame_fill", "merge"), extract_dir, fill_out, int(frame), job_id=job_id)
+
+
+def frame_fill_record(extract_dir: str, attempt: dict) -> None:
+    """채움 시도 1건을 01_extract/frame_fill.json 에 누적."""
+    return _wrap(_attr("esl.io.frame_fill", "record"), extract_dir, attempt)
+
+
+def frame_fill_last_attempt(extract_dir: str, frame: int, job_id: str | None = None) -> dict | None:
+    return _wrap(_attr("esl.io.frame_fill", "last_attempt"), extract_dir, int(frame), job_id)
+
+
+def frame_fill_entry(extract_dir: str, frame: int) -> dict | None:
+    """frames.json frames_fill 에서 그 프레임 항목(채운 프레임인지)."""
+    return _wrap(_attr("esl.io.frame_fill", "fill_entry"), extract_dir, int(frame))
+
+
+def frame_fill_read_meta(extract_dir: str) -> dict:
+    """01_extract/frames.json(요청 키 request_keys 의 meta). 없거나 읽을 수 없으면 CoreError(PREREQUISITE_MISSING)."""
+    import json as _json
+    import os as _os
+
+    p = _os.path.join(extract_dir, "frames.json")
+    try:
+        with open(p, encoding="utf-8-sig") as fh:
+            d = _json.load(fh)
+    except (OSError, ValueError):
+        raise CoreError("PREREQUISITE_MISSING", "01_extract/frames.json 을 읽을 수 없습니다") from None
+    if not isinstance(d, dict):
+        raise CoreError("PREREQUISITE_MISSING", "01_extract/frames.json 형식 오류")
+    return d
+
+
+def tstar_manual_settings(core_settings: dict | None = None) -> dict:
+    """tstar.manual_ratio_warn(v0.25.2 §2.5 — 코어 선택 키, 없으면 코어 기본값)."""
+    return _wrap(_attr("esl.config", "tstar_manual_settings"), core_settings or {})
+
+
 def dump_settings(core_settings: dict | None = None) -> dict:
     """extract.dump_keep·dump_max_bytes(기본값 채움)."""
     return _wrap(_attr("esl.config", "dump_settings"), core_settings or {})

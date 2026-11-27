@@ -169,7 +169,10 @@ def test_defaults_keys_match_contract():
                                             "sample_nbr": 1, "sample_normal_deg": 45.0, "area_ratio_warn": 2.0,
                                             "conv_warn": 0.05, "frame_shift_warn": 0.5, "load_resid_warn": 1.0e-6,
                                             "noise_floor_min": 0.03, "noise_floor_mismatch": 0.05,
-                                            "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2}   # v0.24.8 fix JG-23
+                                            "mesh_h_ratio_warn": 1.25, "mesh_tri_frac_warn": 0.2,   # v0.24.8 fix JG-23
+                                            # v0.25.2 강제 부여(esl_tstar_manual_jig_force.md §3.6·§8.1)
+                                            "tie_force": {"enabled": True, "max_dist_mm": None, "normal_deg": 90.0},
+                                            "tie_force_far_warn_mm": 10.0}
     assert set(gm.HASH_EXCLUDE) <= set(DEFAULTS["rank"]["jig_grid"])
     assert stg._jg_cfg(_ctx(grid=True))["cell_mm"] == 3.0
 

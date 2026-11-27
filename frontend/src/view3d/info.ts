@@ -3,7 +3,7 @@ import type { View3dOut } from "../api/types";
 import { fmtQuant, type DecodedValues } from "./values";
 import type { Selection } from "./selection";
 import { supportSymbol } from "./supports";
-import { markProbe } from "./supportMarks";
+import { markProbe, tieProbe } from "./supportMarks";
 import { f3 } from "../lib/colormap";
 
 const fmt = (v: number, d = 1) => (Number.isFinite(v) ? v.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: d }) : "–");
@@ -30,6 +30,10 @@ export function infoLine(sel: Selection, manifest: View3dOut, vals: DecodedValue
   if (sel.kind === "support") {
     const s = manifest.supports[sel.index];
     return s ? markProbe(s) ?? `지지 ${s.node_id} · dof ${supportSymbol(s.dof).label}` : null;
+  }
+  if (sel.kind === "tie") {
+    const m = manifest.tie_marks?.[sel.index];
+    return m ? tieProbe(m) : null;
   }
   if (sel.kind === "arrow") {
     const row = manifest.top.find((r) => String(r.rank) === sel.key);

@@ -11,13 +11,17 @@ import type { DoeParam, DoeResultOut, DoeShapeRules, EntryOut } from "../api/typ
 import { entryKey } from "./ModeSelect";
 import { shortName, valuesText } from "./DoeThumbGrid";
 import { Empty } from "./ui";
-import { GRID_TEXT, loadFollowTail, JIG_CODE_TEXT, JIG_SOURCE_NAME, SM_CODE_TEXT, VIEW_METRIC_TEXT, evalRegionText, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
+import { GRID_TEXT, loadFollowTail, JIG_CODE_TEXT, JIG_SOURCE_NAME, tieForcedText, SM_CODE_TEXT, VIEW_METRIC_TEXT, evalRegionText, isCrossMesh, isJigResult, isLinResult, jigPoorText, rankThresholds, smFallbackText, smLinRangeText } from "../api/doe";
 import { ShapeNameCell } from "./DoeInputs";
 
 /** v0.21.0 메시 품질 미달 행(mq 키 또는 warn 코드 — 새 스냅샷 ④ 만) */
 const isMq = (r: { mq?: unknown; warn?: string[] | null }) => !!r.mq || !!r.warn?.includes("MESH_QUALITY_RANK");
 
-export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg, shapeRules, perEslNote, resultNote, grid = null, scene = null, onScene }: {
+export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg, shapeRules, perEslNote, resultNote, grid = null, scene = null, onScene, empty, refTag = true }: {
+  /** v0.25.2 §4.2 순위가 0 행일 때 빈 문구 자리에 넣는 안내(다른 하중 출처 순위로 가는 링크 포함). 없으면 "순위가 없습니다" */
+  empty?: ReactNode;
+  /** v0.25.2 §7.2 지그 출처 탭에서만 참고용 꼬리표("참고")를 그린다(전 노드·경계력·내력 탭은 지그 매핑과 무관). 기본 = 그림 */
+  refTag?: boolean;
   /** v0.25.1 선택된 낙하 씬(entry_id, null = 자동) — 그 씬이 최악 ESL 인 칸 강조 */
   scene?: string | null;
   /** v0.25.1 최악 ESL 칸 클릭 = 그 안 + 그 씬(칸은 버튼 — Enter). 없으면 클릭 동작 없음(옛 결과) */
@@ -84,7 +88,7 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
   const cols = 14 + (evOn ? 1 : 0) + varNames.length + (named ? 1 : 0) + (lin ? (aux ? 3 : -2) : auxLin && aux ? 3 : 0) + (aux ? jigAux.length : 0);
   const b = result.baseline;
-  if (!result.ranking.length && !(result.excluded ?? []).length) return <Empty>순위가 없습니다</Empty>;
+  if (!result.ranking.length && !(result.excluded ?? []).length) return <Empty>{empty ?? "순위가 없습니다"}</Empty>;
   const rows = sortRanking(result.ranking, sortKey);
   const def = (k: string) => METRIC_DEFS.find((d) => d.key === k)?.text;
   /** 정렬 가능한 열 머리(버튼 — 현재 정렬 열은 aria-sort) */
@@ -227,6 +231,14 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                 {named && (
                   <th scope="row" className="doe-name-col" title={r.shape?.file_name ?? undefined}>
                     <ShapeNameCell name={r.shape?.name ?? "–"} shape={r.shape} testId={`rank-method-${r.id}`} />
+                    {refTag && r.jig_ref && (
+                      <>
+                        {" "}
+                        <span className="badge neutral ref-tag" data-testid={`rank-ref-${r.id}`} title={tieForcedText(result.warnings, r.id)}>
+                          참고
+                        </span>
+                      </>
+                    )}
                   </th>
                 )}
                 <td className="num mono">

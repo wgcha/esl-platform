@@ -699,18 +699,118 @@ def stage_extract(ctx: Context) -> dict:
 
 
 # ====================================================================== S2 tstar
-def _select_frame(tj: dict, frame: int | None) -> dict:
-    """자동 t* 또는 --frame (후보 프레임 D 안에서만)."""
+MANUAL_REL = ("before", "at", "after")
+
+
+def _point(ctx: Context, model: StoredModel, metric: str, frame_index: int, auto: dict) -> dict:
+    """직접 고른 t* 의 값(계약 esl_tstar_manual_jig_force.md §2.3 — 코어 한 곳): history.npz 의 그 프레임에서 지표(자동 t* 와 같은
+    계열 — 누적 씬 = 누적 계열, 이번 증가 없는 요소·tstar.exclude_elem_ids 뺌) 최대 H 요소. auto = {frame_index, time, value}."""
+    from esl.io import frame_fill as _ff
+    if metric not in METRICS:
+        raise EslError("INPUT_INVALID", f"metric 은 {list(METRICS)} 중 하나 (값 {metric!r})")
+    meta = _frames_meta(ctx)
+    hz, hp = _history(ctx, model)
+    fidx = hz["frame_index"].astype(np.int64)
+    hit = np.flatnonzero(fidx == int(frame_index))
+    if hit.size != 1:
+        raise EslError("FRAME_NOT_FOUND", f"h3d 에 없는 프레임입니다(frame {frame_index} — history.npz 프레임 {fidx.size}개)")
+    f = int(hit[0])
+    series = _metric_series(hz, _shear_factor(ctx, meta), _source(meta))[metric]
+    ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
+    cst = _cum_state(ctx, model)
+    if cst is not None:                            # 누적 씬: 값 = 누적 계열, 이번 증가 없는 요소(이전 손상만) 제외 — 자동과 같은 규칙
+        cum_v, inc_v = _cum.series(series, cst["prev"][hp], cst["modes"][metric])
+        no_inc = ~(np.where(np.isfinite(inc_v[-1]), inc_v[-1], -np.inf) > cst["min_increment"])
+        ex = no_inc if ex is None else (ex | no_inc)
+        series = cum_v
+    pt = tstar.point_at(series, f, ex)
+    fi = int(frame_index)
+    af = int(auto["frame_index"])
+    av = auto.get("value")
+    ratio = float(pt["value"]) / float(av) if av is not None and float(av) > 0 else None
+    D = {int(x) for x in meta.get("frames_D") or []}
+    return {"frame_index": fi, "time": float(hz["time"][f]), "elem_id": int(hz["elem_id"][pt["elem_pos"]]),
+            "value": float(pt["value"]),
+            "auto": {"frame_index": af, "time": float(auto["time"]), "value": None if av is None else float(av)},
+            "ratio": ratio, "rel": MANUAL_REL[0] if fi < af else (MANUAL_REL[1] if fi == af else MANUAL_REL[2]),
+            "in_D": fi in D, "have": _ff.have_frame(ctx.p(D_EXTRACT), fi)}
+
+
+def frame_point(out_dir: str, cfg: dict | None, metric: str, frame_index: int) -> dict:
+    """직접 고른 t* 의 값(계약 §2.3 — 백엔드 확정 저장·코어 _select_frame·보고서 공용). out_dir = Case 출력 폴더(01_extract·
+    02_tstar/tstar.json 필요), cfg = Case 코어 설정(tstar.exclude_elem_ids·cumulative — 없으면 제외 없음), metric = 곡선 지표.
+    반환 {frame_index, time, elem_id, value, auto{frame_index, time, value}, ratio(= value/자동 값 | None), rel(before|at|after),
+    in_D(frames_D 포함), have(disp.npz·strain_frames.npz 에 있음)}. 자동 = tstar.json metrics[metric].tstar. 오류: FRAME_NOT_FOUND
+    (history.npz 에 없는 프레임), PREREQUISITE_MISSING(추출·t* 산출물 없음), INPUT_INVALID(metric)."""
+    out_dir = os.path.abspath(os.fspath(out_dir))
+    _require(out_dir, [f"{D_EXTRACT}/history.npz", f"{D_EXTRACT}/frames.json", f"{D_TSTAR}/tstar.json"])
+    c = dict(cfg or {})
+    c["tstar"] = {"exclude_elem_ids": [], **(c.get("tstar") or {})}
+    ctx = Context(cfg=c, config_path="", rad="", results="", out=out_dir, ts="", frame=None, support_nodes=None,
+                  echo=lambda s: None, record={})
+    tj = _read_json(ctx.p(D_TSTAR, "tstar.json"))
+    rec = ((tj.get("metrics") or {}).get(metric) or {}).get("tstar")
+    if not isinstance(rec, dict):
+        raise EslError("INPUT_INVALID", f"tstar.json 에 {metric} 자동 t* 가 없음")
+    return _point(ctx, load_model(out_dir), metric, int(frame_index), rec)
+
+
+def _select_frame(tj: dict, frame: int | None, ctx: Context | None = None, model: StoredModel | None = None) -> dict:
+    """자동 t* 또는 --frame. 후보 ∧ D = 지금 레코드(바이트 불변). 그 밖은 disp.npz·strain_frames.npz 에 있으면(D ∪ 채운 프레임)
+    직접 고른 t*(계약 esl_tstar_manual_jig_force.md §2.3 — _point 값 + source user + manual{…}), 없으면 FRAME_NOT_CANDIDATE."""
     if frame is None:
         return dict(tj["selected"])
+    f = int(frame)
     D = {int(x["frame_index"]): x for x in tj["frames_D"]}
-    if int(frame) not in D:
+    c = next((c for c in tj["candidates"] if int(c["frame_index"]) == f), None)
+    if f in D and c is not None:
+        return {"frame_index": f, "time": float(D[f]["time"]),
+                "elem_id": c["elem_id"], "value": c["value"],
+                "metric": tj["metric"], "source": "user"}
+    from esl.io import frame_fill as _ff
+    if ctx is None or not _ff.have_frame(ctx.p(D_EXTRACT), f):
+        have = _ff.frames_have(ctx.p(D_EXTRACT)) if ctx is not None else sorted(D)
         raise EslError("FRAME_NOT_CANDIDATE",
-                       f"frame {frame} 은 후보 프레임 D 가 아님 (D: {sorted(D)} — 변위·변형률은 D 프레임에만 있음)")
-    c = next((c for c in tj["candidates"] if int(c["frame_index"]) == int(frame)), None)
-    return {"frame_index": int(frame), "time": float(D[int(frame)]["time"]),
-            "elem_id": c["elem_id"] if c else None, "value": c["value"] if c else None,
-            "metric": tj["metric"], "source": "user"}
+                       f"frame {f} 은 변위가 추출되지 않은 프레임 — 채움 필요 (변위 있는 프레임: {have})")
+    pt = _point(ctx, model if model is not None else load_model(ctx.out), tj["metric"], f, tj["auto"])
+    return {"frame_index": f, "time": pt["time"], "elem_id": pt["elem_id"], "value": pt["value"],
+            "metric": tj["metric"], "source": "user",
+            "manual": {"auto_frame": pt["auto"]["frame_index"], "auto_time": pt["auto"]["time"],
+                       "auto_value": pt["auto"]["value"], "ratio": pt["ratio"], "rel": pt["rel"], "in_D": pt["in_D"],
+                       "have": pt["have"]}}
+
+
+def _pct(r) -> str:
+    return "–" if r is None else f"{float(r) * 100:.1f}"
+
+
+def _manual_notes(ctx: Context, sel: dict, hs: list) -> dict:
+    """직접 고른 t* 요약(§2.5 — esl_summary.json tstar_manual): {auto_frame, auto_time, auto_value, ratio, rel, in_D, filled,
+    notes[{code, level, text}]}. 문구 원본 = resources/doe_messages.json(esl.io.messages). 경고 수준은 ctx.warnings 에도."""
+    from esl.io import frame_fill as _ff
+    from esl.io import messages as _msg
+    m = sel["manual"]
+    f = int(sel["frame_index"])
+    warn = float(_config.tstar_manual_settings(ctx.cfg)["manual_ratio_warn"])
+    ratio = m.get("ratio")
+    kw = {"f": f, "t": f"{float(sel['time']):.6g}", "fa": m.get("auto_frame"),
+          "ta": "–" if m.get("auto_time") is None else f"{float(m['auto_time']):.6g}", "pct": _pct(ratio)}
+    notes = [{"code": "TSTAR_MANUAL", "level": "info"}]
+    if ratio is not None and float(ratio) < warn:
+        notes.append({"code": "TSTAR_MANUAL_LOW", "level": "warning"})
+    if m.get("rel") == "after":
+        notes.append({"code": "TSTAR_MANUAL_AFTER", "level": "info"})
+    if not any(h.get("compared") for h in hs):
+        notes.append({"code": "TSTAR_MANUAL_NO_RISING", "level": "info"})
+    for n in notes:
+        n["text"] = _msg.text(n["code"], **kw)
+        if n["level"] == "warning":
+            ctx.warnings.append(n["text"])
+        else:
+            ctx.echo(f"[esl] {n['text']}")
+    return {"auto_frame": m.get("auto_frame"), "auto_time": m.get("auto_time"), "auto_value": m.get("auto_value"),
+            "ratio": ratio, "rel": m.get("rel"), "in_D": bool(m.get("in_D")),
+            "filled": _ff.fill_entry(ctx.p(D_EXTRACT), f) is not None, "ratio_warn": warn, "notes": notes}
 
 
 def stage_tstar(ctx: Context) -> dict:
@@ -814,7 +914,7 @@ def stage_tstar(ctx: Context) -> dict:
             if "m_inc" in rec["history"]:
                 tj["metrics"][m]["history"]["m_inc"] = rec["history"]["m_inc"]
     tj["selected"] = auto
-    tj["selected"] = _select_frame(tj, ctx.frame)
+    tj["selected"] = _select_frame(tj, ctx.frame, ctx, model)
 
     d = ctx.fresh_dir(D_TSTAR)
     _write_json(ctx.f(d, "tstar.json"), tj)
@@ -1023,7 +1123,7 @@ def stage_esl(ctx: Context) -> dict:
     _check_inputs_unchanged(ctx)
     model = load_model(ctx.out)
     tj = _read_json(ctx.p(D_TSTAR, "tstar.json"))
-    sel = _select_frame(tj, ctx.frame)
+    sel = _select_frame(tj, ctx.frame, ctx, model)
     dz = _load_npz(ctx.p(D_EXTRACT, "disp.npz"))
     if not np.array_equal(dz["node_id"], model.node_id):
         raise EslError("ID_MISMATCH", "disp.npz node_id 가 model.npz 와 다름")
@@ -1101,6 +1201,8 @@ def stage_esl(ctx: Context) -> dict:
             "drill_factor": ctx.cfg["solver"]["drill_factor"], "backend": ctx.cfg["solver"]["backend"],
             "solver": solver_stats(sm), "strain_source": _source(_frames_meta(ctx)), "tag": ctx.tag,
             "created_at": _utcnow()}
+    if sel.get("manual") is not None:                  # v0.25.2 직접 고른 t*(§2.5 — 그때만 키)
+        summ["tstar_manual"] = _manual_notes(ctx, sel, hs)
     _write_json(ctx.f(d, "esl_summary.json"), summ)
     ctx.echo(f"[esl] frame {sel['frame_index']}: 강체회전 {kinfo['rot_deg']:.2f}°, ΣF=|{np.linalg.norm(sumF):.3e}|, "
              f"Σ|F|={sum_abs:.3e}, 평형 오차 {eq_rel:.2e} (모멘트 {mom_rel:.2e}), "
@@ -1113,6 +1215,8 @@ def stage_esl(ctx: Context) -> dict:
     bshort = _bforce_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F, plastic)   # v0.24.0 경계력 ESL(기존 파일 불변 — 새 파일만)
     fshort = _fint_esl(ctx, model, d, sel, u, u_rel, R, sup, sm, F, plastic)     # v0.24.0 내력 ESL(esl_fint.md §3)
     jshort = _jig_esl(ctx, model, d, sel, u_rel, sup, sm)                         # v0.24.4 지그 ESL 3방식(esl_jig_case.md §5.2)
+    if "tstar_manual" in summ:                         # v0.25.2: 직접 고른 t* 요약(그때만 키)
+        jshort = {**jshort, "tstar_manual": {k: v for k, v in summ["tstar_manual"].items() if k != "notes"}}
     return {**jshort, "bforce": bshort, "fint": fshort, "plastic": plastic, "noise": noise_short, "frame": sel, "rot_deg": kinfo["rot_deg"], "rms_def": kinfo["rms_def"], "max_def": kinfo["max_def"],
             "sum_f_norm": float(np.linalg.norm(sumF)), "sum_abs_f": sum_abs, "equilibrium_rel": eq_rel,
             "moment_rel": mom_rel, "supports": sup_rec["supports"], "support_mode": mode,

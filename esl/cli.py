@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--results", required=True, help="TCL 출력 CSV 폴더")
     r.add_argument("--out", required=True, help="Case 출력 폴더")
     r.add_argument("--stage", default="all", choices=list(STAGES) + ["all"])
-    r.add_argument("--frame", type=int, default=None, help="t* 수동 지정(frame_index, 후보 안에서만)")
+    r.add_argument("--frame", type=int, default=None, help="t* 수동 지정(frame_index — 변위가 있는 프레임)")
     r.add_argument("--support-nodes", default=None, help="3-2-1 후보 노드 ID (콤마, 3개 이상)")
     r.add_argument("--export-targets", default=None, help="내보낼 대상(콤마): radioss_inc, fem, csv (기본 전부)")
     return p

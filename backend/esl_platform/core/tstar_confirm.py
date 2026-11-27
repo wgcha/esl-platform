@@ -31,6 +31,25 @@ def select_candidate(info: dict[str, Any], metric: str, frame_index: int) -> dic
     return hit
 
 
+def is_candidate(info: dict[str, Any], metric: str, frame_index: int) -> bool:
+    """후보 표에 있고 변위가 있는 후보(in_D 아님 아님)인가 — 참이면 지금 경로(select_candidate) 그대로(저장 값 바이트 불변)."""
+    m = info["metrics"].get(metric)
+    hit = next((c for c in (m or {}).get("candidates", []) if c["frame_index"] == frame_index), None)
+    return hit is not None and hit.get("in_D") is not False
+
+
+def manual_tstar(point: dict[str, Any], metric: str) -> dict[str, Any]:
+    """직접 고른 t*(계약 §6.1 4번): 지금 키 + manual{auto_frame, auto_time, auto_value, ratio, rel, in_D, have}.
+    point = 코어 ``frame_point`` 반환. 값 계산은 코어 한 곳(백엔드는 저장만)."""
+    auto = point.get("auto") or {}
+    out = {"metric": metric, "frame_index": point["frame_index"], "time": point["time"], "elem_id": point["elem_id"],
+           "value": point["value"], "source": "user"}
+    out["manual"] = {"auto_frame": auto.get("frame_index"), "auto_time": auto.get("time"), "auto_value": auto.get("value"),
+                     "ratio": point.get("ratio"), "rel": point.get("rel"), "in_D": bool(point.get("in_D")),
+                     "have": bool(point.get("have"))}
+    return out
+
+
 def tstar_from(hit: dict[str, Any], metric: str, *, source: str = "user",
                confirmed: dict[str, Any] | None = None) -> dict[str, Any]:
     out = {"metric": metric, "frame_index": hit["frame_index"], "time": hit["time"], "elem_id": hit["elem_id"],

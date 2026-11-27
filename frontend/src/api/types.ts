@@ -141,6 +141,18 @@ export interface TStar {
   support_auto?: SupportAuto | null;
   /** v0.13.0 일괄 실행이 자동 확정했으면 {by:"run_all", run_all_id, user_id}(esl_run_all.md §4.2) */
   confirmed?: TStarConfirmed | null;
+  /** v0.25.2 §6.1: 후보 밖 프레임을 직접 고른 t* 일 때만(없으면 자동 후보 선택) */
+  manual?: TStarManual | null;
+}
+/** v0.25.2 §2.3·§6.1 — 직접 고른 t* 의 자동 대비 값. rel = 자동 t* 보다 앞·같음·뒤 */
+export interface TStarManual {
+  auto_frame: number;
+  auto_time: number;
+  auto_value: number;
+  ratio: number | null;
+  rel: "before" | "at" | "after";
+  in_D: boolean;
+  have: boolean;
 }
 export interface TStarConfirmed {
   by: string;
@@ -505,6 +517,15 @@ export interface QueueXfer {
 export type Queue = QueueOut;
 
 // ---------------------------------------------------------------- t* (GET /cases/{id}/tstar, 자유 형식)
+export interface TstarFrame {
+  frame_index: number;
+  time: number;
+}
+export interface TstarFill {
+  available: boolean;
+  code: string | null;
+  text: string | null;
+}
 export interface TstarPoint {
   frame_index: number;
   time: number;
@@ -537,7 +558,7 @@ export interface TstarMetricBlock {
   tstar: TstarPoint | null;
   candidates: TstarCandidate[];
   /** max-hold 곡선 m(f) = max_{e∈H} v[f,e] (누적 씬이면 누적, value_inc = 이번 낙하 증분) */
-  history: { time: number[]; value: number[]; value_inc?: number[] };
+  history: { time: number[]; value: number[]; value_inc?: number[]; /** v0.25.2 §6.1: 곡선 점의 프레임 번호(없으면 frames 순서) */ frame_index?: number[] };
   hotspots: Hotspot[];
   error?: string;
   /** v0.8.0 누적 씬: 이전 손상만(이번 증가 없음) 제외 수 */
@@ -552,6 +573,14 @@ export interface TstarView {
   hotspots: Hotspot[];
   /** 변위가 추출된 후보 프레임 D */
   frames_D: number[];
+  /** v0.25.2 §6.1: 고를 수 있는 프레임 전부(history.npz 순서) */
+  frames?: TstarFrame[];
+  /** v0.25.2: 변위·변형률이 있는 프레임(D ∪ 채운 프레임) */
+  frames_have?: number[];
+  /** v0.25.2: D 밖 프레임 채움 가능 여부(frame_fill.DECIDE — 불가면 code·text) */
+  fill?: TstarFill;
+  /** v0.25.2(통합 INT — 코어 설정 값 그대로): 직접 고른 t* 경고 임계 tstar.manual_ratio_warn. 없으면 경고색 판정 생략 */
+  manual_ratio_warn?: number;
   /** v0.8.0 누적 씬만 */
   cumulative?: { enabled: boolean; epsp_mode: CumulativeMode; eq_mode: CumulativeMode; agg: string; n_prev_elems: number; min_increment: number };
 }
@@ -1862,6 +1891,21 @@ export interface View3dSupport {
   dirs?: number[][] | null;
   /** 값(INT-1, dirs 와 같은 순서): tie_fixed 0 · tie_disp [g…](mm) · tie_spring {k: [N/mm…], g: [mm…]} · aux_inplane [지정값…](mm) · support321 = 없음 */
   val?: number | number[] | { k: number[]; g: number[] } | null;
+  /** v0.25.2 §4.3: "force" = 체결부가 아닌 곳에 강제로 붙인 노드(옛 manifest·강제 아님 = 없음) */
+  via?: "force" | null;
+}
+/** v0.25.2 §4.3·§6.3 map.tie.marks 그대로 — 강제·못 붙임 체결부 묶음. x = Case 체결부 중심(형상 전역 좌표), dist = 옮긴 거리(mm), n = 묶음 노드 수 */
+export interface View3dTieMark {
+  q: number;
+  via: "force" | "miss";
+  /** Case 체결부 중심(형상 전역 좌표) */
+  x: number[];
+  /** 통합 INT(코어 구현 사실): 붙인 노드 면적 가중 중심(형상 전역 — force 만). 선 = x → to */
+  to?: number[] | null;
+  /** 옮긴 거리 mm(force) — miss 는 null */
+  dist: number | null;
+  n: number;
+  far: boolean;
 }
 export interface View3dRange {
   max: number;
@@ -1920,6 +1964,10 @@ export interface View3dOut {
   sum_m: number[];
   moment_center: number[];
   supports: View3dSupport[];
+  /** v0.25.2 §4.3: 강제·못 붙임 체결부 표식 자료(지그 응답 3D 만 — 없으면 옛 그림 그대로) */
+  tie_marks?: View3dTieMark[] | null;
+  /** v0.25.2(통합 INT): 먼 강제 임계 mm(= map.tie.force.far_mm, 설정 tie_force_far_warn_mm 기록 값) — 범례 문구용. 없으면 숫자 없이 표기 */
+  tie_far_mm?: number | null;
   top: View3dTopRow[];
   clusters: Record<string, View3dClusterSet>;
   created_at: string;
@@ -3042,6 +3090,8 @@ export interface DoePrepShape {
   /** v0.21.0 메싱 경로(cad | cad_relaxed)·선택 근거(새 스냅샷만) */
   mesh_path?: "cad" | "cad_relaxed" | null;
   route?: DoeShapeRoute | null;
+  /** v0.25.2 §4.4: 판 앞뒷면 두 장 의심(경고가 날 때만 키) — frac = 마주 보는 면 비율, gap_mm = 간격 중앙값 */
+  double_sheet?: { frac: number; gap_mm: number } | null;
 }
 export interface DoeProps {
   t: number;
@@ -3438,6 +3488,8 @@ export interface DoeRankRow {
   pareto?: boolean;
   /** 결과의 per_esl_inline 이 true 일 때만(아니면 GET …/results/per-esl) */
   per_esl?: DoePerEsl[];
+  /** v0.25.2 §4.1: 지그 순위가 참고용(강제·못 붙임 비율 또는 먼 강제) — 참일 때만 키 */
+  jig_ref?: boolean;
   /** ④ 형상 이름(values = {}) */
   shape?: DoeShapeRef | null;
   /** v0.16.1 경고 안(SR-D-11) — 비었으면 키 없음 */
@@ -3611,6 +3663,9 @@ export interface DoeJigGridOut {
   small_frac_max: number | null;
   frame_shift_max_mm: number | null;
   sample_outside_max: number | null;
+  /** v0.25.2 §6.3: 체결부 강제 부여·참고용 형상 수(스냅샷에 tie_force 가 있을 때만 — 옛 결과 키 없음) */
+  n_forced_shapes?: number | null;
+  n_ref_shapes?: number | null;
   warnings: string[];
   /** v0.24.8 fix 기준 d000 ↔ 형상 메시 비교(옛 결과 null·키 없음) */
   mesh?: DoeJigGridMeshOut | null;
@@ -3665,8 +3720,17 @@ export interface DoeJigOut {
   th: DoeJigThOut;
   entries: DoeJigEntryOut[];
 }
+/** v0.25.2 §4.1 결과 개수 1줄의 항목(= esl.doe.rank.count_items — 새 결과만, 옛 결과는 화면이 n_failed 로 계산) */
+export interface DoeCountItem {
+  key: string;
+  label: string;
+  n: number;
+}
 export interface DoeResultOut {
   C_ref: number;
+  /** v0.25.2: 지그 순위가 참고용인 형상 수(> 0 일 때만 키 — 스키마는 선택·null 허용) */
+  n_ref?: number | null;
+  counts?: DoeCountItem[] | null;
   baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; umax_ev?: number | null; umax_ev_all?: number | null; shape?: DoeShapeRef | null; worst_entry_id?: string | null };
   n_ok: number;
   n_skipped: Record<string, number>;
@@ -3920,6 +3984,8 @@ export interface DoeJigDiagOut {
 export interface DoeRankViewOut {
   metric: string;
   C_ref: number;
+  n_ref?: number | null;
+  counts?: DoeCountItem[] | null;
   baseline: Record<string, unknown>;
   n_ok: number;
   n_skipped: Record<string, number>;

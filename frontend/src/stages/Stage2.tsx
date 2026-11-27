@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/endpoints";
 import type { Metric } from "../api/types";
 import { Card, Empty } from "../components/ui";
@@ -10,6 +10,7 @@ import { blockReason, useAction } from "./common";
 import { cumText, hasCum } from "../components/Cumulative";
 import { SupportSummary } from "../components/SupportSummary";
 import { stepState } from "../shell/StageStepper";
+import { curvePoints, dispState, manualFromCurve, manualNotes, parseManual, pctText } from "../lib/tstarFrames";
 
 const METRICS: Metric[] = ["max_strain", "plastic_strain"];
 
@@ -20,6 +21,15 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   const [frame, setFrame] = useState<number | null>(c.tstar?.frame_index ?? null);
   const act = useAction(reload);
   const blk = tv.data?.metrics[metric];
+  // v0.25.2 §7.1: "직접" 행 = 후보 밖 프레임(곡선 클릭 또는 입력 칸 — 같은 상태)
+  const [manualFrame, setManualFrame] = useState<number | null>(null);
+  const [manualText, setManualText] = useState("");
+  const [manualBad, setManualBad] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // 후보 표 스크롤 칸: "직접" 행을 더해도 카드 높이가 늘지 않게, 칸 높이를 직접 행을 뺀 표 높이(= 지금까지의 높이)로 고정하고 직접 행은 그 안에서 스크롤로 닿는다
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const manualRowRef = useRef<HTMLTableRowElement>(null);
+  const pts = useMemo(() => curvePoints(blk, tv.data), [blk, tv.data]);
   const hotspots = blk?.hotspots ?? tv.data?.hotspots ?? [];
   // v0.8.0 누적 씬: 값 = 누적(이전 + 이번), 표에 이전·이번(증분) 열
   const cum = !!tv.data?.cumulative && hasCum(blk?.tstar);
@@ -27,14 +37,73 @@ export function Stage2({ c, reload, allowed }: StageProps) {
   // 지표를 바꾸면 그 지표의 현재 t*(또는 자동값)를 기본 선택
   useEffect(() => {
     if (!tv.data) return;
-    if (c.tstar && c.tstar.metric === metric) setFrame(c.tstar.frame_index);
-    else setFrame(tv.data.metrics[metric]?.tstar?.frame_index ?? null);
+    const f = c.tstar && c.tstar.metric === metric ? c.tstar.frame_index : tv.data.metrics[metric]?.tstar?.frame_index ?? null;
+    setFrame(f);
+    // 저장된 t* 가 후보 밖(직접 고름)이면 "직접" 칸에 채움
+    const isCand = f !== null && !!tv.data.metrics[metric]?.candidates.some((k) => k.frame_index === f);
+    setManualFrame(f !== null && !isCand ? f : null);
+    setManualText(f !== null && !isCand ? String(f) : "");
+    setManualBad(false);
   }, [metric, tv.data, c.tstar?.metric, c.tstar?.frame_index]);
+
+  const cands = blk?.candidates ?? [];
+  const hasManualRow = !!blk;
+  useLayoutEffect(() => {
+    const w = wrapRef.current;
+    const r = manualRowRef.current;
+    const t = w?.querySelector("table");
+    if (!w || !r || !t) return;
+    const fit = () => {
+      const h = t.getBoundingClientRect().height - r.getBoundingClientRect().height;
+      w.style.maxHeight = h > 0 ? `min(${+h.toFixed(3)}px, var(--tbl-max))` : "";
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(t);
+    return () => ro.disconnect();
+  }, [hasManualRow, cum, cands.length]);
+  const isCand = frame !== null && cands.some((k) => k.frame_index === frame);
+  const warnRatio = tv.data?.manual_ratio_warn;
+  const autoFrame = blk?.tstar?.frame_index;
+  const pickFrame = (f: number) => {
+    setFrame(f);
+    setManualBad(false);
+    if (!cands.some((k) => k.frame_index === f)) {
+      setManualFrame(f);
+      setManualText(String(f));
+      // 직접 행은 후보 표 스크롤 칸 맨 아래 — 곡선을 눌러 고르면 보이게
+      requestAnimationFrame(() => {
+        const w = wrapRef.current;
+        if (w) w.scrollTop = w.scrollHeight;
+      });
+    }
+  };
+  const commitManual = () => {
+    const r = parseManual(manualText, pts);
+    if (r.ok) pickFrame(r.frame);
+    else setManualBad(r.reason !== "empty");
+  };
+  const mp = manualFrame === null ? undefined : pts.find((p) => p.frame === manualFrame);
+  const mDisp = manualFrame === null ? null : dispState(manualFrame, tv.data);
+  const mCmp = mp ? manualFromCurve(pts, mp.frame, autoFrame) : null;
+  const mNotes = mp && mCmp ? manualNotes(mCmp, mp.frame, mp.time, warnRatio) : [];
+  const mLow = mNotes.some((n) => n.code === "TSTAR_MANUAL_LOW");
+  const fillText = tv.data?.fill?.text ?? "";
+  const frameState = frame !== null && !isCand ? dispState(frame, tv.data) : "have";
 
   const unchanged = !!c.tstar && c.tstar.metric === metric && c.tstar.frame_index === frame;
   // §5.3: 지지 세트가 없으면 같은 t*라도 다시 확정 가능(자동 3-2-1 재시도)
   const hasSupport = !!c.current_support_set_id;
-  const prereq = !ready ? "① 추출을 먼저 실행하세요" : frame === null ? "후보 시점을 고르세요" : unchanged && hasSupport ? "현재 확정된 t*와 같습니다" : null;
+  const prereq = !ready
+    ? "① 추출을 먼저 실행하세요"
+    : frame === null
+      ? "후보 시점을 고르세요"
+      : frameState === "blocked"
+        ? `이 시점은 고를 수 없습니다 — ${fillText || "변위를 읽을 수 없는 프레임입니다"}`
+        : unchanged && hasSupport
+          ? "현재 확정된 t*와 같습니다"
+          : null;
 
   const confirm = () => act.run(() => api.putTstar(c.id, { version: c.version, metric, frame_index: frame! }));
 
@@ -63,11 +132,21 @@ export function Stage2({ c, reload, allowed }: StageProps) {
               </div>
             }
           >
-            {c.tstar && (
-              <div className="small muted" data-testid="current-tstar">
-                현재 t*: {METRIC_LABEL[c.tstar.metric]} · 프레임 {c.tstar.frame_index} · {c.tstar.time.toFixed(3)} s · 요소 {c.tstar.elem_id} · {c.tstar.source === "auto" ? "자동" : "사용자 선택"}
-              </div>
-            )}
+            {c.tstar && (() => {
+              const man = c.tstar.manual;
+              const low = !!man && man.ratio !== null && warnRatio !== undefined && man.ratio < warnRatio;
+              const notes = man ? manualNotes(man, c.tstar.frame_index, c.tstar.time, warnRatio) : [];
+              return (
+                <div
+                  className={`small ${low ? "warn-text" : "muted"} ellipsis`}
+                  data-testid="current-tstar"
+                  title={notes.length ? notes.map((n) => n.text).join("\n") : undefined}
+                >
+                  현재 t*: {METRIC_LABEL[c.tstar.metric]} · 프레임 {c.tstar.frame_index} · {c.tstar.time.toFixed(3)} s · 요소 {c.tstar.elem_id} ·{" "}
+                  {c.tstar.source === "auto" ? "자동" : man ? `직접 고름 · 자동 대비 ${pctText(man.ratio)} %` : "사용자 선택"}
+                </div>
+              );
+            })()}
             {cum && blk?.tstar && (
               <div className="small" data-testid="cum-tstar">
                 자동 t* 값: {cumText(blk.tstar)}
@@ -82,6 +161,8 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                 candidates={blk.candidates}
                 selectedFrame={frame}
                 label={METRIC_LABEL[metric]}
+                frames={pts.map((p) => p.frame)}
+                onPick={allowed ? pickFrame : undefined}
               />
             ) : (
               <Empty>이 지표의 결과가 없습니다</Empty>
@@ -89,7 +170,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
           </Card>
           <div className="contents step2-pair">
             <Card title="후보 시점">
-              <div className="table-wrap scroll">
+              <div className="table-wrap scroll" ref={wrapRef}>
               <table className="table compact">
                 <thead>
                   <tr>
@@ -105,7 +186,7 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {blk?.candidates.map((k) => {
+                  {cands.map((k) => {
                     const pickable = allowed && k.in_D !== false;
                     return (
                       <tr key={k.frame_index} className={frame === k.frame_index ? "hl" : undefined} onClick={() => pickable && setFrame(k.frame_index)}>
@@ -130,11 +211,89 @@ export function Stage2({ c, reload, allowed }: StageProps) {
                       </tr>
                     );
                   })}
+                  {blk && (
+                    <tr
+                      ref={manualRowRef}
+                      data-testid="manual-row"
+                      className={frame !== null && !isCand && frame === manualFrame ? "hl" : undefined}
+                      onClick={() => {
+                        if (allowed && manualFrame !== null && frame !== manualFrame) pickFrame(manualFrame);
+                      }}
+                    >
+                      <td colSpan={2}>
+                        <span className="tstar-manual-cell">
+                          <input
+                            type="radio"
+                            name="tstar"
+                            aria-label="직접"
+                            checked={frame !== null && !isCand && frame === manualFrame}
+                            disabled={!allowed || mDisp === "blocked"}
+                            title={mDisp === "blocked" ? fillText : undefined}
+                            onChange={() => (manualFrame !== null ? pickFrame(manualFrame) : inputRef.current?.focus())}
+                          />
+                          <input
+                            ref={inputRef}
+                            type="text"
+                            className={manualBad ? "tstar-manual-in bad" : "tstar-manual-in"}
+                            data-testid="manual-input"
+                            aria-label="직접 시점"
+                            placeholder="프레임 번호 또는 시간(s)"
+                            value={manualText}
+                            disabled={!allowed}
+                            aria-invalid={manualBad}
+                            title={manualBad ? "h3d 에 없는 프레임" : "정수 = 프레임 번호, 소수점 또는 끝에 s = 시간(가장 가까운 프레임)"}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                              setManualText(e.target.value);
+                              setManualBad(false);
+                            }}
+                            onBlur={commitManual}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitManual();
+                            }}
+                          />
+                        </span>
+                      </td>
+                      <td className="num">{mp ? mp.frame : "–"}</td>
+                      <td className="num">{mp ? mp.time.toFixed(3) : "–"}</td>
+                      <td>–</td>
+                      <td className="num" title={mNotes.map((n) => n.text).join("\n") || undefined}>
+                        {mp ? (
+                          <span className={mLow ? "warn-text" : undefined} data-testid="manual-value">
+                            {fmt(mp.value, 4)}
+                            {mCmp && mCmp.rel !== "at" && <span className="muted"> ({pctText(mCmp.ratio)} %)</span>}
+                          </span>
+                        ) : (
+                          "–"
+                        )}
+                      </td>
+                      {cum && <td className="num">–</td>}
+                      {cum && <td className="num">–</td>}
+                      <td data-testid="manual-disp">
+                        {mDisp === null ? (
+                          "–"
+                        ) : mDisp === "have" ? (
+                          "있음"
+                        ) : mDisp === "fill" ? (
+                          <span className="muted" title="③ ESL 실행 때 이 프레임을 h3d 에서 한 번 읽습니다(몇 분)">
+                            ESL 때 읽음
+                          </span>
+                        ) : (
+                          <span className="error-text" title={fillText}>
+                            불가
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
               </div>
             </Card>
-            <Card title={`hotspot (t* 프레임 ${blk?.tstar?.frame_index ?? "–"}에서 상승 중 = 검증 대상)`}>
+            <Card
+              title={`hotspot (t* 프레임 ${blk?.tstar?.frame_index ?? "–"}에서 상승 중 = 검증 대상)`}
+              hint="직접 고른 시점의 hotspot 은 ESL 뒤 ④ 검증에 표시"
+            >
               <div className="table-wrap scroll">
               <table className="table compact">
                 <thead>

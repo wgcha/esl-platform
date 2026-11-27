@@ -721,6 +721,31 @@ $env:PGPASSWORD = $null
 - **작업 재시작**: `ESL-Backend`·`ESL-Worker`.
 - 서버는 Case 폴더·입력을 읽기만 한다(씬 묶음도 스터디 폴더 `post/` 안에만 쓴다).
 
+### 4.12 v0.25.2 업데이트 안내(t* 직접 선택·체결부 아닌 곳 지그 강제 부여·#96 표시)
+
+**DB migration 없음.** **beadgraph 1.3.0 그대로**. 새 자원 없음(문구는 기존 `resources/doe_messages.json` 에 추가). 설정 키는 없으면 기본값이라 현장 `esl_platform.yaml`·`esl.yaml` 은 고치지 않아도 된다. 현장 확인표 `docs/manual/field_check_v0252.md`. 계약 `docs/contracts/esl_tstar_manual_jig_force.md`(개정 1·§15 구현 메모).
+
+- **새 설정**(같은 이름·값이 코어 기본값·pydantic·`config/esl_platform.example.yaml`·`.prod.example.yaml`(코어 키는 `config/esl.example.yaml`)에 있고 시험으로 같음을 확인. 범위 밖 = 시작 시 `CONFIG_INVALID`):
+  | 키 | 기본 | 범위 | 해시 | 뜻 |
+  |---|---|---|---|---|
+  | 코어 `esl.yaml` `tstar.manual_ratio_warn` | 0.5 | 0 ~ 1 | 밖 | 직접 고른 t* 의 지표가 자동 t* 의 이 비율 미만이면 경고 `TSTAR_MANUAL_LOW`·② 경고색(계산 불변) |
+  | `altair.frame_fill_timeout_s` | 1800 | ≥ 60 | – | D 밖 프레임 채움 hw 1회 시간 한도(넘으면 hw 트리 종료·`TIMEOUT`) |
+  | `altair.frame_fill_wait_s` | 600 | ≥ 0 | – | hw 동시 실행 한도(`altair.max_concurrent_hw`) 빈자리 대기 한도(넘으면 `WAIT`) |
+  | `bead_doe.rank.jig_grid.tie_force.enabled` | true | bool | **안**(스냅샷) | 격자 지그 강제 부여(새 스터디). 끄면 v0.25.1 과 같은 잡기(band·snap·miss) |
+  | `bead_doe.rank.jig_grid.tie_force.max_dist_mm` | null | null 또는 > 0 | 안 | 강제 거리 한도(null = 없음 — 사용자 결정 "거리 무관"). 값을 주면 max(값, snap 한도) 밖은 못 붙임 |
+  | `bead_doe.rank.jig_grid.tie_force.normal_deg` | 90.0 | (0, 90] | 안 | 강제 단계 법선 조건(90 = 조건 없음) |
+  | `bead_doe.rank.jig_grid.tie_force_far_warn_mm` | 10.0 | > 0 | 밖 | "먼 강제" 표시 임계(경고 `JIG_GRID_TIE_FAR`·참고용·3D 빨강 선 — 붙이는 규칙과 무관, 실행 때 값이 `map.tie.force.far_mm` 에 기록되고 3D 범례가 그 값을 씀) |
+  | `bead_doe.view3d.jig_force_marks_max` | 512 | ≥ 1 | 밖 | 3D 체결부 표식 상한(넘으면 먼 순으로 남김) |
+  | `bead_doe.compare.double_sheet.{enabled, gap_min_t, gap_max_t, normal_deg, frac_warn, sample_max}` | true, 0.3, 3.0, 15.0, 0.5, 2000 | gap_min_t > 0, gap_max_t > gap_min_t, normal_deg (0, 90), frac_warn (0, 1], sample_max ≥ 1 | 밖 | ④ 형상 판 앞뒷면 두 장 경고 `SHAPE_DOUBLE_SHEET`(경고만 — 끄면 검사 0) |
+- **스냅샷·옛 스터디**: 새 스터디는 `rank.jig_grid.tie_force` 블록이 스냅샷에 고정된다(해시 안). **블록이 없는 옛 스냅샷(v0.25.1 이전) = 강제 끔** — 열기·이어하기·3D 다시 만들기 결과·해시 바이트 불변. 옛 스터디를 복제하면 현재 설정(기본 켬)으로 계산된다.
+- **D 밖 프레임 채움(워커)**: 직접 고른 t* 가 추출 때 변위를 받지 않은 프레임이면 ESL 단계 앞(경계력 보충 바로 앞, 같은 hw 세마포어)에서 HyperView 를 한 번 더 띄워(`esl_h3d_extract.tcl` 요청 키 `fr_only 1`·`fr_frames`) 그 프레임 변위·변형률(f, f−1)만 읽어 `01_extract/disp.npz`·`strain_frames.npz` 끝에 덧붙인다(`frames.json` `frames_fill`, 시도 기록 `01_extract/frame_fill.json`, 바꾸기 전 파일 `<Case>/_backup/<UTC>/01_extract/`). 작업 폴더 `<esl_root>\_h3d\<Case 폴더>\frame_fill\`. 추정 3 ~ 6 분/프레임(요소 19만), 프레임당 약 25 MB. 실패 = ESL 단계 실패 `TSTAR_FRAME_FILL_FAILED`(원인 `WAIT`·`TIMEOUT`·`LICENSE`·`HW_FAILED`·`MISMATCH`(h3d 가 추출 때와 다름 — ① 재추출)·`MERGE`·막힘 사유 `NO_H3D`·`DUMP_MODE`·`H3D_UNREADABLE`·`HW_UNAVAILABLE`). 로그 줄은 "[esl-worker] 프레임 채움 …". **TCL `fr_only` 는 실제 HyperView 에서 처음 확인**(E-0252-3).
+- **API 변경**: `PUT /cases/{id}/tstar` 의 h3d 에 없는 프레임 = 422 `FRAME_NOT_FOUND`(전 `FRAME_NOT_CANDIDATE`), 채울 수 없는 D 밖 프레임 = 422 `FRAME_NOT_EXTRACTABLE`. `GET …/tstar` 새 키 `frames`·`frames_have`·`fill`·`history.frame_index`·`manual_ratio_warn`. ESL 작업 결과 `frame_fill{status, frame, seconds, cause?, detail?}`. 스터디 결과·보기 `n_ref`·`counts`·`jig_ref`·`jig.grid.n_forced_shapes`·`n_ref_shapes`, 지그 3D manifest `supports[].via`·`tie_marks`·`tie_far_mm` — 모두 선택 키(없으면 키 없음 — 옛 응답 바이트 불변).
+- **(통합) 구멍 위치 어긋남 경고 `JIG_GRID_TIE_SHIFT`**: 새 키 없음 — 임계 = 기존 `rank.jig_grid.frame_shift_warn` × `cell_mm`(기본 1.5 mm, 해시 밖). 강제 부여가 켜진 스터디만 계산하고(Case·형상 메시 자유 변 비교 — 형상당 1 s 미만), 넘으면 그 형상 지그 순위 = 참고. 진단 `jig_grid.json map.tie.shift{mm, vec, n, n_rim, tol_mm, over}`.
+- **(통합 — 메인 결정, 사용자 확인 대기) 최적 형상 규칙**: 결과 `best`(산출물 내보내기 대상) = 참고(`jig_ref`)가 아닌 최상위, 모두 참고면 최상위 + 경고 `BEST_IS_REF`. 순위·번호는 그대로. `ranking.csv` 끝 열 `jig_ref`·보고서 "참고" 열은 강제 부여 스냅샷 결과만(옛 결과 파일 바이트 불변). 되돌리려면 코어 `esl.doe.rank.best_order` 한 곳.
+- **강제 단계 시간**: 묶음마다 KD 최근접 질의(형상 전체 정렬 없음). 합성 11만 노드·6곳 0.6 ~ 1.7 s, 멀리 어긋난 묶음일수록 질의 반경이 커져 느려짐 — 수백 곳이 수백 mm 어긋난 극단은 형상당 수십 초 가능(E-0252-10 에서 실측).
+- **작업 재시작**: `ESL-Backend`·`ESL-Worker`.
+- 서버는 Case 폴더·입력을 읽기만 한다(채움은 Case 산출물 폴더 `01_extract` 에만, 원 h3d 는 읽기).
+
 ---
 
 ## 10. 환경 점검

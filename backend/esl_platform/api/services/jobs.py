@@ -107,7 +107,8 @@ def _prepare(ctx: AppContext, conn, case: dict[str, Any], job_type: str, raw: di
     if job_type == "ESL_SOLVE":
         p = _params(EslSolveParams, raw)
         return job_params.esl_solve_params(conn, ctx.config.core, cdir, case, frame_index=p.frame_index,
-                                           support_set_id=p.support_set_id, material_override=p.material_override)
+                                           support_set_id=p.support_set_id, material_override=p.material_override,
+                                           fill_settings=ctx.settings)
 
     model = RunRefParams if job_type == "VALIDATE" else ExportParams
     p = _params(model, raw)

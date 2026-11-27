@@ -95,9 +95,6 @@ th.num {
 .error-text {
   color: var(--bad);
 }
-.warn-text {
-  color: var(--wait);
-}
 .ok-text {
   color: var(--ok);
 }
@@ -572,6 +569,7 @@ select:disabled {
 .card-head h3 {
   font-size: 1rem;
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -891,6 +889,19 @@ details.card > .table-wrap {
 }
 .chart-label.marker {
   fill: var(--bad);
+}
+/* v0.25.2 ② 곡선 클릭 선택: 가는 안내 세로선 + 그림 안 글자(높이 변화 없음) */
+.chart svg.pickable {
+  cursor: crosshair;
+}
+.chart-hover {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.chart-label.hover {
+  fill: var(--text-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .legend {
   display: inline-flex;
@@ -4610,4 +4621,35 @@ details.card.fold > .fold-body {
 .v3d-leg-ed .small,
 .v3d-leg-ed .seg button {
   white-space: nowrap;
+}
+
+/* v0.25.2 ② 후보 표 "직접" 행(스크롤 영역 안 — 새 줄 없음) */
+.tstar-manual-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.tstar-manual-in {
+  width: 11.5rem;
+  padding: 0.1rem 0.35rem;
+  font: inherit;
+  font-size: 0.85rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+}
+.tstar-manual-in.bad {
+  border-color: var(--bad);
+  outline: 1px solid var(--bad);
+}
+.warn-text {
+  color: var(--wait);
+}
+/* v0.25.2 순위표 "참고" 꼬리표: 줄 높이를 키우지 않게(이름 칸 줄 높이 그대로) */
+.badge.ref-tag {
+  line-height: 1;
+  padding-top: 0;
+  padding-bottom: 0;
+  vertical-align: baseline;
 }

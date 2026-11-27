@@ -2,7 +2,7 @@
 // 순위표·ESL별 표·3D·민감도·칩은 출처 표의 행(열)만 읽는다 — 출처 이름으로 분기하지 않음(AGENTS.md 계획 표 원칙을 화면에도).
 // 출처를 빼거나(예: 전 노드 ESL) 더할 때(예: 조립체 지그) 이 표의 행만 바꾼다. 백엔드 거울 = esl/doe/stages.py RANK_SOURCES.
 import { JIG_CODE_TEXT } from "../../api/doe";
-import type { DoeRankRow, DoeResultOut, DoeWarning } from "../../api/types";
+import type { DoeCountItem, DoeRankRow, DoeResultOut, DoeWarning } from "../../api/types";
 import { jigNoneText } from "../../components/DoeRanking";
 import { SOURCE_ROWS, isHiddenSource } from "../../view3d/sources";
 
@@ -410,6 +410,49 @@ export function bfUnavailable(r: DoeResultOut): string {
   return nodalUnavailable(r, NODAL_BF, "경계력 ESL");
 }
 
+/** v0.25.2 §4.1 결과 개수 라벨 — 서버 esl.doe.rank.COUNT_LABELS 거울(API counts 가 없는 옛 결과에서만 씀). 모르는 키는 키 그대로 */
+export const COUNT_LABELS: Record<string, string> = {
+  ok: "성공",
+  mesh: "메시",
+  size: "크기/정렬",
+  solve: "해석",
+  morph: "모핑",
+  collision: "스킵(충돌)",
+  fixed: "스킵(고정)",
+  geom: "스킵(형상)",
+  jig: "지그 매핑 제외",
+  jd: "지그 매핑 제외",
+  js: "지그 매핑 제외",
+  bf: "경계력 없음",
+  fi: "내력 없음",
+  sm: "강성 지표 없음",
+  ref: "참고용",
+};
+/** 결과 개수 항목: API counts(새 결과) 그대로, 없으면 n_ok + n_skipped·n_failed 의 0 아닌 키 + n_ref(> 0) 로 같은 표시를 계산(옛 결과) */
+export function countItems(r: Pick<DoeResultOut, "n_ok" | "n_skipped" | "n_failed"> & { counts?: DoeCountItem[] | null; n_ref?: number | null }): DoeCountItem[] {
+  if (r.counts?.length) return r.counts;
+  // 서버 count_items 와 같은 규칙(통합 — TM-C1-2: counts 는 격자 지그·강제 부여 스냅샷 결과에만 오고, 그 밖은 여기서 계산):
+  // 같은 키가 n_skipped·n_failed 양쪽에 있으면 합, 순서 = COUNT_LABELS 표 순서(표에 없는 키는 뒤, 이름순)
+  const out: DoeCountItem[] = [{ key: "ok", label: COUNT_LABELS.ok, n: r.n_ok }];
+  const acc = new Map<string, number>();
+  for (const [k, n] of [...Object.entries(r.n_skipped ?? {}), ...Object.entries(r.n_failed ?? {})]) {
+    if (typeof n === "number" && Math.trunc(n) !== 0) acc.set(k, (acc.get(k) ?? 0) + Math.trunc(n));
+  }
+  const order = Object.keys(COUNT_LABELS).filter((k) => k !== "ok");
+  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length);
+  const keys = [...acc.keys()].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+  for (const k of keys) out.push({ key: k, label: COUNT_LABELS[k] ?? k, n: acc.get(k)! });
+  if (r.n_ref && r.n_ref > 0) out.push({ key: "ref", label: COUNT_LABELS.ref, n: r.n_ref });
+  return out;
+}
+/** 결과 카드 제목 꼬리: " · 지그 매핑 제외 1 · 참고용 1"(성공 뺀 0 아닌 항목 — 없으면 "" = 지금과 같은 글자) */
+export function countTail(r: Parameters<typeof countItems>[0]): string {
+  return countItems(r)
+    .filter((x) => x.key !== "ok" && x.n > 0)
+    .map((x) => ` · ${x.label} ${x.n}`)
+    .join("");
+}
+
 const metricEff = (r: DoeResultOut) => r.rank?.metric_effective ?? r.metric_effective ?? r.metric ?? "solve";
 export const sourceOf = (key: LoadTab, sources: readonly LoadSource[] = LOAD_SOURCES) => sources.find((s) => s.key === key) ?? null;
 
@@ -443,8 +486,24 @@ export function tabState(r: DoeResultOut, sources: readonly LoadSource[] = LOAD_
     // 만들 수 있는데 권한이 없거나 작업 중이면 탭 비활성 + 그 사유를 덧붙임(정보 삭제 없음)
     if (!ok[s.key] && sa?.available && !sa.allowed && sa.reason) reason[s.key] = `${reason[s.key]} (${sa.reason})`;
   }
-  const def = primary && ok[primary] ? primary : sources.find((s) => ok[s.key])?.key ?? null;
+  let def = primary && ok[primary] ? primary : sources.find((s) => ok[s.key])?.key ?? null;
+  // v0.25.2 §4.2: 주 출처 탭의 순위가 0 행이고 다른 탭에 순위가 있으면 출처 표 순서에서 처음 그런 탭을 기본으로(안내는 빈 탭 본문)
+  if (def && def === primary && rankRows(r, def, primary) === 0) def = sources.find((s) => s.key !== primary && ok[s.key] && rankRows(r, s.key, primary) > 0)?.key ?? def;
   return { def, keys: sources.map((s) => s.key), ok, reason, add };
+}
+
+/** 한 탭의 순위 행 수: 보기(rank_views[key]) 가 있으면 그 순위, 없으면 주 출처 = 주 결과 순위, 그 밖 = 0 */
+export function rankRows(r: DoeResultOut, key: LoadTab, primary: LoadTab | null): number {
+  const v = ((r.rank_views ?? {}) as Record<string, { ranking?: unknown[] } | null | undefined>)[key];
+  return v ? v.ranking?.length ?? 0 : key === primary ? r.ranking.length : 0;
+}
+
+/** v0.25.2 §4.2 빈 탭 안내: 이 탭 순위가 0 행이고 순위 있는 다른 탭이 있으면 그 탭(출처 표 순서 처음). 없으면 null */
+export function otherRankedTab(r: DoeResultOut, cur: LoadTab, sources: readonly LoadSource[] = LOAD_SOURCES): LoadSource | null {
+  const primary = sources.find((s) => s.primaryFor.includes(metricEff(r)))?.key ?? null;
+  if (rankRows(r, cur, primary) > 0) return null;
+  const ts = tabState(r, sources);
+  return sources.find((s) => s.key !== cur && ts.ok[s.key] && rankRows(r, s.key, primary) > 0) ?? null;
 }
 
 /** 경고 코드 → 출처 키(접두가 맞는 첫 행), 없으면 "common" */
@@ -484,6 +543,9 @@ export function tabResult(r: DoeResultOut, tab: LoadTab, sources: readonly LoadS
     n_ok: v.n_ok,
     n_skipped: v.n_skipped,
     n_failed: v.n_failed,
+    // v0.25.2: 보기마다 자기 개수(counts·n_ref)를 가짐 — 주 결과의 것이 새지 않게 명시(없으면 undefined = n_failed 로 계산)
+    counts: v.counts,
+    n_ref: v.n_ref,
     ranking: v.ranking as unknown as DoeRankRow[],
     per_esl_inline: v.per_esl_inline,
     sensitivity: (v.sensitivity ?? null) as DoeResultOut["sensitivity"],

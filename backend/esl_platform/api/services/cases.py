@@ -17,8 +17,10 @@ import numpy as np
 from sqlalchemy.exc import IntegrityError
 
 from esl_worker import core_adapter
+from esl_worker import frame_fill
 
 from ...core import core_outputs as co
+from ...core import job_params
 from ...core import tstar_confirm
 from ...core.auth import Principal
 from ...core.errors import DomainError, conflict, not_found, unprocessable
@@ -299,8 +301,20 @@ def get_tstar(ctx: AppContext, case_id: str) -> dict[str, Any]:
     info = _tstar_info(ctx, case)
     sel = case.get("tstar") or {}
     blk = info["metrics"].get(sel.get("metric") or info["default_metric"]) or {}
-    out = {"selected": case.get("tstar"), "default_metric": info["default_metric"], "metrics": info["metrics"],
-           "hotspots": blk.get("hotspots", info["hotspots"]), "frames_D": info.get("frames_D") or []}
+    cdir = case_dir(ctx, case)
+    frames = co.history_frames(cdir)                      # v0.25.2 TM(§6.1): 고를 수 있는 프레임 전부 — history.npz 순서
+    fidx = [f["frame_index"] for f in frames]
+    metrics = info["metrics"]
+    if frames:                                            # 곡선 점의 프레임 번호(점 수 = 프레임 수일 때만 — 어긋나면 키 없음)
+        metrics = {k: ({**m, "history": {**m["history"], "frame_index": fidx}}
+                       if len((m.get("history") or {}).get("time") or []) == len(fidx) else m)
+                   for k, m in metrics.items()}
+    out = {"selected": case.get("tstar"), "default_metric": info["default_metric"], "metrics": metrics,
+           "hotspots": blk.get("hotspots", info["hotspots"]), "frames_D": info.get("frames_D") or [],
+           "frames": frames, "frames_have": _frames_have(cdir), "fill": _fill_state(ctx, case, cdir)}
+    warn = _manual_ratio_warn(ctx)
+    if warn is not None:                                  # 통합 INT(계약 §15): 화면 "자동 대비 %" 경고색 임계 = 코어 설정 값 그대로
+        out["manual_ratio_warn"] = warn
     if info.get("cumulative"):
         out["cumulative"] = info["cumulative"]
     return out
@@ -314,6 +328,60 @@ def _auto_support(ctx: AppContext, case: dict[str, Any]) -> tuple[dict[str, Any]
     """모델 로드 + 코어 auto_321(트랜잭션 밖, 30만 노드 < 1 s)."""
     nid, x0 = _model(ctx, case)
     return _core_call(core_adapter.auto_support, x0, _check_cfg(ctx)), nid, x0
+
+
+def _manual_ratio_warn(ctx: AppContext) -> float | None:
+    """코어 설정 tstar.manual_ratio_warn(코어 한 곳 — 기본값 포함). 코어를 못 부르면 None(키 없음 — 화면은 경고색 판정 생략)."""
+    try:
+        return float(core_adapter.tstar_manual_settings(ctx.config.core)["manual_ratio_warn"])
+    except (core_adapter.CoreError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _frames_have(cdir: str) -> list[int]:
+    """변위·변형률이 있는 프레임(D ∪ 채운 프레임) — 코어 frame_fill 한 곳. 코어를 못 부르면 변위 있는 프레임만."""
+    try:
+        return core_adapter.frame_fill_frames_have(os.path.join(cdir, co.D_EXTRACT))
+    except core_adapter.CoreError:
+        return co.disp_frames(cdir)
+
+
+def _fill_state(ctx: AppContext, case: dict[str, Any], cdir: str) -> dict[str, Any]:
+    """D 밖 프레임 채움 가능 여부 {available, code, text}(판정 표 행 2~5 — 워커와 같은 DECIDE). 코어를 못 부르면 가능 아님."""
+    try:
+        return frame_fill.fill_state(case, os.path.join(cdir, co.D_EXTRACT), ctx.settings)
+    except core_adapter.CoreError as exc:
+        return {"available": False, "code": exc.code, "text": exc.message}
+
+
+def _manual_select(ctx: AppContext, case: dict[str, Any], info: dict[str, Any], metric: str, frame_index: int) -> dict[str, Any]:
+    """후보 밖(또는 변위 없는 후보) 프레임 선택(계약 §6.1 PUT 2·3): 프레임 목록에 없음 = 422 FRAME_NOT_FOUND, 변위가 없고 채울 수 없음 =
+    422 FRAME_NOT_EXTRACTABLE(text = 판정 문구). 가능하면 코어 frame_point 값 + manual 로 저장 값을 만든다."""
+    cdir = case_dir(ctx, case)
+    frames = co.history_frames(cdir)
+    if not frames:                       # 프레임 목록을 못 읽는 옛 산출물 — 지금 규칙(후보만) 그대로
+        tstar_confirm.select_candidate(info, metric, frame_index)
+    if frame_index not in {f["frame_index"] for f in frames}:
+        raise unprocessable("FRAME_NOT_FOUND", "h3d 에 없는 프레임입니다", frame_index=frame_index,
+                            n_frames=len(frames))
+    ext = os.path.join(cdir, co.D_EXTRACT)
+    try:
+        facts = frame_fill.facts(case, ext, frame_index, ctx.settings)
+        dec = core_adapter.frame_fill_decide(facts)
+    except core_adapter.CoreError as exc:
+        raise DomainError(exc.code, exc.message, status=500) from None
+    if dec["action"] == "block":
+        raise unprocessable("FRAME_NOT_EXTRACTABLE", dec["text"] or "이 프레임은 고를 수 없습니다", frame_index=frame_index,
+                            reason=dec["code"], text=dec["text"])
+    try:
+        pt = core_adapter.frame_point(cdir, job_params.core_settings_for(ctx.config.core, case, metric=metric), metric, frame_index)
+    except core_adapter.CoreError as exc:
+        if exc.code == "FRAME_NOT_FOUND":
+            raise unprocessable("FRAME_NOT_FOUND", "h3d 에 없는 프레임입니다", frame_index=frame_index) from None
+        if exc.code in ("PREREQUISITE_MISSING", "INPUT_INVALID"):
+            raise unprocessable(exc.code, exc.message) from None
+        raise DomainError(exc.code, exc.message, status=500) from None
+    return tstar_confirm.manual_tstar(pt, metric)
 
 
 def put_tstar(ctx: AppContext, principal: Principal, case_id: str, body) -> dict[str, Any]:
@@ -330,8 +398,13 @@ def put_tstar(ctx: AppContext, principal: Principal, case_id: str, body) -> dict
         require_active_case(case)
         require_no_run_all(conn, case_id)
         info = _tstar_info(ctx, case)
-        hit = tstar_confirm.select_candidate(info, body.metric, body.frame_index)
-        tstar = tstar_confirm.tstar_from(hit, body.metric, source="user")
+        if body.metric not in info["metrics"]:
+            tstar_confirm.select_candidate(info, body.metric, body.frame_index)         # INVALID_METRIC
+        if tstar_confirm.is_candidate(info, body.metric, body.frame_index):             # 후보 = 지금 경로 그대로(저장 값 불변)
+            hit = tstar_confirm.select_candidate(info, body.metric, body.frame_index)
+            tstar = tstar_confirm.tstar_from(hit, body.metric, source="user")
+        else:                                                                           # v0.25.2 직접 고른 t*
+            tstar = _manual_select(ctx, case, info, body.metric, body.frame_index)
         if case["version"] != body.version:
             raise conflict("VERSION_CONFLICT", "다른 사용자가 먼저 수정했습니다. 새로 고친 뒤 다시 시도하세요")
         if not case.get("current_support_set_id") and auto is None:
