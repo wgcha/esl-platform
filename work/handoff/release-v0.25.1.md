@@ -82,7 +82,25 @@
 - [x] 시험 V-0251-1~15 + 분해 재사용(tests/doe/test_view3d_scene.py — 15 의 거울 확인은 B1 뒤 skip 해제)
 - [x] 실측(H5 15,477 노드 — H6 은 superlu 메모리 초과): 묶음 33.4 MB(96 씬), BD_POST +20.3 s(사이드카 seconds 21.2), 분해 수 불변(12)
       → 10만 노드 ≈ 196 MB(계약 195 MB), 시간 ≈ 2.5~3 분 추정(VL-C1-11)
-- [ ] tests/ 전체 1회 + pytest packages/beadgraph — 결과는 아래 "결과"
+- [x] tests/ 전체 1회 + pytest packages/beadgraph — 결과는 아래 "결과"
+- [x] 계약 개정 1(origin/wip/v0.25.1-contract2 e9745958) merge — 4ab332da
 
 ## 결과
-(전체 시험 결과 기록 예정)
+- tests/ 전체(1530df46): 1925 passed · 193 skipped · 4 failed = 허용 3(test_large_model_cad_share·test_v0160_bytes_skip_policy[h8]·
+  [h5open]) + `test_transfer_plan::test_stages_single_load_site`(정적 시험이 `_view3d` 에서 하중 함수 호출을 찾음 → 입력부 `_view3d_input`
+  으로 옮겨 보정, 07d33359 — 다시 돌려 통과). 보정 뒤 test_transfer_plan + test_view3d_scene 41 passed·1 skip(거울 — B1 뒤), tests/deploy·
+  메시지·정적 203 passed. `pytest packages/beadgraph`(저장소 루트) 117 passed·2 skipped.
+- 물리(V-0251-1~7 — 합성·스터디 세계 전부): Σc vs C 상대 ≤ 1e-9(fu·mixed·격자), Σdc vs ΔC 1e-9(항등·격자), conserve_map 합 1e-12, 핀 값 ==
+  표 값(출처 6행·kind ev/all/region/mask). 분해 수 씬 끔 = 켬.
+- 실측: VL-C1-11(H5 — 묶음 33.4 MB/96 씬, BD_POST +20.3 s, 분해 12 = 12, 10만 노드 ≈ 196 MB·2.5~3 분 추정).
+
+## 계약 개정 1 반영(C1 범위만 — 색 작업 없음)
+- §15.1 #2 사이드카 `entries` = 스냅샷 `doe.entries` 전부·같은 순서(이미 그렇게 씀 — 시험 단언 추가 V-0251-11·12).
+- §15.1 #3 `skipped.detail` = 짧은 사유만: `"<c_key> 없음"`·`"view3d.scene.max_mb <값>"`·`"baseline"`·오류 코드(EslError code 또는 예외
+  클래스 이름)·`"공통 좌표 없음"` — 경로·예외 원문 없음(시험 단언). 진단 원문은 사이드카 `warnings` 에만(코드·출처·안·엔트리·수치).
+- §15.1 #5 코어 dispatch: 스펙 `doe.post_mode` 값으로 `"view3d"`(3D 다시 만들기 + 빠진 씬 보충)·`"scene"`(씬 보충만) 구분 — 작업 kind 와
+  무관(VIEW3D 그대로).
+- V-0251-10 개정: 그림 3종(report.html·*.png·select grid_manifest.json color)은 비교에서 뺌(`golden_vl.is_picture`) — C2 색 변경 뒤에도
+  통과. `stages.py` 의 select 썸네일 `color` 줄(color_meta 합치기)은 손대지 않음(통합 때 메인).
+- B1(2475896d) 설정 거울 `BeadDoeView3dSceneCfg{enabled bool, max_mb float 1024 [0, 65536], diff_cell_h_mult 2.0 [0.5, 8]}`·yaml 2개와
+  코어 DEFAULTS 이름·값 같음(max_mb 1024 == 1024.0) — 통합 뒤 `test_v0251_15_settings_mirrors` 가 skip 대신 확인.
