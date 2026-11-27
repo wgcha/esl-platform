@@ -9,6 +9,7 @@ import type {
   DoeBasisMeta, DoeBead, DoeBeadDerived, DoeDeriveOut, DoeDesignStatus, DoeElemSet, DoeParam, DoeParamsOut, DoePlanOut, DoeSelectViewManifest, DoeSelectionDerived, DoeSelectionIn, DoeSelectAutoOut,
   DoeDepthSection, DoeSection, DoeSettingsOut, DoeWarning, XY,
 } from "../api/types";
+import { css, mapFor } from "../lib/colormap";
 import { boundaryNodes, buildTopo, type MeshTopo } from "../view3d/select/adjacency";
 import { enclosedComponents, outerPolygons, type Vec3 } from "../view3d/select/grow";
 import { writeBasis } from "../view3d/select/basis";
@@ -733,7 +734,7 @@ export function selColorMax(cells: { values: Record<string, number>; status: Doe
   return +(v || 1).toFixed(2);
 }
 
-/** 목 썸네일(SVG — 실제는 워커 3D 음영 PNG): 비드를 깊이 변화(파랑 깊어짐·빨강 얕아짐, 같은 ±V) 로 칠함 */
+/** 목 썸네일(SVG — 실제는 워커 3D 음영 PNG): 비드를 깊이 변화(빨강 깊어짐·파랑 얕아짐, 같은 ±V) 로 칠함 */
 export function selThumbSvg(values: Record<string, number> | null, params: DoeParam[], vmax: number, status: DoeDesignStatus | "NOMINAL") {
   const W = 320;
   const Hh = 240;
@@ -748,9 +749,7 @@ export function selThumbSvg(values: Record<string, number> | null, params: DoePa
   };
   const col = (v: number) => {
     if (!values) return "rgb(172,178,188)";
-    const t2 = Math.max(-1, Math.min(1, v / (vmax || 1)));
-    const c = t2 >= 0 ? [247 - 214 * t2, 247 - 145 * t2, 247 - 75 * t2] : [247 + 0 * t2, 247 + 160 * t2, 247 + 175 * t2];
-    return `rgb(${c.map((x) => Math.round(x)).join(",")})`;
+    return css(mapFor("div"), (Math.max(-1, Math.min(1, v / (vmax || 1))) + 1) / 2);
   };
   const path = SEL_PATH.map(([a, b]) => `${sx(a).toFixed(1)},${sy(b).toFixed(1)}`).join(" ");
   const w1 = (60 + dv("B1_W")) * k;

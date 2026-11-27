@@ -160,34 +160,3 @@ export function f3(v: number | null | undefined): string {
   const a = Math.abs(v);
   return a !== 0 && (a < 1e-3 || a >= 1e6) ? v.toExponential(3) : String(+v.toPrecision(4));
 }
-
-// ---------------------------------------------------------------- @deprecated — F1c(2D·썸네일) 병합 때 삭제(통합 시험 V-0251-37 이 0건을 확인)
-// F1c 가 쓰는 파일(DispOverlay·FieldOverlay·library/common.tsx·BeadSelectCard)이 아직 아래를 import 한다. 새 코드는 쓰지 말 것 — mapFor·srgb·css·cssGradient 를 쓴다.
-/** @deprecated mapFor("seq")·css 로 바꾼다(F1c) */
-export const VIRIDIS: RGB[] = [
-  [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142], [38, 130, 142],
-  [31, 158, 137], [53, 183, 121], [109, 205, 89], [180, 222, 44], [253, 231, 37],
-];
-/** @deprecated mapFor("div")·css 로 바꾼다(F1c) */
-export const DIVERGING: RGB[] = [
-  [49, 54, 149], [69, 117, 180], [145, 191, 219], [240, 228, 140], [252, 141, 89], [215, 48, 39], [165, 0, 38],
-];
-/** @deprecated specialCss("nan") 으로 바꾼다(F1c) */
-export const NA_COLOR = "#9aa1ab";
-/** @deprecated css(map, t) 로 바꾼다(F1c) */
-export function lerp(c: RGB[], t: number): string {
-  const x = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0)) * (c.length - 1);
-  const i = Math.min(Math.floor(x), c.length - 2);
-  const f = x - i;
-  const a = c[i];
-  const b = c[i + 1];
-  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)})`;
-}
-/** @deprecated cssGradient(map) 으로 바꾼다(F1c) */
-export function gradient(c: RGB[]): string {
-  return `linear-gradient(90deg, ${c.map((x, i) => `rgb(${x.join(",")}) ${Math.round((100 * i) / (c.length - 1))}%`).join(", ")})`;
-}
-/** @deprecated BeadSelectCard HeightLegend(F1c)가 view3d/colors 를 통해 아직 쓴다 — 옛 띠(빨강 = 얕아짐). F1c 가 cssGradient(mapFor("div")) 로 바꾼 뒤 삭제 */
-export const DIVERGING_GRADIENT = gradient([
-  [103, 0, 31], [178, 24, 43], [214, 96, 77], [244, 165, 130], [253, 219, 199], [247, 247, 247], [209, 229, 240], [146, 197, 222], [67, 147, 195], [33, 102, 172], [5, 48, 97],
-]);

@@ -1959,7 +1959,7 @@ export class DoeMock {
       },
       cells,
       ...(sel ? { warn: cells.filter((c) => c.status === "READY" && c.warnings?.length).length } : {}),
-      ...(sel && r ? { selection_sha256: r.sel?.sha256 ?? null, color: { v_max: selColorMax(cells, this.paramsOf(r)), unit: "mm" } } : {}),
+      ...(sel && r ? { selection_sha256: r.sel?.sha256 ?? null, color: { v_max: selColorMax(cells, this.paramsOf(r)), unit: "mm", map: "diverge" } } : {}),
     };
   }
 

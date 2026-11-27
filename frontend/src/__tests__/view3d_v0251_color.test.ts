@@ -136,9 +136,9 @@ describe("V-0251-37·38·39 자원 하나 · 정점 일치 · 보간 규칙 (TS 
     const rel = (p: string) => p.slice(src.length + 1).replace(/\\/g, "/");
     const importers = files.filter((f) => /from\s+["'][^"']*colormaps\.json["']/.test(readFileSync(f, "utf8"))).map(rel);
     expect(importers).toEqual(["lib/colormap.ts"]);
-    const legacy = files.filter((f) => /\b(VIRIDIS|DIVERGING|BLUES9|RDBU11)\b/.test(readFileSync(f, "utf8"))).map(rel).sort();
-    // F1c 가 병합하면 이 목록은 ["lib/colormap.ts"](deprecated 블록)도 사라져 비게 된다 — 통합 시험이 0건을 확인
-    const allowed = ["components/BeadSelectCard.tsx", "components/DispOverlay.tsx", "components/FieldOverlay.tsx", "lib/colormap.ts", "pages/library/common.tsx", "view3d/colors.ts"];
+    const legacy = files.filter((f) => /\b(VIRIDIS|DIVERGING|DIVERGING_GRADIENT|NA_COLOR|BLUES9|RDBU11)\b/.test(readFileSync(f, "utf8"))).map(rel).sort();
+    // F1c 정리 완료 — 허용 목록 비움(옛 상수 shim 과 view3d/colors.ts 재내보냄 삭제)
+    const allowed: string[] = [];
     for (const f of legacy) expect(allowed, f).toContain(f);
   });
 });
@@ -242,13 +242,10 @@ describe("V-0251-30 공용 확인(정적)", () => {
     }
     return out;
   };
-  it("view3d/** 에 bluesSrgb·BLUES_GRADIENT·BLUES9·RDBU11·DIVERGING_GRADIENT 없음(F1c 용 재내보냄 1줄 제외), RGB 정점 리터럴 없음", () => {
+  it("view3d/** 에 bluesSrgb·BLUES_GRADIENT·BLUES9·RDBU11·DIVERGING_GRADIENT 없음(재내보냄 shim 삭제됨), RGB 정점 리터럴 없음", () => {
     for (const f of walk(dir)) {
       if (/select\/(graph|layers)\.ts$/.test(f)) continue; // 세그먼트 12색·비드 단 색 = 연속값 색이 아님(계약 §0.5 예외 L11)
-      const t = readFileSync(f, "utf8")
-        .split("\n")
-        .filter((l) => !(l.includes("DIVERGING_GRADIENT") && l.includes("@deprecated shim")) && !/export \{ DIVERGING_GRADIENT \} from/.test(l))
-        .join("\n");
+      const t = readFileSync(f, "utf8");
       expect(t, f).not.toMatch(/\b(bluesSrgb|BLUES_GRADIENT|BLUES9|RDBU11|DIVERGING_GRADIENT|LUT_LINEAR|LUT_DIV_LINEAR|VIRIDIS)\b/);
       expect(t, f).not.toMatch(/\[\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\]\s*,\s*\[\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\]/); // 정점 나열
     }

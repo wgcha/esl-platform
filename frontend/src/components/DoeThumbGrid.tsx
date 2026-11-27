@@ -101,7 +101,7 @@ export function DoeThumbGrid({ preview, params, thumbUrl, select, onOpen }: { pr
   const cells = preview.cells ?? [];
   return (
     <>
-      {select && preview.color && <HeightLegend vmax={preview.color.v_max} unit={preview.color.unit} />}
+      {select && preview.color && <HeightLegend vmax={preview.color.v_max} unit={preview.color.unit} legacy={(preview.color as { map?: string }).map !== "diverge"} />}
       <ul className="doe-thumbs" aria-label="미리보기 썸네일">
         <Thumb id="d000" url={thumbUrl("d000")} cell={null} params={params} select={select} onOpen={onOpen} />
         {cells.map((c) => (
