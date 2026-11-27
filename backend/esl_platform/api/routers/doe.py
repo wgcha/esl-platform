@@ -252,12 +252,16 @@ def doe_view3d_scene_manifest(sid: str, src: str, did: str, entry_id: str, reque
 
 @router.get("/doe/studies/{sid}/view3d-scene/{src}/{did}/{name}", response_class=FileResponse,
             responses={200: {"content": {"model/gltf-binary": {}, "application/octet-stream": {}},
-                             "description": "씬 묶음 GLB·값 파일(pack.json 에 적힌 이름만)"}})
+                             "description": "씬 묶음 GLB·값 파일(pack.json 에 적힌 이름만, ETag — If-None-Match 일치 시 304)"},
+                       304: {"description": "변경 없음"}})
 def doe_view3d_scene_file(sid: str, src: str, did: str, name: str, request: Request,
-                          principal: Principal = Depends(get_principal)) -> FileResponse:
-    path, media = svc.view3d_scene_file(get_ctx(request), principal, sid, src, did, name)
-    # 형상(part.glb)은 씬을 바꿔도 같은 URL — 브라우저가 재검증(ETag)하며 캐시하게 no-store 가 아닌 no-cache
-    return FileResponse(path, media_type=media, headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"})
+                          principal: Principal = Depends(get_principal)) -> Response:
+    path, media, etag = svc.view3d_scene_file(get_ctx(request), principal, sid, src, did, name)
+    # 형상(part.glb)은 씬을 바꿔도 같은 URL·ETag — 브라우저가 재검증해 304(기존 Case view3d 파일과 같은 _etag_headers 규칙, 통합 INT-12)
+    headers = {**_etag_headers(etag), "X-Content-Type-Options": "nosniff"}
+    if _not_modified(request, etag):
+        return Response(status_code=304, headers=headers)
+    return FileResponse(path, media_type=media, headers=headers)
 
 
 @router.get("/doe/studies/{sid}/shapes/{did}/defeature", response_model=dict[str, Any])

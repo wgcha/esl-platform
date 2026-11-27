@@ -341,6 +341,13 @@ describe("manifest·mock 정합(백엔드와 맞춰볼 형태)", () => {
       values: `/esl/api/esl-runs/esl-run-1/view3d/values.bin?key=${m.key}`,
     });
     expect(fileUrls({ ...m, geometry_url: "", values_url: "" }).geometry).toBe(`/esl/api/esl-runs/esl-run-1/view3d/part.glb?key=${m.key}`);
+    // 통합 INT-12: 씬 manifest 는 형상 키 = 묶음 geometry_key(씬과 무관 → 같은 URL), 값 파일은 씬 key
+    const sc = (kk: string) => ({ ...m, key: `doe/scene/sv/d001/e${kk}`, geometry_key: "doe/scene/sv/d001", geometry_url: "/doe/studies/s/view3d-scene/full/d001/part.glb", values_url: `/doe/studies/s/view3d-scene/full/d001/e${kk}.bin` });
+    const a = fileUrls(sc("00"));
+    const b = fileUrls(sc("01"));
+    expect(a.geometry).toBe(b.geometry);
+    expect(a.geometry).toBe("/esl/api/doe/studies/s/view3d-scene/full/d001/part.glb?key=doe%2Fscene%2Fsv%2Fd001");
+    expect(a.values).not.toBe(b.values);
   });
 });
 

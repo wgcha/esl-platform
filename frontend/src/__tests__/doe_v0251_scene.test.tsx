@@ -49,7 +49,8 @@ vi.mock("../view3d/loadThree", () => ({
 import { renderApp } from "../test/render";
 import { NO_C_TEXT } from "../view3d/View3DCard";
 import { PER_ESL_HEAT_SPAN, heatStyle, perEslNote } from "../components/DoePerEslTable";
-import { COLOR_SEL_BUTTONS, SCENE_TEXT, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene } from "../pages/doe/doeScene";
+import { COLOR_SEL_BUTTONS, SCENE_TEXT, approxFor, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene } from "../pages/doe/doeScene";
+import FX from "../mock/fixtures/scene_real_v0251.json";
 import { sceneManifest } from "../mock/scenemock";
 import { css, mapFor, relLuminance, table, textOn } from "../lib/colormap";
 import CM from "../../../resources/colormaps.json";
@@ -63,6 +64,38 @@ const open = (id: string) => renderApp(`/p/p-body/doe/${id}`, "power", (s) => {
   doeMock = s.doe;
 });
 const sel = () => screen.findByTestId("v3d-scene-select", {}, { timeout: 10000 }) as Promise<HTMLSelectElement>;
+
+// 통합 INT-10: 실제 백엔드 응답(코어 build_scene_pack 씬 묶음 → GET manifest·파일 그대로 — backend 시험
+// test_int10_frontend_fixture_is_real_api_response 가 이 파일 = API 응답임을 확인)으로 씬 요청에 답한다. 엔트리 첫째 = E0, 나머지 = E1.
+const fx = FX as unknown as { manifests: Record<string, Record<string, unknown>>; files: Record<string, string> };
+function openReal(id: string, patch?: (d: DoeMock) => void) {
+  const seen: string[] = [];
+  const r = renderApp(`/p/p-body/doe/${id}`, "power", (s) => {
+    s.doe.demoScene();
+    doeMock = s.doe;
+    patch?.(s.doe);
+  });
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const u = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+    const m = /\/doe\/studies\/([^/]+)\/view3d-scene\/([^/]+)\/([^/]+)\/(.+)$/.exec(u.pathname);
+    if (!m) return orig(input, init);
+    seen.push(u.pathname + u.search);
+    const [, sid, src, did, tail] = m;
+    const fd = did === "d000" ? "d000" : "d001";
+    const mm = /^([^/]+)\/manifest\.json$/.exec(tail);
+    if (mm) {
+      const entries = doeMock!.recs.find((x) => x.out.id === sid)?.result?.scene_view?.entries ?? [];
+      const fe = entries.findIndex((e) => e.entry_id === decodeURIComponent(mm[1])) <= 0 ? "E0" : "E1";
+      const txt = JSON.stringify(fx.manifests[`${fd}/${fe}`]).split(`/doe/studies/{SID}/view3d-scene/full/${fd}`).join(`/doe/studies/${sid}/view3d-scene/${src}/${did}`);
+      return new Response(txt, { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    const b = fx.files[`${fd}/${tail}`];
+    if (!b) return new Response(JSON.stringify({ detail: { code: "VIEW3D_SCENE_NOT_FOUND", message: "없음" } }), { status: 404, headers: { "Content-Type": "application/json" } });
+    return new Response(Uint8Array.from(atob(b), (c) => c.charCodeAt(0)), { status: 200, headers: { "Content-Type": "application/octet-stream" } });
+  }) as typeof fetch;
+  return { ...r, seen };
+}
 const calls = () => doeMock!.sceneManifestCalls;
 const lastCalls = (n: number) => calls().slice(-n);
 
@@ -143,6 +176,71 @@ describe("V-0251-45 ESL 개선율 칸 색(L10)", () => {
   it("표 설명 문구", () => {
     const r = { esl: [{ entry_id: "e1" }], ranking: [] } as unknown as DoeResultOut;
     expect(perEslNote(r, null)).toContain("파랑 개선(C 감소) · 빨강 악화(C 증가)");
+  });
+});
+
+describe("통합 INT-10~12 — 실제 응답 형식·근사 씬·형상 캐시", () => {
+  it("INT-10·12: 실제 백엔드 응답(값 배열 c·dc)으로 자동(최악 ESL) 두 카드 정상 — C 기여도 활성, 씬을 바꿔도 형상 URL 같음·값 URL 바뀜", async () => {
+    const n0 = h.scenes.length;
+    const { seen } = openReal("doe-60");
+    await waitFor(() => expect(screen.getAllByTestId("v3d-host").map((e) => e.getAttribute("data-phase"))).toEqual(["ready", "ready"]), { timeout: 10000 });
+    expect(screen.queryByTestId("v3d-unavailable")).toBeNull();
+    expect(h.scenes.length - n0).toBeGreaterThanOrEqual(2);
+    const seg = screen.getByTestId("v3d-color");
+    expect((seg.querySelector("[data-color=c]") as HTMLButtonElement).disabled).toBe(false);
+    expect((seg.querySelector("[data-color=dc]") as HTMLButtonElement).disabled).toBe(false);
+    const geo = () => new Set(seen.filter((x) => /\/part\.glb/.test(x)));
+    const g0 = geo();
+    expect(g0.size).toBe(2);                                            // 기준·안 묶음마다 1개
+    expect([...g0].every((x) => /[?&]key=doe%2Fscene%2Fsv%2Fd00\d$/.test(x))).toBe(true);   // 키 = 묶음(씬 아님)
+    const s = await sel();
+    fireEvent.change(s, { target: { value: s.options[2].value } });
+    await waitFor(() => expect(seen.some((x) => /\/e01\.bin/.test(x))).toBe(true), { timeout: 10000 });
+    await waitFor(() => expect(screen.getAllByTestId("v3d-host").map((e) => e.getAttribute("data-phase"))).toEqual(["ready", "ready"]), { timeout: 10000 });
+    expect(geo()).toEqual(g0);                                          // 씬 전환 뒤에도 형상 URL 그대로(브라우저 캐시·304)
+  }, 30000);
+
+  it("INT-11: 근사 씬(packs.approx) = 3D 바 정보 한 줄, 씬 요약 숫자 = 표(per_esl) 값", async () => {
+    openReal("doe-60", (d) => {
+      const rec = d.recs.find((x) => x.out.id === "doe-60")!;
+      const sv = rec.result!.scene_view!;
+      const text = "이 3D 의 C 기여도 합이 표의 C 와 다릅니다(하중 공간 고정 등 — 3D 하중 입력이 평가와 다름) — 색은 근사, 숫자는 표 기준";
+      for (const pk of Object.values(sv.packs))
+        pk.approx = Object.keys(pk.designs).filter((x) => x !== "d000").flatMap((did) => sv.entries.map((e) => ({ did, entry_id: e.entry_id, code: "SCENE_C_MISMATCH", text })));
+    });
+    const line = await screen.findByTestId("v3d-scene-approx", {}, { timeout: 10000 });
+    expect(line.textContent).toContain("숫자는 표 기준");
+    expect(screen.getByTestId("v3d-barline").getAttribute("title")).toContain("숫자는 표 기준");
+    // 씬을 직접 골라 그 칸(ESL 표 셀 title = 표 값 C·umax)과 요약 숫자 비교 — 요약은 manifest(근사)가 아니라 표 값
+    const s = await sel();
+    const eid = s.options[1].value;
+    fireEvent.change(s, { target: { value: eid } });
+    const pick = (screen.getByLabelText("3D 비교 안") as HTMLSelectElement).value;
+    const cell = await screen.findByTestId(`per-esl-cell-${pick}-${eid}`, {}, { timeout: 10000 });
+    const tt = cell.getAttribute("title") ?? "";
+    const tC = Number(/^C ([^ ]+)/.exec(tt)![1]);
+    const tU = Number(/umax ([0-9.]+) mm/.exec(tt)![1]);
+    await waitFor(() => expect(screen.getByTestId("v3d-scene-summary").textContent).toContain(`ESL ${s.options[1].textContent}`), { timeout: 10000 });
+    const sum = screen.getByTestId("v3d-scene-summary").textContent ?? "";
+    const sC = Number(/C 기준 [^ ]+ → 안 ([^ ]+)/.exec(sum)![1]);
+    const sU = Number(/umax[^→]*→ 안 ([0-9.]+)|umax 안 ([0-9.]+)/.exec(sum)!.slice(1).find((x) => x)!);
+    expect(Math.abs(sC / tC - 1)).toBeLessThan(1e-3);
+    expect(Math.abs(sU - tU)).toBeLessThanOrEqual(0.005 + 1e-9);
+  }, 30000);
+
+  it("sceneSummary·approxFor(순수): 표 행이 있으면 C·umax = 표, 없고 근사면 그 쪽 manifest 숫자를 쓰지 않음", () => {
+    const man = (cv: number, uv: number) => ({ c: { kind: "fu", sum: cv, offset: 0, value: cv }, pins: { umax: { node_id: 1, vertex: 0, value: uv, kind: "ev" } }, values: { arrays: [] } });
+    const row = { entry_id: "E0", C: 91.14, ratio: 0.9, umax: 91.14, epsmax: 0 };
+    const t = sceneSummary({ label: "E0", base: man(100, 80), cand: man(95, 107.29), row, baseUmax: 85 });
+    expect(t).toContain(`C 기준 ${Number((91.14 / 0.9).toPrecision(4))} → 안 91.14 (−10.0 %)`);
+    expect(t).toContain("umax 기준 85.000 → 안 91.140");
+    expect(t).not.toContain("107.29");
+    const ap = { base: [], cand: ["SCENE_C_MISMATCH", "SCENE_PIN_MISMATCH"], texts: ["x"] };
+    const t2 = sceneSummary({ label: "E0", base: man(100, 80), cand: man(95, 107.29), approx: ap });
+    expect(t2).toBe("ESL E0");                                       // 근사 쪽 manifest 숫자 없음 → 그 부분 생략
+    const r = { scene_view: { entries: [{ entry_id: "E0", kk: 0 }], packs: { full: { designs: {}, approx: [{ did: "d001", entry_id: "E0", code: "SCENE_PIN_MISMATCH", text: "a" }, { did: "d000", entry_id: "E0", code: "SCENE_C_MISMATCH", text: "b" }, { did: "d002", entry_id: "E0", code: "SCENE_C_MISMATCH", text: "c" }] } } } } as unknown as DoeResultOut;
+    expect(approxFor(r, "full", "d001", "E0")).toEqual({ base: ["SCENE_C_MISMATCH"], cand: ["SCENE_PIN_MISMATCH"], texts: ["a", "b"] });
+    expect(approxFor(r, "full", "d001", "E1")).toEqual({ base: [], cand: [], texts: [] });
   });
 });
 

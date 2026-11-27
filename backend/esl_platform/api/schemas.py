@@ -437,7 +437,8 @@ class View3dLod(View3dFile):
 
 
 class View3dValuesArray(_Out):
-    key: Literal["pa", "fn", "fmag", "u"]
+    # v0.25.1 씬 값 파일(esl_view3d_scene_legend.md §2.3): c(C 기여도)·dc(차이) int16 배열이 뒤에 붙음 — 옛 view3d 파일은 pa·fn·fmag·u 만
+    key: Literal["pa", "fn", "fmag", "u", "c", "dc"]
     dtype: Literal["int16", "uint16"]
     comps: int
     offset: int
@@ -534,6 +535,8 @@ class View3dSceneOut(View3dOut):
     c: dict[str, Any] | None = None
     dc: dict[str, Any] | None = None
     pins: dict[str, Any] | None = None
+    # 통합 INT-12: 형상 파일(part.glb·part_lod.glb) 캐시 키 = 묶음 key(씬과 무관) — 씬을 바꿔도 형상 URL 이 같아 다시 받지 않음(§8)
+    geometry_key: str | None = None
 
 
 class View3dSourceRow(_Out):
@@ -2404,6 +2407,8 @@ class DoeScenePackOut(_Out):
     c_kind: Literal["fu", "mixed"] | None = None
     designs: dict[str, list[str]]
     skipped: list[DoeSceneSkippedOut] = Field(default_factory=list)
+    # 통합 INT-11: 3D 가 표와 다른 씬(사이드카 warnings 의 SCENE_C_MISMATCH·SCENE_PIN_MISMATCH — 색·핀은 근사, 숫자는 표 기준)
+    approx: list[DoeSceneSkippedOut] = Field(default_factory=list)
 
 
 class DoeSceneBudgetOut(_Out):

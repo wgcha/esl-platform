@@ -28,7 +28,7 @@ import { parseGlb } from "../../view3d/glb";
 import { SectionMini } from "../../components/SectionMini";
 import { CloneDepthWindow, DepthSectionChip, DepthSectionRadios } from "../../components/DepthSection";
 import { STEP_LABEL } from "../../api/history";
-import type { DoeCheckOut, DoeJigDiagEntryOut, DoeJigDiagOut, DoeJigRegionsFile, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
+import type { DoeCheckOut, DoePerEsl, DoeJigDiagEntryOut, DoeJigDiagOut, DoeJigRegionsFile, DoeMatrixOut, DoeResultOut, DoeSettingsOut, DoeSpec, DoeStudyOut, EntryOut, JobOut, RedropEntryOut, View3dOut } from "../../api/types";
 import { NO_PERMISSION, canRun, useApp } from "../../app/AppContext";
 import { Shell, MENU_LIBRARY } from "../../shell/Shell";
 import { Badge, Card, Empty, ErrorLine, PrimaryButton, type CardFold } from "../../components/ui";
@@ -37,7 +37,7 @@ import { DoeMethodInfo, DoeParamTable, DoeSpecRow } from "../../components/DoePa
 import { DoeThumbGrid, previewSummary, valuesText } from "../../components/DoeThumbGrid";
 import { BestCleanChip, ChipDetail, BestCleanMqChip, DoeRanking, JigLine, JigNoneChip } from "../../components/DoeRanking";
 import { DoePerEslTable, perEslNote } from "../../components/DoePerEslTable";
-import { COLOR_SEL_BUTTONS, SCENE_TEXT, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene, type ColorSel } from "./doeScene";
+import { COLOR_SEL_BUTTONS, SCENE_TEXT, approxFor, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene, type ColorSel } from "./doeScene";
 import { Sensitivity } from "../../components/Sensitivity";
 import { JobProgress } from "../../components/JobProgress";
 import { BundleButton } from "../../components/BundleButton";
@@ -1079,7 +1079,7 @@ const euro = (w: string): string => {
   return c >= 0 && c < 11172 && c % 28 !== 0 && c % 28 !== 8 ? "으로" : "로";
 };
 
-function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, setScene, kind = null, pairKeys = null, nodal = null, src = null, tie = null, gridMm = null, onRegen, noView = false }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; scene?: string | null; setScene?: (eid: string | null) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; gridMm?: number | null; onRegen?: () => void; noView?: boolean }) {
+function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, setScene, kind = null, pairKeys = null, nodal = null, src = null, tie = null, gridMm = null, onRegen, noView = false, perView = null }: { studyId: string; result: DoeResultOut; pick: string | null; setPick: (id: string) => void; scene?: string | null; setScene?: (eid: string | null) => void; kind?: View3dKind | null; pairKeys?: PairKeys | null; nodal?: NodalCols | null; src?: LoadSource | null; tie?: string | null; gridMm?: number | null; onRegen?: () => void; noView?: boolean; /** ESL별 개선율 표와 같은 per-esl 보기(?view=) — 씬 요약 숫자 = 표 값(통합 INT-11) */ perView?: string | null }) {
   const others = result.view3d.filter((d) => d !== "d000");
   // ④ 형상 비교: 라벨 = 기준 이름 vs 선택 형상 이름
   const named = result.scenario === "compare" || result.ranking.some((r) => !!r.shape);
@@ -1182,7 +1182,27 @@ function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, se
   const picked = scene != null;
   const missingPick = picked && !sceneOn && designView && !!src;
   const skip = missingPick ? skippedFor(result, srcKey, did, eid) : null;
-  const summary = sceneOn && base?.manifest && cand?.manifest ? sceneSummary({ label: eslLabel ?? "–", base: base.manifest, cand: cand.manifest }) : null;
+  // 통합 INT-11: 씬 요약 숫자 = 표(per_esl — 인라인이 아니면 표와 같은 GET …/results/per-esl?view=) 값, 근사 씬은 정보 한 줄
+  const peKey = `${did ?? ""}|${perView ?? ""}`;
+  const [peFetched, setPeFetched] = useState<{ key: string; rows: DoePerEsl[] } | null>(null);
+  const peNeed = sceneOn && !!did && !result.per_esl_inline && peFetched?.key !== peKey;
+  useEffect(() => {
+    if (!peNeed || !did) return;
+    let alive = true;
+    doe
+      .perEsl(studyId, [did], perView)
+      .then((o) => alive && setPeFetched({ key: peKey, rows: o.designs.find((x) => x.id === did)?.per_esl ?? [] }))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [studyId, peKey, peNeed]); // eslint-disable-line react-hooks/exhaustive-deps
+  const peRows = result.per_esl_inline ? result.ranking.find((r) => r.id === did)?.per_esl ?? null : peFetched?.key === peKey ? peFetched.rows : null;
+  const peRow = eid ? peRows?.find((p) => p.entry_id === eid) ?? null : null;
+  const approx = sceneOn ? approxFor(result, srcKey, did, eid) : null;
+  const baseUmax = eid && result.baseline.worst_entry_id === eid && Number.isFinite(result.baseline.umax) ? result.baseline.umax : null;
+  const summary = sceneOn && base?.manifest && cand?.manifest ? sceneSummary({ label: eslLabel ?? "–", base: base.manifest, cand: cand.manifest, row: peRow, baseUmax, approx }) : null;
+  const approxText = approx?.texts.length ? approx.texts.join(" · ") : null;
   const oldNote = !result.scene_view && !!src && designView && !(pairTab && !jigAvail);
   const noteText = (() => {
     if (pairTab && !jigMode) return "";
@@ -1191,7 +1211,7 @@ function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, se
     const b0 = eslLabel ? `색 = 변위 |u| · ESL ${eslLabel}(${picked ? "선택한 씬" : "선택 형상의 최악"}), 두 그림 같은 범위` : "색 = 변위 |u|(최악 ESL), 두 그림 같은 범위";
     return linMode ? `${b0} · 강체 제거, 해석값(순위와 무관)` : b0;
   })();
-  const barTitle = [summary, oldNote ? (result.scene_add?.ok ? SCENE_TEXT.oldNote : SCENE_TEXT.oldNoteNoAdd) : null, !pairTab || jigMode ? cond : null, noteText].filter(Boolean).join(" · ");
+  const barTitle = [summary, approxText, oldNote ? (result.scene_add?.ok ? SCENE_TEXT.oldNote : SCENE_TEXT.oldNoteNoAdd) : null, !pairTab || jigMode ? cond : null, noteText].filter(Boolean).join(" · ");
   const showAddInBar = !!src && designView && !(pairTab && !jigAvail) && !missingPick && (oldNote ? !!result.scene_add?.ok : false);
   const sceneBtn = (inBar: boolean) => <SceneAddButton studyId={studyId} result={result} onQueued={onRegen} inBar={inBar} budget={skip?.code === "SCENE_BUDGET"} />;
   return (
@@ -1222,6 +1242,7 @@ function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, se
         {colorSeg}
         <span className="small" data-testid="v3d-barline" title={barTitle} style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
           {summary && <span data-testid="v3d-scene-summary">{summary} · </span>}
+          {approxText && <span className="muted" data-testid="v3d-scene-approx">ⓘ {approxText} · </span>}
           {oldNote && <span className="muted" data-testid="v3d-scene-oldnote">{result.scene_add?.ok ? SCENE_TEXT.oldNote : SCENE_TEXT.oldNoteNoAdd} · </span>}
           {(!pairTab || jigMode) && <span data-testid="v3d-cond">{cond}</span>} <span className="muted">{noteText}</span>
         </span>
@@ -2162,7 +2183,7 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                         </span>
                       </div>
                       <div className="sub-title">3D 비교</div>
-                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} scene={scene} setScene={setScene} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} gridMm={gridOf(result.data)?.cell_mm ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} />
+                      <Compare3D key={`v3d-${curTab}`} studyId={id} result={r} pick={pick} setPick={setPick} scene={scene} setScene={setScene} kind={curSrc?.view3d ?? null} pairKeys={curSrc?.pairKeys ?? null} nodal={curSrc?.nodal ?? null} src={curSrc} tie={result.data?.jig?.tie_dofs ?? null} gridMm={gridOf(result.data)?.cell_mm ?? null} onRegen={() => void study.reload()} noView={!!curSrc && !!result.data && sourceNoView(result.data, curSrc)} perView={curSrc && (result.data?.rank_views as Record<string, unknown> | null | undefined)?.[curTab] ? curTab : null} />
                     </div>
                     <div className="doe-row-tables" data-testid="doe-row-tables">
                       <div className="doe-col-rank">

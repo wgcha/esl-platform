@@ -1,7 +1,7 @@
 // v0.25.1 F1b 낙하 씬 선택·자료 고르기 — 순수 함수(계약 esl_view3d_scene_legend.md §4.1~§4.4, D-0.25.1-VL-7).
 // 씬 상태는 결과 화면 한 곳의 entry_id | null(null = 자동 = 선택 안의 최악 ESL). 선택 지점 3곳(3D 바·ESL 표·순위표)이 같은 상태를 바꾼다.
 // 문구는 SCENE_TEXT 한 곳, 자료 유무·건너뜀 사유는 응답(results.scene_view)만 읽는다 — 출처 이름 분기 없음.
-import type { DoeResultOut, DoeSceneSkippedOut } from "../../api/types";
+import type { DoePerEsl, DoeResultOut, DoeSceneSkippedOut } from "../../api/types";
 import { sceneExtras } from "../../view3d/sceneManifest";
 
 /** 화면 문구 표(한 곳) */
@@ -70,25 +70,67 @@ export function sceneChoices(result: DoeResultOut, srcKey: string | null | undef
   return ids.map((id) => ({ entry_id: id, label: labelOfEntry(result, id) ?? id, missing: withPack && !hasScenePair(result, srcKey, did, id) }));
 }
 
-/** 씬 요약 한 줄 값(씬 manifest c.value·pins.umax.value — 표 값과 같음). 어느 쪽이든 없으면 그 부분 생략 */
+/** 근사 씬(통합 INT-11): 사이드카 warnings 의 SCENE_C_MISMATCH·SCENE_PIN_MISMATCH(응답 packs[src].approx) 중 이 씬(엔트리)의
+ *  기준(d000)·안 기록. texts = 3D 바 정보 줄 문구(코드별 1번 — 서버 문구 그대로) */
+export interface SceneApprox {
+  base: string[];
+  cand: string[];
+  texts: string[];
+}
+export function approxFor(result: DoeResultOut, srcKey: string | null | undefined, did: string | null, eid: string | null): SceneApprox {
+  const out: SceneApprox = { base: [], cand: [], texts: [] };
+  const p = packOf(result, srcKey);
+  if (!p || !eid) return out;
+  for (const a of p.approx ?? []) {
+    if (a.entry_id !== eid || (a.did !== did && a.did !== "d000")) continue;
+    (a.did === "d000" ? out.base : out.cand).push(a.code);
+    if (!out.texts.includes(a.text)) out.texts.push(a.text);
+  }
+  return out;
+}
+
+/** 씬 요약 한 줄 값(통합 INT-11): 숫자는 **표(per_esl)** 값 — 안 = 그 씬 행 C·ratio·umax, 기준 C = C/ratio(표의 개선율과 같은 비),
+ *  기준 umax = 결과 baseline(그 씬이 기준의 최악 ESL 일 때). 표 값이 없을 때만 manifest(c.value·pins.umax.value)로 — 그 씬이 근사로
+ *  표시된 쪽(approx)은 manifest 숫자를 쓰지 않음(핀·색은 위치 표시용). 어느 쪽이든 없으면 그 부분 생략 */
 export interface SceneSummaryIn {
   label: string;
   base: unknown;
   cand: unknown;
+  row?: DoePerEsl | null;
+  baseUmax?: number | null;
+  approx?: SceneApprox | null;
 }
 const g4 = (x: number) => Number(x.toPrecision(4)).toString();
 const rel = (a: number, b: number) => (a !== 0 && Number.isFinite(a) && Number.isFinite(b) ? `${b / a - 1 >= 0 ? "+" : "−"}${Math.abs((b / a - 1) * 100).toFixed(1)} %` : null);
 export function sceneSummary(x: SceneSummaryIn): string {
   const b = sceneExtras(x.base);
   const d = sceneExtras(x.cand);
+  const ap = x.approx ?? { base: [], cand: [], texts: [] };
+  const okC = (side: string[]) => !side.includes("SCENE_C_MISMATCH");
+  const okPin = (side: string[]) => !side.includes("SCENE_PIN_MISMATCH");
+  const row = x.row ?? null;
+  const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
   const parts = [`ESL ${x.label}`];
-  if (b.c && d.c) {
-    const r = rel(b.c.value, d.c.value);
-    parts.push(`C 기준 ${g4(b.c.value)} → 안 ${g4(d.c.value)}${r ? ` (${r})` : ""}`);
+  let c0: number | null = null;
+  let c1: number | null = null;
+  if (row && fin(row.C) && fin(row.ratio) && row.ratio !== 0) {
+    c1 = row.C;
+    c0 = row.C / row.ratio;
+  } else {
+    c0 = b.c && okC(ap.base) ? b.c.value : null;
+    c1 = d.c && okC(ap.cand) ? d.c.value : null;
   }
-  if (b.umaxPin && d.umaxPin) {
-    const r = rel(b.umaxPin.value, d.umaxPin.value);
-    parts.push(`umax 기준 ${b.umaxPin.value.toFixed(3)} → 안 ${d.umaxPin.value.toFixed(3)}${r ? ` (${r})` : ""} mm`);
+  if (c0 != null && c1 != null) {
+    const r = rel(c0, c1);
+    parts.push(`C 기준 ${g4(c0)} → 안 ${g4(c1)}${r ? ` (${r})` : ""}`);
+  }
+  const u1 = row && fin(row.umax) ? row.umax : d.umaxPin && okPin(ap.cand) ? d.umaxPin.value : null;
+  const u0 = fin(x.baseUmax) ? x.baseUmax : b.umaxPin && okPin(ap.base) ? b.umaxPin.value : null;
+  if (u0 != null && u1 != null) {
+    const r = rel(u0, u1);
+    parts.push(`umax 기준 ${u0.toFixed(3)} → 안 ${u1.toFixed(3)}${r ? ` (${r})` : ""} mm`);
+  } else if (u1 != null) {
+    parts.push(`umax 안 ${u1.toFixed(3)} mm`);
   }
   return parts.join(" · ");
 }

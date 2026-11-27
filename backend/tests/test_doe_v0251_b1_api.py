@@ -149,7 +149,9 @@ def test_scene_manifest_and_files(client, sid, esl_root, tmp_path):
     assert m["ranges"]["c"]["p99"] == 4.5 and m["ranges"]["dc"] is None and m["ranges"]["u_max"] > 0   # 기존 키 + 새 키
     g = api(client, "GET", m["geometry_url"])
     assert g.status_code == 200 and g.content[:4] == b"glTF" and g.headers["content-type"].startswith("model/gltf-binary")
-    assert g.headers["cache-control"] == "private, no-cache" and g.headers["x-content-type-options"] == "nosniff"
+    # 통합 INT-12: ETag + 재검증(기존 Case view3d 파일과 같은 Cache-Control) — If-None-Match 일치 = 304
+    assert g.headers["cache-control"] == "private, max-age=0, must-revalidate" and g.headers["x-content-type-options"] == "nosniff"
+    assert g.headers["etag"] and _get_inm(client, m["geometry_url"], g.headers["etag"]).status_code == 304
     v1, v2 = api(client, "GET", f"{p}/e00.bin"), api(client, "GET", m["values_url"])
     assert v1.status_code == v2.status_code == 200 and v1.content[-1:] == b"\x00" and v2.content[-1:] == b"\x01"
     assert v2.headers["content-type"].startswith("application/octet-stream")
@@ -352,7 +354,9 @@ def test_openapi_has_scene_paths_and_schemas():
     assert {"c", "dc"} <= set(sc["View3dSceneRanges"]["properties"])
     assert {"entries", "packs", "budget"} <= set(sc["DoeSceneViewOut"]["properties"])
     assert set(sc["DoeSceneAddOut"]["properties"]) == {"ok", "blocked"}
-    assert set(sc["DoeScenePackOut"]["properties"]) == {"c_kind", "designs", "skipped"}
+    assert set(sc["DoeScenePackOut"]["properties"]) == {"c_kind", "designs", "skipped", "approx"}     # approx = 통합 INT-11
+    assert {"c", "dc"} <= set(sc["View3dValuesArray"]["properties"]["key"]["enum"])                    # 통합 INT-10
+    assert "geometry_key" in sc["View3dSceneOut"]["properties"]                                          # 통합 INT-12
     assert set(sc["DoeSceneSkippedOut"]["properties"]) == {"did", "entry_id", "code", "text"}
     assert not {"c", "dc", "pins"} & set(sc["View3dOut"]["properties"])             # 기존 스키마 불변
 
@@ -368,3 +372,145 @@ def test_scene_messages_present():
 
     for k in ("SCENE_BUDGET", "SCENE_FAILED", "SCENE_NO_SOURCE", "SCENE_DIFF_NO_FRAME", "SCENE_VIEW_INVALID", "SCENE_UNAVAILABLE_DISABLED"):
         assert up_svc.doe_text(k) != k, k
+
+
+def _get_inm(client, path: str, etag: str):
+    """If-None-Match 를 단 조회(api 도우미는 headers 를 직접 받지 않음)."""
+    from doe_support import API, H
+    return client.request("GET", f"{API}{path}", headers={**H("tok-power", False), "If-None-Match": etag})
+
+
+# ================================================================ 통합 INT-10~12 — 코어가 만든 실제 씬 묶음(build_scene_pack · cfield)
+REAL_ENTRIES = [{"entry_id": "E0", "kk": 0}, {"entry_id": "E1", "kk": 1}]
+
+
+def seed_real_scene(esl_root: Path, sid: str, *, warnings=()) -> dict:
+    """코어 함수(esl.mech.cfield nodal_c·umax_pin·diff + esl.view3d.build_scene_pack)로 기준 d000·안 d001 씬 묶음을 실제로 만든다
+    (값 파일에 c·dc 배열, manifest 에 c·dc·pins·ranges.c·dc — 계약 §2.2·§2.3). 사이드카는 코어와 같은 형식. 돌려줌 = {(did, eid): 기대값}."""
+    import numpy as np
+    from esl import view3d as v3
+    from esl.mech import cfield as cf
+    from opt_support import plate
+
+    m = plate(nx=5, ny=4)
+    nid, n = m["node_id"], m["node_id"].size
+    base = study_dir(esl_root, sid)
+    exp: dict = {}
+    c0: dict = {}
+    for did, amp in (("d000", 1.0), ("d001", 0.8)):
+        scn = []
+        for e in REAL_ENTRIES:
+            k = e["kk"]
+            F = np.zeros((n, 3))
+            F[:, 1] = 1.0 + k + 0.05 * np.arange(n)
+            u = F * (0.01 * amp) * (1.0 + 0.1 * np.sin(np.arange(n)))[:, None]
+            nc = cf.nodal_c(F, u)
+            pin = cf.umax_pin(u)
+            dc = dmeta = None
+            if did == "d000":
+                c0[e["entry_id"]] = (nc["c"], nc["sum"])
+            else:
+                dc = cf.diff(nc["c"], c0[e["entry_id"]][0])
+                dmeta = {"sum": float(dc.sum()), "base_sum": float(c0[e["entry_id"]][1]), "map": "identity"}
+            pins = {"umax": {"node_id": int(nid[pin["index"]]), "vertex": int(pin["index"]), "value": float(pin["value"]), "kind": "all"}}
+            cm = {"kind": "fu", "sum": float(nc["sum"]), "offset": 0.0, "value": float(nc["sum"]),
+                  "parts": {"W_F": float(nc["W_F"]), "W_v": float(nc["W_v"]), "W_g": float(nc["W_g"])}}
+            scn.append({"entry_id": e["entry_id"], "kk": k, "f": F, "u": u, "supports": [{"node_id": int(nid[0]), "dof": "123"}],
+                        "c": nc["c"], "c_meta": cm, "dc": dc, "dc_meta": dmeta, "pins": pins})
+            exp[(did, e["entry_id"])] = {"c": nc["c"], "dc": dc, "c_meta": cm, "dc_meta": dmeta, "pins": pins}
+        v3.build_scene_pack(str(base / "post" / "view3d_scene" / "sv" / did), node_id=nid, x0=m["x0"], conn=m["conn"],
+                            elem_type=m["elem_type"], scenes=iter(scn), key=f"doe/scene/sv/{did}", src="full", did=did,
+                            created_at="2026-11-27T00:00:00Z")
+    side = {"schema": SIDECAR_SCHEMA, "builder_version": 1, "source": "bd_post", "created_at": "2026-11-27T00:00:00Z", "seconds": 0.5,
+            "entries": REAL_ENTRIES,
+            "packs": {"full": {"tag": "sv", "c_kind": "fu", "skipped": [],
+                               "designs": {d: {"dir": f"sv/{d}", "scenes": ["E0", "E1"]} for d in ("d000", "d001")}}},
+            "budget": {"max_mb": 1024, "est_mb": 0.1, "n_scenes": 4, "n_written": 4}, "warnings": list(warnings)}
+    (base / "post" / "scene_view.json").write_text(json.dumps(side), encoding="utf-8")
+    return exp
+
+
+def test_int10_real_core_scene_manifest_roundtrip(client, sid, esl_root):
+    """INT-10(차단 수정): 코어가 만든 씬 manifest(값 배열 c·dc 포함)가 200·응답 스키마 통과 — c·dc·pins·ranges 값과 값 파일의 c·dc
+    배열이 코어 계산과 왕복 일치(양자화 오차 ≤ scale/2)."""
+    import numpy as np
+    from esl import view3d as v3
+
+    exp = seed_real_scene(esl_root, sid)
+    for (did, eid), x in exp.items():
+        p = f"/doe/studies/{sid}/view3d-scene/full/{did}"
+        r = api(client, "GET", f"{p}/{eid}/manifest.json")
+        assert r.status_code == 200, (did, eid, r.text)
+        m = r.json()
+        keys = [a["key"] for a in m["values"]["arrays"]]
+        assert keys == ["pa", "fn", "fmag", "u", "c"] + (["dc"] if x["dc"] is not None else [])
+        assert m["c"] == {**x["c_meta"], "unit": "N·mm"} and m["pins"] == x["pins"]
+        assert (m["dc"] is None) == (x["dc"] is None) and m["ranges"]["c"]["max"] == float(x["c"].max())
+        if x["dc"] is not None:
+            assert m["dc"] == x["dc_meta"] and m["ranges"]["dc"]["abs_max"] == float(np.abs(x["dc"]).max())
+        buf = api(client, "GET", m["values_url"]).content
+        got = v3.unpack_values(buf, m["values"]["arrays"], m["n_nodes"])
+        for k in ("c", "dc"):
+            if x[k] is None:
+                continue
+            s_ = next(a["scale"] for a in m["values"]["arrays"] if a["key"] == k)
+            assert np.abs(got[k] - x[k]).max() <= s_ / 2 + 1e-12 * s_, k
+        assert m["geometry_key"] == f"doe/scene/sv/{did}"
+
+
+def test_int12_geometry_url_same_across_scenes_and_304(client, sid, esl_root):
+    """INT-12: 같은 묶음의 형상 URL·캐시 키는 씬과 무관(E0 → E1 같은 geometry_url·geometry_key), 두 번째 요청(If-None-Match) = 304.
+    값 파일은 씬마다 다른 URL·ETag."""
+    seed_real_scene(esl_root, sid)
+    p = f"/doe/studies/{sid}/view3d-scene/full/d001"
+    a, b = (api(client, "GET", f"{p}/{e}/manifest.json").json() for e in ("E0", "E1"))
+    assert a["geometry_url"] == b["geometry_url"] and a["geometry_key"] == b["geometry_key"] and a["key"] != b["key"]
+    g1 = api(client, "GET", a["geometry_url"])
+    assert g1.status_code == 200 and g1.headers["etag"]
+    g2 = _get_inm(client, b["geometry_url"], g1.headers["etag"])
+    assert g2.status_code == 304 and g2.headers["etag"] == g1.headers["etag"] and g2.content == b""
+    va, vb = api(client, "GET", a["values_url"]), api(client, "GET", b["values_url"])
+    assert va.headers["etag"] != vb.headers["etag"]
+    assert _get_inm(client, b["values_url"], va.headers["etag"]).status_code == 200
+
+
+def test_int11_approx_from_core_warnings(client, sid, esl_root):
+    """INT-11: 코어 사이드카 warnings 의 SCENE_C_MISMATCH·SCENE_PIN_MISMATCH(코어 문자열 형식 그대로) → packs[src].approx
+    {did, entry_id, code, text}(문구 = doe_messages, 수치 원문은 내지 않음, 같은 것 1번). 모르는 출처·다른 경고는 무시."""
+    w = ["SCENE_C_MISMATCH: full d001 E0 Σc+offset 40898298.1 ≠ 40968693.6",
+         "SCENE_PIN_MISMATCH: full d001 E0 2665.23048 ≠ umax_ev 2737.21842",
+         "SCENE_PIN_MISMATCH: full d001 E0 2665.23048 ≠ umax_ev 2737.21842",
+         "SCENE_C_MISMATCH: jig_disp d001 E1 1 ≠ 2",                   # 사이드카 packs 에 없는 출처
+         "SCENE_FAILED: full d001 E1 ESL_X"]
+    seed_real_scene(esl_root, sid, warnings=w)
+    sv = api(client, "GET", f"/doe/studies/{sid}/results").json()["scene_view"]
+    ap = sv["packs"]["full"]["approx"]
+    assert [(x["did"], x["entry_id"], x["code"]) for x in ap] == [("d001", "E0", "SCENE_C_MISMATCH"), ("d001", "E0", "SCENE_PIN_MISMATCH")]
+    assert all("표 기준" in x["text"] for x in ap) and "40898298" not in json.dumps(sv)
+    seed_real_scene(esl_root, sid)
+    assert api(client, "GET", f"/doe/studies/{sid}/results").json()["scene_view"]["packs"]["full"]["approx"] == []
+
+
+FRONT_FIXTURE = Path(__file__).resolve().parents[2] / "frontend" / "src" / "mock" / "fixtures" / "scene_real_v0251.json"
+
+
+def test_int10_frontend_fixture_is_real_api_response(client, sid, esl_root):
+    """프런트 시험 fixture(frontend/src/mock/fixtures/scene_real_v0251.json) = 이 API 가 코어 씬 묶음으로 돌려준 응답 그대로
+    (스터디 id 만 {SID}). 다시 기록: ESL_RECORD_SCENE_FIXTURE=1."""
+    import base64
+
+    seed_real_scene(esl_root, sid)
+    pre = f"/doe/studies/{sid}/"
+    out: dict = {"manifests": {}, "files": {}}
+    for did in ("d000", "d001"):
+        for eid in ("E0", "E1"):
+            r = api(client, "GET", f"/doe/studies/{sid}/view3d-scene/full/{did}/{eid}/manifest.json")
+            assert r.status_code == 200, r.text
+            out["manifests"][f"{did}/{eid}"] = json.loads(r.text.replace(pre, "/doe/studies/{SID}/"))
+            m = r.json()
+            for u in (m["geometry_url"], m["values_url"]):
+                out["files"][f"{did}/{u.rsplit('/', 1)[1]}"] = base64.b64encode(api(client, "GET", u).content).decode()
+    if os.environ.get("ESL_RECORD_SCENE_FIXTURE") == "1":
+        FRONT_FIXTURE.parent.mkdir(parents=True, exist_ok=True)
+        FRONT_FIXTURE.write_text(json.dumps(out, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    assert json.loads(FRONT_FIXTURE.read_text(encoding="utf-8")) == out

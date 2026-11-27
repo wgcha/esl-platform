@@ -5919,6 +5919,13 @@
       },
       "DoeScenePackOut": {
         "properties": {
+          "approx": {
+            "items": {
+              "$ref": "#/components/schemas/DoeSceneSkippedOut"
+            },
+            "title": "Approx",
+            "type": "array"
+          },
           "c_kind": {
             "anyOf": [
               {
@@ -18283,6 +18290,17 @@
           "geometry": {
             "$ref": "#/components/schemas/View3dFile"
           },
+          "geometry_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geometry Key"
+          },
           "geometry_url": {
             "title": "Geometry Url",
             "type": "string"
@@ -18782,7 +18800,9 @@
               "pa",
               "fn",
               "fmag",
-              "u"
+              "u",
+              "c",
+              "dc"
             ],
             "title": "Key",
             "type": "string"
@@ -22034,7 +22054,10 @@
               "application/octet-stream": {},
               "model/gltf-binary": {}
             },
-            "description": "씬 묶음 GLB·값 파일(pack.json 에 적힌 이름만)"
+            "description": "씬 묶음 GLB·값 파일(pack.json 에 적힌 이름만, ETag — If-None-Match 일치 시 304)"
+          },
+          "304": {
+            "description": "변경 없음"
           },
           "422": {
             "content": {
