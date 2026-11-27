@@ -794,8 +794,13 @@ def _sm_csv(rank: dict, r: dict, x: dict | None, entry_ids: list[str], sm_key: s
     return mid + cm + cs
 
 
+def _ref_csv(rid: str, x: dict | None) -> list:
+    """통합 INT-10 맨 끝 열 jig_ref(강제 부여 스냅샷 격자 지그 결과만 — 옛 CSV 바이트 불변): 순위 행 True/False, 기준·순위 밖 = 빈 칸."""
+    return [""] if rid == BASELINE or x is None else [bool(x.get("jig_ref"))]
+
+
 def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: list[str],
-                 lt_cols: dict | None = None, sm_key: str | None = None, jig: dict | None = None) -> str:
+                 lt_cols: dict | None = None, sm_key: str | None = None, jig: dict | None = None, ref_col: bool = False) -> str:
     """①②③ ranking.csv. v0.20.0 LT-13·20 lt_cols(새 스냅샷만) = 끝 열 lt_method·lt_far_frac·lt_dM_rel·score_alt.
     sm_key(강성 지표 스냅샷 — per_esl 의 metric 키) = 가운데 열 SM_CSV_MID·C_<i>(metric)·C_solve_<i>(§6).
     jig(v0.23.0 — {"block": DoeJigOut | None}, 스냅샷에 지그 있을 때만) = 맨 끝 열 JIG_CSV_COLS."""
@@ -805,7 +810,7 @@ def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: l
         (["score", "improvement", "worst", "umax", "epsmax"] + [f"C_{e}" for e in entry_ids])
     w.writerow(["id", "rank", "status"] + names + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
                + (LT_CSV_COLS if lt_cols is not None else []) + (JIG_CSV_COLS if jig is not None else [])
-               + [f"{k}_{pe}" for pe in (jig or {}).get("pes") or () for k in ("C", "umax")])
+               + [f"{k}_{pe}" for pe in (jig or {}).get("pes") or () for k in ("C", "umax")] + (["jig_ref"] if ref_col else []))
     rr = {x["id"]: x for x in rank["ranking"]}
     b0 = next((r for r in results if r["id"] == BASELINE), None)
     for r in sorted(results, key=lambda x: x["id"]):
@@ -831,7 +836,8 @@ def _ranking_csv(rank: dict, results: list[dict], names: list[str], entry_ids: l
         w.writerow(row + extra + ((lt_cols.get(r["id"]) or [""] * len(LT_CSV_COLS)) if lt_cols is not None else [])
                    + (_jig_csv(rank, r["id"], x, jig["block"]) if jig is not None else [])
                    + [v for pe in (jig or {}).get("pes") or () for v in _jig_pe_csv(r, b0, pe, x is not None or
-                                                                                      r["id"] == BASELINE)])
+                                                                                      r["id"] == BASELINE)]
+                   + (_ref_csv(r["id"], x) if ref_col else []))
     return buf.getvalue()
 
 
@@ -1088,7 +1094,7 @@ def bd_post(spec: dict, echo=print) -> dict:
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_ranking_csv(R, res_rank, names, [e["id"] for e in c.D["entries"]], lt_cols,
                               smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None,
-                              _jig_csv_arg(c, jblk)))
+                              _jig_csv_arg(c, jblk), ref_col="counts" in R))
     c.write_json(os.path.join("post", "designs.json"), {"designs": [{"id": r["id"], "status": r["status"],
                                                                     "code": r.get("code"), "score": r.get("score")}
                                                                    for r in results]})
@@ -1115,7 +1121,10 @@ def bd_post(spec: dict, echo=print) -> dict:
     _scn_finish(c)                               # v0.25.1 씬 3D 묶음 마무리(새 파일만 — 결과·순위 무영향)
     c.progress(60)
     keep_k = int(c.cfg["paicad"]["keep_files_top"])
-    best_ids = [x["id"] for x in R["ranking"][:max(1, min(k, keep_k))]]
+    order_, best_ref = rk.best_order(R["ranking"])         # 통합 INT-10: 최적 = 참고(jig_ref) 아닌 최상위(jig_ref 없으면 순위 순 그대로)
+    best_ids = order_[:max(1, min(k, keep_k))]
+    if best_ref:
+        warns.append("BEST_IS_REF: " + _msg_fmt("BEST_IS_REF", did=best_ids[0]))
     best_files = {}
     for did in best_ids:
         best_files[did] = _best(c, did, by[did]["values"], warns)
@@ -7124,6 +7133,9 @@ def _jg_merge_map(maps: list, cfg: dict | None = None) -> dict:
               "marks": marks}
         if any(x.get("marks_truncated") for x in tie):
             fk["marks_truncated"] = True
+        shs = [x["shift"] for x in tie if x.get("shift")]
+        if shs:                                             # 통합 INT-11: 묶음별 구멍 위치 어긋남 중 가장 큰 것
+            fk["shift"] = max(shs, key=lambda d: float(d["mm"]))
 
     def mn(xs):
         xs = [x for x in xs if x is not None]
@@ -7225,10 +7237,14 @@ def _jg_shape(c: Ctx, t, did: str, mesh: dict, sup: list, region, *, keep_u: boo
                 values.append({"key": float(s2), "loads": l2, "field": f2, "GF": GF2})
         params = {"tie_dofs": g["tie_dofs"], "kink_deg": float(J["normal_kink_deg"]), "dup_deg": float(J["aux321_dup_deg"]),
                   "frame_A": fr_A, "frame_dst": dst["frame"], "sup_x": G.get("sup_x")}
+        rim = None
+        if cfg.get("tie_force") is not None:                  # 통합 INT-11: Case 체결부 구멍 가장자리(골격 점 ∩ A 자유 변) — 강제 부여 스냅샷만
+            rim = np.isin(np.asarray(G["skel"]["idx"], dtype=np.int64), gm.free_edge_nodes(_jg_mesh_of_raw(e0.raw)))
         res = gm.run_shape(mesh, sup_idx, loads, G["skel"], G["field"], G["GF"], R, Xs_A, methods=ms, entries=eids,
                            params=params, cfg=cfg, solver_cfg=c.solver_cfg(), spring=G["spring"], omega=omega, ev_mask=evm,
                            keep_u=keep_u or conv, values=values,
-                           marks_max=int(c.cfg["view3d"]["jig_force_marks_max"]) if cfg.get("tie_force") is not None else None)
+                           marks_max=int(c.cfg["view3d"]["jig_force_marks_max"]) if cfg.get("tie_force") is not None else None,
+                           rim_A=rim)
         out["maps"].append(res["map"])
         if res.get("force_nodes") is not None:                # v0.25.2 강제로 붙인 형상 노드(3D 지지 표식 via force)
             out["force_nodes"] = np.union1d(out.get("force_nodes", np.zeros(0, np.int64)), res["force_nodes"])
@@ -7445,7 +7461,17 @@ def _jg_force_warns(did: str, tt: dict, cfg: dict) -> list:
         out.append(_jg_text("JIG_GRID_TIE_UNPLACED", did=did, n_miss=n_m, n_clusters=f["n_clusters"],
                             limit="" if lim is None else f"(거리 한도 {float(lim):g} mm)",
                             fail=" — 이 형상은 격자 지그 순위에서 빠집니다" if fail else ""))
+    sh = tt.get("shift") or {}
+    if sh.get("over"):                                      # 통합 INT-11: 구멍 위치가 한 방향으로 어긋남(마지막 — 앞 행 순서 불변)
+        out.append(_jg_text("JIG_GRID_TIE_SHIFT", **_jg_shift_fields(did, sh)))
     return out
+
+
+def _jg_shift_fields(did: str, sh: dict) -> dict:
+    v = [float(x) for x in sh.get("vec") or (0.0, 0.0, 0.0)]
+    return {"did": did, "mm": _jg_fmt(sh.get("mm")), "n": int(sh.get("n") or 0), "n_rim": int(sh.get("n_rim") or 0),
+            "tol": _jg_fmt(sh.get("tol_mm")),
+            "vec": ", ".join(f"{x:+.3g}" for x in v)}
 
 
 def _jg_area_out(tt: dict, rw: float) -> bool:
@@ -7711,6 +7737,11 @@ def _jg_study_warns(c: Ctx, runs: dict, cfg: dict) -> list:
             did, t_ = max(ums.items(), key=lambda kv: (int(kv[1]["n_miss"]) / int(kv[1]["n_clusters"]), kv[0]))
             put(_jg_force_warns(did, {**t_, "n_force": 0, "n_far": 0}, cfg)[0],
                 {"did": did, "n_miss": int(t_["n_miss"]), "n_clusters": int(t_["n_clusters"]), "n_shapes": len(ums)})
+        shf = {did: t_ for did, t_ in fon.items() if (t_.get("shift") or {}).get("over")}
+        if shf:                                             # 통합 INT-11: 구멍 위치 어긋남 최악 형상 1건
+            did, t_ = max(shf.items(), key=lambda kv: (float(kv[1]["shift"]["mm"]), kv[0]))
+            put(_jg_text("JIG_GRID_TIE_SHIFT", **_jg_shift_fields(did, t_["shift"])),
+                {"did": did, "mm": float(t_["shift"]["mm"]), "n_shapes": len(shf)})
         if any(t_.get("ref") for t_ in fon.values()):
             put(_jg_text("JIG_GRID_TIE_HINT"), {"n_shapes": sum(1 for t_ in fon.values() if t_.get("ref"))})
     miss = {did: (int(t_["n_miss"]) / int(t_["n_clusters"]), t_) for did, t_ in tie.items()
@@ -7900,7 +7931,7 @@ def _cmp_mq_rank(c: Ctx, R: dict, shapes: dict) -> dict | None:
 
 
 def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: list[str], lt_cols: dict | None = None,
-                     sm_key: str | None = None, mq_cols: bool = False, jig: dict | None = None) -> str:
+                     sm_key: str | None = None, mq_cols: bool = False, jig: dict | None = None, ref_col: bool = False) -> str:
     """④ ranking.csv: 변수 열 대신 name·file_name. v0.16.0 끝 열(§7·C2-D-22) = source·mesh_method·hausdorff_mm·refine_h_mm·
     elem_ratio_ref(기존 열 위치 불변). v0.20.0 LT-13 lt_cols(새 스냅샷만) = 끝 열 lt_method·lt_far_frac·lt_dM_rel·score_alt."""
     buf = io.StringIO()
@@ -7910,7 +7941,8 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
     w.writerow(["id", "rank", "status", "name", "file_name"] + mid_h + PER_ESL_COLS + [f"ratio_{e}" for e in entry_ids]
                + MESH_CSV_COLS + (LT_CSV_COLS if lt_cols is not None else []) + (MQ_CSV_COLS if mq_cols else [])
                + (JIG_CSV_COLS if jig is not None else [])
-               + [f"{k}_{pe}" for pe in (jig or {}).get("pes") or () for k in ("C", "umax")])   # v0.24.8 격자 지그만(pes)
+               + [f"{k}_{pe}" for pe in (jig or {}).get("pes") or () for k in ("C", "umax")]   # v0.24.8 격자 지그만(pes)
+               + (["jig_ref"] if ref_col else []))                                           # 통합 INT-10(강제 부여 스냅샷만)
     rr = {x["id"]: x for x in rank["ranking"]}
     b0 = next((r for r in results if r["id"] == BASELINE), None)
     for r in sorted(results, key=lambda x: x["id"]):
@@ -7937,7 +7969,8 @@ def _cmp_ranking_csv(rank: dict, results: list[dict], shapes: dict, entry_ids: l
                    + (([mqv["fail_ratio"], mqv["tria_pct"]] if mqv else ["", ""]) if mq_cols else [])
                    + (_jig_csv(rank, r["id"], x, jig["block"]) if jig is not None else [])
                    + [v for pe in (jig or {}).get("pes") or () for v in _jig_pe_csv(r, b0, pe, x is not None or
-                                                                                      r["id"] == BASELINE)])
+                                                                                      r["id"] == BASELINE)]
+                   + (_ref_csv(r["id"], x) if ref_col else []))
     return buf.getvalue()
 
 
@@ -8157,7 +8190,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
     with open(c.writer.guard(c.p("post", "ranking.csv")), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(_cmp_ranking_csv(R, results, shapes, eids, lt_cols,
                                   smm.metric_key(S_["metric_effective"], S_["lin_form"]) if S_ else None,
-                                  mq_cols=mq_res is not None, jig=_jig_csv_arg(c, jblk)))
+                                  mq_cols=mq_res is not None, jig=_jig_csv_arg(c, jblk), ref_col="counts" in R))
 
     def shp(did):
         s = shapes.get(did) or {}
@@ -8203,7 +8236,10 @@ def _cmp_post(c: Ctx, echo) -> dict:
     c.write_json(os.path.join("post", "per_esl.json"),
                  {"esl": esl, "ratio_tol": R["ratio_tol"], "designs": {x["id"]: x["per_esl"] for x in R["ranking"]},
                   "names": {x["id"]: x["shape"]["name"] for x in R["ranking"]}})
-    best_id = R["ranking"][0]["id"] if R["ranking"] else None
+    order_, best_ref = rk.best_order(R["ranking"])         # 통합 INT-10: 최적(산출물 대상) = 참고(jig_ref) 아닌 최상위 — 순위는 그대로
+    best_id = order_[0] if order_ else None
+    if best_ref:
+        warns.append("BEST_IS_REF: " + _msg_fmt("BEST_IS_REF", did=best_id))
     out = {"scenario": "compare", "reference_source": doc["reference_source"], "C_ref": R["C_ref"],
            "baseline": R["baseline"], "n_ok": R["n_ok"], "n_skipped": R["n_skipped"], "n_failed": R["n_failed"],
            "ranking": [{kk: v for kk, v in x.items() if kk != "C" and (kk != "per_esl" or inline)} for x in R["ranking"]],
@@ -8260,7 +8296,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
         out["warnings"] = _jg_warn_rows(c, out["warnings"])
     c.write_json(os.path.join("post", "result.json"), out)
     echo(f"[bd_post] ④ 성공 {R['n_ok']} · 최적 {best_id or '-'}"
-         + (f" ({_cmp_name(c, best_id)}) score {R['ranking'][0]['score']:.4f}" if best_id else ""))
+         + (f" ({_cmp_name(c, best_id)}) score {by[best_id]['score']:.4f}" if best_id else ""))
     c.progress(100)
     ret = {"files": ["post/result.json", "post/ranking.csv", "post/designs.json", "post/per_esl.json", "report.html"]
            + ([f"post/{LT_DIAG_JSON}"] if L is not None and lt_diag is not None else []),

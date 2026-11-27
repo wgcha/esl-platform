@@ -522,10 +522,15 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_GRID_TIE_UNPLACED: "형상 {did}: 체결부 {n_miss}/{n_clusters}곳은 붙일 면이 없어 뺐습니다",
   JIG_GRID_TIE_HINT: "체결부를 많이 못 찾은 형상은 Case 와 다른 모델이거나, 좌표가 어긋났거나, STEP 이 중립면이 아닐 수 있습니다 — 3D 지그 보기에서 위치를 확인하세요",
   JIG_GRID_TIE_SNAP: "체결부 {n_clusters_max}곳을 노드 1개로만 잡았습니다(형상 {n_shapes}개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요",
+  // 통합 INT-11(계약 §15.4): 구멍 위치가 한 방향으로 어긋남 — 서버 문구가 원본
+  JIG_GRID_TIE_SHIFT: "형상 {did}: Case 체결부 구멍 가장자리와 형상 구멍 가장자리가 한 방향으로 {mm} mm 어긋나 있습니다 — 좌표가 통째로 어긋났거나 다른 모델일 수 있어 지그 순위는 참고용입니다",
 };
-/** v0.25.2 §7.2 순위표 "참고" 꼬리표 title: 그 형상(did)의 JIG_GRID_TIE_FORCED 문구(없으면 코드 뜻) — 경고의 did·id·name 또는 문구 속 형상 이름으로 찾음 */
+/** v0.25.2 §7.2 순위표 "참고" 꼬리표 title: 그 형상(did)의 JIG_GRID_TIE_FORCED 문구 — 없으면(통합 INT-11: 위치 어긋남만으로 참고) JIG_GRID_TIE_SHIFT
+ *  문구, 둘 다 없으면 코드 뜻. 경고의 did·id·name 또는 문구 속 형상 이름으로 찾음 */
 export function tieForcedText(warnings: readonly { code: string; message?: string | null; [k: string]: unknown }[], did: string): string {
-  const w = warnings.find((x) => x.code === "JIG_GRID_TIE_FORCED" && (x.did === did || x.id === did || x.name === did || (typeof x.message === "string" && x.message.includes(`형상 ${did}`))));
+  const of = (code: string) =>
+    warnings.find((x) => x.code === code && (x.did === did || x.id === did || x.name === did || (typeof x.message === "string" && x.message.includes(`형상 ${did}`))));
+  const w = of("JIG_GRID_TIE_FORCED") ?? of("JIG_GRID_TIE_SHIFT");
   return w ? warnText(w) : JIG_CODE_TEXT.JIG_GRID_TIE_FORCED.replace(/^형상 \{did\}: /, "").replace(/\{[^}]+\}/g, "–");
 }
 /** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */

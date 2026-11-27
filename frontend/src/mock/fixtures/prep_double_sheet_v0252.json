@@ -1,0 +1,19 @@
+{
+ "_note": "worker/tests/test_v0252_int_jobs.py 가 실제 코어 ④ 준비 → 워커 등록 → API 응답과 대조(통합 INT-12). 형상 행 = {id, status, source, double_sheet}",
+ "shapes": [
+  {
+   "id": "d000",
+   "status": "READY",
+   "source": "case"
+  },
+  {
+   "id": "d001",
+   "status": "READY",
+   "source": "mesh",
+   "double_sheet": {
+    "frac": 0.943,
+    "gap_mm": 2.0
+   }
+  }
+ ]
+}

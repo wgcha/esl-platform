@@ -989,7 +989,8 @@ def _tie_diag0(cap: dict, ksp: dict) -> dict:
             "k_scale_min": float(min(ks_min)) if ks_min else None, "k_scale_max": float(max(ks_max)) if ks_max else None}
 
 
-def force_diag(cap: dict, skel: dict, Xs_A, X_S, R_pl, *, far_mm: float, frac_max: float, marks_max: int | None) -> dict:
+def force_diag(cap: dict, skel: dict, Xs_A, X_S, R_pl, *, far_mm: float, frac_max: float, marks_max: int | None,
+               shift: dict | None = None, shift_tol: float | None = None) -> dict:
     """강제 부여 진단(§3.4·§4.3·§6.3 — 스냅샷에 tie_force 가 있을 때만 map.tie 에 더함): n_force, n_far(옮긴 거리 > far_mm — 표시
     임계), force{dist_min_mm, dist_med_mm, dist_max_mm, shift_max_mm, far_mm, limit_mm(설정 max_dist_mm — null = 없음)}, ref(참고용 =
     (강제 + 못 붙임)/묶음 > frac_max ∨ n_far ≥ 1), marks[{q, via: force|miss, x (Case 체결부 중심 — 형상 전역 좌표), to(force — 붙인
@@ -1008,6 +1009,10 @@ def force_diag(cap: dict, skel: dict, Xs_A, X_S, R_pl, *, far_mm: float, frac_ma
           "shift_max_mm": max(float(c["shift"]) for c in fcl) if fcl else None, "far_mm": far,
           "limit_mm": None if fc.get("max_dist_mm") is None else float(fc["max_dist_mm"])}
     ref = bool((n_cl and (len(fcl) + len(mcl)) / n_cl > float(frac_max)) or n_far >= 1)
+    sh = None
+    if shift is not None and shift_tol is not None:   # 통합 INT-11: 구멍 위치 어긋남(rim_shift) > 임계 = 참고용
+        sh = {**shift, "tol_mm": float(shift_tol), "over": bool(float(shift["mm"]) > float(shift_tol))}
+        ref = ref or sh["over"]
     Xs = np.asarray(Xs_A, dtype=np.float64)
     XS = np.asarray(X_S, dtype=np.float64)
     R = np.asarray(R_pl, dtype=np.float64).reshape(3, 3)
@@ -1035,11 +1040,71 @@ def force_diag(cap: dict, skel: dict, Xs_A, X_S, R_pl, *, far_mm: float, frac_ma
                 mk.update(dist=None, n=0, far=False)
             marks.append(mk)
     out = {"n_force": len(fcl), "n_far": int(n_far), "force": fd, "ref": ref, "marks": marks}
+    if sh is not None:
+        out["shift"] = sh
     if marks_max is not None and len(marks) > int(marks_max):
         keep = sorted(marks, key=lambda m: (-(np.inf if m["dist"] is None else m["dist"]), m["q"]))[:int(marks_max)]
         out["marks"] = sorted(keep, key=lambda m: m["q"])
         out["marks_truncated"] = True
     return out
+
+
+def free_edge_nodes(mesh) -> np.ndarray:
+    """자유 변(요소 1개만 쓰는 변 — 구멍 가장자리·바깥 둘레)의 노드 인덱스(정렬, 중복 없음)."""
+    conn = np.asarray(mesh["conn"], dtype=np.int64)
+    q = np.asarray(mesh["elem_type"]).astype(np.int64) == 4
+    e = np.concatenate([conn[:, [0, 1]], conn[:, [1, 2]], conn[q][:, [2, 3]], conn[q][:, [3, 0]], conn[~q][:, [2, 0]]], axis=0)
+    e = e[(e[:, 0] >= 0) & (e[:, 1] >= 0) & (e[:, 0] != e[:, 1])]
+    if not e.size:
+        return np.zeros(0, np.int64)
+    u, cnt = np.unique(np.sort(e, axis=1), axis=0, return_counts=True)
+    return np.unique(u[cnt == 1]).astype(np.int64)
+
+
+def rim_shift(skel: dict, rim_A, Xs_A, s_free, normal=None) -> dict | None:
+    """좌표 어긋남 진단(v0.25.2 통합 — 계약 §15.4 INT-11): Case 체결부 구멍 가장자리 ↔ 형상 자유 변.
+
+    rim_A = 골격 점 bool(그 점이 Case A 메시 자유 변 노드 — 구멍 가장자리), s_free = 형상 자유 변 노드 인덱스(Xs_A 좌표 = A 쪽 배치).
+    묶음 q 마다 Case 가장자리 점의 중심 c_A 에서 묶음 반지름 R_q(골격 점의 무게중심 거리 최대 — 와셔 면 크기) 안의 형상 자유 변 노드 중심
+    c_S 를 구해 v_q = c_S − c_A(normal 이 있으면 판 법선 성분 뺌). 그 안에 형상 자유 변 노드가 3개 미만이면 그 묶음은 뺌(형상에 그 구멍이
+    없음·메워짐 — 거짓 경보 방지). 판이 이어져 있으면 band 잡기는 위치가 어긋나도 "잡힘" 이라 잡기 결과로는 어긋남이 안 보인다 → 구멍
+    위치로 본다. 반환 {mm: ‖median_q v_q‖, vec: median_q v_q (3), n: 비교한 묶음 수, n_rim: Case 구멍 가장자리가 있는 묶음 수} 또는
+    None(비교할 묶음 0). 한계: 어긋남이 와셔 면 크기(R_q)를 넘으면 형상 구멍이 탐색 원 밖이라 비교 묶음이 줄고 값이 작아진다 — 그보다 큰 통째
+    이동은 정렬 검사(SHAPE_MISALIGNED, frame 원점 차 > align_tol·L)가 잡는다(그 사이는 못 잡을 수 있음 — 현장 E-0252-11 3D 확인)."""
+    rim = np.asarray(rim_A, dtype=bool).reshape(-1)
+    sf = np.asarray(s_free, dtype=np.int64).reshape(-1)
+    if not rim.any() or sf.size == 0:
+        return None
+    XS = np.asarray(Xs_A, dtype=np.float64)[sf]
+    tS = cKDTree(XS)
+    nn = None
+    if normal is not None:
+        nn = np.asarray(normal, dtype=np.float64).reshape(3)
+        nn = nn / max(float(np.linalg.norm(nn)), 1e-300)
+    X = np.asarray(skel["x"], dtype=np.float64)
+    qq = np.asarray(skel["q"], dtype=np.int64)
+    V = []
+    n_rim = 0
+    for q in range(int(skel["n_q"])):
+        Pq = np.flatnonzero(qq == q)
+        rp = Pq[rim[Pq]]
+        if rp.size < 3:
+            continue
+        n_rim += 1
+        xq = X[Pq]
+        R_q = float(np.linalg.norm(xq - xq.mean(axis=0), axis=1).max())
+        c_A = X[rp].mean(axis=0)
+        js = tS.query_ball_point(c_A, R_q)
+        if len(js) < 3:
+            continue
+        v = XS[np.asarray(js, dtype=np.int64)].mean(axis=0) - c_A
+        if nn is not None:
+            v = v - float(v @ nn) * nn
+        V.append(v)
+    if not V:
+        return None
+    med = np.median(np.asarray(V), axis=0)
+    return {"mm": float(np.linalg.norm(med)), "vec": [float(x) for x in med], "n": len(V), "n_rim": n_rim}
 
 
 def frame_shift(Xs_A, X_S, nodes, frame_A: dict, frame_dst: dict) -> float:
@@ -1054,7 +1119,7 @@ def frame_shift(Xs_A, X_S, nodes, frame_A: dict, frame_dst: dict) -> float:
 
 def run_shape(mesh_S, sup321_idx, loads: dict, skel: dict, field: dict, GF: dict, R_pl, Xs_A, *, methods, entries,
               params: dict, cfg: dict, solver_cfg: dict | None, spring: dict | None = None, omega=None, ev_mask=None,
-              keep_u: bool = False, values: list | None = None, marks_max: int | None = None) -> dict:
+              keep_u: bool = False, values: list | None = None, marks_max: int | None = None, rim_A=None) -> dict:
     """공용 실행기(형상 1개 · 묶음 1개): 잡기 → BC → 패턴 묶음마다 분해 1 → 엔트리마다 응답. loads = {src: [(eid, F (N_S,3))]}
     (entries 순 — 격자 u 의 k), cfg = 격자 설정(tie_capture_rel·tie_snap_rel·tie_normal_deg·tie_miss_frac_max·sample_nbr·
     sample_normal_deg), params = {tie_dofs, kink_deg, dup_deg(+ frame_A·frame_dst·X_S 진단 — 선택, sup_x — A 3-2-1 점)}.
@@ -1075,11 +1140,18 @@ def run_shape(mesh_S, sup321_idx, loads: dict, skel: dict, field: dict, GF: dict
     n_miss = sum(1 for c in cap["clusters"] if c["miss"])
     XS = np.asarray(mesh_S["x0"], dtype=np.float64)
 
+    shift = shift_tol = None
+    if cap.get("force") is not None and rim_A is not None:   # 통합 INT-11: 구멍 위치 어긋남(강제 부여 스냅샷만 — 옛 결과 불변)
+        fa = params.get("frame_A") or {}
+        shift = rim_shift(skel, rim_A, Xs_A, free_edge_nodes(mesh_S), fa.get("n"))
+        shift_tol = float(cfg["frame_shift_warn"]) * float(cfg["cell_mm"])    # 기존 표시 임계 재사용(해시 밖)
+
     def _tie_diag(cap_, ksp_):                         # v0.25.2: 강제 부여 설정 스냅샷이면 map.tie 에 강제 진단 키(§6.3)
         d_ = _tie_diag0(cap_, ksp_)
         if cap_.get("force") is not None:
             d_.update(force_diag(cap_, skel, Xs_A, XS, R_pl, far_mm=float(cfg["tie_force_far_warn_mm"]),
-                                 frac_max=float(cfg["tie_miss_frac_max"]), marks_max=marks_max))
+                                 frac_max=float(cfg["tie_miss_frac_max"]), marks_max=marks_max,
+                                 shift=shift, shift_tol=shift_tol))
         return d_
 
     def fail_all(code, err, tie_d, samp):

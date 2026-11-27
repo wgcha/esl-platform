@@ -1,6 +1,8 @@
 // V-0252-30·31 (F1 몫) + #96: 스터디 결과 화면 — 제목 개수·빈 주 탭 → 순위 있는 탭·빈 탭 안내 링크·"참고" 꼬리표·옛 결과 불변,
 // 3D 강제 부여 표식(자홍 테두리·빈 고리 + 선·✕·범례·탐침)·SHAPE_DOUBLE_SHEET 배지. 화면 높이 증가 0 은 scripts/screenshots-v0252-f1.mjs.
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { CompareShapeSummary } from "../components/DoeInputs";
+import PREP_DS from "../mock/fixtures/prep_double_sheet_v0252.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PickEvent } from "../view3d/sceneApi";
 
@@ -50,7 +52,7 @@ import { MARK_TABLE, TIE_PX, TIE_TABLE, markLegend, tieProbe } from "../view3d/s
 import { buildSupportSpecs, buildTieMarks } from "../view3d/supports";
 import { infoLine } from "../view3d/info";
 import { selectionFromPick } from "../view3d/selection";
-import type { DoeResultOut, View3dOut, View3dSupport, View3dTieMark } from "../api/types";
+import type { DoePrepShape, DoeResultOut, DoeStudyOut, View3dOut, View3dSupport, View3dTieMark } from "../api/types";
 
 afterEach(() => {
   cleanup();
@@ -137,6 +139,10 @@ describe("스터디 결과 화면", () => {
     await screen.findByRole("table", { name: "순위표" }, { timeout: 8000 });
     expect(screen.queryByText("참고")).toBeNull();
   });
+  it("통합 INT-11: 위치 어긋남만으로 참고인 형상 = 꼬리표 title 이 JIG_GRID_TIE_SHIFT 문구", () => {
+    const w = [{ code: "JIG_GRID_TIE_SHIFT", did: "d002", message: "형상 d002: 구멍이 한 방향으로 2.18 mm 어긋남" }];
+    expect(tieForcedText(w, "d002")).toBe("형상 d002: 구멍이 한 방향으로 2.18 mm 어긋남");
+  });
   it("tieForcedText: did 로 그 형상 경고를 찾음", () => {
     const w = [{ code: "JIG_GRID_TIE_FORCED", did: "d002", message: "형상 d002: 강제" }, { code: "JIG_GRID_TIE_FORCED", did: "d003", message: "형상 d003: 강제" }];
     expect(tieForcedText(w, "d003")).toBe("형상 d003: 강제");
@@ -222,5 +228,18 @@ describe("SHAPE_DOUBLE_SHEET", () => {
   it("형상 표 배지 title = 경고 문구 + 마주 보는 면 % · 간격 mm", async () => {
     const { warnText } = await import("../api/doe");
     expect(warnText({ code: "SHAPE_DOUBLE_SHEET" })).toMatch(/판 앞뒷면 표면이 둘 다 들어 있는 것 같습니다/);
+  });
+});
+
+describe("통합 INT-12: ④ 준비 요약 형상 행 double_sheet(실제 워커 등록 → API 응답 fixture)", () => {
+  it("API 형상 행 그대로 → d001 '앞뒷면 두 장?' 배지·마주 보는 면 %·간격 툴팁, 경고 없는 d000 은 배지 없음", () => {
+    // fixture = worker/tests/test_v0252_int_jobs.py 가 실제 코어 ④ 준비 → 워커 BD_PREP_REGISTER → GET /doe/studies/{id} 응답과 대조
+    const shapes = PREP_DS.shapes.map((x) => ({ name: x.id, file_name: null, reference: x.id === "d000", ...x })) as unknown as DoePrepShape[];
+    const study = { inputs: { reference_source: "case", shapes: [], mesh_mode: "auto" }, prep: { shapes, failed: [], warnings: [] } } as unknown as DoeStudyOut;
+    render(<CompareShapeSummary study={study} />);
+    const b = screen.getByTestId("prep-dsheet-d001");
+    expect(b.textContent).toMatch(/앞뒷면 두 장\?/);
+    expect(b.getAttribute("title")).toMatch(/판 앞뒷면 표면이 둘 다 들어 있는 것 같습니다.*마주 보는 면 94 % · 간격 2 mm/);
+    expect(screen.queryByTestId("prep-dsheet-d000")).toBeNull();
   });
 });

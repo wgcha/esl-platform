@@ -518,8 +518,9 @@ def render_compare(ctx: dict) -> str:
                  f"{H.esc(df.get('hole_elems'))}개 · 비드 억제 기준 {H.esc(_f(df.get('min_bead_height_mm')))} mm(defeature 단계에서 적용)</p>")
     if rk:
         top_n = int(ctx.get("ranking_rows") or 20)
+        ref_c = "counts" in res                              # 통합 INT-10: "참고" 열(강제 부여 스냅샷 격자 지그 결과만 — 옛 보고서 불변)
         hdr = ["순위", "id", "이름", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
-               "기하평균 개선율", "Pareto"]
+               "기하평균 개선율", "Pareto"] + (["참고"] if ref_c else [])
         rows = []
         for x in rk[:top_n]:
             allv = x.get("all_improved")
@@ -527,7 +528,7 @@ def render_compare(ctx: dict) -> str:
                          x.get("worst_entry_id") or "", x["umax"], x["epsmax"],
                          "–" if allv is None else ("✓" if allv else "✗"), _pct(x.get("min_improvement")),
                          f"{x.get('n_improved', 0)} / {x.get('n_worsened', 0)}", _pct(x.get("geo_mean_improvement")),
-                         "●" if x.get("pareto") else ""])
+                         "●" if x.get("pareto") else ""] + ([REF_MARK if x.get("jig_ref") else ""] if ref_c else []))
         inner = H.table(hdr, rows, num=(0, 3, 6, 7, 9, 11))
         inner += per_esl_html(rk, ctx.get("esl") or [], top_n)
         inner += ("<p class='small muted'>지표 정의 — " + " · ".join(f"{H.esc(k)}: {H.esc(v)}" for k, v in METRIC_DEFS)
@@ -549,7 +550,8 @@ def render_compare(ctx: dict) -> str:
     best = ctx.get("best")
     if best:
         S.append(H.section("best", f"4. 최적 형상 {best.get('id')} {names.get(best.get('id'), '')}",
-                           "<p class='small'>산출물: " + H.esc(", ".join(best.get("files") or [])) + "</p>"))
+                           "<p class='small'>산출물: " + H.esc(", ".join(best.get("files") or [])) + "</p>"
+                           + best_ref_note(rk, best)))
     warns = [w for w in ctx.get("warnings") or [] if not str(w).startswith("COMPARE_REF_CASE_MESH")]
     if warns:
         S.append(H.section("warnings", "경고", "<ul>" + "".join(f"<li>{H.esc(w)}</li>" for w in warns) + "</ul>"))
@@ -703,8 +705,9 @@ def render(ctx: dict) -> str:
     if rk:
         # v0.16.1 ⚠ 열(select) — v0.16.2 AD-D-8: 다른 시나리오도 경고 안(극단 요소)이 있을 때만(없으면 보고서 불변)
         sel_w = st.get("scenario") == "select" or any(x.get("warn") for x in rk)
+        ref_c = "counts" in res                              # 통합 INT-10: "참고" 열(강제 부여 스냅샷 격자 지그 결과만 — 옛 보고서 불변)
         hdr = (["순위", "안", "score", "개선율", "최악 ESL", "umax", "εmax", "전 씬 개선", "최소 개선율", "개선/악화 씬",
-                "기하평균 개선율", "Pareto"] + names + ["경고"] + (["⚠"] if sel_w else []))
+                "기하평균 개선율", "Pareto"] + names + ["경고"] + (["⚠"] if sel_w else []) + (["참고"] if ref_c else []))
         trs = []
         for x in rk[:top_n]:
             imp = H.esc(_pct(x["improvement"])) + (" <span class='muted'>(잡음 이내)</span>" if x.get("noise") else "")
@@ -714,7 +717,7 @@ def render(ctx: dict) -> str:
                         f"{x.get('n_improved', 0)} / {x.get('n_worsened', 0)}", _pct(x.get("geo_mean_improvement")),
                         "●" if x.get("pareto") else ""]
                        + [x["values"].get(n) for n in names] + [x.get("warnings_n", 0)]
-                       + ([_warn_ko(x.get("warn"))] if sel_w else []))
+                       + ([_warn_ko(x.get("warn"))] if sel_w else []) + ([REF_MARK if x.get("jig_ref") else ""] if ref_c else []))
         inner = H.table(hdr, trs, num=(0, 2, 5, 6, 8, 10) + tuple(range(12, 12 + len(names))), raw=(3,))
         inner += per_esl_html(rk, ctx.get("esl") or [], top_n)
         inner += ("<p class='small muted'>지표 정의 — " + " · ".join(f"{H.esc(k)}: {H.esc(v)}" for k, v in METRIC_DEFS)
@@ -754,7 +757,7 @@ def render(ctx: dict) -> str:
     best = ctx.get("best")
     if best:
         inner = H.kv_table([(k, v) for k, v in sorted((best.get("values") or {}).items())])
-        inner += "<p class='small'>산출물: " + H.esc(", ".join(best.get("files") or [])) + "</p>"
+        inner += "<p class='small'>산출물: " + H.esc(", ".join(best.get("files") or [])) + "</p>" + best_ref_note(rk, best)
         S.append(H.section("best", f"7. 최적 안 {best.get('id')}", inner))
     # 8. 방법·출처
     if ms:
@@ -781,6 +784,17 @@ def render(ctx: dict) -> str:
 # " · 라벨 n" 으로 덧붙임(덧붙일 키가 없으면 지금 줄과 글자까지 같음)
 COUNT_SHOWN_COMPARE = ("ok", "mesh", "size", "solve")
 COUNT_SHOWN_MAIN = ("ok", "collision", "fixed", "geom", "morph", "mesh", "solve")
+
+
+REF_MARK = "참고"                                          # 통합 INT-10 순위표 "참고" 열 칸(화면 꼬리표와 같은 글자)
+
+
+def best_ref_note(ranking: list, best: dict) -> str:
+    """통합 INT-10: 최적이 순위 1위가 아니면(1위가 참고용이라 건너뜀) 한 줄 — 그 밖 빈 문자열(보고서 불변)."""
+    top = (ranking or [{}])[0].get("id")
+    if not ranking or top == best.get("id"):
+        return ""
+    return f"<p class='small muted'>{H.esc(_msg('BEST_SKIPS_REF').format(top=top, did=best.get('id')))}</p>"
 
 
 def count_tail(res: dict, shown) -> str:

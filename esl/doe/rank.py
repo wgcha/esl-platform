@@ -281,6 +281,16 @@ COUNT_LABELS = {"mesh": "메시", "size": "크기/정렬", "solve": "해석", "m
 JIG_METRIC_KEYS = ("C_jig", "C_jd", "C_js")       # v0.25.2 §7.2: 지그 출처 순위(참고용 꼬리표 jig_ref 가 붙는 순위 — 전 노드·경계력·내력 아님)
 
 
+def best_order(ranking: list) -> tuple[list, bool]:
+    """최적 후보 순서(v0.25.2 통합 메인 결정 D-0.25.2-INT-10 — 사용자 확인 대기): 참고(jig_ref)가 아닌 행(순위 순) 다음 참고 행(순위 순).
+    순위 번호·정렬은 바꾸지 않는다(최적·산출물 대상만). 둘째 값 = 첫 후보가 참고(= 모든 행이 참고 → 경고 BEST_IS_REF).
+    jig_ref 가 없는 결과(옛 스냅샷·base 모드) = 순위 순서 그대로."""
+    ok = [x["id"] for x in ranking or [] if not x.get("jig_ref")]
+    ref = [x["id"] for x in ranking or [] if x.get("jig_ref")]
+    order = ok + ref
+    return order, bool(order) and not ok
+
+
 def mark_ref(R: dict, metric_key: str, ref_ids) -> dict:
     """참고용 형상 표시(§3.4·§4.1 — 순위 값·정렬 불변): metric_key 가 지그 출처 순위면 ref_ids 안의 행에 jig_ref True(참일 때만 키),
     R["n_ref"] = 그 수(> 0 일 때만 키). R 을 바꾸고 돌려준다."""

@@ -887,6 +887,8 @@ COMPARE_SHAPE_KEYS = ("id", "name", "file_name", "reference", "source", "status"
                       "defeature", "diag",
                       # v0.16.3(C2-D-28·30): 성공한 이산 단계(freeform | tria | remesh)·단계별 결과·초
                       "fallback_stage", "stage_times",
+                      # v0.25.2 DS(esl_tstar_manual_jig_force.md §4.4·§6.3): 판 앞뒷면 두 장 {frac, gap_mm} — 경고 난 형상 행에만(없으면 아래에서 뺌)
+                      "double_sheet",
                       # v0.21.0(esl_bead_shape_v021.md §5.3·§7, 새 스냅샷만 — 없으면 아래에서 뺌): 메싱 경로 route{path, reason,
                       # n_faces, min_faces}·메시 품질 순위 표시 mq{fail_ratio, tria_pct, over}
                       "route", "mq")
@@ -960,8 +962,8 @@ def _register_compare_prep(conn: Connection, s: dict[str, Any], ddir: str) -> di
             x["quality"] = {k: q.get(k) for k in ("fail_elems", "fail_ratio", "warn_elems", "warn_ratio", "tria_pct",
                                                   "over_limit", "max_fail_ratio")}
     failed = [{"id": r["id"], "status": r["status"], "code": r.get("code")} for r in shapes if r.get("status") != "READY"]
-    for x in shapes:                     # v0.21.0 route·mq 는 새 스냅샷 행에만(옛 준비 요약 키 불변)
-        for k in ("route", "mq"):
+    for x in shapes:                     # v0.21.0 route·mq 는 새 스냅샷 행에만, v0.25.2 double_sheet 는 경고 난 행에만(옛 준비 요약 키 불변)
+        for k in ("route", "mq", "double_sheet"):
             if not isinstance(x.get(k), dict):
                 x.pop(k, None)
     for x in shapes:                     # v0.16.1 키는 있을 때만(v0.16.0 준비 요약 그대로). 코어 행 defeature 는 cad 형상이면
