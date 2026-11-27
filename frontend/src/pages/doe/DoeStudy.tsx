@@ -1201,8 +1201,9 @@ function Compare3D({ studyId, result, pick, setPick, scene: sceneProp = null, se
   const peRows = result.per_esl_inline ? result.ranking.find((r) => r.id === did)?.per_esl ?? null : peFetched?.key === peKey ? peFetched.rows : null;
   const peRow = eid ? peRows?.find((p) => p.entry_id === eid) ?? null : null;
   const approx = sceneOn ? approxFor(result, srcKey, did, eid) : null;
-  const baseUmax = eid && result.baseline.worst_entry_id === eid && Number.isFinite(result.baseline.umax) ? result.baseline.umax : null;
-  const summary = sceneOn && base?.manifest && cand?.manifest ? sceneSummary({ label: eslLabel ?? "–", base: base.manifest, cand: cand.manifest, row: peRow, baseUmax, approx }) : null;
+  // 기준 umax(표): 결과 baseline 은 기준의 최악 ESL 씬 값뿐 — 그 씬일 때만(다른 씬은 표에 기준 행이 없어 umax 비교를 비움, INT-14)
+  const baseRow = eid && result.baseline.worst_entry_id === eid ? { umax: result.baseline.umax, umax_ev: result.baseline.umax_ev ?? null } : null;
+  const summary = sceneOn && base?.manifest && cand?.manifest ? sceneSummary({ label: eslLabel ?? "–", row: peRow, baseRow }) : null;
   const approxText = approx?.texts.length ? approx.texts.join(" · ") : null;
   const oldNote = !result.scene_view && !!src && designView && !(pairTab && !jigAvail);
   const noteText = (() => {

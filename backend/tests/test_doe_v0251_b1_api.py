@@ -491,6 +491,31 @@ def test_int11_approx_from_core_warnings(client, sid, esl_root):
     assert api(client, "GET", f"/doe/studies/{sid}/results").json()["scene_view"]["packs"]["full"]["approx"] == []
 
 
+
+@pytest.mark.parametrize("warnings", [123, "SCENE_C_MISMATCH: full d001 E0 x", {"a": 1}, None])
+def test_int15_warnings_not_list_keeps_scene_view(client, sid, esl_root, warnings):
+    """INT-15: 사이드카 warnings 가 목록이 아니면 그 필드만 무시(approx 비움) — scene_view 는 살아 있음."""
+    seed_real_scene(esl_root, sid)
+    base = study_dir(esl_root, sid)
+    side = json.loads((base / "post" / "scene_view.json").read_text(encoding="utf-8"))
+    side["warnings"] = warnings
+    (base / "post" / "scene_view.json").write_text(json.dumps(side), encoding="utf-8")
+    sv = api(client, "GET", f"/doe/studies/{sid}/results").json()["scene_view"]
+    assert sv is not None and sv["packs"]["full"]["approx"] == [] and list(sv["packs"]["full"]["designs"]) == ["d000", "d001"]
+
+
+def test_int15_approx_entry_id_with_space_matches_sidecar_entries(client, sid, esl_root):
+    """INT-15: 엔트리 id 는 사이드카 entries 와 대조(공백·접두 겹침 — "E 0" vs "E"), 모르는 id 는 무시."""
+    seed_real_scene(esl_root, sid, warnings=["SCENE_PIN_MISMATCH: full d001 E 0 1.5 ≠ umax_ev 1.2",
+                                             "SCENE_C_MISMATCH: full d001 E 1 Σc+offset 3 ≠ 2",
+                                             "SCENE_C_MISMATCH: full d001 Z9 Σc+offset 3 ≠ 2"])
+    base = study_dir(esl_root, sid)
+    side = json.loads((base / "post" / "scene_view.json").read_text(encoding="utf-8"))
+    side["entries"] = [{"entry_id": "E", "kk": 0}, {"entry_id": "E 0", "kk": 1}, {"entry_id": "E 1", "kk": 2}]
+    (base / "post" / "scene_view.json").write_text(json.dumps(side), encoding="utf-8")
+    ap = api(client, "GET", f"/doe/studies/{sid}/results").json()["scene_view"]["packs"]["full"]["approx"]
+    assert [(x["entry_id"], x["code"]) for x in ap] == [("E 0", "SCENE_PIN_MISMATCH"), ("E 1", "SCENE_C_MISMATCH")]
+
 FRONT_FIXTURE = Path(__file__).resolve().parents[2] / "frontend" / "src" / "mock" / "fixtures" / "scene_real_v0251.json"
 
 

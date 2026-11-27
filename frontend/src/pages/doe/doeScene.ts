@@ -89,48 +89,44 @@ export function approxFor(result: DoeResultOut, srcKey: string | null | undefine
   return out;
 }
 
-/** 씬 요약 한 줄 값(통합 INT-11): 숫자는 **표(per_esl)** 값 — 안 = 그 씬 행 C·ratio·umax, 기준 C = C/ratio(표의 개선율과 같은 비),
- *  기준 umax = 결과 baseline(그 씬이 기준의 최악 ESL 일 때). 표 값이 없을 때만 manifest(c.value·pins.umax.value)로 — 그 씬이 근사로
- *  표시된 쪽(approx)은 manifest 숫자를 쓰지 않음(핀·색은 위치 표시용). 어느 쪽이든 없으면 그 부분 생략 */
+/** 씬 요약 한 줄 값(통합 INT-11·INT-14): 숫자는 **표 값만** — 핀·manifest 숫자는 쓰지 않음(위치·색 표시용).
+ *  C = 안의 그 씬 행 C·ratio(기준 C = C/ratio — 표의 개선율과 같은 비). umax = 표 정의(평가 영역 umax_ev 가 있으면 그것, 없으면 umax)로
+ *  안·기준 **같은 정의끼리만** 비교 — 기준 값은 표에 기준의 그 씬 행이 있을 때만(결과 baseline = 기준의 최악 ESL 씬). 없으면 umax 를 비우고 C 만 */
+export interface SceneUmax {
+  umax: number;
+  umax_ev?: number | null;
+}
 export interface SceneSummaryIn {
   label: string;
-  base: unknown;
-  cand: unknown;
+  /** 표(per_esl)의 안 행 — 그 씬 */
   row?: DoePerEsl | null;
-  baseUmax?: number | null;
-  approx?: SceneApprox | null;
+  /** 표의 기준 값 — 그 씬(결과 baseline 의 worst_entry_id 가 이 씬일 때만) */
+  baseRow?: SceneUmax | null;
 }
 const g4 = (x: number) => Number(x.toPrecision(4)).toString();
 const rel = (a: number, b: number) => (a !== 0 && Number.isFinite(a) && Number.isFinite(b) ? `${b / a - 1 >= 0 ? "+" : "−"}${Math.abs((b / a - 1) * 100).toFixed(1)} %` : null);
+const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+/** 안·기준 umax 를 같은 정의로: 둘 다 umax_ev 가 있으면 ev, 둘 다 없으면 umax, 한쪽만 있으면 null(섞지 않음) */
+export function umaxPair(cand: SceneUmax, base: SceneUmax): [number, number] | null {
+  const ce = fin(cand.umax_ev);
+  const be = fin(base.umax_ev);
+  if (ce && be) return [base.umax_ev as number, cand.umax_ev as number];
+  if (!ce && !be && fin(cand.umax) && fin(base.umax)) return [base.umax, cand.umax];
+  return null;
+}
 export function sceneSummary(x: SceneSummaryIn): string {
-  const b = sceneExtras(x.base);
-  const d = sceneExtras(x.cand);
-  const ap = x.approx ?? { base: [], cand: [], texts: [] };
-  const okC = (side: string[]) => !side.includes("SCENE_C_MISMATCH");
-  const okPin = (side: string[]) => !side.includes("SCENE_PIN_MISMATCH");
-  const row = x.row ?? null;
-  const fin = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
   const parts = [`ESL ${x.label}`];
-  let c0: number | null = null;
-  let c1: number | null = null;
-  if (row && fin(row.C) && fin(row.ratio) && row.ratio !== 0) {
-    c1 = row.C;
-    c0 = row.C / row.ratio;
-  } else {
-    c0 = b.c && okC(ap.base) ? b.c.value : null;
-    c1 = d.c && okC(ap.cand) ? d.c.value : null;
+  const row = x.row ?? null;
+  if (!row) return parts[0];
+  if (fin(row.C) && fin(row.ratio) && row.ratio !== 0) {
+    const c0 = row.C / row.ratio;
+    const r = rel(c0, row.C);
+    parts.push(`C 기준 ${g4(c0)} → 안 ${g4(row.C)}${r ? ` (${r})` : ""}`);
   }
-  if (c0 != null && c1 != null) {
-    const r = rel(c0, c1);
-    parts.push(`C 기준 ${g4(c0)} → 안 ${g4(c1)}${r ? ` (${r})` : ""}`);
-  }
-  const u1 = row && fin(row.umax) ? row.umax : d.umaxPin && okPin(ap.cand) ? d.umaxPin.value : null;
-  const u0 = fin(x.baseUmax) ? x.baseUmax : b.umaxPin && okPin(ap.base) ? b.umaxPin.value : null;
-  if (u0 != null && u1 != null) {
-    const r = rel(u0, u1);
-    parts.push(`umax 기준 ${u0.toFixed(3)} → 안 ${u1.toFixed(3)}${r ? ` (${r})` : ""} mm`);
-  } else if (u1 != null) {
-    parts.push(`umax 안 ${u1.toFixed(3)} mm`);
+  const pair = x.baseRow ? umaxPair(row, x.baseRow) : null;
+  if (pair) {
+    const r = rel(pair[0], pair[1]);
+    parts.push(`umax 기준 ${pair[0].toFixed(3)} → 안 ${pair[1].toFixed(3)}${r ? ` (${r})` : ""} mm`);
   }
   return parts.join(" · ");
 }
