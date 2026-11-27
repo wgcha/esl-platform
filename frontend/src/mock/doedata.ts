@@ -2946,9 +2946,10 @@ export class DoeMock {
         const off = (x: number[], d: number[]) => x.map((v, i) => +(v + d[i]).toFixed(2));
         const tieExtra = forceDemo && ties.length >= 2
           ? { tie_far_mm: 10, tie_marks: [
-              { q: 3, via: "force" as const, x: off(ties[0].x0, [45, 0, 0]), dist: 45, n: 4, far: false },
-              { q: 7, via: "force" as const, x: off(ties[1].x0, [-250, 60, 0]), dist: 257, n: 6, far: true },
-              { q: 11, via: "miss" as const, x: off(ties[1].x0, [-30, -120, 0]), dist: 0, n: 3, far: false },
+              // 통합: 코어 모양 그대로 — force 에 to(붙인 노드 면적 가중 중심), miss 는 dist null
+              { q: 3, via: "force" as const, x: off(ties[0].x0, [45, 0, 0]), to: [...ties[0].x0], dist: 45, n: 4, far: false },
+              { q: 7, via: "force" as const, x: off(ties[1].x0, [-250, 60, 0]), to: [...ties[1].x0], dist: 257, n: 6, far: true },
+              { q: 11, via: "miss" as const, x: off(ties[1].x0, [-30, -120, 0]), dist: null, n: 0, far: false },
             ] }
           : {};
         return ok({ ...m, ...tieExtra, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, ...(jigView ? { supports: newFmt ? supports3 : supports3.map((x) => ({ ...x, dof: "123" })) } : {}), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
