@@ -282,3 +282,27 @@ def test_report_explain_boxes(tmp_path):
     for w in ("cos", "합력비", "hotspot 이동", "ε_max 비"):
         assert w in box
     assert "margin-right:10px}.rel.warn" in doc
+
+
+def test_v0251_44_compare_envelope_colors(tmp_path):
+    """V-0251-44(버전 비교 L16·L17): 차이 지도 = div(+ 빨강 증가 · − 파랑 감소), 셀 포락 = seq, 문구 "빨강 증가, 파랑 감소"·
+    설명 박스 "빨강 = 늘어남, 파랑 = 줄어듦"(옛 "파랑 증가, 주황 감소" 없음), 투명도 램프 없음."""
+    r = cmp.compare(_version("v001", (24, 16), 1.0), _version("v002", (24, 16), 1.2, changed={2: ("B", "A", 0.3)}), None,
+                    {"n_representative": 2})                               # 새 버전 힘 20 % 큼 → 차이 > 0
+    r.update(comparison_id="C1", model="50QX10A", base_version="v001", new_version="v002")
+    cmp.save(r, str(tmp_path), U.Writer(str(tmp_path)))
+    doc = open(tmp_path / "report.html", encoding="utf-8").read()
+    assert "차이 = 신 − 구 (빨강 증가, 파랑 감소)." in doc and "빨강 = 늘어남, 파랑 = 줄어듦." in doc
+    assert "파랑 증가" not in doc and "주황 감소" not in doc and "파랑 = 늘어남" not in doc
+    assert not re.search(r'class="cell"[^>]*fill-opacity', doc)
+    from esl.io import colormaps as cm
+    Ed = np.asarray(r["envelope"]["diff"], dtype=float)
+    vmax = float(np.max(np.abs(Ed)))
+    svgs = re.findall(r"<svg[^>]*aria-label=\"셀 포락 차이 \(신 − 구\)\">(.*?)</svg>", doc, re.S)
+    assert len(svgs) == 1 and vmax > 0
+    fills = re.findall(r'<rect class="cell"[^>]*fill="([^"]+)"', svgs[0])
+    nx, ny = Ed.shape
+    want = [cm.css(cm.map_for("div"), 0.5 + Ed[i, j] / (2 * vmax)) for i in range(nx) for j in range(ny)]
+    assert fills == want
+    i, j = np.unravel_index(np.argmax(Ed), Ed.shape)
+    assert Ed[i, j] > 0 and fills[i * ny + j] == "rgb(103,0,31)"           # 가장 많이 는 셀 = 빨강 끝
