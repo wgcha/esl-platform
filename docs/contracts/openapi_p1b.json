@@ -18042,6 +18042,17 @@
             "title": "Supports",
             "type": "array"
           },
+          "tie_far_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Far Mm"
+          },
           "tie_marks": {
             "anyOf": [
               {
@@ -18488,6 +18499,17 @@
             },
             "title": "Supports",
             "type": "array"
+          },
+          "tie_far_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tie Far Mm"
           },
           "tie_marks": {
             "anyOf": [

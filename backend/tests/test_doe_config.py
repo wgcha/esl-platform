@@ -33,14 +33,9 @@ def test_defaults_mirror_core():
             dump.pop(k)
     if "scene" not in (DEFAULTS.get("view3d") or {}):   # v0.25.1 VL view3d.scene(esl.doe.DEFAULTS) 코어 병합 전에만 — 병합 후에는 전체 대조(이 분기 사라짐)
         dump["view3d"].pop("scene")
-    # v0.25.2 JF·DS(esl_tstar_manual_jig_force.md §8.1): 코어 DEFAULTS 새 키 병합(C1) 전에만 그 키를 빼고 대조 — 병합 후에는 전체 대조(이 분기 사라짐)
-    for k in ("tie_force", "tie_force_far_warn_mm"):
-        if k not in ((DEFAULTS.get("rank") or {}).get("jig_grid") or {}):
-            dump["rank"]["jig_grid"].pop(k)
-    if "jig_force_marks_max" not in (DEFAULTS.get("view3d") or {}):
-        dump["view3d"].pop("jig_force_marks_max")
-    if "double_sheet" not in (DEFAULTS.get("compare") or {}):
-        dump["compare"].pop("double_sheet")
+    # v0.25.2 JF·DS(esl_tstar_manual_jig_force.md §8.1): 새 키는 코어 DEFAULTS 에 있어 아래 전체 대조에 포함(통합 — B1 의 C1 병합 전 분기 제거)
+    assert {"tie_force", "tie_force_far_warn_mm"} <= set(DEFAULTS["rank"]["jig_grid"])
+    assert "jig_force_marks_max" in DEFAULTS["view3d"] and "double_sheet" in DEFAULTS["compare"]
     from doe_support import core_view_v0161
 
     assert core_view_v0161(dump, DEFAULTS) == DEFAULTS                # 숫자는 한 곳(코어 기본값 거울)과 같게(v0.16.1 키는 코어 병합 후)

@@ -103,20 +103,24 @@ export function buildTieMarks(marks: View3dTieMark[], specs: SupportSpec[], diag
       return;
     }
     for (let i = 0; i < TIE_RING_N; i++) ring.segs.push([ptAt(c, (2 * Math.PI * i) / TIE_RING_N, r), ptAt(c, (2 * Math.PI * (i + 1)) / TIE_RING_N, r)]);
-    let best: SupportSpec | null = null;
-    let bd = Infinity;
-    for (const s of forced) {
-      const d = dist3(s.position, c);
-      if (d < bd) {
-        bd = d;
-        best = s;
+    // 선 끝 = 코어가 준 붙인 곳(to — 붙인 노드 면적 가중 중심). 없으면(옛 자료) 가장 가까운 강제 지지
+    let end: V3 | null = m.to && m.to.length >= 3 ? [m.to[0], m.to[1], m.to[2]] : null;
+    if (!end) {
+      let bd = Infinity;
+      for (const s of forced) {
+        const d = dist3(s.position, c);
+        if (d < bd) {
+          bd = d;
+          end = s.position;
+        }
       }
     }
-    if (best && bd > r) {
+    const bd = end ? dist3(end, c) : 0;
+    if (end && bd > r) {
       // 고리 가장자리에서 시작 — 선 길이 = 옮긴 거리 그대로(중심 ~ 붙인 곳)
-      const dir = sub3(best.position, c);
+      const dir = sub3(end, c);
       const k = r / bd;
-      (m.far ? far : line).segs.push([[c[0] + dir[0] * k, c[1] + dir[1] * k, c[2] + dir[2] * k], best.position]);
+      (m.far ? far : line).segs.push([[c[0] + dir[0] * k, c[1] + dir[1] * k, c[2] + dir[2] * k], end]);
     }
   });
   return { layers: [line, far, ring, miss].filter((l) => l.segs.length), picks };

@@ -11,7 +11,8 @@
   (FAKE_HW_BF_NFRAMES·FAKE_HW_BF_TIMES·FAKE_HW_BF_TYPE·FAKE_HW_BF_NOFRAMES 로 조정)
 - FAKE_HW_TCL_DATA(+FAKE_HW_TCL_MOCK·FAKE_HW_TCL_SCRIPT, `write_tcl_bf_env`): bf_only 요청을 실제 TCL 을 tclsh+hwmock 으로
   돌려 처리(done.json·bf_<k>.csv 가 실제 TCL 출력 — v0.24.2 통합)
-- request fr_only 1(v0.25.2): 요청 프레임의 disp.csv·strain_frames.csv·done.json(mode fr_only) (FAKE_HW_FR_MODE·FAKE_HW_FR_NFRAMES·FAKE_HW_FR_BF)
+- request fr_only 1(v0.25.2): 요청 프레임의 disp.csv·strain_frames.csv·done.json(mode fr_only) (FAKE_HW_FR_MODE·FAKE_HW_FR_NFRAMES·FAKE_HW_FR_BF,
+  FAKE_HW_FR_SRC = 전 프레임 D 합성 CSV 폴더 — 그 f·f−1 행·시각·프레임 수를 그대로: 실제 코어 병합이 받는 출력)
 - FAKE_HW_DELAY=<초>: 시작 시 대기(동시 실행 한도 시험)
 argv 는 <output>/../argv_<pid>.json 에 남긴다.
 """
@@ -103,10 +104,34 @@ if opt("-config") and os.path.isfile(opt("-config")):
 if req.get("fr_only") == "1":
     # 프레임 채움 흉내(v0.25.2 계약 §2.4): 요청 프레임 f 의 disp.csv(f 만)·strain_frames.csv(f, f-1), done.json mode fr_only.
     # FAKE_HW_FR_MODE=ok(기본)|nofiles(csv 안 씀)|wrongmode(mode≠fr_only) · FAKE_HW_FR_NFRAMES · FAKE_HW_FR_BF=1(done.json bforce 추가)
+    # FAKE_HW_FR_SRC(통합 v0.25.2): 같은 합성 결과를 전 프레임 D 로 쓴 CSV 폴더 — 그 f·f-1 행(같은 텍스트)·frames.csv 시각·프레임 수를
+    # 그대로 내보낸다(실제 코어 frame_fill.merge 의 같은 h3d 확인을 통과하는 출력). 없으면 아래 고정 합성 값(병합 전 단계 시험용).
     frs = [int(x) for x in req["fr_frames"].split()]
     fmode = os.environ.get("FAKE_HW_FR_MODE", "ok")
     prevs = [f - 1 for f in frs if f > 0]
-    if fmode != "nofiles":
+    frsrc = os.environ.get("FAKE_HW_FR_SRC")
+    ftimes = {{f: f * 0.001 for f in prevs + frs}}
+    nfr = 10
+    nnodes, nelems = 9, 2
+    if frsrc:
+        allt = {{}}
+        for ln in open(os.path.join(frsrc, "frames.csv"), encoding="utf-8").read().splitlines()[1:]:
+            a, b = ln.split(",")[:2]
+            allt[int(a)] = float(b)
+        ftimes = {{f: allt[f] for f in prevs + frs if f in allt}}
+        nfr = len(allt)
+    nfr = int(os.environ.get("FAKE_HW_FR_NFRAMES", str(nfr)))
+    if fmode != "nofiles" and frsrc:
+        for name, want in (("disp.csv", set(frs)), ("strain_frames.csv", set(frs) | set(prevs))):
+            lines = open(os.path.join(frsrc, name), encoding="utf-8").read().splitlines()
+            keep = [ln for ln in lines[1:] if ln and int(ln.split(",", 1)[0]) in want]
+            with open(os.path.join(out, name), "w", encoding="utf-8") as fh:
+                fh.write(lines[0] + "\n" + "".join(ln + "\n" for ln in keep))
+            if name == "disp.csv":
+                nnodes = len(keep) // max(len(frs), 1)
+            else:
+                nelems = len({{ln.split(",")[1] for ln in keep}})
+    elif fmode != "nofiles":
         with open(os.path.join(out, "disp.csv"), "w", encoding="utf-8") as fh:
             fh.write("frame_index,node_id,ux,uy,uz\n")
             for f in frs:
@@ -118,8 +143,8 @@ if req.get("fr_only") == "1":
                 for e in (101, 102):
                     fh.write("%d,%d,0.001,0.0,0.0,0.0,0.0,0.0\n" % (f, e))
     done = {{"ok": True, "mode": "fr_only" if fmode != "wrongmode" else "full", "h3d": opt("-input"),
-            "n_frames": int(os.environ.get("FAKE_HW_FR_NFRAMES", "10")), "n_nodes": 9, "n_elems": 2, "frames": frs,
-            "prev_frames": prevs, "frame_times": {{str(f): f * 0.001 for f in prevs + frs}},
+            "n_frames": nfr, "n_nodes": nnodes, "n_elems": nelems, "frames": frs,
+            "prev_frames": prevs, "frame_times": {{str(f): t for f, t in ftimes.items()}},
             "strain_source": req.get("strain_sources"), "passes": {{"FR": {{"seconds": 0.0}}}}, "warnings": []}}
     if os.environ.get("FAKE_HW_FR_BF") == "1":
         done["bforce"] = {{"on": True, "frames": frs, "kinds": {{}}}}

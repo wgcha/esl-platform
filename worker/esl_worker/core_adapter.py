@@ -284,6 +284,11 @@ def frame_fill_read_meta(extract_dir: str) -> dict:
     return d
 
 
+def tstar_manual_settings(core_settings: dict | None = None) -> dict:
+    """tstar.manual_ratio_warn(v0.25.2 §2.5 — 코어 선택 키, 없으면 코어 기본값)."""
+    return _wrap(_attr("esl.config", "tstar_manual_settings"), core_settings or {})
+
+
 def dump_settings(core_settings: dict | None = None) -> dict:
     """extract.dump_keep·dump_max_bytes(기본값 채움)."""
     return _wrap(_attr("esl.config", "dump_settings"), core_settings or {})

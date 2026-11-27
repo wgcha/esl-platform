@@ -157,6 +157,7 @@ def test_v0252_23_issue96_force_on(w96, capsys):
     assert mf, "d001 지그 변위 3D 없음"
     man = _j(mf[0])
     assert man["tie_marks"] == tie["marks"] and any(s.get("via") == "force" for s in man["supports"])
+    assert man["tie_far_mm"] == tie["force"]["far_mm"]                          # 통합 INT: 범례 임계 = marks[].far 를 정한 값
     with capsys.disabled():
         f = tie["force"]
         print(f"\nV0252-23 #96 on: force {tie['n_force']}/{tie['n_clusters']} dist {f['dist_min_mm']:.2f}/"

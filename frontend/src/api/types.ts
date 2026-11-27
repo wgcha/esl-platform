@@ -579,7 +579,7 @@ export interface TstarView {
   frames_have?: number[];
   /** v0.25.2: D 밖 프레임 채움 가능 여부(frame_fill.DECIDE — 불가면 code·text) */
   fill?: TstarFill;
-  /** v0.25.2(제안 키 — B1 과 맞춤): 직접 고른 t* 경고 임계 tstar.manual_ratio_warn. 없으면 경고색 판정 생략 */
+  /** v0.25.2(통합 INT — 코어 설정 값 그대로): 직접 고른 t* 경고 임계 tstar.manual_ratio_warn. 없으면 경고색 판정 생략 */
   manual_ratio_warn?: number;
   /** v0.8.0 누적 씬만 */
   cumulative?: { enabled: boolean; epsp_mode: CumulativeMode; eq_mode: CumulativeMode; agg: string; n_prev_elems: number; min_increment: number };
@@ -1898,8 +1898,12 @@ export interface View3dSupport {
 export interface View3dTieMark {
   q: number;
   via: "force" | "miss";
+  /** Case 체결부 중심(형상 전역 좌표) */
   x: number[];
-  dist: number;
+  /** 통합 INT(코어 구현 사실): 붙인 노드 면적 가중 중심(형상 전역 — force 만). 선 = x → to */
+  to?: number[] | null;
+  /** 옮긴 거리 mm(force) — miss 는 null */
+  dist: number | null;
   n: number;
   far: boolean;
 }
@@ -1962,7 +1966,7 @@ export interface View3dOut {
   supports: View3dSupport[];
   /** v0.25.2 §4.3: 강제·못 붙임 체결부 표식 자료(지그 응답 3D 만 — 없으면 옛 그림 그대로) */
   tie_marks?: View3dTieMark[] | null;
-  /** v0.25.2(제안 키 — B1 과 맞춤): 먼 강제 임계 mm(tie_force_far_warn_mm) — 범례 문구용. 없으면 숫자 없이 표기 */
+  /** v0.25.2(통합 INT): 먼 강제 임계 mm(= map.tie.force.far_mm, 설정 tie_force_far_warn_mm 기록 값) — 범례 문구용. 없으면 숫자 없이 표기 */
   tie_far_mm?: number | null;
   top: View3dTopRow[];
   clusters: Record<string, View3dClusterSet>;
@@ -3724,8 +3728,8 @@ export interface DoeCountItem {
 }
 export interface DoeResultOut {
   C_ref: number;
-  /** v0.25.2: 지그 순위가 참고용인 형상 수(> 0 일 때만 키) */
-  n_ref?: number;
+  /** v0.25.2: 지그 순위가 참고용인 형상 수(> 0 일 때만 키 — 스키마는 선택·null 허용) */
+  n_ref?: number | null;
   counts?: DoeCountItem[] | null;
   baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; umax_ev?: number | null; umax_ev_all?: number | null; shape?: DoeShapeRef | null; worst_entry_id?: string | null };
   n_ok: number;
@@ -3980,7 +3984,7 @@ export interface DoeJigDiagOut {
 export interface DoeRankViewOut {
   metric: string;
   C_ref: number;
-  n_ref?: number;
+  n_ref?: number | null;
   counts?: DoeCountItem[] | null;
   baseline: Record<string, unknown>;
   n_ok: number;

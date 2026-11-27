@@ -7802,7 +7802,9 @@ def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[di
         nid = np.asarray(mesh["node_id"], dtype=np.int64)
         names = {}
         fset = None if res.get("force_nodes") is None else {int(nid[i]) for i in np.asarray(res["force_nodes"], np.int64)}
-        marks = ((res.get("map") or {}).get("tie") or {}).get("marks") if fset is not None else None
+        tie_ = ((res.get("map") or {}).get("tie") or {}) if fset is not None else {}
+        marks = tie_.get("marks") if fset is not None else None
+        far_ = (tie_.get("force") or {}).get("far_mm")      # 통합 INT: marks[].far 를 정한 임계(기록 값) → manifest tie_far_mm
         for e in ents_:
             BC = res["bc"][src][e]
             sup = jig_bc.support_rows(BC, mesh["x0"], smax, nid, src)      # v0.24.9 INT-5: 스터디·Case 3D 와 같은 코어 함수
@@ -7812,7 +7814,7 @@ def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[di
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
             build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=res["loads"][src][e],
                        u_rel=res["u"][src][e], supports=sup,
-                       key=f"doe/{nm}", esl_run_id=str(e), tie_marks=marks)
+                       key=f"doe/{nm}", esl_run_id=str(e), tie_marks=marks, tie_far_mm=far_)
             names[e] = nm
         if _scn_wants(c, src, did):                            # v0.25.1: 같은 _jg_shape 결과(전 엔트리 응답)로 씬 묶음 — 추가 풀이 없음
             _scn_feed(c, src, did, _scn_jig_grid_p(c, t, did, src, mesh, reg, res))

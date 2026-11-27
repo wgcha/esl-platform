@@ -312,6 +312,9 @@ def get_tstar(ctx: AppContext, case_id: str) -> dict[str, Any]:
     out = {"selected": case.get("tstar"), "default_metric": info["default_metric"], "metrics": metrics,
            "hotspots": blk.get("hotspots", info["hotspots"]), "frames_D": info.get("frames_D") or [],
            "frames": frames, "frames_have": _frames_have(cdir), "fill": _fill_state(ctx, case, cdir)}
+    warn = _manual_ratio_warn(ctx)
+    if warn is not None:                                  # 통합 INT(계약 §15): 화면 "자동 대비 %" 경고색 임계 = 코어 설정 값 그대로
+        out["manual_ratio_warn"] = warn
     if info.get("cumulative"):
         out["cumulative"] = info["cumulative"]
     return out
@@ -325,6 +328,14 @@ def _auto_support(ctx: AppContext, case: dict[str, Any]) -> tuple[dict[str, Any]
     """모델 로드 + 코어 auto_321(트랜잭션 밖, 30만 노드 < 1 s)."""
     nid, x0 = _model(ctx, case)
     return _core_call(core_adapter.auto_support, x0, _check_cfg(ctx)), nid, x0
+
+
+def _manual_ratio_warn(ctx: AppContext) -> float | None:
+    """코어 설정 tstar.manual_ratio_warn(코어 한 곳 — 기본값 포함). 코어를 못 부르면 None(키 없음 — 화면은 경고색 판정 생략)."""
+    try:
+        return float(core_adapter.tstar_manual_settings(ctx.config.core)["manual_ratio_warn"])
+    except (core_adapter.CoreError, KeyError, TypeError, ValueError):
+        return None
 
 
 def _frames_have(cdir: str) -> list[int]:

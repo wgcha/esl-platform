@@ -523,12 +523,15 @@ class View3dOut(_Out):
     # v0.25.2 JF(§4.3·§6.3): 강제·못 붙임 체결부 표식 자료([{q, via: "force"|"miss", x[3], dist, n, far}] = jig_grid.json map.tie.marks 그대로,
     # 지그 응답 3D 만 — 없으면 키를 내지 않는다: 그 밖 manifest 응답 바이트 불변)
     tie_marks: list[dict[str, Any]] | None = None
+    # 통합 INT(계약 §15): marks[].far 를 정한 먼 강제 임계 mm(= map.tie.force.far_mm — 설정 tie_force_far_warn_mm 기록 값, 범례 "{far} mm 넘음")
+    tie_far_mm: float | None = None
 
     @model_serializer(mode="wrap")
     def _drop_tie_marks_absent(self, handler):  # type: ignore[no-untyped-def]
         d = handler(self)
-        if isinstance(d, dict) and d.get("tie_marks") is None:
-            d.pop("tie_marks", None)
+        for k in ("tie_marks", "tie_far_mm"):
+            if isinstance(d, dict) and d.get(k) is None:
+                d.pop(k, None)
         return d
 
 

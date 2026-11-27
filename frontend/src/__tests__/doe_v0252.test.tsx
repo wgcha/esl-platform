@@ -70,6 +70,13 @@ describe("개수 항목(순수)", () => {
     expect(countTail({ n_ok: 3, n_skipped: { collision: 0 }, n_failed: { mesh: 0 } })).toBe("");
     expect(countTail({ n_ok: 1, n_skipped: {}, n_failed: {}, n_ref: 1 })).toBe(" · 참고용 1");
   });
+  it("통합: counts 없는 결과(TM-C1-2 — 격자 지그·강제 부여 스냅샷 밖)의 계산 = 서버 count_items 와 같은 합·순서", () => {
+    // 기대값 = esl.doe.rank.count_items({n_ok:2, n_skipped:{collision:1, mesh:1}, n_failed:{zz:1, mesh:2, jd:1, size:0}, n_ref:1}) 출력
+    const r = { n_ok: 2, n_skipped: { collision: 1, mesh: 1 }, n_failed: { zz: 1, mesh: 2, jd: 1, size: 0 }, n_ref: 1 };
+    expect(countItems(r).map((x) => [x.key, x.label, x.n])).toEqual([
+      ["ok", "성공", 2], ["mesh", "메시", 3], ["collision", "스킵(충돌)", 1], ["jd", "지그 매핑 제외", 1], ["zz", "zz", 1], ["ref", "참고용", 1],
+    ]);
+  });
   it("API counts 가 있으면 그대로(새 결과), 라벨 거울 키", () => {
     const counts = [{ key: "ok", label: "성공", n: 1 }, { key: "x", label: "서버 라벨", n: 2 }];
     expect(countTail({ n_ok: 1, n_skipped: {}, n_failed: { jd: 9 }, counts })).toBe(" · 서버 라벨 2");
@@ -165,6 +172,14 @@ describe("3D 강제 부여 표식", () => {
     const L = 0.04 * 500;
     const d = Math.hypot(...[0, 1, 2].map((i) => far.segs[0][1][i] - far.segs[0][0][i]));
     expect(d).toBeCloseTo(Math.hypot(260 - 200, 0, 0) - 0.5 * L, 6);
+  });
+  it("통합: 코어 marks[].to(붙인 노드 면적 가중 중심)가 있으면 선 끝 = to(가장 가까운 지지가 아님), miss dist null 탐침", () => {
+    const specs = buildSupportSpecs([sup(1, "force"), sup(2, "force")], null, 0, 500);
+    const withTo: View3dTieMark[] = [{ q: 1, via: "force", x: [115, 0, 0], to: [140, 30, 0], dist: 15, n: 2, far: false }];
+    const t = buildTieMarks(withTo, specs, 500, [0, 0, 1]);
+    const near = t.layers.find((l) => l.color === TIE_TABLE.ring.color && l.widthPx === TIE_PX.line)!;
+    expect(near.segs[0][1]).toEqual([140, 30, 0]);
+    expect(tieProbe({ q: 4, via: "miss", dist: null, far: false })).toBe("체결부 q4 · 붙일 면 없음");
   });
   it("강제 지지가 없으면 선 없음(고리만) · tie_marks 없으면 표식 없음", () => {
     const specs = buildSupportSpecs([sup(1), sup(2)], null, 0, 500);

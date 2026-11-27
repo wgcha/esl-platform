@@ -1,7 +1,8 @@
 """v0.25.2 B1 — ② t* 임의 프레임 API(계약 esl_tstar_manual_jig_force.md §6.1, V-0252-24·25), 설정 거울(V-0252-17 백엔드 쪽·27), 스터디 결과 통과(27).
 
-코어 구현(C1)이 끝나기 전이라 계약 형식 fixture 로 시험: 01_extract·02_tstar 산출물은 손으로 심고, 코어 frame_point 만 monkeypatch
-(계약 §2.3 반환 형식). DECIDE·frames_have·extract_facts 는 이미 들어 있는 코어 접점 껍데기(esl.io.frame_fill)를 그대로 쓴다.
+계약 형식 fixture 로 시험: 01_extract·02_tstar 산출물은 손으로 심고(지표 계열 없음), 코어 frame_point 만 monkeypatch(계약 §2.3 반환
+형식 — 백엔드 저장·판정 단위 시험). DECIDE·frames_have·extract_facts 는 실제 코어(esl.io.frame_fill).
+실제 코어 frame_point·merge·ESL 을 거치는 PUT → ESL 은 worker/tests/test_frame_fill.py(통합 — 합성 Case 추출 산출물).
 """
 
 from __future__ import annotations
@@ -114,6 +115,7 @@ def test_get_tstar_new_keys_results_case(client, case_r):
     assert j["frames_have"] == D_FRAMES
     assert j["fill"]["available"] is False and j["fill"]["code"] == "NO_H3D" and "h3d 없이" in j["fill"]["text"]
     assert j["metrics"]["max_strain"]["history"]["frame_index"] == list(range(NF))
+    assert j["manual_ratio_warn"] == 0.5                                            # 통합 INT: 코어 설정 tstar.manual_ratio_warn 값 그대로
     for k in ("selected", "default_metric", "metrics", "hotspots", "frames_D"):     # 기존 키 그대로
         assert k in j
     assert j["metrics"]["max_strain"]["candidates"][0]["frame_index"] == 6
@@ -323,6 +325,31 @@ def test_result_schema_passthrough_and_absent_keys():
     d0 = DoeResultOut(**top).model_dump()
     assert "n_ref" not in d0 and "counts" not in d0
     assert "tie_marks" not in View3dOut.model_json_schema().get("required", [])
+    assert "tie_far_mm" not in View3dOut.model_json_schema().get("required", [])
+
+
+
+def test_manifest_tie_far_mm_passthrough(tmp_path):
+    """통합 INT(계약 §15): 실제 코어 build_view manifest — tie_marks 가 있을 때만 tie_far_mm(범례 임계), 옛 manifest = 두 키 없음."""
+    import numpy as np
+    from esl.view3d import build_view
+    from esl_platform.api.schemas import View3dOut
+    from opt_support import plate
+
+    m = plate(nx=4, ny=3)
+    f = np.zeros((m["node_id"].size, 3))
+    f[:, 1] = 1.0
+    urls = {"geometry_url": "g", "values_url": "v"}
+    marks = [{"q": 0, "via": "force", "x": [0.0, 0.0, 0.0], "dist": 12.0, "n": 1, "far": True}]
+    for sub, kw in (("new", {"tie_marks": marks, "tie_far_mm": 10.0}), ("old", {})):
+        man = build_view(str(tmp_path / sub), node_id=m["node_id"], x0=m["x0"], conn=m["conn"], elem_type=m["elem_type"], f=f,
+                         u_rel=f * 0.01, supports=[{"node_id": int(m["node_id"][0]), "dof": "123"}], key="doe/d001",
+                         esl_run_id="e1", created_at="2026-11-27T00:00:00Z", **kw)
+        out = View3dOut.model_validate({**man, **urls}).model_dump(by_alias=True)
+        if kw:
+            assert out["tie_far_mm"] == 10.0 and out["tie_marks"] == marks
+        else:
+            assert "tie_marks" not in man and "tie_far_mm" not in man and "tie_marks" not in out and "tie_far_mm" not in out
 
 
 def test_openapi_snapshot_current():

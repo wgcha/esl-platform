@@ -48,7 +48,7 @@ export const TIE_RING_R = 0.5;
 export const TIE_RING_N = 20;
 /** 탐침(고리·✕ 클릭) 한 줄 */
 export const tieProbe = (m: Pick<View3dTieMark, "q" | "dist" | "via" | "far">) =>
-  `체결부 q${m.q} · ${m.via === "miss" ? "붙일 면 없음" : `거리 ${num(m.dist)} mm${m.far ? " · 먼 곳" : ""}`}`;
+  `체결부 q${m.q} · ${m.via === "miss" ? "붙일 면 없음" : `거리 ${m.dist == null ? "–" : num(m.dist)} mm${m.far ? " · 먼 곳" : ""}`}`;
 
 /** 옛 파일(kind 없음) 대체 표시 안내 — 범례 툴팁·탐침 */
 export const LEGACY_MARK_TIP = "이전 형식 — 다시 만들기를 누르면 방식별 기호로 표시";

@@ -431,9 +431,18 @@ export const COUNT_LABELS: Record<string, string> = {
 /** 결과 개수 항목: API counts(새 결과) 그대로, 없으면 n_ok + n_skipped·n_failed 의 0 아닌 키 + n_ref(> 0) 로 같은 표시를 계산(옛 결과) */
 export function countItems(r: Pick<DoeResultOut, "n_ok" | "n_skipped" | "n_failed"> & { counts?: DoeCountItem[] | null; n_ref?: number | null }): DoeCountItem[] {
   if (r.counts?.length) return r.counts;
+  // 서버 count_items 와 같은 규칙(통합 — TM-C1-2: counts 는 격자 지그·강제 부여 스냅샷 결과에만 오고, 그 밖은 여기서 계산):
+  // 같은 키가 n_skipped·n_failed 양쪽에 있으면 합, 순서 = COUNT_LABELS 표 순서(표에 없는 키는 뒤, 이름순)
   const out: DoeCountItem[] = [{ key: "ok", label: COUNT_LABELS.ok, n: r.n_ok }];
-  for (const [k, n] of [...Object.entries(r.n_skipped ?? {}), ...Object.entries(r.n_failed ?? {})]) if (n) out.push({ key: k, label: COUNT_LABELS[k] ?? k, n });
-  if (r.n_ref) out.push({ key: "ref", label: COUNT_LABELS.ref, n: r.n_ref });
+  const acc = new Map<string, number>();
+  for (const [k, n] of [...Object.entries(r.n_skipped ?? {}), ...Object.entries(r.n_failed ?? {})]) {
+    if (typeof n === "number" && Math.trunc(n) !== 0) acc.set(k, (acc.get(k) ?? 0) + Math.trunc(n));
+  }
+  const order = Object.keys(COUNT_LABELS).filter((k) => k !== "ok");
+  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length);
+  const keys = [...acc.keys()].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+  for (const k of keys) out.push({ key: k, label: COUNT_LABELS[k] ?? k, n: acc.get(k)! });
+  if (r.n_ref && r.n_ref > 0) out.push({ key: "ref", label: COUNT_LABELS.ref, n: r.n_ref });
   return out;
 }
 /** 결과 카드 제목 꼬리: " · 지그 매핑 제외 1 · 참고용 1"(성공 뺀 0 아닌 항목 — 없으면 "" = 지금과 같은 글자) */

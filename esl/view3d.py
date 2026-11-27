@@ -599,7 +599,8 @@ def _now(created_at: str | None) -> str:
 
 def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports=(), cfg: dict[str, Any] | None = None,
                key: str = "", esl_run_id: str = "", units: dict[str, str] | None = None,
-               created_at: str | None = None, tie_marks: list | None = None) -> dict[str, Any]:
+               created_at: str | None = None, tie_marks: list | None = None,
+               tie_far_mm: float | None = None) -> dict[str, Any]:
     """out_dir 에 part.glb·(part_lod.glb)·values.bin·manifest.json 을 쓰고 manifest dict 를 돌려준다.
 
     supports = [{"node_id", "dof", …}] (03_bc/support.json 또는 run.supports). x0 는 model.npz 에서 취한다.
@@ -647,6 +648,8 @@ def build_view(out_dir: str, *, node_id, x0, conn, elem_type, f, u_rel, supports
     }
     if tie_marks is not None:                          # v0.25.2 §4.3: 강제·못 붙인 체결부 자리(격자 지그 강제 부여 스냅샷만 — 옛 manifest 불변)
         manifest["tie_marks"] = tie_marks
+        if tie_far_mm is not None:                     # 통합 INT(§15): marks[].far 를 정한 먼 강제 임계(map.tie.force.far_mm) — 범례 숫자
+            manifest["tie_far_mm"] = float(tie_far_mm)
     with open(os.path.join(out_dir, MANIFEST), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, allow_nan=False)
     return manifest
