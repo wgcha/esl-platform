@@ -1,0 +1,70 @@
+# release/v0.25.1 C1 handoff (코어 — 낙하 씬별 3D 묶음 + C 기여도·차이·umax 핀)
+
+계약 docs/contracts/esl_view3d_scene_legend.md(수정 금지), 결정 D-0.25.1-VL-1~12. C1 소유 = `esl/mech/cfield.py`(새)·`esl/view3d.py`·
+`esl/doe/stages.py`·`esl/doe/__init__.py`(DEFAULTS)·`esl/mech/grid_map.py`(rcfs 보관 1곳 — VL-C1-2)·`tests/doe/test_view3d_scene.py`·
+`tests/doe/golden_v0251_c1/`. 시험 환경 /tmp/rdenv_v0251c1.sh(= /tmp/rdenv_main.sh, REPO_ROOT=wt_v0251, PYTHONPATH += packages/beadgraph/src).
+발견·최소 해석 = work/findings.md VL-C1-1~.
+
+## B1(백엔드)·F1b(스터디 화면)가 쓸 인터페이스 — 파일 형식(계약 §2.2·§2.3 그대로, 코어 함수 호출 없음)
+
+### 사이드카 `post/scene_view.json`
+```
+{"schema": "esl/doe_scene_view/1", "builder_version": 1, "source": "bd_post" | "regen", "created_at", "seconds",
+ "entries": [{"entry_id", "kk"}],                                   # kk = 스냅샷 doe.entries 순번(0..)
+ "packs": {"<src>": {"tag", "c_kind": "fu" | "mixed",
+                     "designs": {"<did>": {"dir": "<tag>/<did>", "scenes": ["<entry_id>", …]}},   # 디스크 pack.json 이 원본
+                     "skipped": [{"did": str | null, "entry_id": str | null, "code", "detail"}]}},
+ "budget": {"max_mb", "est_mb", "n_scenes", "n_written"}, "warnings": ["…"]}
+```
+- `<src>` = 순위 보기 키 `full`·`jig`·`jig_disp`·`jig_spring`·`bforce`·`fint`(코어 `stages.SCENE_SOURCES` 행 = `RANK_SOURCES` 키).
+  tag = `sv`(full)·`jig`·`jd`·`js`·`bf`·`fi`(= 기존 v3d_tag).
+- skipped code ∈ `SCENE_BUDGET`·`SCENE_FAILED`·`SCENE_NO_SOURCE`·`SCENE_DIFF_NO_FRAME`(`stages.SCENE_SKIP_CODES`). `detail` = 자유 문자열
+  (SCENE_FAILED = 오류 코드 또는 "baseline"). 응답 `skipped.text` 는 B1 이 resources/doe_messages.json 에서 code 로 만든다.
+- `warnings` = 진단 문자열(`SCENE_FAILED: <src> <did> <code>`, `SCENE_C_MISMATCH: …`, `SCENE_PIN_MISMATCH: …` — 계약 밖 진단, VL-C1-8).
+- 사이드카 없음(옛 스터디·`view3d.scene.enabled: false`) = `scene_view: null`.
+
+### 묶음 `post/view3d_scene/<tag>/<did>/`
+- `pack.json` = `{"schema": "esl/view3d_scene/1", "builder_version": 1, "key", "src", "did", "n_nodes", "n_elems", "n_tris", "bbox",
+  "plate_normal", "geometry": {"name": "part.glb", "bytes"}, "lod": {name, bytes, n_vertices} | null,
+  "scenes": [{"entry_id", "kk", "manifest": "e<kk>.json", "values": "e<kk>.bin"}], "created_at"}` — **마지막에 씀(없으면 미완성 묶음)**.
+  API 파일 이름 화이트리스트 = pack.json 의 `geometry.name`·`lod.name`·`scenes[].values`(+ manifest).
+- `part.glb`(·`part_lod.glb`) = `esl.view3d.write_glb` 같은 바이트 규칙(같은 메시면 `post/view3d/<did>/part.glb` 와 바이트 동일 — 시험 V-0251-9).
+- `e<kk>.json` = 기존 view3d manifest 키 전부(schema `esl/view3d/1`, `geometry`·`lod` = 묶음 것 이름, `values.name` = `e<kk>.bin`,
+  `esl_run_id` = entry_id, `key` = `doe/scene/<tag>/<did>/e<kk>`) + 새 키:
+  - `c`: `{"kind": "fu"|"mixed", "sum": Σc(float64 — 양자화 전), "offset": C_pe − 합(fu 0.0, mixed E_0 − C_mix,0), "value": per_esl 저장 C,
+    "parts": {"W_F", "W_v", "W_g"}, "unit": "N·mm"}` — `sum + offset == value`(상대 1e-9).
+  - `dc`: 베이스라인 묶음 = `null`. 안 = `{"sum": Σdc, "base_sum": 기준 c.sum, "map": "identity"|"grid", "cell_mm"?, "moved_rel"?}`
+    (`cell_mm`·`moved_rel` = grid 일 때만). 공통 좌표 없음 = `null` + skipped SCENE_DIFF_NO_FRAME. `sum == value_안 − value_기준`(1e-9).
+  - `pins`: `{"umax": {"node_id", "vertex", "value", "kind": "ev"|"all"|"region"|"mask"} | null}` — `value` == 표의 umax_ev(있으면)
+    또는 그 출처 umax(같은 값 ==).
+  - `ranges.c` = `{min, max, p01, p99}`(p01·p99 = 값 ≠ 0 노드 — VL-C1-3, 없으면 null), `ranges.dc` = `{abs_max, abs_p99}` | null.
+  - `values.arrays` 끝에 `{"key": "c", "dtype": "int16", "comps": 1, "offset", "scale"}`(항상)·`{"key": "dc", …}`(안 묶음만). 앞 4배열
+    (pa·fn·fmag·u)은 기존 values.bin 과 같은 바이트(같은 F·u 이면). 복원 = q·scale(기존 규칙).
+- `e<kk>.bin` 노드당 = 베이스라인 14 B·안 16 B(+ 4바이트 정렬 패딩).
+
+### 작업(B1) — 씬 3D 보충 `POST …/view3d/scenes`
+- 코어 dispatch: 스펙 `doe.post_mode == "scene"` → `stages._post_scene`(쓰는 것 = `post/view3d_scene/**`·`post/scene_view.json` 만, 멱등 —
+  새로 만든 씬이 없으면 아무것도 쓰지 않고 `files: []`). 반환 `{"files": ["post/scene_view.json"] | [], "warnings", "result": None}`.
+  post/result.json 없음 = `RESULT_NOT_READY`.
+- **워커 변경 없이** 쓰려면 작업 params `kind: "VIEW3D"`(worker `doe_jobs.POST_ONLY_KINDS` — 등록 = DB 무변경 `register_doe_view3d`) +
+  `doe.post_mode: "scene"`, resume BD_POST(기존 `SOURCE_ADD` jig 행과 같은 틀).
+- 기존 `post_mode: "view3d"`(3D 다시 만들기)도 끝에 같은 실행기를 불러 빠진 씬을 채운다(반환 files 에 `post/scene_view.json` 추가될 수 있음).
+- 설정: `bead_doe.view3d.scene = {enabled: true, max_mb: 1024, diff_cell_h_mult: 2.0}` — 코어 DEFAULTS·검증
+  `esl.doe.check_view3d_scene`(settings() 가 부름 — enabled bool, max_mb 0..65536, diff_cell_h_mult 0.5..8, 밖 = CONFIG_INVALID
+  detail {key, value}). pydantic `BeadDoeView3dSceneCfg`·yaml 2개 = B1(같은 이름·값 — 코어 시험 `test_v0251_15_settings_mirrors` 가 B1
+  통합 뒤 자동 확인, 지금은 skip). `_cfg_hash` 밖(input_sha256 불변 — 시험).
+- 결과 받기 zip 에서 `post/view3d_scene/**`·`post/scene_view.json` 제외(B1).
+
+### F1b — 자료 고르기
+- 씬 묶음 있음 = `scene_view.packs[<탭 출처 키>].designs[<did>]` 에 entry_id 가 있으면 그 manifest(새 API). 기준 카드 = `d000` 같은 씬.
+- 색 모드 `c`·`dc` 가능 여부 = manifest `values.arrays` 에 c/dc 키 존재(dc 는 안 카드만 — 기준 묶음엔 없음), 범위 = `ranges.c`·`ranges.dc`.
+- 씬 요약 값 = manifest `c.value`(C)·`pins.umax.value`(umax) — 표 값과 같음.
+
+## 진행 상태
+- [x] 골든 기록(main 97a0e358 코드) tests/doe/golden_v0251_c1 — 세계 6(same_lt·same_all6·sel_case_jig·step_old·cmp_lt·cmp_grid)
+- [x] cfield.py(nodal_c·umax_pin·conserve_map·diff) · view3d.build_scene_pack(build_view 내부 함수 분리 — 바이트 불변)
+- [x] stages: SCENE_SOURCES·_scene_post(실행기 1개)·provider 4개(_scn_full·_scn_jig(·_scn_jig_grid)·_scn_nodal)·사이드카·post_mode scene·
+      _post_view3d 끝 보충·_cmp_post 훅, _view3d 입력부 분리(_view3d_input)
+- [x] DEFAULTS view3d.scene + check_view3d_scene
+- [x] 시험 V-0251-1~15(tests/doe/test_view3d_scene.py — 15 의 거울 확인은 B1 뒤)
+- [ ] tests/ 전체 1회 + pytest packages/beadgraph · 실측(H5) — 결과는 아래 "결과"

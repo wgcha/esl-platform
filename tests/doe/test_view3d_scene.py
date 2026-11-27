@@ -595,3 +595,38 @@ def test_v0251_hash_outside_view3d_scene(tmp_path):
     b = stg.Ctx({"stage": "bd_eval", "out": str(tmp_path / "o"), "doe": {**doe, "cfg": {**doe["cfg"], "bead_doe": bd}}})
     assert stg._cfg_hash(a) == stg._cfg_hash(b)
     _ = (hashlib, json)
+
+
+# ---------------------------------------------------------------- V-0251(§2.1 VL-1) 인수분해 재사용 — 씬 추가 = 후진대입만
+def test_v0251_factorization_reused(tmp_path):
+    """같은 스터디 BD_POST 를 씬 끔·켬으로: 분해 횟수 같음(기존 3D 의 분해를 씬 묶음이 이어 씀), 풀이 횟수만 늘어남."""
+    import test_jig_stages as T
+    from esl.mech import shell as msh
+    t = str(tmp_path)
+    doe, rank, mesh = GV.same_world(t, kind="all6")
+    out, _post, _ids = T.run(os.path.join(t, "o"), doe, mesh, rank=rank)
+    cnt = {"f": 0}
+    of, ob = msh.ShellModel.factorize, msh.ShellModel.factorize_bc
+
+    def f1(self, *a, **k):
+        cnt["f"] += 1
+        return of(self, *a, **k)
+
+    def f2(self, *a, **k):
+        cnt["f"] += 1
+        return ob(self, *a, **k)
+    got = {}
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(msh.ShellModel, "factorize", f1)
+        mp.setattr(msh.ShellModel, "factorize_bc", f2)
+        for en in (False, True):
+            bd = copy.deepcopy(doe["cfg"]["bead_doe"])
+            bd["view3d"] = {"scene": {"enabled": en}}
+            cnt["f"] = 0
+            stg.run_stage({"stage": "bd_post", "out": out, "doe": {**doe, "cfg": {**doe["cfg"], "bead_doe": bd}, "rank": rank,
+                                                                     "rev": 1}}, lambda s: None)
+            got[en] = cnt["f"]
+    assert got[True] == got[False] > 0, got
+    side = _side(out)
+    assert set(side["packs"]) == {r["key"] for r in stg.SCENE_SOURCES} and not side["warnings"]
+    assert 0.0 <= side["seconds"]

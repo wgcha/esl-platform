@@ -705,13 +705,14 @@ def scene_ranges(c, dc=None) -> tuple[dict, dict | None]:
 
 def build_scene_pack(out_dir: str, *, node_id, x0, conn, elem_type, scenes, cfg: dict[str, Any] | None = None,
                      key: str = "", src: str = "", did: str = "", units: dict[str, str] | None = None,
-                     created_at: str | None = None, existing: dict | None = None) -> dict[str, Any]:
+                     created_at: str | None = None, existing: dict | None = None, write_pack: bool = True) -> dict[str, Any]:
     """씬 묶음(계약 §2.2): out_dir 에 part.glb(``build_view`` 와 같은 바이트 규칙)·씬마다 e<kk>.bin·e<kk>.json·(part_lod.glb)·pack.json
     (마지막 — 없으면 미완성)을 쓰고 pack dict 를 돌려준다.
 
     scenes = 씬 dict 반복자(한 번에 하나씩 만들어도 됨 — 메모리 = 씬 1개): {entry_id, kk, f (N,3), u (N,3) 화면 변위, supports,
     c (N,) C 기여도, c_meta{kind, sum, offset, value, parts{W_F, W_v, W_g}}, dc (N,) | None, dc_meta | None, pins{umax{…}}}.
-    existing = 같은 형상의 이전 pack.json(보충 — 그 씬·part 파일은 그대로 두고 새 씬만 더함). LOD 대표 값 = 씬별 면압의 노드별 최댓값."""
+    existing = 같은 형상의 이전 pack.json(보충 — 그 씬·part 파일은 그대로 두고 새 씬만 더함). LOD 대표 값 = 씬별 면압의 노드별 최댓값.
+    write_pack False = pack.json 을 아직 쓰지 않음(차이를 나중에 더할 묶음 — ``patch_scene_dc`` 뒤 ``write_pack_json``)."""
     c = {**DEFAULTS, **(cfg or {})}
     nid = np.asarray(node_id, np.int64)
     x0 = np.asarray(x0, np.float64)
@@ -791,6 +792,39 @@ def build_scene_pack(out_dir: str, *, node_id, x0, conn, elem_type, scenes, cfg:
             "bbox": {"min": lo.tolist(), "max": hi.tolist(), "diag": float(np.linalg.norm(hi - lo))},
             "plate_normal": geom.n_p.tolist(), "geometry": {"name": GEOMETRY, "bytes": gbytes}, "lod": lod,
             "scenes": rows, "created_at": _now(created_at)}
+    if write_pack:
+        write_pack_json(out_dir, pack)
+    return pack
+
+
+def write_pack_json(out_dir: str, pack: dict) -> None:
+    """pack.json(묶음 완성 표시 — 마지막에 씀)."""
     with open(os.path.join(out_dir, PACK_JSON), "w", encoding="utf-8") as fh:
         json.dump(pack, fh, ensure_ascii=False, allow_nan=False)
-    return pack
+
+
+def patch_scene_dc(out_dir: str, kk: int, dc, dc_meta: dict) -> None:
+    """이미 쓴 씬(dc 없음)에 차이를 더함: e<kk>.bin 끝에 dc(int16 — ``pack_scene_values`` 와 같은 정렬·양자화, 결과 바이트 = 처음부터 dc 를
+    넣어 쓴 것과 같음), e<kk>.json values·dc·ranges.dc 갱신."""
+    mname, vname = scene_files(kk)
+    with open(os.path.join(out_dir, mname), encoding="utf-8") as fh:
+        man = json.load(fh)
+    with open(os.path.join(out_dir, vname), "rb") as fh:
+        buf = bytearray(fh.read())
+    dv = np.asarray(dc, np.float64).reshape(-1)
+    if dv.size != int(man["n_nodes"]) or not np.isfinite(dv).all():
+        raise EslError("OUTPUT_INCONSISTENT", "차이 배열 크기가 노드 수와 다르거나 NaN/inf 가 있습니다")
+    if any(a["key"] == "dc" for a in man["values"]["arrays"]):
+        raise EslError("OUTPUT_INCONSISTENT", f"{mname}: 차이가 이미 있습니다")
+    b, sc = _q16(dv)
+    buf += b"\x00" * (-len(buf) % 4)
+    man["values"]["arrays"].append({"key": "dc", "dtype": "int16", "comps": 1, "offset": len(buf), "scale": sc})
+    buf += b
+    buf += b"\x00" * (-len(buf) % 4)
+    man["values"]["bytes"] = len(buf)
+    man["dc"] = dict(dc_meta)
+    man["ranges"]["dc"] = scene_ranges(np.zeros(0), dv)[1]
+    with open(os.path.join(out_dir, vname), "wb") as fh:
+        fh.write(bytes(buf))
+    with open(os.path.join(out_dir, mname), "w", encoding="utf-8") as fh:
+        json.dump(man, fh, ensure_ascii=False, allow_nan=False)
