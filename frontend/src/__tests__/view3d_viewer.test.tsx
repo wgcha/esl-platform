@@ -61,14 +61,16 @@ import { api } from "../api/endpoints";
 import type { View3dOut } from "../api/types";
 import { makeMesh, mockView3d } from "../mock/view3dmock";
 import { renderApp } from "../test/render";
-import { bandT, bandedGradient, normalize } from "../view3d/colors";
+import { bandT, normalize } from "../view3d/colors";
+import { cssGradient, mapFor } from "../lib/colormap";
 import { FEATURE_DEG, featureEdges } from "../view3d/edges";
 import { infoLine, shortFieldName } from "../view3d/info";
 import { LegendOverlay, boundaryIndices } from "../view3d/LegendOverlay";
 import { extremes, marksFor } from "../view3d/marks";
 import { View3DCard } from "../view3d/View3DCard";
 import { ViewToolbar } from "../view3d/ViewToolbar";
-import { LEVEL_CHOICES, VIEWER_PLANS, planOf, type ViewerState } from "../view3d/viewerPlan";
+import { VIEWER_PLANS, planOf, type ViewerState } from "../view3d/viewerPlan";
+import { LEGEND_DEFAULTS } from "../view3d/legend/legendModel";
 import { VIEWER_KEY, readViewerPrefs, writeViewerPrefs } from "../view3d/viewerPrefs";
 import { useViewerSync } from "../view3d/viewerSync";
 import { decodeValues } from "../view3d/values";
@@ -101,19 +103,21 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("V-0246-VW-1 VIEWER_PLANS 계획 표", () => {
-  it("모든 행·열 채움, LEVEL_CHOICES 0 포함, 알 수 없는 키 = 오류", () => {
+  it("모든 행·열 채움, legendSync 열, 알 수 없는 키 = 오류", () => {
     expect(Object.keys(VIEWER_PLANS).sort()).toEqual(["case_disp", "case_load", "study_design", "study_jigdiag", "study_recon"]);
     for (const [k, p] of Object.entries(VIEWER_PLANS)) {
       expect(p.layers.length, k).toBeGreaterThan(0);
       expect(["none", "pair"], k).toContain(p.sync);
+      expect(["none", "pair"], k).toContain(p.legendSync);
+      expect(p.layers, k).toContain("upin");
       for (const f of ["bc", "load", "ghost", "marks"] as const) expect(typeof p.defaults[f], `${k}.${f}`).toBe("boolean");
-      expect((LEVEL_CHOICES as readonly number[]).includes(p.defaults.levels), k).toBe(true);
     }
-    expect(LEVEL_CHOICES[0]).toBe(0);
-    expect([...LEVEL_CHOICES]).toEqual([0, 6, 9, 12]);
     expect(() => planOf("nope")).toThrow();
-    // Q-VW-3 기본 가정: 연속·최대 표식 켬·원형 끔, 경계조건·하중 켬(지금 그림)
-    expect(planOf("case_load").defaults).toEqual({ bc: true, load: true, ghost: false, marks: true, levels: 0 });
+    // Q-VW-3 기본 가정: 최대 표식 켬·원형 끔, 경계조건·하중 켬(지금 그림). 범례 기본은 legendModel(레벨 9)
+    expect(planOf("case_load").defaults).toEqual({ bc: true, load: true, ghost: false, marks: true });
+    expect(LEGEND_DEFAULTS.levels).toBe(9);
+    expect(planOf("study_design").legendSync).toBe("pair");
+    expect(planOf("case_load").legendSync).toBe("none");
     expect(planOf("study_design").sync).toBe("pair");
     expect(planOf("case_load").sync).toBe("none");
   });
@@ -218,13 +222,13 @@ describe("V-0246-VW-4 bandT · 구간 띠", () => {
     expect(bandT(5, 4, 3, 12)).toBe(0);
     for (const v of [-1, 0, 2.5, 5, 10, 11]) expect(bandT(v, 0, 10, 0)).toBe(normalize(v, 0, 10));
   });
-  it("bandedGradient(9) 계단 정지점 18개, 연속(0) = 지금 띠", () => {
-    const g = bandedGradient(9);
+  it("cssGradient(레벨 9) 계단 정지점 18개, 연속(0) = 지도 정점 수(레인보우 5)", () => {
+    const g = cssGradient(mapFor("seq"), { levels: 9 });
     expect(g.match(/rgb\(/g)!.length).toBe(18);
     expect(g).toContain(" 0%");
     expect(g).toContain(" 100%");
-    expect(bandedGradient(0)).toContain("linear-gradient(90deg");
-    expect(bandedGradient(0).match(/rgb\(/g)!.length).toBe(9);
+    expect(cssGradient(mapFor("seq"), { levels: 0 })).toContain("linear-gradient(90deg");
+    expect(cssGradient(mapFor("seq"), { levels: 0 }).match(/rgb\(/g)!.length).toBe(5);
   });
 });
 
@@ -237,30 +241,32 @@ describe("V-0246-VW-5 범례 변경 = setLegend 만", () => {
     const up0 = sc.stats().valueUploads;
     expect(f0).toBeGreaterThan(0);
     expect(count("setColors")).toBe(0);
-    expect(last("setLegend")![0]).toMatchObject({ levels: 0 });
+    expect(last("setLegend")![0]).toMatchObject({ levels: 9, log: false, outGray: false }); // v0.25.1 기본 레벨 9
     const inp = within(screen.getByTestId("v3d-legend")).getByLabelText("범위 최대");
     fireEvent.change(inp, { target: { value: "0.5" } });
-    await waitFor(() => expect(last("setLegend")![0]).toMatchObject({ min: 0, max: 0.5, levels: 0 }));
+    await waitFor(() => expect(last("setLegend")![0]).toMatchObject({ min: 0, max: 0.5, levels: 9 }));
     openGear();
-    const seg = screen.getByTestId("v3d-opt-levels");
-    fireEvent.click(seg.querySelector("[data-levels='9']")!);
-    await waitFor(() => expect(last("setLegend")![0]).toMatchObject({ max: 0.5, levels: 9 }));
-    fireEvent.click(seg.querySelector("[data-levels='6']")!);
+    fireEvent.click(screen.getByTestId("v3d-gleg-cont"));
+    await waitFor(() => expect(last("setLegend")![0]).toMatchObject({ max: 0.5, levels: 0 }));
+    fireEvent.click(screen.getByTestId("v3d-gleg-cont"));
+    fireEvent.change(screen.getByTestId("v3d-gleg-levels"), { target: { value: "6" } });
     await waitFor(() => expect(last("setLegend")![0]).toMatchObject({ levels: 6 }));
     expect(count("setField")).toBe(f0);
     expect(sc.stats().valueUploads).toBe(up0);
     expect(sc.stats().colorLoops).toBe(0);
     expect(count("setColors")).toBe(0);
-    // 구간이면 바닥 띠 = 계단, 연속이면 지금 띠
+    // 구간이면 바닥 띠 = 계단
     expect((screen.getByTestId("v3d-legend").querySelector(".ramp") as HTMLElement).style.background).toContain("rgb(");
   });
 });
 
 describe("V-0246-VW-6 LegendOverlay", () => {
   const R = { min: 0, max: 9 };
-  it("연속이면 렌더 없음", () => {
-    const { container } = render(<LegendOverlay levels={0} range={R} title="x" hostHeight={600} />);
-    expect(container.firstChild).toBeNull();
+  it("연속이어도 항상 표시: 매끄러운 띠 + 눈금 5개(최대가 위)", () => {
+    render(<LegendOverlay levels={0} range={R} title="x" hostHeight={600} />);
+    expect(screen.getByTestId("v3d-legend-ov-cont")).toBeTruthy();
+    const ticks = screen.getAllByTestId("v3d-legend-ov-tick").map((e) => e.textContent);
+    expect(ticks).toEqual(["0", "2.25", "4.5", "6.75", "9"]);
   });
   it("L+1 경계값(f3), 위 = 최대, ▲▼ 개수, 최대 표식 한 줄", () => {
     render(<LegendOverlay levels={9} range={R} title="변위 |u| (mm)" above={3} below={2} maxLine="최대 9 @N 7" hostHeight={900} />);
@@ -271,7 +277,7 @@ describe("V-0246-VW-6 LegendOverlay", () => {
     expect(screen.getByTestId("v3d-legend-ov-above").textContent).toContain("3");
     expect(screen.getByTestId("v3d-legend-ov-below").textContent).toContain("2");
     expect(screen.getByTestId("v3d-legend-ov-max").textContent).toBe("최대 9 @N 7");
-    expect(screen.getByTestId("v3d-legend-ov").getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByTestId("v3d-legend-ov").getAttribute("role")).toBeNull(); // onOpen 없으면 눌러지지 않는 표시
   });
   it("높이가 모자라면 경계값을 한 칸 걸러(최대·최소 유지)", () => {
     expect(boundaryIndices(12, 20, 16)).toHaveLength(13);
@@ -280,16 +286,19 @@ describe("V-0246-VW-6 LegendOverlay", () => {
     render(<LegendOverlay levels={12} range={R} title="t" hostHeight={150} />);
     expect(screen.getAllByTestId("v3d-legend-ov-tick").length).toBeLessThan(13);
   });
-  it("카드: 구간 선택 시 겹침 범례가 칸 안에 생기고 연속으로 돌리면 사라진다", async () => {
+  it("카드: 겹침 범례는 항상 칸 안에 있고(기본 레벨 9), 연속 체크 → 매끄러운 띠, 범례 클릭 = 편집 팝오버", async () => {
     renderApp(url("c-demo", 4));
     await ready();
-    expect(screen.queryByTestId("v3d-legend-ov")).toBeNull();
-    openGear();
-    fireEvent.click(screen.getByTestId("v3d-opt-levels").querySelector("[data-levels='9']")!);
-    await waitFor(() => expect(screen.getByTestId("v3d-legend-ov")).toBeTruthy());
+    expect(screen.getByTestId("v3d-legend-ov").getAttribute("data-levels")).toBe("9");
     expect(screen.getByTestId("v3d-host").parentElement!.contains(screen.getByTestId("v3d-legend-ov"))).toBe(true);
-    fireEvent.click(screen.getByTestId("v3d-opt-levels").querySelector("[data-levels='0']")!);
-    await waitFor(() => expect(screen.queryByTestId("v3d-legend-ov")).toBeNull());
+    expect(screen.queryByTestId("v3d-legend-pop")).toBeNull();
+    fireEvent.click(screen.getByTestId("v3d-legend-ov"));
+    expect(screen.getByTestId("v3d-legend-pop")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("v3d-leg-cont"));
+    await waitFor(() => expect(screen.getByTestId("v3d-legend-ov").getAttribute("data-levels")).toBe("0"));
+    expect(screen.getByTestId("v3d-legend-ov-cont")).toBeTruthy();
+    fireEvent.keyDown(screen.getByTestId("v3d-legend-pop"), { key: "Escape" });
+    expect(screen.queryByTestId("v3d-legend-pop")).toBeNull();
   });
 });
 
@@ -488,9 +497,8 @@ describe("V-0246-VW-10 ③ 수동 범위 유지", () => {
     fireEvent.change(inp, { target: { value: "0.37" } });
     await waitFor(() => expect(rangeMax()).toBeCloseTo(0.37, 6));
     expect(screen.getByTestId("v3d-legend").getAttribute("data-manual")).toBe("true");
-    const keys = Object.keys(localStorage).filter((k) => k.startsWith("esl.legend.v1:"));
-    expect(keys).toEqual(["esl.legend.v1:c-demo:load:pa"].map((k) => keys.find((x) => x.endsWith(":load:pa")) ?? k));
-    expect(keys.every((k) => !/:(full|bforce|fint|jig)/.test(k.replace(/^esl\.legend\.v1:/, "").replace(/c-demo.*?:load:\w+$/, "")))).toBe(true);
+    // v0.25.1 §5.6: 직접 입력한 범위는 기억하지 않는다(범위 키 0개)
+    expect(Object.keys(localStorage).filter((k) => k.startsWith("esl.legend.v1:"))).toEqual([]);
     const tab = (k: string) => screen.getByTestId("v3d-src-tab").querySelector(`[data-tab=${k}]`) as HTMLButtonElement;
     fireEvent.click(tab("bforce"));
     await waitFor(() => expect(tab("bforce").getAttribute("aria-selected")).toBe("true"));
@@ -523,14 +531,14 @@ describe("V-0246-VW-10 ③ 수동 범위 유지", () => {
 
 describe("V-0246-VW-11 viewerPrefs", () => {
   it("계획 키별 저장·읽기, 키 1개", () => {
-    const s: ViewerState = { bc: false, load: true, ghost: true, marks: false, levels: 9 };
+    const s: ViewerState = { bc: false, load: true, ghost: true, marks: false };
     writeViewerPrefs("case_load", s);
-    writeViewerPrefs("study_design", { ...s, levels: 6 });
+    writeViewerPrefs("study_design", { ...s, bc: true });
     expect(readViewerPrefs("case_load")).toEqual(s);
-    expect(readViewerPrefs("study_design").levels).toBe(6);
+    expect(readViewerPrefs("study_design").bc).toBe(true);
     expect(readViewerPrefs("case_disp")).toEqual(planOf("case_disp").defaults);
     expect(Object.keys(localStorage)).toEqual([VIEWER_KEY]);
-    expect(VIEWER_KEY).toBe("esl.v3d.viewer.v1");
+    expect(VIEWER_KEY).toBe("esl.v3d.viewer.v2");
   });
   it("localStorage 가 던져도 기본값·쓰기 무시, 형식 오류 무시", () => {
     const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
@@ -545,7 +553,7 @@ describe("V-0246-VW-11 viewerPrefs", () => {
     set.mockRestore();
     localStorage.setItem(VIEWER_KEY, "{broken");
     expect(readViewerPrefs("case_load")).toEqual(planOf("case_load").defaults);
-    localStorage.setItem(VIEWER_KEY, JSON.stringify({ case_load: { bc: "yes", load: false, levels: 7 } }));
+    localStorage.setItem(VIEWER_KEY, JSON.stringify({ case_load: { bc: "yes", load: false } }));
     expect(readViewerPrefs("case_load")).toEqual({ ...planOf("case_load").defaults, load: false });
     localStorage.setItem(VIEWER_KEY, "[1]");
     expect(readViewerPrefs("case_load")).toEqual(planOf("case_load").defaults);
@@ -555,7 +563,7 @@ describe("V-0246-VW-11 viewerPrefs", () => {
     await ready();
     fireEvent.click(screen.getByTestId("v3d-layer-bc"));
     openGear();
-    fireEvent.click(screen.getByTestId("v3d-opt-levels").querySelector("[data-levels='12']")!);
+    fireEvent.change(screen.getByTestId("v3d-gleg-levels"), { target: { value: "12" } });
     r.unmount();
     h.scenes.length = 0;
     renderApp(url("c-demo", 4));
@@ -604,10 +612,13 @@ describe("V-0246-VW-12 ViewerSync", () => {
   });
   it("층·레벨·변형 공유 상태, 계획 기본값에서 시작하고 층·레벨만 기억", () => {
     const { result } = renderHook(() => useViewerSync("study_design"));
-    expect(result.current.state).toMatchObject({ bc: true, load: true, ghost: false, marks: true, levels: 0, deformOn: false, real: false });
-    act(() => result.current.set({ bc: false, levels: 9, deformOn: true, kexp: 2 }));
-    expect(result.current.state).toMatchObject({ bc: false, levels: 9, deformOn: true, kexp: 2 });
-    expect(readViewerPrefs("study_design")).toMatchObject({ bc: false, levels: 9 });
+    expect(result.current.state).toMatchObject({ bc: true, load: true, ghost: false, marks: true, deformOn: false, real: false });
+    expect(result.current.state.legend).toEqual(LEGEND_DEFAULTS);
+    act(() => result.current.set({ bc: false, deformOn: true, kexp: 2 }));
+    act(() => result.current.setLegend({ levels: 12 }));
+    expect(result.current.state).toMatchObject({ bc: false, deformOn: true, kexp: 2 });
+    expect(result.current.state.legend.levels).toBe(12);
+    expect(readViewerPrefs("study_design")).toMatchObject({ bc: false });
     expect(JSON.stringify(readViewerPrefs("study_design"))).not.toContain("deform");
   });
   it("쌍 카드 둘이 같은 상태를 읽고, Case ③(카드 하나)은 장면에 카메라 중계를 걸지 않는다", async () => {

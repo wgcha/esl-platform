@@ -390,8 +390,7 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
     sc.setLayerVisible("supports", lay.bc);
     sc.setLayerVisible("arrows", lay.load);
     sc.setLayerVisible("ghost", ghostOn);
-    sc.setLayerVisible("marks", lay.marks || (lg.minMark && modeRow.editable) || lay.upin);
-  }, [data, lay.bc, lay.load, lay.marks, lay.upin, lg.minMark, modeRow.editable, ghostOn]);
+  }, [data, lay.bc, lay.load, ghostOn]);
   // 원형 외곽선: 처음 켤 때 1회 계산(기하별 캐시), 이후는 visible 만
   const ghostCache = useRef<ParsedGlb | null>(null);
   useEffect(() => {
@@ -432,6 +431,12 @@ export function View3DCard({ view, options }: { view: LoadView; options?: View3D
   useEffect(() => {
     sceneRef.current?.setValueMarks?.(markList);
   }, [data, markList]);
+  // 표식 층(최대·최소·umax 핀 스프라이트)은 셋 중 하나라도 켜져 있으면 보인다
+  const marksVisible = lay.marks || wantMin || pinOn;
+  useEffect(() => {
+    const sc = sceneRef.current;
+    if (data && sc?.setLayerVisible) sc.setLayerVisible("marks", marksVisible);
+  }, [data, marksVisible]);
 
   // ---- 쌍 동기화: 장면을 쌍에 등록(시점 중계)
   const attach = sync?.attach;
