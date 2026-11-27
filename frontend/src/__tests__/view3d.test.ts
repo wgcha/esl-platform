@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ARROW_COLOR, CLUSTER_COLOR, CLUSTER_MIN_FRAC, CLUSTER_STAGES, CONE_ASPECT, LINE_PX, MIN_LEN_FRAC, NODE_STAGES, N_STAGES, arrowLength, buildArrowSpecs, nearestEnabledStage, nodeCount, stageEnabled, stageIndex, stageMode, stageText,
 } from "../view3d/arrows";
-import { BLUES9, LUT_LINEAR, LUT_SRGB, NAN_LINEAR, bluesSrgb, fillVertexColors, luminance, normalize, srgbToLinear } from "../view3d/colors";
+import { fillVertexColors, luminance, normalize, srgbToLinear } from "../view3d/colors";
+import { buildLut, mapFor, specialLinear, srgb } from "../lib/colormap";
 import { applyDeform, defaultScale, defaultScaleExp, pointAt, scaleFromExp, scaleLabel } from "../view3d/deform";
 import { parseGlb } from "../view3d/glb";
 import { fileUrls, resolveFileUrl } from "../view3d/fetchFiles";
@@ -85,36 +86,32 @@ describe("V-L3-10 화살표 길이·사양", () => {
   });
 });
 
-describe("V-L3-10 Blues 표", () => {
-  it("끝값 #f7fbff → #08306b, 밝기 단조 감소, NaN 회색, 범위 밖은 끝색", () => {
-    expect(bluesSrgb(0).map(Math.round)).toEqual([247, 251, 255]);
-    expect(bluesSrgb(1).map(Math.round)).toEqual([8, 48, 107]);
-    expect(BLUES9.length).toBe(9);
-    let prev = Infinity;
-    for (let i = 0; i <= 64; i++) {
-      const L = luminance(bluesSrgb(i / 64));
-      expect(L).toBeLessThan(prev);
-      prev = L;
-    }
+describe("V-L3-10 → V-0251-20 색표(레인보우) 보조 함수", () => {
+  const LUT = buildLut(mapFor("seq"), { linear: true });
+  it("끝값 파랑 → 빨강, NaN 회색, 범위 밖은 끝색, 정규화", () => {
+    expect(srgb(mapFor("seq"), 0)).toEqual([0, 0, 255]);
+    expect(srgb(mapFor("seq"), 1)).toEqual([255, 0, 0]);
     // 선형 표 = sRGB 표의 선형 변환
-    expect(LUT_LINEAR[0]).toBeCloseTo(srgbToLinear(247), 6);
-    expect(LUT_SRGB[0]).toBeCloseTo(247 / 255, 6);
+    expect(LUT[0]).toBeCloseTo(srgbToLinear(0), 6);
+    expect(LUT[2]).toBeCloseTo(srgbToLinear(255), 6);
     const out = new Float32Array(9);
     fillVertexColors([0, 100, NaN], 0, 50, out);
-    expect([out[0], out[1], out[2]]).toEqual([LUT_LINEAR[0], LUT_LINEAR[1], LUT_LINEAR[2]]);
+    expect([out[0], out[1], out[2]]).toEqual([LUT[0], LUT[1], LUT[2]]);
     const last = (256 - 1) * 3;
-    expect(out[3]).toBeCloseTo(LUT_LINEAR[last], 6); // 100 > max → 가장 진함
-    expect([out[6], out[7], out[8]].map((x, i) => x - NAN_LINEAR[i])).toEqual([0, 0, 0].map((x) => expect.closeTo(x, 6)));
+    expect(out[3]).toBeCloseTo(LUT[last], 6); // 100 > max → 빨강(끝색)
+    const nan = specialLinear("nan");
+    expect([out[6], out[7], out[8]].map((x, i) => x - nan[i])).toEqual([0, 0, 0].map((x) => expect.closeTo(x, 6)));
     expect(normalize(5, 0, 10)).toBe(0.5);
     expect(normalize(5, 10, 10)).toBe(0);
     expect(Number.isNaN(normalize(Infinity, 0, 1))).toBe(true);
+    expect(luminance([255, 255, 255])).toBeCloseTo(1, 6);
   });
 
   it("LOD src 로 원 정점 값을 모아 색을 채운다", () => {
     const out = new Float32Array(6);
     fillVertexColors([0, 10], 0, 10, out, [1, 0]);
-    expect(out[0]).toBeCloseTo(LUT_LINEAR[255 * 3], 6);
-    expect(out[3]).toBeCloseTo(LUT_LINEAR[0], 6);
+    expect(out[0]).toBeCloseTo(LUT[255 * 3], 6);
+    expect(out[3]).toBeCloseTo(LUT[0], 6);
   });
 });
 
@@ -344,6 +341,13 @@ describe("manifest·mock 정합(백엔드와 맞춰볼 형태)", () => {
       values: `/esl/api/esl-runs/esl-run-1/view3d/values.bin?key=${m.key}`,
     });
     expect(fileUrls({ ...m, geometry_url: "", values_url: "" }).geometry).toBe(`/esl/api/esl-runs/esl-run-1/view3d/part.glb?key=${m.key}`);
+    // 통합 INT-12: 씬 manifest 는 형상 키 = 묶음 geometry_key(씬과 무관 → 같은 URL), 값 파일은 씬 key
+    const sc = (kk: string) => ({ ...m, key: `doe/scene/sv/d001/e${kk}`, geometry_key: "doe/scene/sv/d001", geometry_url: "/doe/studies/s/view3d-scene/full/d001/part.glb", values_url: `/doe/studies/s/view3d-scene/full/d001/e${kk}.bin` });
+    const a = fileUrls(sc("00"));
+    const b = fileUrls(sc("01"));
+    expect(a.geometry).toBe(b.geometry);
+    expect(a.geometry).toBe("/esl/api/doe/studies/s/view3d-scene/full/d001/part.glb?key=doe%2Fscene%2Fsv%2Fd001");
+    expect(a.values).not.toBe(b.values);
   });
 });
 

@@ -209,6 +209,11 @@ def golden_runs(tmp_path_factory):
     return {"study": study_snapshot(out, str(t)), "case": case_snapshot(cout, croot), "case_old_plan": osnap}
 
 
+# v0.25.1(계약 esl_view3d_scene_legend.md V-0251-10 개정·§5.9 INT): 새로 만든 report.html 은 색·범례 문구만 바뀜 — 바이트 비교에서 뺌
+# (파일 목록에는 그대로 있어야 함, 색 외 내용 = V-0251-43·44). 다른 파일 바이트 비교는 그대로.
+PICTURE_V0251 = ("report.html",)
+
+
 def test_v0244_jig_1_golden_bytes(golden_runs):
     """V-0244-JIG-1: 옛 스냅샷 스터디 지그 결과·Case 산출물 = v0.24.3 코드 기록값(모듈 이동·shell 추가 후에도)."""
     cur = golden_runs
@@ -228,11 +233,11 @@ def test_v0244_jig_1_golden_bytes(golden_runs):
     assert {"04_esl/f_eq.npz", "04_esl/bforce.npz", "04_esl/fint.npz", "05_val/sources.json"} <= set(gold["case"])
     if gold["env"] != env_sig():
         pytest.skip(f"환경 서명이 골든과 다름({env_sig()} ≠ {gold['env']})")
-    diff = sorted(f for f in gold["study"] if gold["study"][f] != cur["study"][f])
+    diff = sorted(f for f in gold["study"] if gold["study"][f] != cur["study"][f] and not f.endswith(PICTURE_V0251))
     assert not diff, ("study", diff)                                          # 옛 스냅샷 스터디(RANK_SOURCES 2행 추가 후에도)
-    diff = sorted(f for f in gold["case"] if gold["case"][f] != cur["case_old_plan"][f])
+    diff = sorted(f for f in gold["case"] if gold["case"][f] != cur["case_old_plan"][f] and not f.endswith(PICTURE_V0251))
     assert not diff, ("case_old_plan", diff)                                  # 새 코드 + 옛 출처 표 = 골든 전부
-    diff = sorted(f for f in gold["case"] if gold["case"][f] != cur["case"][f])
+    diff = sorted(f for f in gold["case"] if gold["case"][f] != cur["case"][f])   # report.html 은 원래 의도 차이 목록에 있음
     assert diff == sorted(CASE_PLAN_CHANGED), ("case", diff)                  # 새 출처 표: 의도된 2파일만(04_esl·05_val 루트·full 등 불변)
 
 

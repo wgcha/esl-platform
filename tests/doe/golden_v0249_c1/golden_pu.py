@@ -77,14 +77,17 @@ def file_sha(p: str, root: str) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def tree_sha(out: str, root: str) -> dict:
+SCENE_NEW = ("post/view3d_scene/", "post/scene_view.json")   # v0.25.1 새 파일(계약 esl_view3d_scene_legend.md §7.2 — 옛 골든 비교 밖, V-0251-10 이 확인)
+
+
+def tree_sha(out: str, root: str, scene: bool = False) -> dict:
     res = {}
     for dp, dn, fns in os.walk(out):
         dn[:] = sorted(d for d in dn if d not in ("_backup", "logs"))
         for fn in fns:
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, out).replace(os.sep, "/")
-            if fn.endswith((".log", ".lock", ".tmp")) or fn.startswith("."):
+            if fn.endswith((".log", ".lock", ".tmp")) or fn.startswith(".") or (not scene and rel.startswith(SCENE_NEW)):
                 continue
             res[rel] = file_sha(p, root)
     return dict(sorted(res.items()))

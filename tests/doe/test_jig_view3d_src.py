@@ -346,10 +346,10 @@ def test_src_3d_failure_isolated_bd_post(tmp_path, monkeypatch):
     골든과 같음(경고가 result.json 에 새지 않음)."""
     f0 = stg._jig_resp_rows
 
-    def boom(c, mesh, z, jidx, ld):
+    def boom(c, mesh, z, jidx, ld, **kw):                     # v0.25.1: keep(연 분해 — 씬 묶음 재사용) 그대로 넘김
         if "method" in z and str(np.asarray(z["method"]).ravel()[0]) == "prescribed":
             raise RuntimeError("synthetic jd 3D crash")
-        return f0(c, mesh, z, jidx, ld)
+        return f0(c, mesh, z, jidx, ld, **kw)
     monkeypatch.setattr(stg, "_jig_resp_rows", boom)
     mesh, doe = T.build_same(tmp_path)
     out, post, ids = T.run(str(tmp_path / "o"), doe, mesh, rank=T.rank_snap(jig=_jig_v0244()))

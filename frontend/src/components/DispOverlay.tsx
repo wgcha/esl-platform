@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/endpoints";
 import type { DispFieldOut, DispLayer, DispSummary } from "../api/types";
-import { VIRIDIS, f3, gradient, lerp } from "../lib/colormap";
+import { css, cssGradient, f3, mapFor } from "../lib/colormap";
 import { usePolling } from "../lib/usePolling";
 import { ColorLegend, autoRange, countOut, useLegendRange } from "./ColorLegend";
 import { useWidth } from "./MaxHoldChart";
@@ -25,7 +25,7 @@ const LEGEND_LABEL: Record<DispLayer, string> = {
 
 /** 값 → 색(0..max 선형). 범위 밖은 끝색 */
 export function dispColor(value: number, range: { min: number; max: number }): string {
-  return lerp(VIRIDIS, (value - range.min) / (range.max - range.min || 1));
+  return css(mapFor("seq"), (value - range.min) / (range.max - range.min || 1));
 }
 
 function draw(cv: HTMLCanvasElement | null, f: DispFieldOut | undefined, range: { min: number; max: number }, g: Geo | null) {
@@ -181,7 +181,7 @@ export function DispOverlay({ vid, disp, sec, src }: { vid: string; disp: DispSu
           label={LEGEND_LABEL[layer]}
           range={range}
           manual={lg.manual}
-          gradient={gradient(VIRIDIS)}
+          gradient={cssGradient(mapFor("seq"))}
           onApply={lg.apply}
           onReset={lg.reset}
           above={out.above}

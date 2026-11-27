@@ -17,7 +17,11 @@ import { ShapeNameCell } from "./DoeInputs";
 /** v0.21.0 메시 품질 미달 행(mq 키 또는 warn 코드 — 새 스냅샷 ④ 만) */
 const isMq = (r: { mq?: unknown; warn?: string[] | null }) => !!r.mq || !!r.warn?.includes("MESH_QUALITY_RANK");
 
-export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg, shapeRules, perEslNote, resultNote, grid = null }: {
+export function DoeRanking({ result, params, entries, selected, onSelect, varNames, rankCfg, shapeRules, perEslNote, resultNote, grid = null, scene = null, onScene }: {
+  /** v0.25.1 선택된 낙하 씬(entry_id, null = 자동) — 그 씬이 최악 ESL 인 칸 강조 */
+  scene?: string | null;
+  /** v0.25.1 최악 ESL 칸 클릭 = 그 안 + 그 씬(칸은 버튼 — Enter). 없으면 클릭 동작 없음(옛 결과) */
+  onScene?: (eid: string, did: string) => void;
   /** v0.24.8 격자 지그 스터디(gridOf(원 결과)) — 탭 투영 결과는 jig 를 숨기므로 호출부가 원 결과로 넘긴다. 정의 문구 꼬리·잡음 배지 title 만 바꿈 */
   grid?: { cell_mm: number; noise_floor: number | null; nf_by?: Record<string, number> } | null;
   /** v0.23.1 ESL별 개선율 표 설명(ⓘ 지표 정의 안 — esl_doe_ui_tidy.md §4.1) */
@@ -241,7 +245,24 @@ export function DoeRanking({ result, params, entries, selected, onSelect, varNam
                     </span>
                   )}
                 </td>
-                <td className="small">{esl(r.worst_entry_id)}</td>
+                <td className="small" style={scene && scene === r.worst_entry_id ? { boxShadow: "inset 0 -3px 0 var(--accent)" } : undefined}>
+                  {onScene && r.worst_entry_id ? (
+                    <button
+                      type="button"
+                      data-testid={`rank-worst-${r.id}`}
+                      aria-pressed={scene === r.worst_entry_id}
+                      style={{ font: "inherit", padding: 0, background: "none", border: 0, cursor: "pointer", color: "inherit", textDecoration: "underline dotted" }}
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        onScene(r.worst_entry_id!, r.id);
+                      }}
+                    >
+                      {esl(r.worst_entry_id)}
+                    </button>
+                  ) : (
+                    esl(r.worst_entry_id)
+                  )}
+                </td>
                 {!lin && (
                   <td className="num mono" title={`전 ESL 최대 ${mm(r.umax_all)}`}>
                     {mm(um(r))}

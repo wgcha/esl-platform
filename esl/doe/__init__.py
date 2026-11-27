@@ -82,8 +82,11 @@ DEFAULTS: dict = {
     "fint": {"enabled": False, "grades": ["fint"], "view3d": True},                # v0.24.0 내력 ESL(esl_fint.md §9) — 같은 블록 형식
     # v0.23.3 jig_diag = 지그 진단 3D·하중 정의 보기(esl_jig_view.md §6). v0.24.1 recon = 노드 힘 출처 기준 3D 재현 진단
     # (d000_<pe>_e<kk>/recon.json·recon.bin — 목표 sm_ref, esl_view3d_sources.md §5.2·§7)
+    # v0.25.1 scene(esl_view3d_scene_legend.md §7.1 — D-0.25.1-VL-1·2·5·11, 해시·스냅샷 밖 보기 설정): 3D 비교 대상 × 전 낙하 씬 묶음
+    # post/view3d_scene/·post/scene_view.json(enabled 끔 = v0.25.0 파일 집합), max_mb 스터디당 추정 한도(0 = 없음), diff_cell_h_mult 차이
+    # 격자 셀 = max(rank.jig_grid.cell_mm, 이 값 × 안 메시 변 길이 중앙값). pydantic BeadDoeView3dSceneCfg·yaml 2개 거울(같은 이름·값)
     "view3d": {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1,
-               "recon": True},
+               "recon": True, "scene": {"enabled": True, "max_mb": 1024, "diff_cell_h_mult": 2.0}},
     # v0.10.0 §11.4 ESL별 개선 지표: '변화 없음' 허용치(③ 은 max(이 값, noise_floor)), 순위 행에 per_esl 을 넣는 상한(안 수 × ESL 수)
     # v0.20.0 강성 지표(esl_stiffness_metric.md §6 — pydantic BeadDoeRankCfg·두 yaml 거울). metric·lin_form·lin_valid·
     # imbalance_warn 은 새 스터디 스냅샷 doe.rank 로만 쓰임 — 스냅샷에 키 없는 옛 스터디 = solve(바이트 동일).
@@ -373,10 +376,34 @@ def settings(cfg: dict | None = None) -> dict:
             return copy.deepcopy(DEFAULTS)
         if not isinstance(sect, dict):
             raise EslError("CONFIG_INVALID", "bead_doe 절은 매핑이어야 함")
-        return check_virtual_bead(_deep_merge(DEFAULTS, sect))
+        return check_view3d_scene(check_virtual_bead(_deep_merge(DEFAULTS, sect)))
     if any(k in cfg for k in ("opt_run", "commands", "upload", "worker")):
         return copy.deepcopy(DEFAULTS)              # 전체 설정인데 bead_doe 절 없음 → 비활성
-    return check_virtual_bead(_deep_merge(DEFAULTS, cfg))
+    return check_view3d_scene(check_virtual_bead(_deep_merge(DEFAULTS, cfg)))
+
+
+# v0.25.1 view3d.scene 범위(계약 §7.1 표 — pydantic BeadDoeView3dSceneCfg 와 같은 값): 키 → (하한, 상한)
+VIEW3D_SCENE_RANGES = {"max_mb": (0.0, 65536.0), "diff_cell_h_mult": (0.5, 8.0)}
+
+
+def check_view3d_scene(st: dict) -> dict:
+    """v0.25.1 §7.1 설정 검증: view3d.scene{enabled bool, max_mb 0..65536, diff_cell_h_mult 0.5..8} — 어기면 CONFIG_INVALID
+    (detail {key, value}). 블록이 없으면(옛 설정 사본) 그대로."""
+    sc = ((st.get("view3d") or {}).get("scene") if isinstance(st, dict) else None)
+    if not isinstance(sc, dict):
+        return st
+    if not isinstance(sc.get("enabled"), bool):
+        e = EslError("CONFIG_INVALID", "bead_doe.view3d.scene.enabled 는 true/false")
+        e.detail = {"key": "bead_doe.view3d.scene.enabled", "value": sc.get("enabled")}
+        raise e
+    for k, (lo, hi) in VIEW3D_SCENE_RANGES.items():
+        v = sc.get(k)
+        ok = isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= float(v) <= hi
+        if not ok:
+            e = EslError("CONFIG_INVALID", f"bead_doe.view3d.scene.{k}: {lo:g} ~ {hi:g} (값 {v!r})")
+            e.detail = {"key": f"bead_doe.view3d.scene.{k}", "value": v}
+            raise e
+    return st
 
 
 def check_virtual_bead(st: dict) -> dict:

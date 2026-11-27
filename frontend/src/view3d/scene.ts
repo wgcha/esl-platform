@@ -12,7 +12,7 @@ import { LineSegments2 } from "three/examples/jsm/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/examples/jsm/lines/LineSegmentsGeometry.js";
 import { ARROW_COLOR, ARROW_PICK_PX, ARROW_SELECTED, CONE_ASPECT, CONE_CLUSTER_SCALE, CONE_LEN_SCALE, CONE_PX, LINE_PX, SUPPORT_LINE_PX, type ArrowSpec } from "./arrows";
 import { applyDeform } from "./deform";
-import { LUT_DIV_LINEAR, LUT_LINEAR, LUT_SIZE, NAN_LINEAR, srgbToLinear } from "./colors";
+import { LUT_SIZE, buildLut, mapFor, specialLinear, srgbToLinear } from "../lib/colormap";
 import { idToRgb, type IdPatch, type Rect } from "./select/lasso";
 import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
@@ -212,7 +212,7 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       lutData[k * 4 + 3] = 1;
     }
   };
-  setLutData(LUT_LINEAR);
+  setLutData(buildLut(mapFor("seq"), { linear: true }));
   const lutTex = new DataTexture(lutData, LUT_SIZE, 1, RGBAFormat, FloatType);
   lutTex.minFilter = NearestFilter;
   lutTex.magFilter = NearestFilter;
@@ -221,8 +221,11 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
     uMin: { value: 0 },
     uMax: { value: 1 },
     uLevels: { value: 0 },
+    uLog: { value: 0 },
+    uOutMode: { value: 0 },
     uLut: { value: lutTex },
-    uNaN: { value: new Vector3(NAN_LINEAR[0], NAN_LINEAR[1], NAN_LINEAR[2]) },
+    uNaN: { value: new Vector3(...specialLinear("nan")) },
+    uOutColor: { value: new Vector3(...specialLinear("out")) },
   };
   const surfMat = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
   surfMat.onBeforeCompile = (sh) => {
@@ -231,10 +234,15 @@ export const createScene: CreateScene = (canvas: HTMLCanvasElement, opts: SceneO
       .replace(
         "void main() {",
         `attribute float aValue;
-uniform float uMin; uniform float uMax; uniform float uLevels; uniform sampler2D uLut; uniform vec3 uNaN;
+uniform float uMin; uniform float uMax; uniform float uLevels; uniform float uLog; uniform float uOutMode; uniform sampler2D uLut; uniform vec3 uNaN; uniform vec3 uOutColor;
 vec3 gpuColor(float v) {
   if (v > 3.0e38) return uNaN;
-  float t = (uMax > uMin) ? clamp((v - uMin) / (uMax - uMin), 0.0, 1.0) : 0.0;
+  if (uOutMode > 0.5 && (v < uMin || v > uMax)) return uOutColor;
+  float t = 0.0;
+  if (uMax > uMin) {
+    if (uLog > 0.5) t = (v <= 0.0 || uMin <= 0.0) ? 0.0 : clamp(log(v / uMin) / log(uMax / uMin), 0.0, 1.0);
+    else t = clamp((v - uMin) / (uMax - uMin), 0.0, 1.0);
+  }
   if (uLevels > 0.5) t = (min(floor(t * uLevels), uLevels - 1.0) + 0.5) / uLevels;
   float k = floor(t * ${(LUT_SIZE - 1).toFixed(1)} + 0.5);
   return texture2D(uLut, vec2((k + 0.5) / ${LUT_SIZE.toFixed(1)}, 0.5)).rgb;
@@ -273,7 +281,6 @@ void main() {`,
   };
   const srcOf = (l: Layer) => l.geo.src;
 
-  let lut: Float32Array = LUT_LINEAR;
   /** aValue 업로드(필드가 바뀔 때만) */
   const paintLayer = (l: Layer) => {
     if (!fieldValues) return;
@@ -522,6 +529,7 @@ void main() {`,
   // v0.24.6 최대·최소 표식 스프라이트, 원형 외곽선
   const markSprites: Sprite[] = [];
   let markTexts: string[] = [];
+  let markStyles: string[] = [];
   const clearMarkSprites = () => {
     for (const s of markSprites) {
       scene.remove(s);
@@ -761,6 +769,8 @@ void main() {`,
       uni.uMin.value = l.min;
       uni.uMax.value = l.max;
       uni.uLevels.value = l.levels;
+      uni.uLog.value = l.log ? 1 : 0;
+      uni.uOutMode.value = l.outGray ? 1 : 0;
       invalidate();
     },
     setDeform(uu, k) {
@@ -908,13 +918,14 @@ void main() {`,
     },
     setValueMarks(list) {
       const texts = list.map((m) => m.text);
-      if (markSprites.length === list.length && texts.every((t, i) => t === markTexts[i])) {
+      if (markSprites.length === list.length && texts.every((t, i) => t === markTexts[i]) && list.every((m, i) => (m.symbol ?? "●") + (m.color ?? "") === markStyles[i])) {
         list.forEach((m, i) => markSprites[i].position.set(m.position[0], m.position[1], m.position[2])); // 위치만
       } else {
         clearMarkSprites();
         markTexts = texts;
+        markStyles = list.map((m) => (m.symbol ?? "●") + (m.color ?? ""));
         for (const m of list) {
-          const sp = textSprite(m.text, "●", { color: "#b45309", bg: "rgba(255,255,255,0.9)", px: 20 });
+          const sp = textSprite(m.text, m.symbol ?? "●", { color: m.color ?? "#b45309", bg: "rgba(255,255,255,0.9)", px: 20 });
           sp.position.set(m.position[0], m.position[1], m.position[2]);
           sp.center.set(0.05, -0.1); // 표식 점 위쪽에 라벨(지지 기호 라벨은 아래쪽)
           sp.renderOrder = 11;
@@ -978,9 +989,8 @@ void main() {`,
       }
       invalidate();
     },
-    setColorMap(map) {
-      lut = map === "diverging" ? LUT_DIV_LINEAR : LUT_LINEAR;
-      setLutData(lut);
+    setColorMap(role, reversed) {
+      setLutData(buildLut(mapFor(role), { linear: true, reversed: !!reversed }));
       lutTex.needsUpdate = true;
       invalidate();
     },

@@ -701,6 +701,26 @@ $env:PGPASSWORD = $null
 - 서버는 Case 폴더·입력을 읽기만 한다(추가 비드도 스터디 폴더 안 기저 파일만 쓴다).
 - 응답 새 키: `GET /doe/settings` `virtual_bead`, 스터디 `inputs.virtual_bead`(옛 = null), 선택 `virtual_beads[]`, derive `virtual_beads[]`·`vb_frame`(블록 있는 스터디는 추가 비드 0개여도), 변수 표 A 행(`form "hinge"`·`label`·`wall_elems`·`vb`·`acc_hint`·`guard.warp`)·`beads[].kind "virtual"`·`vb_reason`, basis.json `vb_rules`·`virtual_beads[]`, 결과 경고 `VB_VERIFY_HINT`.
 
+### 4.11 v0.25.1 업데이트 안내(낙하 씬별 3D·C 기여도·차이·umax 핀·범례 편집·색 통일)
+
+**DB migration 없음.** **beadgraph 1.3.0 그대로**(휠 배포 불필요). 설정 키가 늘었지만 없으면 기본값이라 현장 `esl_platform.yaml` 은 고치지 않아도 된다. 현장 확인표: `docs/manual/field_check_v0251.md`. 계약 `docs/contracts/esl_view3d_scene_legend.md`.
+
+- **새 자원 `resources/colormaps.json`**(색 지도 정점·특수색·색 칸 글자 대비 기준 — 화면과 파이썬 그림이 같은 파일을 읽음). 설치·업데이트 스크립트(`install-common.ps1` `$EslAppItems`)와 오프라인 묶음(`collect-offline.ps1`·`.sh`)이 `<런타임>\app\resources\` 로 복사한다. **이 파일이 없으면** `bead_map.png`·비드 선택 썸네일·보고서 생성이 `CONFIG_INVALID`(colormaps 를 읽을 수 없음)로 실패한다 — 손으로 파일을 옮기는 현장은 같이 옮긴다. 프런트는 빌드 때 같은 파일을 넣으므로 업데이트 후 새로 빌드한 `frontend\dist` 를 쓴다. 정점을 바꾸려면 계약 개정(지도마다 256색 `check` sha256 도 같이 — 화면·파이썬 시험이 확인).
+- **설정 `bead_doe.view3d.scene`**(3키 — 보기 설정: 해시 밖·스냅샷에 넣지 않음, 실행 시점 값 사용. 같은 이름이 `config/esl_platform.example.yaml`·`esl_platform.prod.example.yaml`·코어 DEFAULTS·pydantic 에 있고 시험으로 같음을 확인):
+  | 키 | 기본 | 범위·뜻 |
+  |---|---|---|
+  | `enabled` | true | false = 씬 묶음·사이드카를 만들지 않음(v0.25.0 과 같은 파일 집합), [씬 3D 만들기] = 409 `VIEW3D_SCENE_UNAVAILABLE` |
+  | `max_mb` | 1024 | 0..65536 — 스터디당 씬 묶음 추정 용량 한도(MB, 0 = 한도 없음). 넘으면 베이스라인 C 큰 씬부터 들어가는 만큼(각 안의 최악 ESL 은 항상), 빠진 씬 = `SCENE_BUDGET` |
+  | `diff_cell_h_mult` | 2.0 | 0.5..8 — 메시가 다른 안의 `차이` 격자 칸 = max(`rank.jig_grid.cell_mm`, 이 값 × 변 길이 중앙값). 차이 그림 얼룩이 심하면 키운다 |
+  - 범위 밖 값 = 시작 시 `CONFIG_INVALID`(detail `{key, value}`).
+- **저장·시간**: 새 스터디는 BD_POST 에서 3D 비교 대상(베이스라인 + `view3d.top_k`) × 전 씬을 스터디 폴더 `post/view3d_scene/<출처>/<안>/`(형상 1개 + 씬별 값)과 사이드카 `post/scene_view.json` 에 쓴다. 기존 결과 파일(result.json·ranking.csv·per_esl.json·jig_view.json·`post/view3d/**`)은 바이트 그대로. 실측(합성 H5 15,477 노드): 묶음 33.4 MB(96 씬)·BD_POST +20 s, 분해 횟수 불변. 추정 10만 노드 × 8 씬 ≈ 195 MB·2.5 ~ 3 분 추가. 실제 시간은 사이드카 `seconds`·작업 로그 `[bd_post scene]` 에 남는다. **결과 받기(zip)에는 넣지 않는다**(보기 파생 자료).
+- **옛 스터디 [씬 3D 만들기]**: `POST /doe/studies/{id}/view3d/scenes`(실행 권한 ∧ 관리자·작성자) → 기존 작업 큐(작업 `kind VIEW3D` + `doe.post_mode "scene"`, resume BD_POST — 워커가 돌아야 함). 씬 묶음·사이드카만 쓰고 멱등(있는 씬은 다시 만들지 않음). 기존 [지그 3D 다시 만들기]도 끝에 빠진 씬을 채운다.
+- **새 API**: `GET /doe/studies/{id}/view3d-scene/{src}/{did}/{entry_id}/manifest.json`·`…/{src}/{did}/{name}`(pack.json 에 적힌 파일만 — 경로 고정·링크 거부, 404 `VIEW3D_SCENE_NOT_FOUND`), 결과 응답 새 키 `scene_view`(사이드카 요약, 옛 = null)·`scene_add{ok, blocked}`. 문구 코드 `SCENE_BUDGET`·`SCENE_FAILED`·`SCENE_NO_SOURCE`·`SCENE_DIFF_NO_FRAME`·`SCENE_VIEW_INVALID`·`SCENE_UNAVAILABLE_DISABLED`(`resources/doe_messages.json`).
+- **색 통일**: 모든 연속값 색 = 높은 값 빨강·낮은 값 파랑(순차 레인보우, 부호 있는 값 = − 파랑·0 흰·+ 빨강). **뜻이 뒤집힌 곳**(사용자 안내 필요): 비드 높이 변화(빨강 = 깊어짐), 보고서 격자 지도 차이(빨강 = 늘어남), ESL별 개선율 칸(파랑 = 개선 — 전에는 초록). 예전에 만든 보고서·PNG·썸네일은 **다시 만들지 않는다**(파일 안 범례가 그 그림과 맞음, 옛 썸네일은 화면 범례도 옛 문구).
+- **3D 뷰어 기억**: 범례 모양은 브라우저 localStorage `esl.v3d.viewer.v2`(v1 은 처음 열 때 이행 — 레벨 기본 9). 서버 설정 없음.
+- **작업 재시작**: `ESL-Backend`·`ESL-Worker`.
+- 서버는 Case 폴더·입력을 읽기만 한다(씬 묶음도 스터디 폴더 `post/` 안에만 쓴다).
+
 ---
 
 ## 10. 환경 점검

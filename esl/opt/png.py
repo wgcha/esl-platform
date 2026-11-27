@@ -2,8 +2,9 @@
 
 - ``encode_png(rgb)``: (H, W, 3) uint8 → PNG 바이트(필터 0, zlib 9 — 같은 입력이면 같은 바이트).
 - ``render_plan(mesh, frame, …)``: 대상 (a, b) mm 평면도. 요소를 삼각형으로 나눠 픽셀 중심 포함 판정으로 래스터화
-  (요소 번호 버퍼) → 값이 있으면 순차 색(0 → vmax), 비설계·금지 영역은 회색 빗금, 사각형 외곽선 주황,
-  3-2-1 지지 초록 기호, 색 막대 범례(숫자는 5×7 비트맵 글꼴).
+  (요소 번호 버퍼) → 값이 있으면 순차 색(0 → vmax — 공용 자원 ``seq`` 역할: 낮음 파랑 → 높음 빨강, v0.25.1
+  esl_view3d_scene_legend.md §5.7 L12), 비설계·금지 영역은 회색 빗금, 사각형 외곽선 주황, 3-2-1 지지 초록 기호,
+  색 막대 범례(숫자는 5×7 비트맵 글꼴).
 """
 from __future__ import annotations
 
@@ -12,10 +13,9 @@ import zlib
 
 import numpy as np
 
+from esl.io import colormaps as cm
 from esl.opt.keepout import project_ab
 
-# 순차 색(viridis 근사 앵커)
-_SEQ = np.array([[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]], dtype=np.float64)
 BG = (255, 255, 255)
 EDGE_GRAY = (200, 200, 200)
 HATCH_BG = (225, 225, 225)
@@ -57,10 +57,8 @@ def decode_png_size(data: bytes) -> tuple[int, int]:
 
 
 def seq_color(v: np.ndarray) -> np.ndarray:
-    v = np.clip(np.asarray(v, dtype=np.float64), 0.0, 1.0) * (len(_SEQ) - 1)
-    i = np.minimum(np.floor(v).astype(int), len(_SEQ) - 2)
-    t = (v - i)[..., None]
-    return np.round(_SEQ[i] * (1 - t) + _SEQ[i + 1] * t).astype(np.uint8)
+    """0..1 → 순차 색 (…, 3) uint8 — 공용 자원 ``seq`` 역할(정점은 ``resources/colormaps.json`` 에만)."""
+    return cm.rgb(cm.map_for("seq"), v)
 
 
 class Canvas:

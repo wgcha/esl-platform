@@ -248,3 +248,35 @@ def back_tree(out: str) -> None:
 def _dump(p: str, obj) -> None:
     with open(p, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=1)
+
+
+# ---------------------------------------------------------------- v0.25.1 색 통일 되돌림(Case 보고서)
+# 계약 esl_view3d_scene_legend.md §5.7 L14·L15·§5.9·V-0251-10 개정: 새로 그린 Case 보고서는 색만 바뀜 — JS 의 정점 리터럴(VIR·DIV)을
+# 지우고 데이터 JSON ``cmap``(esl.io.colormaps.as_json)을 읽음. 아래 되돌림 = 그 차이만 v0.25.0(e9745958) 글자로 돌려놓아 옛 골든과
+# 바이트로 비교(색 외 내용이 그대로인지 — 보고서가 시험 주제인 V-0245-VT-6·8). 옛 정점은 옛 바이트 재현용(시험 전용 — 제품 코드엔 없음).
+_C2_NEW_JS = ("var CM=D.cmap||{},SEQC=(CM.seq||{}).stops,DIVC=(CM.div||{}).stops;\n"
+              "function lerp(c,t){t=(t===t)?Math.max(0,Math.min(1,t)):0;var s=t*(c.length-1),i=Math.min(Math.floor(s),c.length-2),"
+              "f=s-i,a=c[i],b=c[i+1];\n"
+              " function ch(k){return Math.floor(a[k]+(b[k]-a[k])*f+0.5);}return 'rgb('+ch(0)+','+ch(1)+','+ch(2)+')';}\n")
+_C2_OLD_JS = ("var VIR=[[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],"
+              "[180,222,44],[253,231,37]];\n"
+              "var DIV=[[49,54,149],[69,117,180],[145,191,219],[240,228,140],[252,141,89],[215,48,39],[165,0,38]];\n"
+              "function lerp(c,t){t=Math.max(0,Math.min(1,t));var s=t*(c.length-1),i=Math.min(Math.floor(s),c.length-2),f=s-i,"
+              "a=c[i],b=c[i+1];\n"
+              " return 'rgb('+Math.round(a[0]+(b[0]-a[0])*f)+','+Math.round(a[1]+(b[1]-a[1])*f)+','+Math.round(a[2]+(b[2]-a[2])*f)"
+              "+')';}\n")
+_C2_RENAME = (("lerp(DIVC,", "lerp(DIV,"), ("lerp(SEQC,", "lerp(VIR,"), ("grad(DIVC)", "grad(DIV)"), ("grad(SEQC)", "grad(VIR)"))
+
+
+def back_color_v0250(html: str) -> str:
+    """새 Case 보고서 글자 → v0.25.0 색 코드 글자(데이터 JSON ``cmap`` 삭제 + JS 색 줄 되돌림). 차이가 그 둘뿐이면 결과 = 옛 바이트.
+    새 색 코드가 정확히 한 번씩 있어야 함(없으면 단언 실패 — 되돌릴 것이 바뀌었다는 뜻)."""
+    from esl.io import colormaps as cm
+    from esl.report import html as H
+    cmap = ',"cmap":' + H.json_text(cm.as_json(("seq", "div")))
+    assert html.count(cmap) == 1 and html.count(_C2_NEW_JS) == 1
+    html = html.replace(cmap, "").replace(_C2_NEW_JS, _C2_OLD_JS)
+    for a, b in _C2_RENAME:
+        assert html.count(a) == 1, a
+        html = html.replace(a, b)
+    return html

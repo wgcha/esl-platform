@@ -1810,8 +1810,9 @@ export interface ChangelogEntry {
 
 // ---------------------------------------------------------------- v0.5.8 3D 하중 보기 (계약 esl_3d_load.md §3.6·§4)
 export interface View3dValuesArray {
-  /** fn(int16, N, 부호) · fmag(uint16, N) · u(int16×3, mm) · pa(uint16, 면압 |Fn|/A MPa — 사용자 결정 2026-10-28) */
-  key: "fn" | "fmag" | "u" | "pa";
+  /** fn(int16, N, 부호) · fmag(uint16, N) · u(int16×3, mm) · pa(uint16, 면압 |Fn|/A MPa — 사용자 결정 2026-10-28)
+   *  · v0.25.1 씬 값 파일만 c(int16, C 기여도 N·mm) · dc(int16, 차이 — 안 묶음만) */
+  key: "fn" | "fmag" | "u" | "pa" | "c" | "dc";
   dtype: "int16" | "uint16";
   comps: number;
   offset: number;
@@ -1925,6 +1926,20 @@ export interface View3dOut {
   geometry_url: string;
   lod_url?: string | null;
   values_url: string;
+}
+/** v0.25.1 씬 manifest 범위(View3dRanges + 선택 키 c·dc — 새 키는 씬 manifest 에만) */
+export interface View3dSceneRanges extends View3dRanges {
+  c?: Record<string, unknown> | null;
+  dc?: Record<string, unknown> | null;
+}
+/** GET /doe/studies/{sid}/view3d-scene/{src}/{did}/{entry_id}/manifest.json — View3dOut + 선택 키 c·dc·pins·ranges.c·ranges.dc(계약 §2.3·§15.1 #1) */
+export interface View3dSceneOut extends View3dOut {
+  c?: Record<string, unknown> | null;
+  dc?: Record<string, unknown> | null;
+  pins?: Record<string, unknown> | null;
+  ranges: View3dSceneRanges;
+  /** 통합 INT-12: 형상 파일 캐시 키 = 묶음 key(씬과 무관 — 씬을 바꿔도 형상 URL 같음) */
+  geometry_key?: string | null;
 }
 
 /** v0.24.3 ④ 검증 출처(esl_validate_sources.md §7.2) — GET /validations/{id}/sources · /cases/{id}/validations/sources */
@@ -3126,8 +3141,9 @@ export interface DoePreviewOut {
   cells?: DoePreviewCell[];
   /** v0.15.0 select: 미리보기를 만든 선택 sha(BS-D-3) */
   selection_sha256?: string | null;
-  /** v0.15.0 select: 썸네일 색 범위(grid_manifest.color — 모든 칸 같은 ±v_max) */
-  color?: { v_max: number; unit: string } | null;
+  /** v0.15.0 select: 썸네일 색 범위(grid_manifest.color — 모든 칸 같은 ±v_max).
+   *  v0.25.1 map = 썸네일을 그린 색 지도 이름(select_render.color_meta — 계약 esl_view3d_scene_legend.md §5.9). 없음 = 옛 썸네일(옛 범례) */
+  color?: { v_max: number; unit: string; map?: string } | null;
   /** v0.16.1 경고 READY 수(§6 counts.warn) */
   warn?: number | null;
   /** v0.16.1 판정 규칙 판이 옛 미리보기(grid_manifest.rules 없음, §7.4) */
@@ -3748,7 +3764,41 @@ export interface DoeResultOut {
   view3d_fi_recon?: Record<string, string> | null;
   /** v0.24.0 평가 영역 요약(새 스냅샷만 — esl_fint.md §6.2) */
   eval_region?: DoeEvalRegionOut | null;
+  /** v0.25.1 씬별 3D 사이드카 요약(post/scene_view.json — 없으면 null = 옛 결과) */
+  scene_view?: DoeSceneViewOut | null;
+  /** v0.25.1 [씬 3D 만들기] 가능 여부 */
+  scene_add?: DoeSceneAddOut | null;
   warnings: DoeWarning[];
+}
+export interface DoeSceneEntryOut {
+  entry_id: string;
+  kk: number | string;
+}
+export interface DoeSceneSkippedOut {
+  code: string;
+  did?: string | null;
+  entry_id?: string | null;
+  text: string;
+}
+export interface DoeScenePackOut {
+  c_kind?: "fu" | "mixed" | null;
+  designs: Record<string, string[]>;
+  skipped?: DoeSceneSkippedOut[];
+  /** 통합 INT-11: 3D 색·핀이 표와 다른 씬(SCENE_C_MISMATCH·SCENE_PIN_MISMATCH) — 숫자는 표 기준 */
+  approx?: DoeSceneSkippedOut[];
+}
+export interface DoeSceneBudgetOut {
+  max_mb: number;
+  est_mb: number;
+}
+export interface DoeSceneViewOut {
+  entries: DoeSceneEntryOut[];
+  packs: Record<string, DoeScenePackOut>;
+  budget?: DoeSceneBudgetOut | null;
+}
+export interface DoeSceneAddOut {
+  ok: boolean;
+  blocked?: string | null;
 }
 /** v0.24.0 평가 영역(보조 지표 umax(평가 영역)) */
 export interface DoeEvalRegionOut {

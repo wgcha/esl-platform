@@ -865,8 +865,24 @@ def _jig_pe_csv(r: dict, b: dict | None, pe: str, ranked: bool) -> list:
 
 
 def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
-    """안(또는 베이스라인)의 최악 ESL 로 view3d 파일 → post/view3d/<did>/."""
+    """안(또는 베이스라인)의 최악 ESL 로 view3d 파일 → post/view3d/<did>/. v0.25.1: 입력부 = ``_view3d_input``(씬 묶음 전 노드 출처와
+    같은 함수 — 메시·지지·하중 바이트 같음)."""
     from esl.view3d import build_view
+    mesh, sup, loads = _view3d_input(c, t, bmeta, did, inp)
+    worst_id = res.get("worst_entry_id")
+    sel = [(e, f) for e, f in loads if e == worst_id] or loads[:1]
+    P = _scn_full_p(c, t, did, mesh, sup, loads)        # v0.25.1: evaluate 와 같은 분해·풀이(같은 u) — 씬 묶음이 같은 분해를 이어 씀
+    s0 = P["get"](str(sel[0][0]))
+    od = c.writer.fresh_dir(c.p("post", "view3d", did), c.out)
+    build_view(od, node_id=mesh["node_id"], x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=sel[0][1],
+               u_rel=s0["u_view"], supports=[{"node_id": n, "dof": d} for n, d in sup],
+               key=f"doe/{did}", esl_run_id=str(sel[0][0]))
+    _scn_feed(c, SCENE_KEY_OF["_scn_full"], did, P)
+    return did
+
+
+def _view3d_input(c: Ctx, t, bmeta, did: str, inp: dict) -> tuple[dict, list, list]:
+    """전 노드 3D 의 (안 mesh, 지지, 하중 [(entry_id, F)]) — 실행과 같은 함수(모드 분기는 v0.25.0 ``_view3d`` 그대로)."""
     dd = design_dir(c, did)
     if did == BASELINE and c.scn != "compare":
         mesh, sup = dict(t.mesh), list(t.supports)
@@ -893,14 +909,7 @@ def _view3d(c: Ctx, t, bmeta, did: str, inp: dict, res: dict) -> str | None:
             mesh["x0"] = dz["x"]
             sup = list(t.supports)
             _, loads = sc.load_loads(c.p("prep"))
-    worst_id = res.get("worst_entry_id")
-    sel = [(e, f) for e, f in loads if e == worst_id] or loads[:1]
-    r = ev.evaluate(mesh, sup, sel, c.solver_cfg(), reaction_warn=c.cfg["solve"]["reaction_warn"], keep_u=[sel[0][0]])
-    od = c.writer.fresh_dir(c.p("post", "view3d", did), c.out)
-    build_view(od, node_id=mesh["node_id"], x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=sel[0][1],
-               u_rel=_sm_view_u(c, did, mesh, r["u"][sel[0][0]]), supports=[{"node_id": n, "dof": d} for n, d in sup],
-               key=f"doe/{did}", esl_run_id=str(sel[0][0]))
-    return did
+    return mesh, sup, loads
 
 
 def _copy_tree(src: str, dst: str, writer: U.Writer) -> list[str]:
@@ -1019,6 +1028,8 @@ def bd_post(spec: dict, echo=print) -> dict:
     c = Ctx(spec)
     if c.D.get("post_mode") == "view3d":
         return _post_view3d(c, echo)
+    if c.D.get("post_mode") == "scene":                 # v0.25.1 씬 3D 보충(esl_view3d_scene_legend.md §2.5 — 새 파일만)
+        return _post_scene(c, echo)
     if c.D.get("post_mode") in NODAL_BY_KEY:            # v0.24.0 노드 힘 출처 추가 계산(esl_bforce.md §6·esl_fint.md §5.2)
         return _post_nodal(c, NODAL_BY_KEY[c.D["post_mode"]], echo)
     if c.scn == "compare":
@@ -1084,6 +1095,7 @@ def bd_post(spec: dict, echo=print) -> dict:
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
+    _scn_begin(c, t, results, [BASELINE] + top, source="bd_post", fresh=True, echo=echo)   # v0.25.1 씬 3D(기존 3D 가 분해를 넘김)
     for did in [BASELINE] + top:
         res = next(r for r in results if r["id"] == did)
         try:
@@ -1099,6 +1111,7 @@ def bd_post(spec: dict, echo=print) -> dict:
             _ns_post(c, ns, t, bmeta, m, results, noise, S_, shown=[BASELINE] + top, source="bd_post", echo=echo)
         except Exception as exc:                 # noqa: BLE001
             echo(f"[bd_post] {ns['name']} 생략: {getattr(exc, 'code', type(exc).__name__)}")
+    _scn_finish(c)                               # v0.25.1 씬 3D 묶음 마무리(새 파일만 — 결과·순위 무영향)
     c.progress(60)
     keep_k = int(c.cfg["paicad"]["keep_files_top"])
     best_ids = [x["id"] for x in R["ranking"][:max(1, min(k, keep_k))]]
@@ -4633,15 +4646,21 @@ def _jig_apply_multi(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: di
     return warns
 
 
-def _jig_resp_rows(c: Ctx, mesh: dict, z, jidx, ld: list) -> list:
-    """지그 3D 응답 행(u 포함): 옛 npz(BC 배열 없음) = ``design_response``(병진 고정 — 옛 그대로), 새 npz = 저장 BC(엔트리 값·바닥·k)로
-    같은 경계 재풀이(view 메시 = 기준 위상 — 같은 노드 순서)."""
+def _jig_resp_rows(c: Ctx, mesh: dict, z, jidx, ld: list, keep: dict | None = None) -> list:
+    """지그 3D 응답 행(u 포함): 옛 npz(BC 배열 없음) = ``design_response``(병진 고정 — 옛 그대로: ``factor`` + ``respond``), 새 npz = 저장
+    BC(엔트리 값·바닥·k)로 같은 경계 재풀이(view 메시 = 기준 위상 — 같은 노드 순서). keep(v0.25.1) = 연 분해를 keep["h"] 에 남김(씬 묶음이
+    같은 분해로 후진대입만 — ``_scn_jig_p(st=keep)``)."""
     from esl.doe import jig as jg
     if "bc_node" not in z:
-        return jg.design_response(mesh, jidx, ld, c.solver_cfg(), keep_u=True)["rows"]
+        h = jg.factor(mesh, jidx, c.solver_cfg())              # = design_response(같은 분해·응답 — 통계만 없음)
+        if keep is not None:
+            keep["h"] = h
+        return jg.respond(h, ld, keep_u=True)
     from esl.mech import jig_bc
     zeids = [str(e) for e in z["entry_ids"].tolist()]
     h = jig_bc.factorize(_jig_sm(mesh, c.solver_cfg()), _jig_bc_of(z, None))
+    if keep is not None:
+        keep["h"] = h
     return [{"entry_id": e, "u": np.asarray(jig_bc.respond(h, F, _jig_bc_of(z, zeids.index(e)))["u"], dtype=np.float64)[:, :3]}
             for e, F in ld]
 
@@ -4753,7 +4772,8 @@ def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict) -> tuple
                 return o[np.searchsorted(nid, nb_[np.asarray(i, dtype=np.int64)], sorter=o)]
         jidx = rmap(z["jig_idx"])
         ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
-        rows = _jig_resp_rows(c, mesh, z, jidx, ld)
+        st: dict = {}
+        rows = _jig_resp_rows(c, mesh, z, jidx, ld, keep=st)     # v0.25.1: 연 분해를 st 에 남김 — 씬 묶음이 이어 씀(후진대입만)
         names = {}
         for (e, F), rr in zip(ld, rows):
             sup = _jig_support_rows(z, e, rmap, mesh["x0"], smax, nid, str(row["key"]))   # dof(옛) + kind·dirs·val(엔트리 BC)
@@ -4762,6 +4782,8 @@ def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict) -> tuple
             build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=rr["u"],
                        supports=sup, key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
+        if _scn_wants(c, str(row["key"]), did):
+            _scn_feed(c, str(row["key"]), did, _scn_jig_p(c, t, did, str(row["key"]), z, mesh, st=st))
         return names
 
     for did in [d for d in shown if d in pick]:
@@ -5239,13 +5261,7 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
         raise EslError("RESULT_NOT_READY", "post/result.json 이 없습니다 — 실행이 끝난 스터디만 3D 를 다시 만들 수 있습니다")
     res0 = U.read_json(rp)
     t, _bmeta = sc.load_base(c.p("prep"))
-    if _lt_plan(c)["dst"] == "shape":                         # v0.24.8 ④(계획 dst shape — 격자 지그) — 행렬 없음(m = None), 형상 결과만
-        m = None
-        results = [U.read_json(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON)) for r_ in _cmp_doc(c)["shapes"]
-                   if r_["status"] == "READY" and os.path.isfile(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON))]
-    else:
-        m = _matrix(c)
-        results, _pv = _collect(c, m)
+    m, results = _post_results(c)                             # v0.24.8 ④(계획 dst shape — 격자 지그) = 행렬 없음(m = None), 형상 결과만
     for r in results:                                         # 순위 score 는 bd_post 가 안 result.json 에 써 둔 값(읽기만)
         if r["id"] == BASELINE:
             r["score"] = 1.0
@@ -5263,6 +5279,7 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
             if nr.get("status") == "OK" and b is not None and b.get("status") == "OK":
                 noise = abs(float(nr["C_max"]) / float(b["C_max"]) - 1.0)
     shown = [str(d) for d in res0.get("view3d") or [] if d]
+    _scn_begin(c, t, results, shown, source="regen", fresh=False, echo=echo)      # v0.25.1 §2.5: 빠진 씬 3D 도 모두(보충)
     v3, vjw = ({}, []) if isinstance(res0.get("view3d_jig"), dict) else _jig_view3d(c, t, results, shown)
     c.progress(40)
     doc = _jig_extras(c, t, m, results, noise, S_, shown=shown, v3_jig=v3 or None, source="view3d_regen",
@@ -5270,6 +5287,7 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
     if doc is not None and vjw:
         doc["warnings"] = list(doc.get("warnings") or []) + vjw
         c.write_json(os.path.join("post", JIG_VIEW_JSON), U.jsonable(doc))
+    sdoc = _scn_finish(c)
     gone = _prune_view3d_backups(c, int(c.cfg["view3d"].get("regen_keep_backups", 1)))
     if gone:
         echo(f"[bd_post view3d] 이전 진단 백업 {len(gone)}개 삭제(최근 {c.cfg['view3d'].get('regen_keep_backups', 1)}개만 유지)")
@@ -5278,9 +5296,776 @@ def _post_view3d(c: Ctx, echo=print) -> dict:
          f" · 지그 응답 3D {'새로 만듦' if v3 else '기존 유지'}"
          f" · 지그 방식 3D {','.join(str(r_['v3d_tag']) for r_ in RANK_SOURCES if r_['v3d_store'] == 'sidecar' and doc and r_['v3d'][0] in doc) or '없음'}")
     c.progress(100)
-    files = [] if doc is None else ["post/" + JIG_VIEW_JSON]
+    files = ([] if doc is None else ["post/" + JIG_VIEW_JSON]) + ([] if sdoc is None else ["post/" + SCENE_VIEW_JSON])
     return {"files": files, "warnings": list((doc or {}).get("warnings") or vjw), "result": None}
 
+
+# ---------------------------------------------------------------- v0.25.1 낙하 씬별 3D 묶음 + C 기여도·차이·umax 핀 (esl_view3d_scene_legend.md §2·§3)
+# 계산(C 기여도·umax 위치·보존 격자 사상·차이) = 순수 모듈 esl.mech.cfield, 파일 = esl.view3d.build_scene_pack, 여기 = 계획 표 + 실행기 1개.
+# 새 파일만: post/view3d_scene/<tag>/<did>/{pack.json, part.glb, (part_lod.glb), e<kk>.json, e<kk>.bin} · post/scene_view.json
+# (result.json·ranking.csv·per_esl.json·사이드카·post/view3d/** 바이트 불변 — D-0.25.1-VL-11).
+# 인수분해 재사용(D-0.25.1-VL-1): 기존 3D 함수(_view3d·_jig_v3d_build·_ns_view3d·_jg_view3d_src)가 같은 provider(입력 함수 + 열린 분해)로
+# 자기 폴더를 쓰고 그 provider 를 실행기에 넘김(_scn_feed) → 실행기는 남은 씬을 후진대입만. 기존 3D 가 만들지 않은 (출처, 안)만 실행기가
+# provider 를 직접 부름(_scn_finish — 보충 실행 post_mode scene 도 같은 함수).
+SCENE_VIEW_JSON = "scene_view.json"
+SCENE_VIEW_SCHEMA = "esl/doe_scene_view/1"
+SCENE_VIEW_VERSION = 1
+SCENE_DIR = "view3d_scene"
+# §2.4 용량 추정식 상수(형상 36 B/노드 · 씬 값 16 B/노드(베이스라인 14 — dc 없음) · 씬 manifest 40 KB, §0.4 형식에서 계산)
+SCENE_EST = {"geom_b": 36, "val_b": 16, "val_b_base": 14, "manifest_b": 40_000, "mb": 1 << 20}
+SCENE_SKIP_CODES = ("SCENE_BUDGET", "SCENE_FAILED", "SCENE_NO_SOURCE", "SCENE_DIFF_NO_FRAME")
+SCENE_CHECK_REL = 1e-6                      # 사이드카 진단 경고(합·핀 값 ≠ 표 값) 상대 허용 — 계약 시험 기준(1e-9)은 시험이 직접 확인
+# 씬 출처 표(§2.6 SCENE_SOURCES — 행 = 순위 보기 키(RANK_SOURCES 키) 1개, 모든 열 필수: 빈 칸 = 시험 실패). 호출부(실행기)는 열만
+# 읽음(출처 이름 분기 없음). 열: tag(폴더 꼬리표) · provider(메시·지지·하중·응답을 주는 함수 — 기존 3D 와 같은 입력 함수) · ready(조건 함수)
+# · c_kind(fu | mixed | bc — bc = BC 배열 있으면 mixed, 옛 npz = fu) · c_key(per_esl C 키) · pin(umax 핀 키 — 앞의 것이 값이 있으면 그것:
+# 평가 영역 → 그 출처 umax) · values(per_esl 을 읽는 곳 — result = 안 result.json, nodal = 노드 힘 출처 안 사이드카).
+SCENE_SOURCES = (
+    {"key": "full", "tag": "sv", "provider": "_scn_full", "ready": "_scn_ready_full", "c_kind": "fu", "c_key": "C",
+     "pin": ("umax_ev", "umax"), "values": "result"},
+    {"key": "jig", "tag": "jig", "provider": "_scn_jig", "ready": "_scn_ready_jig", "c_kind": "bc", "c_key": "C_jig",
+     "pin": ("umax_jig_ev", "umax_jig"), "values": "result"},
+    {"key": "jig_disp", "tag": "jd", "provider": "_scn_jig", "ready": "_scn_ready_jig", "c_kind": "mixed", "c_key": "C_jd",
+     "pin": ("umax_jd_ev", "umax_jd"), "values": "result"},
+    {"key": "jig_spring", "tag": "js", "provider": "_scn_jig", "ready": "_scn_ready_jig", "c_kind": "mixed", "c_key": "C_js",
+     "pin": ("umax_js_ev", "umax_js"), "values": "result"},
+    {"key": "bforce", "tag": "bf", "provider": "_scn_nodal", "ready": "_scn_ready_nodal", "c_kind": "fu", "c_key": "C_bf",
+     "pin": ("umax_bf_ev", "umax_bf"), "values": "nodal"},
+    {"key": "fint", "tag": "fi", "provider": "_scn_nodal", "ready": "_scn_ready_nodal", "c_kind": "fu", "c_key": "C_fi",
+     "pin": ("umax_fi_ev", "umax_fi"), "values": "nodal"},
+)
+SCENE_COLS = ("key", "tag", "provider", "ready", "c_kind", "c_key", "pin", "values")
+SCENE_C_KINDS = ("fu", "mixed", "bc")
+SCENE_KEY_OF = {r["provider"]: r["key"] for r in SCENE_SOURCES if r["provider"] == "_scn_full"}   # _view3d(전 노드 3D) 가 넘길 키
+
+
+def _scn_fn(name: str):
+    """계획 표 열 값(함수 이름) → 이 모듈 함수."""
+    f = globals().get(str(name))
+    if not callable(f):
+        raise EslError("CONFIG_INVALID", f"SCENE_SOURCES 열 함수 없음: {name!r}")
+    return f
+
+
+def _scn_ready_full(c: Ctx, row: dict) -> bool:
+    return True                                                 # 전 노드 = 항상(§2.6 조건 열)
+
+
+def _scn_ready_jig(c: Ctx, row: dict) -> bool:
+    """지그 계열: view3d.jig ∧ (격자 = _jg_ready, 같은 메시 = prep/<src>.json ok ∧ npz) — 기존 지그 3D 조건 그대로."""
+    if not c.cfg["view3d"].get("jig"):
+        return False
+    if _jg_kind(c) == "grid":
+        return _jg_ready(c, str(row["key"]))
+    return _jig_src_ready(c, str(row["key"])) is not None
+
+
+def _scn_ready_nodal(c: Ctx, row: dict) -> bool:
+    """노드 힘 출처: 계산 켬(_ns_on — 계획 열) ∧ 출처 3D 설정 ∧ prep 하중 ok."""
+    ns = NODAL_BY_KEY[str(row["key"])]
+    if not (_ns_on(c, ns) and _ns_cfg(c, ns).get("view3d")):
+        return False
+    pj, pz = c.p("prep", _nf(ns, "prep")), c.p("prep", _nf(ns, "loads"))
+    try:
+        return os.path.isfile(pz) and U.read_json(pj).get("status") == "ok"
+    except (OSError, ValueError):
+        return False
+
+
+def _scn_vals_result(c: Ctx, row: dict, by: dict, did: str) -> dict:
+    return {str(p["entry_id"]): p for p in (by.get(did) or {}).get("per_esl") or []}
+
+
+def _scn_vals_nodal(c: Ctx, row: dict, by: dict, did: str) -> dict:
+    p = os.path.join(design_dir(c, did), _nf(NODAL_BY_KEY[str(row["key"])], "design"))
+    try:
+        doc = U.read_json(p) if os.path.isfile(p) else None
+    except (OSError, ValueError):
+        doc = None
+    return {str(x["entry_id"]): x for x in (doc or {}).get("per_esl") or []}
+
+
+SCENE_VALUES = {"result": _scn_vals_result, "nodal": _scn_vals_nodal}      # 열 values 값 → per_esl 읽기
+
+
+def _scn_region_nodes(mesh: dict, region):
+    """요소 영역 → 노드 bool(``evaluate.evaluate`` region 과 같은 규칙). None = 전 노드."""
+    if region is None:
+        return None
+    rn = np.zeros(np.asarray(mesh["node_id"]).size, bool)
+    rc = np.asarray(mesh["conn"], dtype=np.int64)[np.asarray(region, bool)]
+    rn[rc[rc >= 0]] = True
+    return rn
+
+
+def _scn_frame(c: Ctx, t, mesh: dict) -> dict | None:
+    """차이 격자 공통 좌표(§3.2 provider frame): 스터디 대상 frame(t.frame — 모든 안·형상의 지지·하중 대상 frame, 배치는 모든 메시에 같은
+    사상 — VL-C1-1) + 메시 좌표. frame 키가 없으면 None(SCENE_DIFF_NO_FRAME)."""
+    fr = getattr(t, "frame", None)
+    if not isinstance(fr, dict) or any(k not in fr for k in ("origin", "e_xi", "e_eta", "n", "a_range", "b_range")):
+        return None
+    return {"fr": fr, "X": np.asarray(mesh["x0"], dtype=np.float64)}
+
+
+def _scn_p(mesh: dict, entries: list, one, supports, masks, frame, ref) -> dict:
+    """provider 공통 모양: get(e) = 씬 1개(기존 3D 가 쓴 씬은 보관 — 실행기가 다시 풀지 않음), solve(eids) = 씬 반복자(메모리 = 씬 1개),
+    masks() = umax 핀 마스크(늦게 계산), frame = 차이 공통 좌표, ref = mixed 기준 {e: {C_mix, E}} | None."""
+    cache: dict = {}
+
+    def get(e):
+        if e not in cache:
+            cache[e] = one(e)
+        return cache[e]
+
+    def solve(eids):
+        for e in eids:
+            if e in entries:
+                yield cache.pop(e) if e in cache else one(e)
+    return {"mesh": mesh, "entries": list(entries), "get": get, "solve": solve, "supports": supports, "masks": masks,
+            "frame": frame, "ref": ref}
+
+
+def _scn_factor_full(c: Ctx, mesh: dict, sup: list):
+    """``evaluate.evaluate`` 와 같은 지지 점검·쉘 모델·분해(같은 u — 비트 동일)."""
+    from esl.mech import supports as msup
+    from esl.mech.shell import ShellModel, solver_check_kwargs
+    from esl.opt.target import support_check
+    sr = support_check(mesh, sup)
+    if sr["rank"] < 6 or sr["sigma_ratio"] < msup.DEGENERATE_RATIO:
+        raise EslError("SUPPORT_DEGENERATE", f"3-2-1 지지가 강체 6모드를 구속하지 못함: {list(sup)}")
+    scfg = c.solver_cfg()
+    sm_ = ShellModel(mesh["x0"], mesh["conn"], mesh["elem_type"], mesh["thickness"], mesh["E"], mesh["nu"],
+                     drill_factor=float(scfg["drill_factor"]), backend=str(scfg["backend"]), **solver_check_kwargs(scfg))
+    return sm_.factorize(ev.spc_of(mesh, sup))
+
+
+def _scn_lazy_solver(c: Ctx, mesh: dict, sup: list, ld: dict):
+    """분해 1회(첫 풀이 때) + 씬마다 후진대입: e → (F, u (N,3))."""
+    st: dict = {"h": None}
+
+    def run(e):
+        if st["h"] is None:
+            st["h"] = _scn_factor_full(c, mesh, sup)
+        F = np.asarray(ld[e], dtype=np.float64)
+        u, _R = st["h"].solve(F)
+        return F, np.array(u[:, :3], dtype=np.float64, copy=True)
+    return run
+
+
+def _scn_full_region(c: Ctx, did: str):
+    """전 노드 umax 영역 = 평가와 같은 영역(bd_eval reg_e: 하중 전달 ∧ 계획 mask compare_region → LT-8 영역, 그 밖 ③ step 영역)."""
+    if _lt(c) is not None and _lt_plan(c)["mask"] == "compare_region":
+        return _lt_load_region(c, did)
+    if _is_step_base(c):
+        from esl.doe import step_graph as sg
+        return sg.load_region(c.p("prep"))
+    return None
+
+
+def _scn_full_p(c: Ctx, t, did: str, mesh: dict, sup: list, loads: list) -> dict:
+    """전 노드 provider 본체(``_view3d`` 와 실행기 공용): 분해 1회 + 씬 단위 후진대입, 화면 변위 = ``_sm_view_u``."""
+    ld = {str(e): f for e, f in loads}
+    run = _scn_lazy_solver(c, mesh, sup, ld)
+    supd = [{"node_id": int(n), "dof": str(d)} for n, d in sup]
+
+    def one(e):
+        F, u = run(e)
+        return {"entry_id": e, "F": F, "u_raw": u, "u_view": _sm_view_u(c, did, mesh, u), "bc": None, "rc": None, "fs": None}
+
+    def masks():
+        region = _scn_full_region(c, did)
+        return {"ev": _ev_mask(c, mesh), "base": _scn_region_nodes(mesh, region),
+                "base_kind": "region" if region is not None else "all"}
+    return _scn_p(mesh, list(ld), one, lambda _e: supd, masks, _scn_frame(c, t, mesh), None)
+
+
+def _scn_full(c: Ctx, t, did: str, row: dict) -> dict:
+    """전 노드 출처 provider: ``_view3d_input``(메시·지지·하중 = 실행과 같은 함수) + ``_scn_full_p``."""
+    bmeta = U.read_json(c.p("prep", "base.json"))
+    inp = U.read_json(c.p("prep", "input.json"))
+    mesh, sup, loads = _view3d_input(c, t, bmeta, did, inp)
+    return _scn_full_p(c, t, did, mesh, sup, loads)
+
+
+def _scn_jig_p(c: Ctx, t, did: str, src: str, z, mesh: dict, st: dict | None = None) -> dict:
+    """같은 메시 지그 provider 본체(``_jig_v3d_build`` 와 실행기 공용): 방식 npz 의 a·BC — 분해 1회(``_jig_resp_rows`` 와 같은 분해·응답,
+    BC 배열 없는 옛 npz = ``jig.factor``·``jig.respond`` = ``design_response`` 와 같은 계산) + 씬마다 응답. st = ``_jig_resp_rows(keep)`` 가
+    남긴 분해(있으면 다시 분해하지 않음)."""
+    from esl.doe import jig as jg
+    from esl.mech import jig_bc
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    nb_ = np.asarray(z["node_id"], dtype=np.int64)
+    N = nid.size
+    if np.array_equal(nb_, nid):
+        pos = np.arange(N)
+    else:
+        o = np.argsort(nid)
+        pos = o[np.searchsorted(nid, nb_, sorter=o).clip(0, N - 1)]
+        if not np.array_equal(nid[pos], nb_):
+            raise EslError("OUTPUT_INCONSISTENT", "안 노드 ID 가 지그 기준과 다름")
+
+    def rmap(i):
+        return pos[np.asarray(i, dtype=np.int64)]
+    zeids = [str(e) for e in z["entry_ids"].tolist()]
+    basis = _jig_basis_of(z, int(z["a"].shape[1]))
+    has_bc = all(n in z for n in JIG_BC_PATTERN + JIG_BC_VALUES)
+    omega = np.zeros(N, bool)
+    omega[pos[np.asarray(z["omega"], bool)]] = True
+    jidx = rmap(z["jig_idx"])
+    st = {"h": (st or {}).get("h") if np.array_equal(nb_, nid) else None}   # 기존 3D 가 연 분해(같은 노드 순서일 때만 — 같은 BC 행)
+
+    def remap(b):
+        return {**b, "bc_node": rmap(b["bc_node"]), "sp_node": rmap(b["sp_node"])}
+
+    def one(e):
+        F = np.zeros((N, 3))
+        F[pos] = jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)
+        if not has_bc:                                          # 옛 npz(병진 고정 — C_jig = Fᵀu)
+            if st["h"] is None:
+                st["h"] = jg.factor(mesh, jidx, c.solver_cfg())
+            u = np.asarray(jg.respond(st["h"], [(e, F)], umax_mask=omega, keep_u=True)[0]["u"], dtype=np.float64)
+            return {"entry_id": e, "F": F, "u_raw": u, "u_view": u, "bc": None, "rc": None, "fs": None}
+        if st["h"] is None:
+            st["h"] = jig_bc.factorize(_jig_sm(mesh, c.solver_cfg()), remap(_jig_bc_of(z, None)))
+        B = remap(_jig_bc_of(z, zeids.index(e)))
+        r = jig_bc.respond(st["h"], F, B)
+        u = np.asarray(r["u"], dtype=np.float64)[:, :3].copy()
+        return {"entry_id": e, "F": F, "u_raw": u, "u_view": u, "bc": B, "rc": r["rc"], "fs": r["fs"]}
+    ref = None
+    if has_bc and "Cmix_ref" in z and "E_ref" in z:            # offset = E_0 − C_mix,0(평가 때 쓴 같은 저장값 — 다시 계산 금지)
+        ref = {e: {"C_mix": float(z["Cmix_ref"][k]), "E": float(z["E_ref"][k])} for k, e in enumerate(zeids)}
+        lf = _scn_lf_ref(c, src)
+        if lf is not None:                                      # v0.24.9 spatial: 기준 = prep/load_follow.json d000 값(평가와 같음)
+            ref = lf
+    smax = int(c.cfg["view3d"]["jig_support_max"])
+
+    def masks():
+        return {"ev": _ev_mask(c, mesh), "base": omega, "base_kind": "mask"}
+    return _scn_p(mesh, zeids, one, lambda e: _jig_support_rows(z, e, rmap, mesh["x0"], smax, nid, src), masks,
+                  _scn_frame(c, t, mesh), ref)
+
+
+def _scn_jig(c: Ctx, t, did: str, row: dict) -> dict:
+    """지그 계열 provider(jig·jig_disp·jig_spring): 격자 계획 = ``_scn_jig_grid``(_jg_shape(keep_u)), 같은 메시 = ``_jig_v3d_build`` 입력부
+    (방식 npz + ``_jig_view_mesh``) → ``_scn_jig_p``."""
+    if _jg_kind(c) == "grid":
+        return _scn_jig_grid(c, t, did, row)
+    rd = _jig_src_ready(c, str(row["key"]))
+    if rd is None:
+        raise EslError("SCENE_NO_SOURCE", f"{row['key']} 방식 산출물 없음")
+    return _scn_jig_p(c, t, did, str(row["key"]), rd[1], _jig_view_mesh(c, t, did))
+
+
+def _scn_lf_ref(c: Ctx, src: str) -> dict | None:
+    """v0.24.9 하중 공간 고정(spatial) 스터디의 지그 기준 C_mix,0·E_0(prep/load_follow.json jig_ref — 평가가 쓴 값). 없으면 None."""
+    if _lf_mode(c) != "spatial":
+        return None
+    p = c.p("prep", LF_JSON)
+    try:
+        jr = ((U.read_json(p) if os.path.isfile(p) else {}).get("jig_ref") or {}).get(src)
+    except (OSError, ValueError):
+        jr = None
+    if not isinstance(jr, dict):
+        return None
+    return {str(e): {"C_mix": float(v["C_mix"]), "E": float(v["E"])} for e, v in jr.items()}
+
+
+def _scn_jig_grid_p(c: Ctx, t, did: str, src: str, mesh: dict, reg, res: dict) -> dict:
+    """격자 지그 provider 본체(``_jg_view3d_src`` 와 실행기 공용): ``_jg_shape(keep_u)`` 결과 res(엔트리 u·하중·BC·반력·스프링 힘 —
+    추가 풀이 없음), 기준 C_mix,0·E_0 = d000 jig_grid.json(평가 저장값)."""
+    from esl.mech import jig_bc
+    m_ = res["methods"].get(src) or {}
+    if m_.get("status") != "ok":
+        raise EslError(m_.get("code") or "JIG_DESIGN_FAILED", m_.get("err") or "")
+    rcfs = (res.get("rcfs") or {}).get(src) or {}
+    us = (res.get("u") or {}).get(src) or {}
+    Fs = (res.get("loads") or {}).get(src) or {}
+    md = ((_jg_run_doc(c, BASELINE) or {}).get("methods") or {}).get(src) or {}
+    ref = ({str(x["entry_id"]): {"C_mix": float(x["C_mix"]), "E": float(x["E"])} for x in md.get("entries") or []}
+           if md.get("status") == "ok" else None)
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    smax = int(c.cfg["view3d"]["jig_support_max"])
+    order = [str(e["id"]) for e in c.D["entries"]]
+
+    def one(e):
+        x = rcfs[e]
+        return {"entry_id": e, "F": np.asarray(Fs[e], dtype=np.float64), "u_raw": us[e], "u_view": us[e], "bc": x["bc"],
+                "rc": x["rc"], "fs": x["fs"]}
+
+    def masks():
+        omega = ltm.active_nodes(mesh, reg) if _lt_plan(c)["sm_omega"] != "all" and reg is not None else None
+        return {"ev": _ev_mask(c, mesh), "base": omega, "base_kind": "mask" if omega is not None else "all"}
+    return _scn_p(mesh, [e for e in order if e in us and e in rcfs], one,
+                  lambda e: jig_bc.support_rows(rcfs[e]["bc"], mesh["x0"], smax, nid, src), masks, _scn_frame(c, t, mesh), ref)
+
+
+def _scn_jig_grid(c: Ctx, t, did: str, row: dict) -> dict:
+    """격자 지그 provider(④·옛 ③ — §3.4): 메시·지지·영역 = ``_jg_mesh_of``(그 모드 실행 함수), 응답 = ``_jg_shape(keep_u)``."""
+    src = str(row["key"])
+    mesh, sup, reg = _jg_mesh_of(c, t, did)
+    res = _jg_shape(c, t, did, mesh, sup, reg, keep_u=True, only=[src])
+    return _scn_jig_grid_p(c, t, did, src, mesh, reg, res)
+
+
+def _scn_nodal_p(c: Ctx, t, did: str, ns: dict, mesh: dict, us: dict | None) -> dict:
+    """노드 힘 출처 provider 본체(``_ns_view3d`` 와 실행기 공용): us = ``_ns_design(keep_u = 전 씬)`` 의 변위(추가 풀이 없음) | None(분해 1회
+    + 씬 후진대입 — ``_ns_design`` 의 evaluate 와 같은 모델·지지, 안 사이드카는 다시 쓰지 않음)."""
+    sup = list(t.supports)
+    ld = {str(e): f for e, f in _ns_loads(c, ns, mesh)}
+    run = _scn_lazy_solver(c, mesh, sup, ld) if us is None else None
+    supd = [{"node_id": int(n), "dof": str(d)} for n, d in sup]
+
+    def one(e):
+        if run is None:
+            return {"entry_id": e, "F": np.asarray(ld[e], dtype=np.float64), "u_raw": np.asarray(us[e], dtype=np.float64),
+                    "u_view": np.asarray(us[e], dtype=np.float64), "bc": None, "rc": None, "fs": None}
+        F, u = run(e)
+        return {"entry_id": e, "F": F, "u_raw": u, "u_view": u, "bc": None, "rc": None, "fs": None}
+
+    def masks():
+        region = _bf_region(c)
+        return {"ev": _ev_mask(c, mesh), "base": _scn_region_nodes(mesh, region),
+                "base_kind": "region" if region is not None else "all"}
+    ents = [e for e in ld if us is None or e in us]
+    return _scn_p(mesh, ents, one, lambda _e: supd, masks, _scn_frame(c, t, mesh), None)
+
+
+def _scn_nodal(c: Ctx, t, did: str, row: dict) -> dict:
+    """노드 힘 출처 provider(경계력·내력): ``_ns_view3d`` 입력부(안 메시 = 기준 위상 + 안 좌표, 3-2-1 지지, prep 하중) + 씬 단위 풀이."""
+    return _scn_nodal_p(c, t, did, NODAL_BY_KEY[str(row["key"])], _jig_view_mesh(c, t, did), None)
+
+
+def _scn_worst(vals: dict, eids: list, key: str) -> str | None:
+    """최악 씬 = key 최대(동률 = 앞 — ``rank._agg`` 와 같은 규칙)."""
+    w = None
+    for e in eids:
+        v = (vals.get(e) or {}).get(key)
+        if v is not None and (w is None or float(v) > w[1]):
+            w = (e, float(v))
+    return None if w is None else w[0]
+
+
+def _scn_old_pack(od: str) -> dict | None:
+    from esl.view3d import PACK_JSON, SCENE_BUILDER_VERSION
+    p = os.path.join(od, PACK_JSON)
+    try:
+        doc = U.read_json(p) if os.path.isfile(p) and not os.path.islink(od) else None
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) and doc.get("builder_version") == SCENE_BUILDER_VERSION else None
+
+
+def _scn_cell(c: Ctx, mesh: dict) -> float:
+    """차이 격자 셀(§3.2) = max(rank.jig_grid.cell_mm, view3d.scene.diff_cell_h_mult × 안 메시 변 길이 중앙값)."""
+    from esl.opt.mesh_check import _edge_lengths
+    base = float((_jg_cfg(c) if _jg_kind(c) == "grid" else c.cfg["rank"]["jig_grid"])["cell_mm"])
+    L = _edge_lengths(np.asarray(mesh["x0"], dtype=np.float64), np.asarray(mesh["conn"], dtype=np.int64),
+                      np.asarray(mesh["elem_type"]).astype(int))
+    h = float(np.nanmedian(L)) if np.size(L) else 0.0
+    return max(base, float(c.cfg["view3d"]["scene"]["diff_cell_h_mult"]) * h)
+
+
+def _scn_plan(c: Ctx, t, results: list, shown: list, fresh: bool) -> tuple[list, dict, dict]:
+    """§2.4 계획: 출처 행마다 표시 안(베이스라인 먼저)·씬(엔트리)·이미 있는 씬 → 한도 안의 씬. 반환 (계획 행, skipped{key: []}, 예산)."""
+    cfg = c.cfg["view3d"]["scene"]
+    eids = [str(e["id"]) for e in c.D["entries"]]
+    by = {str(r["id"]): r for r in results}
+    E_ = SCENE_EST
+    plans, skipped = [], {}
+    for row in SCENE_SOURCES:
+        if not _scn_fn(row["ready"])(c, row):
+            continue
+        key = str(row["key"])
+        sk = skipped.setdefault(key, [])
+        vals, have = {}, {}
+        for did in shown:
+            r = by.get(did)
+            if not r or r.get("status") != "OK":
+                continue
+            v = SCENE_VALUES[row["values"]](c, row, by, did)
+            hv = [e for e in eids if (v.get(e) or {}).get(row["c_key"]) is not None]
+            if hv:
+                vals[did], have[did] = v, hv
+        if not vals:
+            continue
+        if BASELINE not in vals:
+            sk.append({"did": BASELINE, "entry_id": None, "code": "SCENE_NO_SOURCE", "detail": f"{row['c_key']} 없음"})
+            continue
+        base_set = set(have[BASELINE])
+        for did in list(have):
+            miss = [e for e in eids if e not in have[did] or e not in base_set]
+            have[did] = [e for e in have[did] if e in base_set]
+            for e in miss:
+                sk.append({"did": did, "entry_id": e, "code": "SCENE_NO_SOURCE", "detail": f"{row['c_key']} 없음"})
+        n_of = {did: int(((by[did].get("mesh") or {}).get("n_nodes")) or t.n_nodes) for did in have}
+        old = {} if fresh else {did: _scn_old_pack(c.p("post", SCENE_DIR, str(row["tag"]), did)) for did in have}
+        present = {did: {str(s_["entry_id"]) for s_ in ((old.get(did) or {}).get("scenes") or [])} for did in have}
+        worst = {_scn_worst(vals[did], have[did], row["c_key"]) for did in have}
+        b0 = vals[BASELINE]
+        rank_e = sorted(have[BASELINE], key=lambda e: (-float(b0[e][row["c_key"]]), eids.index(e)))
+        plans.append({"row": row, "vals": vals, "have": have, "n": n_of, "old": old, "present": present,
+                      "worst": {e for e in worst if e is not None}, "rank": rank_e})
+    est = sum(E_["geom_b"] * p_["n"][d] + len(p_["have"][d]) * (E_["val_b"] * p_["n"][d] + E_["manifest_b"])
+              for p_ in plans for d in p_["have"])
+    n_sc = sum(len(p_["have"][d]) for p_ in plans for d in p_["have"])
+    max_b = float(cfg["max_mb"]) * E_["mb"]
+
+    def cost(p_, e):
+        return sum((E_["val_b_base"] if d == BASELINE else E_["val_b"]) * p_["n"][d] + E_["manifest_b"]
+                   for d in p_["have"] if e in p_["have"][d])
+    for p_ in plans:
+        p_["chosen"] = set(p_["rank"])
+    if float(cfg["max_mb"]) > 0 and est > max_b:
+        used = sum(E_["geom_b"] * p_["n"][d] for p_ in plans for d in p_["have"])
+        rest = []
+        for pi, p_ in enumerate(plans):
+            keep = {e for e in p_["rank"] if e in p_["worst"] or all(e in p_["present"][d] for d in p_["have"]
+                                                                     if e in p_["have"][d])}
+            p_["chosen"] = set(keep)
+            used += sum(cost(p_, e) for e in keep)
+            rest += [(i, pi, e) for i, e in enumerate(p_["rank"]) if e not in keep]
+        for _i, pi, e in sorted(rest):                          # 베이스라인 C 큰 순(출처마다 순번) → 표 행 순
+            p_ = plans[pi]
+            ce = cost(p_, e)
+            if used + ce <= max_b:
+                p_["chosen"].add(e)
+                used += ce
+        for p_ in plans:
+            for e in p_["rank"]:
+                if e not in p_["chosen"]:
+                    skipped[str(p_["row"]["key"])].append({"did": None, "entry_id": e, "code": "SCENE_BUDGET",
+                                                           "detail": f"view3d.scene.max_mb {cfg['max_mb']}"})
+    for p_ in plans:                                            # 할 일: 고른 씬 중 아직 없는 것, 기준 = 안 할 일의 씬 + 자기 할 일
+        p_["todo"] = {d: [e for e in eids if e in p_["chosen"] and e in p_["have"][d] and e not in p_["present"][d]]
+                      for d in p_["have"]}
+        p_["need_base"] = sorted({e for d in p_["todo"] for e in p_["todo"][d]}, key=eids.index)
+        p_["base"] = {"c": {}, "sum": {}, "nid": None, "frame": None, "state": "wait"}
+        p_["pending"] = []
+    budget = {"max_mb": cfg["max_mb"], "est_mb": round(est / E_["mb"], 3), "n_scenes": int(n_sc)}
+    return plans, skipped, budget
+
+
+def _scn_dc(c: Ctx, base: dict, nid, frame, mesh: dict, e: str, c_d, cell: dict):
+    """같은 씬 차이(§3.2): 노드 ID 같음 = 항등, 다름 = 보존 격자 사상(공통 좌표 없으면 None). 반환 (dc | None, dc_meta | None)."""
+    from esl.mech import cfield as cf
+    from esl.mech.grid_map import grid_frame
+    if base["nid"].size == nid.size and np.array_equal(base["nid"], nid):
+        c0, meta = base["c"][e], {"map": "identity"}
+    elif frame is None or base.get("frame") is None:
+        return None, None
+    else:
+        if "gf" not in cell:
+            cell["gf"] = grid_frame(frame["fr"], _scn_cell(c, mesh))
+        c0, info = cf.conserve_map(base["c"][e], base["frame"]["X"], frame["X"], cell["gf"])
+        meta = {"map": "grid", "cell_mm": float(info["cell_mm"]), "moved_rel": float(info["moved_rel"])}
+    dc = cf.diff(c_d, c0)
+    return dc, {"sum": float(np.sum(dc)), "base_sum": float(base["sum"][e]), **meta}
+
+
+def _scn_scenes(c: Ctx, P: dict, row: dict, did: str, vals: dict, solve_e: list, write_e: set, base: dict, warns: list,
+                skipped: list, hold: dict | None):
+    """씬 dict 반복자(build_scene_pack 입력): 씬마다 C 기여도(cfield.nodal_c)·umax 핀(cfield.umax_pin)·차이(같은 씬 기준). 베이스라인이면
+    c 를 base 에 남김. 기준이 아직 없으면(기존 3D 가 안을 먼저 만듦) 차이 = 나중(hold 에 c 보관 — _scn_patch). write_e 밖 씬은 계산만."""
+    from esl.mech import cfield as cf
+    mesh = P["mesh"]
+    nid = np.asarray(mesh["node_id"], dtype=np.int64)
+    k_ev, k_b = row["pin"]
+    mk = None
+    cell: dict = {}
+    for s_ in P["solve"](solve_e):
+        e = str(s_["entry_id"])
+        p = vals[e]
+        nc = cf.nodal_c(s_["F"], s_["u_raw"], s_["bc"], s_["rc"], s_["fs"])
+        kind = "mixed" if s_["bc"] is not None else "fu"
+        ref = (P.get("ref") or {}).get(e) if kind == "mixed" else None
+        if kind == "mixed" and ref is None:
+            raise EslError("SCENE_NO_SOURCE", f"{row['key']} {did} {e} 기준 C_mix,0·E_0 없음")
+        offset = (float(ref["E"]) - float(ref["C_mix"])) if ref is not None else 0.0
+        value = float(p[row["c_key"]])
+        if abs(nc["sum"] + offset - value) > SCENE_CHECK_REL * max(abs(value), abs(nc["W_F"]), 1e-300):
+            warns.append(f"SCENE_C_MISMATCH: {row['key']} {did} {e} Σc+offset {nc['sum'] + offset:.9g} ≠ {value:.9g}")
+        if mk is None:
+            mk = P["masks"]()
+        if p.get(k_ev) is not None:
+            mask, pk, kd = mk["ev"], k_ev, "ev"
+        else:
+            mask, pk, kd = mk["base"], k_b, mk["base_kind"]
+        pin = cf.umax_pin(s_["u_raw"], mask)
+        if p.get(pk) is not None and abs(pin["value"] - float(p[pk])) > SCENE_CHECK_REL * max(abs(float(p[pk])), 1e-300):
+            warns.append(f"SCENE_PIN_MISMATCH: {row['key']} {did} {e} {pin['value']:.9g} ≠ {pk} {float(p[pk]):.9g}")
+        pins = {"umax": None if pin["index"] is None else {"node_id": int(nid[pin["index"]]), "vertex": int(pin["index"]),
+                                                            "value": float(pin["value"]), "kind": kd}}
+        dc = dmeta = None
+        if did == BASELINE:
+            base["c"][e] = nc["c"]
+            base["sum"][e] = nc["sum"]
+        elif e in base["c"]:
+            dc, dmeta = _scn_dc(c, base, nid, P.get("frame"), mesh, e, nc["c"], cell)
+            if dc is None and e in write_e:
+                skipped.append({"did": did, "entry_id": e, "code": "SCENE_DIFF_NO_FRAME", "detail": "공통 좌표 없음"})
+        elif hold is not None and e in write_e:
+            hold[e] = nc["c"]
+        if e not in write_e:
+            continue
+        yield {"entry_id": e, "kk": base["kk"][e], "f": s_["F"], "u": s_["u_view"], "supports": P["supports"](e),
+               "c": nc["c"], "c_meta": {"kind": kind, "sum": float(nc["sum"]), "offset": float(offset), "value": value,
+                                        "parts": {"W_F": float(nc["W_F"]), "W_v": float(nc["W_v"]), "W_g": float(nc["W_g"])}},
+               "dc": dc, "dc_meta": dmeta, "pins": pins}
+
+
+def _scn_patch(c: Ctx, R: dict, p_: dict) -> None:
+    """기준이 나중에 온 안 묶음: 보관한 c 로 차이를 더하고(e<kk>.bin 끝·e<kk>.json — 바로 쓴 것과 같은 바이트) pack.json 을 마저 씀.
+    기준 실패 = 차이 없이 pack.json 만."""
+    from esl.view3d import patch_scene_dc, write_pack_json
+    base = p_["base"]
+    for pd in p_["pending"]:
+        try:
+            if base["state"] == "ok":
+                cell: dict = {}
+                for e, cd in pd["hold"].items():
+                    if e not in base["c"]:
+                        continue
+                    dc, dmeta = _scn_dc(c, base, pd["nid"], pd["frame"], pd["mesh"], e, cd, cell)
+                    if dc is None:
+                        p_["sk"].append({"did": pd["did"], "entry_id": e, "code": "SCENE_DIFF_NO_FRAME", "detail": "공통 좌표 없음"})
+                        continue
+                    patch_scene_dc(pd["od"], base["kk"][e], dc, dmeta)
+            write_pack_json(pd["od"], pd["pack"])
+        except Exception as exc:                                # noqa: BLE001
+            code = getattr(exc, "code", type(exc).__name__)
+            p_["sk"].append({"did": pd["did"], "entry_id": None, "code": "SCENE_FAILED", "detail": str(code)})
+            R["warns"].append(f"SCENE_FAILED: {p_['row']['key']} {pd['did']} {code}")
+    p_["pending"] = []
+
+
+def _scn_begin(c: Ctx, t, results: list, shown: list, *, source: str, fresh: bool, echo=print) -> None:
+    """실행기 시작(BD_POST·보충 공용 — §2.1·§2.5): 계획·한도 → c._scn. fresh = BD_POST(옛 묶음 백업 후 새로), 아니면 보충(이미 있는
+    (묶음, 씬)은 다시 만들지 않음). 설정 view3d.scene.enabled 끔 = 실행기 없음(None — 아무것도 쓰지 않음). 실패 = 로그만."""
+    c._scn = None
+    t0 = time.monotonic()
+    try:
+        if not c.cfg["view3d"]["scene"].get("enabled"):
+            return
+        eids = [str(e["id"]) for e in c.D["entries"]]
+        shown = list(dict.fromkeys([BASELINE] + [str(d) for d in shown if d]))
+        plans, skipped, budget = _scn_plan(c, t, results, shown, fresh)
+        root = c.p("post", SCENE_DIR)
+        if fresh and os.path.isdir(root) and not os.path.islink(root):   # BD_POST 다시 = 보기 파생 자료라 지우고 새로(백업 안 함 — VL-C1-12)
+            shutil.rmtree(c.writer.guard(root))
+        kk = {e: k for k, e in enumerate(eids)}
+        for p_ in plans:
+            p_["base"]["kk"] = kk
+            p_["sk"] = skipped[str(p_["row"]["key"])]
+        c._scn = {"t": t, "plans": {str(p_["row"]["key"]): p_ for p_ in plans}, "skipped": skipped, "budget": budget,
+                  "source": source, "fresh": fresh, "sec": time.monotonic() - t0, "warns": [], "kinds": {}, "n_new": 0,
+                  "done": set(), "shown": shown, "eids": eids, "echo": echo}
+        for p_ in plans:
+            p_["n_done"] = 0
+    except Exception as exc:                                    # noqa: BLE001 — 씬 3D 때문에 BD_POST 실패 금지
+        echo(f"[bd_post scene] 생략: {getattr(exc, 'code', type(exc).__name__)}")
+        c._scn = None
+
+
+def _scn_wants(c: Ctx, key: str, did: str) -> bool:
+    """실행기가 (출처, 안)의 씬을 아직 원하는가(기존 3D 가 provider 를 넘길지·전 씬 변위를 남길지 판단)."""
+    R = getattr(c, "_scn", None)
+    p_ = None if R is None else R["plans"].get(str(key))
+    return bool(p_ is not None and did in p_["have"] and (key, did) not in R["done"]
+                and (p_["todo"].get(did) or (did == BASELINE and p_["need_base"])))
+
+
+def _scn_feed(c: Ctx, key: str, did: str, P: dict) -> None:
+    """(출처, 안) provider 를 받아 씬 묶음을 씀(기존 3D 가 연 분해 재사용 — 후진대입만). 실패 = 그 안만 SCENE_FAILED(예외 밖으로 내지 않음)."""
+    from esl.view3d import build_scene_pack
+    R = getattr(c, "_scn", None)
+    if not _scn_wants(c, key, did):
+        return
+    key = str(key)
+    p_ = R["plans"][key]
+    row = p_["row"]
+    tag = str(row["tag"])
+    R["done"].add((key, did))
+    t0 = time.monotonic()                                       # 씬 시간(사이드카 seconds) = 실행기 몫만(기존 3D 의 분해·풀이 제외)
+    base = p_["base"]
+    todo = p_["todo"][did]
+    solve_e = p_["need_base"] if did == BASELINE else list(todo)
+    write_e = set(todo)
+    od = c.p("post", SCENE_DIR, tag, did)
+    old = p_["old"].get(did)
+    defer = did != BASELINE and base["state"] == "wait"
+    hold: dict | None = {} if defer else None
+    try:
+        if did == BASELINE:
+            base["nid"] = np.asarray(P["mesh"]["node_id"], dtype=np.int64)
+            base["frame"] = P.get("frame")
+        if did != BASELINE and base["state"] == "failed":
+            raise EslError("SCENE_FAILED", "baseline")
+        gen = _scn_scenes(c, P, row, did, p_["vals"][did], solve_e, write_e, base, R["warns"], p_["sk"], hold)
+        if write_e:
+            if old is None:
+                c.writer.fresh_dir(od, c.out)
+            else:
+                c.writer.makedirs(od)
+            m = P["mesh"]
+            pk = build_scene_pack(od, node_id=m["node_id"], x0=m["x0"], conn=m["conn"], elem_type=m["elem_type"], scenes=gen,
+                                  key=f"doe/scene/{tag}/{did}", src=key, did=did, existing=old, write_pack=not defer)
+            R["n_new"] += len(write_e)
+            R["kinds"][key] = R["kinds"].get(key) or _scn_pack_kind(od, pk)
+            if defer:
+                p_["pending"].append({"did": did, "od": od, "pack": pk, "hold": hold, "nid": np.asarray(m["node_id"], np.int64),
+                                      "frame": P.get("frame"), "mesh": {k: m[k] for k in ("x0", "conn", "elem_type")}})
+        else:
+            for _x in gen:
+                pass
+        if did == BASELINE:
+            base["state"] = "ok"
+            _scn_patch(c, R, p_)
+    except Exception as exc:                                    # noqa: BLE001 — 씬 3D 때문에 BD_POST·다시 만들기 실패 금지
+        code = getattr(exc, "code", type(exc).__name__)
+        p_["sk"].append({"did": did, "entry_id": None, "code": "SCENE_FAILED",
+                         "detail": "baseline" if code == "SCENE_FAILED" else str(code)})
+        R["warns"].append(f"SCENE_FAILED: {key} {did} {code}")
+        if write_e and old is None and os.path.isdir(od) and not os.path.islink(od):
+            shutil.rmtree(c.writer.guard(od), ignore_errors=True)
+        if did == BASELINE:
+            base["state"] = "failed"
+            _scn_patch(c, R, p_)
+    R["sec"] += time.monotonic() - t0
+    p_["n_done"] += len(write_e)
+    R["echo"](f"[bd_post scene] {key} {p_['n_done']}/{sum(len(v) for v in p_['todo'].values())}")
+
+
+def _scn_finish(c: Ctx) -> dict | None:
+    """실행기 끝: 기존 3D 가 넘기지 않은 (출처, 안)을 provider 로 직접(기준 먼저), 늦은 차이 마저, 사이드카. 보충에서 새로 만든 것이 없으면
+    아무것도 쓰지 않음(None). 예외는 로그만."""
+    R = getattr(c, "_scn", None)
+    if R is None:
+        return None
+    t0, sec0 = time.monotonic(), R["sec"]
+    try:
+        for key, p_ in R["plans"].items():
+            row = p_["row"]
+            for did in [d for d in R["shown"] if d in p_["have"]]:
+                if not _scn_wants(c, key, did):
+                    continue
+                if did != BASELINE and p_["base"]["state"] == "failed":
+                    R["done"].add((key, did))
+                    p_["sk"].append({"did": did, "entry_id": None, "code": "SCENE_FAILED", "detail": "baseline"})
+                    continue
+                try:
+                    P = _scn_fn(row["provider"])(c, R["t"], did, row)
+                except Exception as exc:                        # noqa: BLE001
+                    code = getattr(exc, "code", type(exc).__name__)
+                    R["done"].add((key, did))
+                    p_["sk"].append({"did": did, "entry_id": None, "code": "SCENE_FAILED", "detail": str(code)})
+                    R["warns"].append(f"SCENE_FAILED: {key} {did} {code}")
+                    if did == BASELINE:
+                        p_["base"]["state"] = "failed"
+                        _scn_patch(c, R, p_)
+                    continue
+                _scn_feed(c, key, did, P)
+                P = None
+            if p_["pending"]:                                   # 기준이 끝내 없음(할 일 없음·실패) — 차이 없이 마무리
+                if p_["base"]["state"] == "wait":
+                    p_["base"]["state"] = "failed" if p_["need_base"] else "ok"
+                _scn_patch(c, R, p_)
+        if not R["fresh"] and R["n_new"] == 0 and os.path.isfile(c.p("post", SCENE_VIEW_JSON)):
+            return None                                         # 보충 멱등: 새로 만든 것 없음 = 사이드카도 그대로
+        R["sec"] = sec0 + (time.monotonic() - t0)               # 끝 단계 안의 _scn_feed 시간은 이 구간에 한 번만
+        return _scn_sidecar(c, R)
+    except Exception as exc:                                    # noqa: BLE001
+        R["echo"](f"[bd_post scene] 생략: {getattr(exc, 'code', type(exc).__name__)}")
+        return None
+    finally:
+        c._scn = None
+
+
+def _scene_post(c: Ctx, t, results: list, shown: list, *, source: str, fresh: bool, echo=print) -> dict | None:
+    """씬 묶음 실행기 1개(§2.1·§2.5 — 시작·끝 사이에 기존 3D 가 provider 를 넘기지 않으면 실행기가 모두 직접): 3D 비교 대상(베이스라인 +
+    상위 k) × 전 씬 → post/view3d_scene/<tag>/<did>/ + post/scene_view.json. 반환 사이드카 | None."""
+    _scn_begin(c, t, results, shown, source=source, fresh=fresh, echo=echo)
+    return _scn_finish(c)
+
+
+def _scn_pack_kind(od: str, pk: dict) -> str | None:
+    """묶음 첫 씬 manifest 의 c.kind(fu | mixed)."""
+    for r in (pk or {}).get("scenes") or []:
+        try:
+            return str((U.read_json(os.path.join(od, r["manifest"])).get("c") or {}).get("kind"))
+        except (OSError, ValueError, KeyError):
+            return None
+    return None
+
+
+def _scn_sidecar(c: Ctx, R: dict) -> dict:
+    """사이드카 post/scene_view.json(§2.3) — 묶음 목록은 디스크(pack.json)가 원본(보충·옛 묶음 포함)."""
+    shown, kinds, skipped = R["shown"], R["kinds"], R["skipped"]
+    try:
+        old_side = U.read_json(c.p("post", SCENE_VIEW_JSON)) if os.path.isfile(c.p("post", SCENE_VIEW_JSON)) else {}
+    except (OSError, ValueError):
+        old_side = {}
+    packs: dict = {}
+    n_written = 0
+    for row in SCENE_SOURCES:
+        key, tag = str(row["key"]), str(row["tag"])
+        d = c.p("post", SCENE_DIR, tag)
+        designs: dict = {}
+        if os.path.isdir(d) and not os.path.islink(d):
+            names = [x for x in shown if os.path.isdir(os.path.join(d, x))] + sorted(
+                x for x in os.listdir(d) if x not in shown and os.path.isdir(os.path.join(d, x)))
+            for did in names:
+                pk = _scn_old_pack(os.path.join(d, did))
+                if pk is None:
+                    continue
+                sc_ = [str(r["entry_id"]) for r in sorted(pk.get("scenes") or [], key=lambda r: int(r["kk"]))]
+                designs[did] = {"dir": f"{tag}/{did}", "scenes": sc_}
+                n_written += len(sc_)
+                if not kinds.get(key):
+                    kinds[key] = _scn_pack_kind(os.path.join(d, did), pk)
+        sk = [x for x in skipped.get(key) or [] if not (x["entry_id"] is not None and x["did"] is not None
+                                                         and x["entry_id"] in (designs.get(x["did"]) or {}).get("scenes", []))]
+        if not designs and not sk:
+            continue
+        ck = kinds.get(key) or ((old_side.get("packs") or {}).get(key) or {}).get("c_kind") or \
+            ("fu" if row["c_kind"] == "fu" else "mixed")
+        packs[key] = {"tag": tag, "c_kind": ck, "designs": designs, "skipped": sk}
+    doc = {"schema": SCENE_VIEW_SCHEMA, "builder_version": SCENE_VIEW_VERSION,
+           "source": "bd_post" if R["source"] == "bd_post" else "regen", "created_at": U.utcnow(),
+           "seconds": round(R["sec"], 3),
+           "entries": [{"entry_id": e, "kk": k} for k, e in enumerate(R["eids"])],
+           "packs": packs, "budget": {**R["budget"], "n_written": int(n_written)}, "warnings": list(R["warns"])}
+    c.writer.makedirs(c.p("post"))
+    c.write_json(os.path.join("post", SCENE_VIEW_JSON), U.jsonable(doc))
+    return doc
+
+
+def _post_results(c: Ctx) -> tuple[dict | None, list]:
+    """다시 만들기·씬 보충 공용: (행렬 | None, 안 결과) — ④(계획 dst shape) = 형상 결과만(READY), 그 밖 = 행렬·_collect."""
+    if _lt_plan(c)["dst"] == "shape":
+        return None, [U.read_json(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON)) for r_ in _cmp_doc(c)["shapes"]
+                      if r_["status"] == "READY" and os.path.isfile(os.path.join(design_dir(c, r_["id"]), ev.RESULT_JSON))]
+    m = _matrix(c)
+    results, _pv = _collect(c, m)
+    return m, results
+
+
+def _post_scene(c: Ctx, echo=print) -> dict:
+    """§2.5 씬 3D 보충(post_mode scene — D-0.25.1-VL-3): post/view3d_scene/**·post/scene_view.json 만 쓴다(그 밖 파일 불변, 멱등 —
+    이미 있는 (묶음, 씬)은 다시 만들지 않음). 대상 = result.json view3d(베이스라인 + 상위 k)."""
+    c.progress(0)
+    rp = c.p("post", "result.json")
+    if not os.path.isfile(rp):
+        raise EslError("RESULT_NOT_READY", "post/result.json 이 없습니다 — 실행이 끝난 스터디만 씬 3D 를 만들 수 있습니다")
+    res0 = U.read_json(rp)
+    t, _bmeta = sc.load_base(c.p("prep"))
+    _m, results = _post_results(c)
+    shown = [str(d) for d in res0.get("view3d") or [] if d]
+    c.progress(10)
+    doc = _scene_post(c, t, results, shown, source="regen", fresh=False, echo=echo)
+    n = 0 if doc is None else sum(len(v["scenes"]) for p_ in doc["packs"].values() for v in p_["designs"].values())
+    echo(f"[bd_post scene] 보충 {'새로 씀' if doc is not None else '새 씬 없음'} · 씬 {n}")
+    c.progress(100)
+    return {"files": [] if doc is None else ["post/" + SCENE_VIEW_JSON],
+            "warnings": list((doc or {}).get("warnings") or []), "result": None}
 
 # ---------------------------------------------------------------- v0.24.0 노드 힘 출처 — 경계력·내력 ESL (esl_bforce.md §5·§6, esl_fint.md §5)
 BF_PREP_JSON = "bforce.json"                       # prep/ (엔트리별 출처·등급) — 경계력 행 파일 이름(아래 표 file 열과 같음)
@@ -5654,7 +6439,8 @@ def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, 
 
     def _write(did: str, ents: list, name_of, ref: dict | None = None) -> dict:
         mesh = _jig_view_mesh(c, t, did)
-        _, us = _ns_design(c, ns, did, mesh, sup, region, keep_u=ents)
+        want = _scn_wants(c, ns["key"], did)                 # v0.25.1: 씬 묶음이 원하면 전 씬 변위를 남김(같은 풀이 — 추가 계산 없음)
+        _, us = _ns_design(c, ns, did, mesh, sup, region, keep_u=list(order) if want else ents)
         loads = dict(_ns_loads(c, ns, mesh))
         names = {}
         for e in ents:
@@ -5669,6 +6455,8 @@ def _ns_view3d(c: Ctx, ns: dict, t, res2: list, shown: list, sup: list, region, 
                     recon[str(e)] = nm
                 except Exception as exc:                        # noqa: BLE001
                     warns.append(f"VIEW3D_FAILED: {nm} recon {getattr(exc, 'code', type(exc).__name__)}")
+        if want:
+            _scn_feed(c, ns["key"], did, _scn_nodal_p(c, t, did, ns, mesh, us))
         return names
 
     for did, e in pick.items():
@@ -6354,6 +7142,8 @@ def _jg_shape(c: Ctx, t, did: str, mesh: dict, sup: list, region, *, keep_u: boo
             om["shared"] = bool(om["shared"] or rm.get("shared"))
             if src in res["bc"]:
                 out["bc"].setdefault(src, {}).update({eid: res["bc"][src] for eid in eids})
+            if keep_u:                                            # v0.25.1 씬 C 기여도: 엔트리 BC·반력·스프링 힘(보관만)
+                out.setdefault("rcfs", {}).setdefault(src, {}).update(((res.get("rcfs") or {}).get(src) or {}))
             for eid, u in ((res.get("u") or {}).get(src) or {}).items():
                 out["u"].setdefault(src, {})[eid] = u                 # keep_u(3D) ∨ conv(d000 재현·수렴 MAC)
                 if conv:                                          # d000 재현: u_S(파트 Kabsch 제거) vs ũ_rel(형상 노드 복셀 표본)
@@ -6855,6 +7645,8 @@ def _jg_view3d_src(c: Ctx, t, results: list, shown: list, row: dict) -> tuple[di
                        u_rel=res["u"][src][e], supports=sup,
                        key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
+        if _scn_wants(c, src, did):                            # v0.25.1: 같은 _jg_shape 결과(전 엔트리 응답)로 씬 묶음 — 추가 풀이 없음
+            _scn_feed(c, src, did, _scn_jig_grid_p(c, t, did, src, mesh, reg, res))
         return names
 
     for did in [d for d in shown if d in pick]:
@@ -7213,6 +8005,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
     k = int(c.cfg["view3d"]["top_k"])
     top = [x["id"] for x in R["ranking"][:k]]
     v3 = []
+    _scn_begin(c, t, results, [BASELINE] + top, source="bd_post", fresh=True, echo=echo)   # v0.25.1 씬 3D(기존 3D 가 분해를 넘김)
     for did in [BASELINE] + top:
         res = next(r for r in results if r["id"] == did)
         try:
@@ -7225,6 +8018,7 @@ def _cmp_post(c: Ctx, echo) -> dict:
         warns += vw
     if _jg_kind(c) == "grid":                    # v0.24.8 JG §2.3·§5: 격자 지그 사이드카(보기·jd·js 3D) — grid 만(옛 ④ 바이트 불변)
         _jig_extras(c, t, None, results, None, S_, shown=[BASELINE] + top, v3_jig=None, source="bd_post", echo=echo)
+    _scn_finish(c)                               # v0.25.1 씬 3D 묶음 마무리(새 파일만)
     c.progress(60)
     props = bmeta["props"]
     best_files: dict[str, list[str]] = {}
@@ -8468,7 +9262,7 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
     """BS-D-11 미리보기(select): 안마다 기저 모핑 → 고정·뒤집힘·품질 → 3D 썸네일 → doe/<rev>/grid/(paicad grid 와 같은 형식).
 
     grid_manifest.json = {schema_version 1, kind 'select', cells[{id, status OK|FAIL, code, thumb, quality, fixed_max_mm, fixed_viol?}],
-    nominal{thumb}, color{v_max, unit}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
+    nominal{thumb}, color{v_max, unit, map}, selection_sha256, basis_sha256}. 셀 FAIL 코드 = SELECT_*(→ paicad_io.cell_state)."""
     from esl import view3d as v3
     from esl.doe import bead_select as bsel
     from esl.doe import select_render as sr
@@ -8525,7 +9319,7 @@ def bd_select_grid(spec: dict, echo=print) -> dict:
         cells.append(cell)
         c.progress(35 + 60 * (k + 1) / max(len(designs), 1))
     man = {"schema_version": 1, "kind": "select", "cells": cells, "nominal": {"thumb": "cells/nominal/thumb.png"},
-           "color": {"v_max": V, "unit": "mm"}, "selection_sha256": L["rev"]["selection_sha256"],
+           "color": {"v_max": V, "unit": "mm", **sr.color_meta()}, "selection_sha256": L["rev"]["selection_sha256"],
            "basis_sha256": L["rev"]["basis_sha256"], "rules": bsel.RULES,
            **({"graph_rules": _bgr().GRAPH_RULES} if L["checks"].get("outside") else {})}
     c.write_json(os.path.join(gd_rel, pio.GRID_MANIFEST), U.jsonable(man))

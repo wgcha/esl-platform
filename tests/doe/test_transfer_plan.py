@@ -75,7 +75,8 @@ def test_stages_single_load_site():
     for fn in (stg._lt_base_loads, stg._lt_design, stg._lt_target_loads, stg._lt_mesh_loads, stg._cmp_loads_lt,
                stg._lt_eval):
         assert "_plan_loads(" in inspect.getsource(fn), fn.__name__
-    for name in ("bd_loads", "_sel_loads", "_design_mesh", "_view3d", "_cmp_design_mesh", "_cmp_refine_bias"):
+    assert "_view3d_input(" in inspect.getsource(stg._view3d)                      # v0.25.1: 3D 입력부 = _view3d_input(씬 묶음 공용)
+    for name in ("bd_loads", "_sel_loads", "_design_mesh", "_view3d_input", "_cmp_design_mesh", "_cmp_refine_bias"):
         s = inspect.getsource(getattr(stg, name))
         assert re.search(r"_lt_(base_loads|target_loads|design|mesh_loads)\(|_cmp_loads_lt\(", s) or \
             name == "_cmp_design_mesh" and "_lt_design(" in s, name

@@ -1,7 +1,7 @@
 """V-BS-10(렌더)·V-BS-8(썸네일 결정성) + select 코어 단계 흐름(bd_input → bd_loads → bd_matrix → bd_select_grid → bd_eval →
 bd_post, 계약 esl_bead_select.md §7.2·§8 — 워커 작업 시험 V-BS-14 는 S3).
 
-썸네일 크기·결정적 바이트, 색 부호(깊어짐 = 파랑 채널 우세), 모든 칸 같은 V(manifest)·같은 시점(공칭 bbox), 공칭 칸 회색,
+썸네일 크기·결정적 바이트, 색 부호(v0.25.1: 깊어짐 = 빨강 채널 우세 — V-0251-43), 모든 칸 같은 V(manifest)·같은 시점(공칭 bbox), 공칭 칸 회색,
 셀 상태(SELECT_* → SKIPPED_FIXED/FAILED_MESH), 산출물 rad 사본 = /NODE 좌표 칸 외 바이트 동일, 입력 폴더 불변."""
 import os
 
@@ -53,10 +53,10 @@ def test_thumb_size_determinism_sign(G):
     assert va["scale"] == vc["scale"]
     deep = sr.png_rgb(a).astype(int)
     shallow = sr.png_rgb(_thumb(g, D, B, {"B1_D1": 17.0})[0]).astype(int)
-    blue = (deep[..., 2] - deep[..., 0] > 40).sum()
-    red = (shallow[..., 0] - shallow[..., 2] > 40).sum()
-    assert blue > 200 and red > 200                                        # 깊어짐 = 파랑, 얕아짐 = 빨강
-    assert (deep[..., 0] - deep[..., 2] > 40).sum() < blue / 20
+    red = (deep[..., 0] - deep[..., 2] > 40).sum()
+    blue = (shallow[..., 2] - shallow[..., 0] > 40).sum()
+    assert red > 200 and blue > 200                                        # v0.25.1: 깊어짐(+) = 빨강, 얕아짐(−) = 파랑
+    assert (deep[..., 2] - deep[..., 0] > 40).sum() < red / 20
     # 공칭(색 None) = 회색 음영
     X0 = g["mesh"]["x0"]
     tris = v3.triangulate(g["mesh"]["conn"], g["mesh"]["elem_type"])
@@ -64,7 +64,50 @@ def test_thumb_size_determinism_sign(G):
     assert np.all(nom[..., 0] == nom[..., 1]) and np.all(nom[..., 1] == nom[..., 2])
     assert (nom < 250).any()
     t = sr.diverging(np.array([1.0, 0.0, -1.0]))
-    assert t[0, 2] > t[0, 0] and t[2, 0] > t[2, 2] and np.allclose(t[1], sr.WHITE)
+    assert t[0, 0] > t[0, 2] and t[2, 2] > t[2, 0] and t[1].tolist() == [247.0, 247.0, 247.0]
+
+
+# ---------------------------------------------------------------- V-0251-43 (C2 썸네일 — 색만 바뀜)
+# main(e9745958) 썸네일의 구조 픽셀(바탕 BG·비드 경계 EDGE) 라벨 마스크 sha256 — 색 바꾸기 전 코드로 계산한 값(크기·시점·경계선 불변)
+MAIN_THUMB_MASK_SHA = "c2617a104574f3aa1ba8163233b4d981ca9881ebab569b9b428799002ce5740b"
+
+
+def _struct_sha(img, colors):
+    import hashlib
+    lab = np.zeros(img.shape[:2], np.uint8)
+    for k, c in enumerate(colors, 1):
+        lab[np.all(img == np.asarray(c, np.uint8), axis=2)] = k
+    return hashlib.sha256(lab.tobytes()).hexdigest()
+
+
+def test_v0251_43_thumb_colors_only(G):
+    from esl.io import colormaps as cm
+    g, D, B = G
+    assert sr.color_meta() == {"map": "diverge"}
+    loops = [lp["nodes"] for b in D.beads for lp in b.loops]
+    X0 = g["mesh"]["x0"]
+    tris = v3.triangulate(g["mesh"]["conn"], g["mesh"]["elem_type"])
+    for vals in ({"B1_D1": 27.0}, {"B1_D1": 17.0}):
+        png_a = _thumb(g, D, B, vals)[0]
+        assert png_a == _thumb(g, D, B, vals)[0]                          # 결정성(두 번 같은 바이트)
+        img = sr.png_rgb(png_a)
+        assert decode_png_size(png_a) == (TC["w"], TC["h"])
+        assert _struct_sha(img, [(255, 255, 255), sr.EDGE]) == MAIN_THUMB_MASK_SHA
+    # 색 값: c > 0 삼각형 = 빨강 쪽(R > B), c < 0 = 파랑 쪽(B > R), 0 = 흰 — 자원 div 역할과 같은 정점
+    d = cm.map_for("div")
+    assert sr.diverging(np.array([1.0])).tolist() == [d["stops"][-1]] and sr.diverging(np.array([-1.0])).tolist() == [d["stops"][0]]
+    assert sr.diverging(np.array([0.0])).tolist() == [[247.0, 247.0, 247.0]]
+    pos, neg = sr.diverging(np.array([0.3])), sr.diverging(np.array([-0.3]))
+    assert pos[0, 0] > pos[0, 2] and neg[0, 2] > neg[0, 0]
+    # 영향 없음 = special none 음영: 공칭 그림의 전경은 회색(R=G=B) ≤ none 값, 색 그림에서 공칭과 같은 픽셀(영향 밖)도 회색
+    va = _thumb(g, D, B, {"B1_D1": 27.0})[1]
+    nom = sr.png_rgb(sr.render(X0, tris, None, None, va, 5.0, TC, loops=loops)).astype(int)
+    gv = cm.special("none")[0]
+    fg = nom.sum(axis=2) < 3 * 255
+    assert fg.any() and np.all(nom[fg][:, 0] == nom[fg][:, 2]) and nom[fg].max() <= gv
+    col = sr.png_rgb(_thumb(g, D, B, {"B1_D1": 27.0})[0]).astype(int)
+    same = fg & np.all(col == nom, axis=2)
+    assert same.sum() > 1000 and np.all(col[same][:, 0] == col[same][:, 1])
 
 
 def test_raster_depth_nearest_wins():
@@ -144,6 +187,7 @@ def test_select_stage_flow(tmp_path, G):
     gm = U.read_json(str(gd / pio.GRID_MANIFEST))
     assert gm["kind"] == "select" and gm["nominal"]["thumb"] == "cells/nominal/thumb.png" and gm["rules"] == 3
     assert gm["color"]["unit"] == "mm" and gm["color"]["v_max"] > 0
+    assert gm["color"]["map"] == sr.color_meta()["map"] == "diverge"
     assert (gd / "cells" / "nominal" / "thumb.png").is_file()
     nomp = sr.png_rgb((gd / "cells" / "nominal" / "thumb.png").read_bytes())
     assert np.all(nomp[..., 0] == nomp[..., 1])

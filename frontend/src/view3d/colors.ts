@@ -1,39 +1,8 @@
-// 표면 색: ColorBrewer Blues 9단계(#f7fbff → #08306b) 선형 보간 256칸(계약 §6.1). 0 = 가장 옅음, 범위 위 = 가장 진함, NaN = 회색.
-// three 정점 색은 선형 작업 공간이라 sRGB 표를 선형으로 바꾼 표(LUT_LINEAR)를 쓴다. CSS 레전드는 sRGB 정점을 그대로 쓴다.
+// 색표 보조(v0.25.1 §5.5): 정규화·띠 위치·휘도·정점 색 채우기. 색 정점은 여기 없다 — lib/colormap.ts 가 자원(resources/colormaps.json)에서만 읽는다.
+import { LUT_SIZE, buildLut, mapFor, relLuminance, specialLinear, srgbToLinear } from "../lib/colormap";
 import type { RGB } from "../lib/colormap";
 
-export const BLUES9: RGB[] = [
-  [247, 251, 255], [222, 235, 247], [198, 219, 239], [158, 202, 225], [107, 174, 214], [66, 146, 198], [33, 113, 181], [8, 81, 156], [8, 48, 107],
-];
-export const LUT_SIZE = 256;
-/** 계산 불가(NaN) 회색(sRGB) */
-export const NAN_RGB: RGB = [154, 161, 171];
-
-export function bluesSrgb(t: number): RGB {
-  const x = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0)) * (BLUES9.length - 1);
-  const i = Math.min(Math.floor(x), BLUES9.length - 2);
-  const f = x - i;
-  const a = BLUES9[i];
-  const b = BLUES9[i + 1];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
-}
-
-export const srgbToLinear = (c8: number): number => {
-  const c = c8 / 255;
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
-};
-
-function buildLut(linear: boolean): Float32Array {
-  const lut = new Float32Array(LUT_SIZE * 3);
-  for (let k = 0; k < LUT_SIZE; k++) {
-    const c = bluesSrgb(k / (LUT_SIZE - 1));
-    for (let j = 0; j < 3; j++) lut[k * 3 + j] = linear ? srgbToLinear(c[j]) : c[j] / 255;
-  }
-  return lut;
-}
-export const LUT_SRGB = buildLut(false);
-export const LUT_LINEAR = buildLut(true);
-export const NAN_LINEAR: [number, number, number] = [srgbToLinear(NAN_RGB[0]), srgbToLinear(NAN_RGB[1]), srgbToLinear(NAN_RGB[2])];
+export { LUT_SIZE, srgbToLinear };
 
 /** 값 → 0~1 (범위 밖은 끝색). 범위가 퇴화(max ≤ min)면 0. 비유한 값은 NaN */
 export function normalize(v: number, min: number, max: number): number {
@@ -50,28 +19,16 @@ export function bandT(v: number, min: number, max: number, levels: number): numb
   return (Math.min(Math.floor(t * levels), levels - 1) + 0.5) / levels;
 }
 
-/** 구간 범례 CSS 띠(왼쪽 최소 → 오른쪽 최대): 칸마다 중앙값 색, 경계에서 계단. 정지점 2L 개 */
-export function bandedGradient(levels: number, srgb: (t: number) => RGB = bluesSrgb): string {
-  if (!(levels > 0)) return BLUES_GRADIENT;
-  const stops: string[] = [];
-  for (let i = 0; i < levels; i++) {
-    const c = srgb((i + 0.5) / levels).map(Math.round);
-    const a = Math.round((100000 * i) / levels) / 1000;
-    const b = Math.round((100000 * (i + 1)) / levels) / 1000;
-    stops.push(`rgb(${c.join(",")}) ${a}%`, `rgb(${c.join(",")}) ${b}%`);
-  }
-  return `linear-gradient(90deg, ${stops.join(", ")})`;
-}
-
-/** 정점 색 채우기(선형 공간, 길이 3n). src 가 있으면 LOD: 정점 i 의 값 = values[src[i]]. lut = 선형 색표(기본 Blues) */
-export function fillVertexColors(values: ArrayLike<number>, min: number, max: number, out: Float32Array, src?: ArrayLike<number> | null, lut: Float32Array = LUT_LINEAR): Float32Array {
+/** 정점 색 채우기(선형 공간, 길이 3n) — CPU 경로(옛 장면 mock·시험용). src 가 있으면 LOD: 정점 i 의 값 = values[src[i]]. lut = 선형 색표(기본 seq 역할) */
+export function fillVertexColors(values: ArrayLike<number>, min: number, max: number, out: Float32Array, src?: ArrayLike<number> | null, lut: Float32Array = defaultLut()): Float32Array {
+  const nan = specialLinear("nan");
   const n = src ? src.length : values.length;
   for (let i = 0; i < n; i++) {
     const t = normalize(values[src ? src[i] : i], min, max);
     if (Number.isNaN(t)) {
-      out[i * 3] = NAN_LINEAR[0];
-      out[i * 3 + 1] = NAN_LINEAR[1];
-      out[i * 3 + 2] = NAN_LINEAR[2];
+      out[i * 3] = nan[0];
+      out[i * 3 + 1] = nan[1];
+      out[i * 3 + 2] = nan[2];
     } else {
       const k = Math.round(t * (LUT_SIZE - 1)) * 3;
       out[i * 3] = lut[k];
@@ -81,37 +38,12 @@ export function fillVertexColors(values: ArrayLike<number>, min: number, max: nu
   }
   return out;
 }
+let _lut: Float32Array | null = null;
+function defaultLut(): Float32Array {
+  return (_lut ??= buildLut(mapFor("seq"), { linear: true }));
+}
 
-/** 상대 휘도(sRGB 입력) — 시험: 값이 커질수록 어두워진다 */
+/** 상대 휘도(sRGB 입력) — 식 한 곳(lib/colormap.ts relLuminance) */
 export function luminance(c: RGB): number {
-  return 0.2126 * srgbToLinear(c[0]) + 0.7152 * srgbToLinear(c[1]) + 0.0722 * srgbToLinear(c[2]);
+  return relLuminance(c);
 }
-
-/** ColorLegend 의 CSS 띠 */
-export const BLUES_GRADIENT = `linear-gradient(90deg, ${BLUES9.map((x, i) => `rgb(${x.join(",")}) ${Math.round((100 * i) / (BLUES9.length - 1))}%`).join(", ")})`;
-
-// ---------------------------------------------------------------- v0.15.0 발산 색(esl_bead_select.md §7.2·§7.3)
-// 공칭 대비 높이 변화: 빨강 = 얕아짐(−) · 흰 = 0 · 파랑 = 깊어짐(+). ColorBrewer RdBu 11단계(빨강 → 파랑). 범위 = 모든 칸 같은 ±V.
-export const RDBU11: RGB[] = [
-  [103, 0, 31], [178, 24, 43], [214, 96, 77], [244, 165, 130], [253, 219, 199], [247, 247, 247], [209, 229, 240], [146, 197, 222], [67, 147, 195], [33, 102, 172], [5, 48, 97],
-];
-/** t ∈ [0, 1] (0 = −V 빨강, 0.5 = 0 흰, 1 = +V 파랑) */
-export function divergingSrgb(t: number): RGB {
-  const x = Math.max(0, Math.min(1, Number.isFinite(t) ? t : 0.5)) * (RDBU11.length - 1);
-  const i = Math.min(Math.floor(x), RDBU11.length - 2);
-  const f = x - i;
-  const a = RDBU11[i];
-  const b = RDBU11[i + 1];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
-}
-function buildDivLut(linear: boolean): Float32Array {
-  const lut = new Float32Array(LUT_SIZE * 3);
-  for (let k = 0; k < LUT_SIZE; k++) {
-    const c = divergingSrgb(k / (LUT_SIZE - 1));
-    for (let j = 0; j < 3; j++) lut[k * 3 + j] = linear ? srgbToLinear(c[j]) : c[j] / 255;
-  }
-  return lut;
-}
-export const LUT_DIV_LINEAR = buildDivLut(true);
-/** ColorLegend·썸네일 범례의 CSS 띠(왼쪽 −V 빨강 → 오른쪽 +V 파랑) */
-export const DIVERGING_GRADIENT = `linear-gradient(90deg, ${RDBU11.map((x, i) => `rgb(${x.join(",")}) ${Math.round((100 * i) / (RDBU11.length - 1))}%`).join(", ")})`;

@@ -318,6 +318,10 @@ export const doe = {
   redropUrl: (id: string, did: string, entryId: string) => `${API_PREFIX}/doe/studies/${id}/designs/${encodeURIComponent(did)}/redrop?entry_id=${encodeURIComponent(entryId)}`,
   reportUrl: (id: string) => `${API_PREFIX}/doe/studies/${id}/report`,
   /** 3D 비교 manifest(기존 view3d 파일 API 규칙 — 파일 URL 은 manifest 의 geometry_url·values_url) */
+  /** v0.25.1 씬 manifest(계약 §6 — 파일 URL 은 manifest 의 geometry_url·values_url) */
+  sceneManifestPath: (id: string, src: string, did: string, entryId: string) => `/doe/studies/${id}/view3d-scene/${encodeURIComponent(src)}/${encodeURIComponent(did)}/${encodeURIComponent(entryId)}/manifest.json`,
+  /** v0.25.1 [씬 3D 만들기] — 202 DoeStudyOut(403 · 409 JOB_ACTIVE · 409 VIEW3D_SCENE_UNAVAILABLE) */
+  addScenes: (id: string) => request<DoeStudyOut>("POST", `/doe/studies/${id}/view3d/scenes`),
   view3dPath: (id: string, did: string, file = "manifest.json") => `/doe/studies/${id}/view3d/${encodeURIComponent(did)}/${file}`,
   // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §9)
   /** 선택 보기 파일(part.glb · select.bin · select_manifest.json) */
