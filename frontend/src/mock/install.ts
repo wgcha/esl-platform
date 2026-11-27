@@ -74,6 +74,8 @@ export function installMockFetch() {
   if (params.get("demoJig") === "1") server.doe.demoJig();
   // v0.24.8 격자 지그 시연: ?demoJigGrid=1 doe-60(④ 격자 지그 — jd·js 3D·매핑 오차 표식) · doe-61(대조) · doe-62·63(옛 스냅샷 — 복제 안내 2종)
   if (params.get("demoJigGrid") === "1") server.doe.demoJigGrid();
+  // v0.25.2 체결부 강제 부여 시연: ?demoJigForce=1 doe-80(참고용 형상·경고·3D 고리·선·✕) · doe-81(#96 꼴 — 지그 순위 0 행, 기본 탭 = 전 노드)
+  if (params.get("demoJigForce") === "1") server.doe.demoJigForce();
   // v0.24.9 위치 U·지그 표식 시연: ?demoPosU=1 doe-70(① 변수 표 U 행) · doe-71(② 공간 고정 결과) · doe-72(④ 지그 3방식 표식) · Case ③ 지그 3D 표식 = ?demoJigRows=1 의 jig·jig_disp·jig_spring 출처(src 로 방식별 기호)
   if (params.get("demoPosU") === "1") server.doe.demoPosU();
   if (params.get("demoVBead") === "1") server.doe.demoVBead();

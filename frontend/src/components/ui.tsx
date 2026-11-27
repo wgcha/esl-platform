@@ -78,7 +78,7 @@ export function Card({ title, children, right, fold, hint }: { title?: string; c
     <section className="card" aria-label={title}>
       {(title || right) && (
         <header className="card-head">
-          <h3 title={hint}>{title}</h3>
+          <h3 title={hint}>{hint ? <span className="ellipsis">{title}</span> : title}</h3>
           {right}
         </header>
       )}

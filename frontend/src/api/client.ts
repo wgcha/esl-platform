@@ -135,10 +135,6 @@ export const CODE_TEXT: Record<string, string> = {
   FRAME_NOT_FOUND: "h3d 에 없는 프레임입니다",
   TSTAR_FRAME_FILL_FAILED: "직접 고른 시점을 h3d 에서 읽지 못했습니다 — 다시 실행하거나 ② 에서 다른 시점을 고르세요",
   SHAPE_DOUBLE_SHEET: "판 앞뒷면 표면이 둘 다 들어 있는 것 같습니다 — 두께가 두 번 계산되고 지그 체결부를 못 찾을 수 있습니다. 중립면 한 장으로 올려 주세요",
-  JIG_GRID_TIE_FORCED: "Case 지그 체결부 일부가 형상의 체결부 자리가 아니어서 가장 가까운 면에 강제로 붙였습니다",
-  JIG_GRID_TIE_FAR: "체결부 일부를 먼 면에 붙였습니다 — 다른 모델이거나 좌표가 어긋났을 수 있습니다. 3D 지그 보기의 선 길이를 확인하세요",
-  JIG_GRID_TIE_UNPLACED: "체결부 일부는 붙일 면이 없어 뺐습니다",
-  JIG_GRID_TIE_HINT: "체결부를 많이 못 찾은 형상은 Case 와 다른 모델이거나, 좌표가 어긋났거나, STEP 이 중립면이 아닐 수 있습니다 — 3D 지그 보기에서 위치를 확인하세요",
   MESH_FACE_FALLBACK: "일부 면을 다른 2D 알고리즘(또는 제약 해제)으로 메시했습니다 — 그 면 주변 요소 모양이 다를 수 있음",
 };
 

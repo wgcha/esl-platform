@@ -1890,6 +1890,17 @@ export interface View3dSupport {
   dirs?: number[][] | null;
   /** 값(INT-1, dirs 와 같은 순서): tie_fixed 0 · tie_disp [g…](mm) · tie_spring {k: [N/mm…], g: [mm…]} · aux_inplane [지정값…](mm) · support321 = 없음 */
   val?: number | number[] | { k: number[]; g: number[] } | null;
+  /** v0.25.2 §4.3: "force" = 체결부가 아닌 곳에 강제로 붙인 노드(옛 manifest·강제 아님 = 없음) */
+  via?: "force" | null;
+}
+/** v0.25.2 §4.3·§6.3 map.tie.marks 그대로 — 강제·못 붙임 체결부 묶음. x = Case 체결부 중심(형상 전역 좌표), dist = 옮긴 거리(mm), n = 묶음 노드 수 */
+export interface View3dTieMark {
+  q: number;
+  via: "force" | "miss";
+  x: number[];
+  dist: number;
+  n: number;
+  far: boolean;
 }
 export interface View3dRange {
   max: number;
@@ -1948,6 +1959,10 @@ export interface View3dOut {
   sum_m: number[];
   moment_center: number[];
   supports: View3dSupport[];
+  /** v0.25.2 §4.3: 강제·못 붙임 체결부 표식 자료(지그 응답 3D 만 — 없으면 옛 그림 그대로) */
+  tie_marks?: View3dTieMark[] | null;
+  /** v0.25.2(제안 키 — B1 과 맞춤): 먼 강제 임계 mm(tie_force_far_warn_mm) — 범례 문구용. 없으면 숫자 없이 표기 */
+  tie_far_mm?: number | null;
   top: View3dTopRow[];
   clusters: Record<string, View3dClusterSet>;
   created_at: string;
@@ -3068,6 +3083,8 @@ export interface DoePrepShape {
   /** v0.21.0 메싱 경로(cad | cad_relaxed)·선택 근거(새 스냅샷만) */
   mesh_path?: "cad" | "cad_relaxed" | null;
   route?: DoeShapeRoute | null;
+  /** v0.25.2 §4.4: 판 앞뒷면 두 장 의심(경고가 날 때만 키) — frac = 마주 보는 면 비율, gap_mm = 간격 중앙값 */
+  double_sheet?: { frac: number; gap_mm: number } | null;
 }
 export interface DoeProps {
   t: number;
@@ -3464,6 +3481,8 @@ export interface DoeRankRow {
   pareto?: boolean;
   /** 결과의 per_esl_inline 이 true 일 때만(아니면 GET …/results/per-esl) */
   per_esl?: DoePerEsl[];
+  /** v0.25.2 §4.1: 지그 순위가 참고용(강제·못 붙임 비율 또는 먼 강제) — 참일 때만 키 */
+  jig_ref?: boolean;
   /** ④ 형상 이름(values = {}) */
   shape?: DoeShapeRef | null;
   /** v0.16.1 경고 안(SR-D-11) — 비었으면 키 없음 */
@@ -3637,6 +3656,9 @@ export interface DoeJigGridOut {
   small_frac_max: number | null;
   frame_shift_max_mm: number | null;
   sample_outside_max: number | null;
+  /** v0.25.2 §6.3: 체결부 강제 부여·참고용 형상 수(스냅샷에 tie_force 가 있을 때만 — 옛 결과 키 없음) */
+  n_forced_shapes?: number | null;
+  n_ref_shapes?: number | null;
   warnings: string[];
   /** v0.24.8 fix 기준 d000 ↔ 형상 메시 비교(옛 결과 null·키 없음) */
   mesh?: DoeJigGridMeshOut | null;
@@ -3691,8 +3713,17 @@ export interface DoeJigOut {
   th: DoeJigThOut;
   entries: DoeJigEntryOut[];
 }
+/** v0.25.2 §4.1 결과 개수 1줄의 항목(= esl.doe.rank.count_items — 새 결과만, 옛 결과는 화면이 n_failed 로 계산) */
+export interface DoeCountItem {
+  key: string;
+  label: string;
+  n: number;
+}
 export interface DoeResultOut {
   C_ref: number;
+  /** v0.25.2: 지그 순위가 참고용인 형상 수(> 0 일 때만 키) */
+  n_ref?: number;
+  counts?: DoeCountItem[] | null;
   baseline: { id: "d000"; score: number; umax: number; epsmax: number; umax_def?: number | null; umax_ev?: number | null; umax_ev_all?: number | null; shape?: DoeShapeRef | null; worst_entry_id?: string | null };
   n_ok: number;
   n_skipped: Record<string, number>;
@@ -3944,6 +3975,8 @@ export interface DoeJigDiagOut {
 export interface DoeRankViewOut {
   metric: string;
   C_ref: number;
+  n_ref?: number;
+  counts?: DoeCountItem[] | null;
   baseline: Record<string, unknown>;
   n_ok: number;
   n_skipped: Record<string, number>;

@@ -516,10 +516,20 @@ export const JIG_CODE_TEXT: Record<string, string> = {
   JIG_GRID_MESH_MISMATCH: "기준과 형상의 메시 크기·요소 종류가 달라 메시 차이만으로 수 % 차이가 날 수 있습니다 — 기준 형상도 같은 방식으로 메시해 넣으세요(메시가 다른 형상 {n_shapes}개는 차이 {nf} % 이내를 오차 범위로 표시)",
   JIG_GRID_MESH_MISMATCH_SHAPE: "이 형상은 기준과 메시가 달라 차이 {nf} % 이내는 오차 범위입니다(요소 변 {h} mm · 삼각 비율 {tri})",
   LOAD_FOLLOW_SPATIAL: "위치 변수가 있어 하중을 공간에 고정했습니다({cell_mm} mm 셀) — 기준 포함 모든 안이 같은 경로",
+  // v0.25.2 강제 부여(esl_tstar_manual_jig_force.md §3.5) — 서버 문구(message)가 원본, 이 표는 없을 때의 대체
+  JIG_GRID_TIE_FORCED: "형상 {did}: Case 지그 체결부 {n_force}/{n_clusters}곳({pct} %)이 형상의 체결부 자리가 아니어서 가장 가까운 면에 강제로 붙였습니다(옮긴 거리 최소 {dmin} · 중앙 {dmed} · 최대 {dmax} mm, {far} mm 넘는 곳 {n_far}곳)",
+  JIG_GRID_TIE_FAR: "형상 {did}: 체결부 {n_far}곳은 {far} mm 넘게 떨어진 면에 붙였습니다 — 다른 모델이거나 좌표가 어긋났을 수 있습니다. 3D 지그 보기의 선 길이를 확인하세요",
+  JIG_GRID_TIE_UNPLACED: "형상 {did}: 체결부 {n_miss}/{n_clusters}곳은 붙일 면이 없어 뺐습니다",
+  JIG_GRID_TIE_HINT: "체결부를 많이 못 찾은 형상은 Case 와 다른 모델이거나, 좌표가 어긋났거나, STEP 이 중립면이 아닐 수 있습니다 — 3D 지그 보기에서 위치를 확인하세요",
   JIG_GRID_TIE_SNAP: "체결부 {n_clusters_max}곳을 노드 1개로만 잡았습니다(형상 {n_shapes}개) — 형상의 체결부 면이 Case 와 다릅니다. 지그 순위는 참고만 하세요",
 };
+/** v0.25.2 §7.2 순위표 "참고" 꼬리표 title: 그 형상(did)의 JIG_GRID_TIE_FORCED 문구(없으면 코드 뜻) — 경고의 did·id·name 또는 문구 속 형상 이름으로 찾음 */
+export function tieForcedText(warnings: readonly { code: string; message?: string | null; [k: string]: unknown }[], did: string): string {
+  const w = warnings.find((x) => x.code === "JIG_GRID_TIE_FORCED" && (x.did === did || x.id === did || x.name === did || (typeof x.message === "string" && x.message.includes(`형상 ${did}`))));
+  return w ? warnText(w) : JIG_CODE_TEXT.JIG_GRID_TIE_FORCED.replace(/^형상 \{did\}: /, "").replace(/\{[^}]+\}/g, "–");
+}
 /** v0.24.8 정보 등급 코드(계약 §1.4 — 등급 "정보"): 서버가 level 을 안 줘도 ⓘ 로 표시(⚠ 개수 제외). 경고 등급(SOURCE_MISSING·TIE_MISS·LOAD_RESID·NO_REF)은 넣지 않음 */
-export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE"]);
+export const JIG_GRID_INFO_CODES: ReadonlySet<string> = new Set(["JIG_GRID_OUTSIDE", "JIG_GRID_AREA_RATIO", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_CONV", "JIG_GRID_RANK", "JIG_GRID_ON_CLONE", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE", "JIG_GRID_TIE_HINT"]);
 /** v0.24.9 위치 U 정보 등급 코드(계약 §2.3·§1.1 — 서버가 level 을 안 줘도 ⓘ, 경고 개수 제외) */
 export const POS_U_INFO_CODES: ReadonlySet<string> = new Set(["LOAD_FOLLOW_SPATIAL", "PU_PARTIAL", "PU_LIN_SKIPPED", "U_SATURATED", "U_SHORT_SEG"]);
 /** v0.24.9 INT-7·8: U 행 회색 꼬리표 코드(비드 경고의 var = 변수 이름) — 툴팁 = 서버 문구(resources/doe_messages.json, message) */

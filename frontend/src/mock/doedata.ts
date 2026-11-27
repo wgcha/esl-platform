@@ -1037,6 +1037,38 @@ export function withJigGrid(res: DoeResultOut, opts: { plain?: boolean; cellMm?:
     ...v3("jd"), ...v3("js"),
   } as DoeResultOut;
 }
+/** v0.25.2 §3·§4 체결부 강제 부여 결과(목) — forced = 마지막 형상이 참고용(jig_ref·n_ref·경고 FORCED/FAR/HINT·counts), empty = #96 꼴(지그 순위 0 행·n_failed.jd 1·전 노드 보기에는 순위 1 행) */
+export function withJigForce(res: DoeResultOut, kind: "forced" | "empty"): DoeResultOut {
+  const j = withJigGrid(res);
+  const refId = j.ranking[j.ranking.length - 1]?.id ?? "d001";
+  type Row = Record<string, unknown>;
+  type View = Record<string, unknown> & { ranking: Row[]; n_ok: number };
+  const views = (j.rank_views ?? {}) as unknown as Record<string, View | null>;
+  const cnt = (n_ok: number, extra: { key: string; label: string; n: number }[]) => [{ key: "ok", label: "성공", n: n_ok }, ...extra];
+  if (kind === "forced") {
+    const mark = (rows: Row[]) => rows.map((r) => (r.id === refId ? { ...r, jig_ref: true } : r));
+    const rv = Object.fromEntries(Object.entries(views).map(([k, v]) => [k, v && (k === "jig_disp" || k === "jig_spring") ? { ...v, ranking: mark(v.ranking), n_ref: 1, counts: cnt(v.n_ok, [{ key: "ref", label: "참고용", n: 1 }]) } : v]));
+    const ranking = j.ranking.map((r) => (r.id === refId ? { ...r, jig_ref: true } : r));
+    const warnings = [
+      ...j.warnings,
+      { code: "JIG_GRID_TIE_FORCED", did: refId, message: `형상 ${refId}: Case 지그 체결부 128/228곳(56 %)이 형상의 체결부 자리가 아니어서 가장 가까운 면에 강제로 붙였습니다(옮긴 거리 최소 0.4 · 중앙 5.2 · 최대 61 mm, 10 mm 넘는 곳 37곳 · 면적비 0.62~1.4) — 지그 순위는 참고용입니다` },
+      { code: "JIG_GRID_TIE_FAR", did: refId, message: `형상 ${refId}: 체결부 37곳은 10 mm 넘게 떨어진 면에 붙였습니다(먼 순 상위 5곳: 61·58·55·49·44 mm) — 다른 모델이거나 좌표가 어긋났을 수 있습니다. 3D 지그 보기의 선 길이를 확인하세요` },
+      { code: "JIG_GRID_TIE_HINT", level: "info" as const, message: "체결부를 많이 못 찾은 형상은 Case 와 다른 모델이거나, 좌표가 어긋났거나, STEP 이 중립면이 아닐 수 있습니다 — 3D 지그 보기에서 위치를 확인하세요" },
+    ] as DoeResultOut["warnings"];
+    return {
+      ...j, ranking, warnings, n_ref: 1, counts: cnt(j.n_ok, [{ key: "ref", label: "참고용", n: 1 }]),
+      jig: { ...j.jig!, grid: { ...j.jig!.grid!, n_forced_shapes: 1, n_ref_shapes: 1 } },
+      rank_views: rv as unknown as DoeResultOut["rank_views"],
+    } as DoeResultOut;
+  }
+  const emptyView = (v: View | null): View | null => (v ? { ...v, ranking: [], n_ok: 0, n_failed: { jd: 1 }, counts: cnt(0, [{ key: "jd", label: "지그 매핑 제외", n: 1 }]) } : v);
+  const full = views.full ? { ...views.full, ranking: views.full.ranking.slice(0, 1), n_ok: 1 } : views.full;
+  return {
+    ...j, ranking: [], n_ok: 0, n_failed: { jd: 1 }, excluded: [], counts: cnt(0, [{ key: "jd", label: "지그 매핑 제외", n: 1 }]),
+    rank_views: { jig_disp: emptyView(views.jig_disp), jig_spring: emptyView(views.jig_spring), full } as unknown as DoeResultOut["rank_views"],
+    warnings: [...j.warnings, { code: "JIG_GRID_TIE_MISS", message: `형상 ${refId}: 체결부 128/228곳을 찾지 못해 격자 지그 순위에서 뺐습니다` }] as DoeResultOut["warnings"],
+  } as DoeResultOut;
+}
 /** v0.24.8 fix(D-0.24.8-JG-21): 옛 ④·옛 ③ 스냅샷 결과의 실제 형태 — 코어가 jig{status: unsupported, code JIG_UNSUPPORTED} 블록을 쓰고,
  *  서버는 그래도 jig_on_clone(설정 rank.jig ∧ rank.jig_grid)을 내며 참이면 정보 줄 JIG_GRID_ON_CLONE 1건을 응답에 덧붙인다(esl_jig_grid_map.md §5·§6) */
 export function withOldGridSnapshot(res: DoeResultOut, onClone: boolean): DoeResultOut {
@@ -1878,6 +1910,17 @@ export class DoeMock {
       mk("doe-62", "Ch/R 형상 비교 — 옛 스냅샷(복제하면 격자)", "2026-11-26T03:00:00Z", withOldGridSnapshot(base, true)),
       mk("doe-63", "Ch/R 형상 비교 — 옛 스냅샷(격자 설정 꺼짐)", "2026-11-26T04:00:00Z", withOldGridSnapshot(base, false)),
     );
+  }
+
+  /** v0.25.2 시연·시험(?demoJigForce=1): doe-80 = 체결부 강제 부여(참고용 형상·경고·3D 고리·선·✕) · doe-81 = #96 꼴(지그 순위 0 행 → 기본 탭 = 전 노드) */
+  demoJigForce() {
+    if (this.recs.some((r) => r.out.id === "doe-80")) return;
+    this.demoJigGrid();
+    const t20 = this.recs.find((r) => r.out.id === "doe-60")!;
+    const posIn = { pos_u: { schema: 1, range_rel: 0.25, max_rel: 0.5, gap_rel: 0.5, hold_frac_max: 0.2 }, load_follow: { schema: 1, cell_mm: 3 } };
+    const mk = (id: string, title: string, at: string, result: DoeResultOut): Rec => ({ ...t20, out: { ...t20.out, id, title, created_at: at, inputs: { ...t20.out.inputs, ...posIn } }, jobIds: [...t20.jobIds], result });
+    const base = this.recs.find((r) => r.out.id === "doe-20")!.result!;
+    this.recs.push(mk("doe-80", "Ch/R 형상 비교 — 체결부 강제 부여(v0.25.2)", "2026-11-27T01:00:00Z", withJigForce(base, "forced")), mk("doe-81", "Ch/R 형상 비교 — #96 꼴(지그 순위 0 행)", "2026-11-27T02:00:00Z", withJigForce(base, "empty")));
   }
 
   /** v0.25.0 시연·시험(?demoVBead=1): 설정 bead_doe.virtual_bead 를 켠 새 스터디처럼 — ③ 목록 아래 접힌 절 "추가 비드"(derive 목 = 추가 비드 응답·미리보기 g·c·변수 표 A 행) */
@@ -2896,7 +2939,19 @@ export class DoeMock {
         const newFmt = jigView && !!(rec.out.inputs as { pos_u?: unknown }).pos_u;
         const m = mockView3d().manifest(eid ?? `doe-${rec.out.id}-${did}`, newFmt ? jk : null);
         const ratio = (row ? row.umax / res!.baseline.umax : 1) * (jigView ? 0.12 : 1);
-        return ok({ ...m, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, ...(jigView ? { supports: newFmt ? m.supports : m.supports.map((x) => ({ ...x, dof: "123" })) } : {}), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
+        // v0.25.2 §4.3(목): doe-80 지그 3D = 앞의 tie 지지 둘이 강제(via force) + Case 체결부 자리 고리 3개(가까움·먼·못 붙임)
+        const forceDemo = jigView && rec.out.id === "doe-80" && newFmt;
+        const ties = m.supports.filter((x) => x.kind === "tie_fixed" || x.kind === "tie_disp" || x.kind === "tie_spring");
+        const supports3 = forceDemo ? m.supports.map((x) => (ties.slice(0, 2).includes(x) ? { ...x, via: "force" as const } : x)) : m.supports;
+        const off = (x: number[], d: number[]) => x.map((v, i) => +(v + d[i]).toFixed(2));
+        const tieExtra = forceDemo && ties.length >= 2
+          ? { tie_far_mm: 10, tie_marks: [
+              { q: 3, via: "force" as const, x: off(ties[0].x0, [45, 0, 0]), dist: 45, n: 4, far: false },
+              { q: 7, via: "force" as const, x: off(ties[1].x0, [-250, 60, 0]), dist: 257, n: 6, far: true },
+              { q: 11, via: "miss" as const, x: off(ties[1].x0, [-30, -120, 0]), dist: 0, n: 3, far: false },
+            ] }
+          : {};
+        return ok({ ...m, ...tieExtra, ranges: { ...m.ranges, u_max: m.ranges.u_max * ratio }, ...(jigView ? { supports: newFmt ? supports3 : supports3.map((x) => ({ ...x, dof: "123" })) } : {}), geometry_url: `/doe/studies/${rec.out.id}/view3d/${did}/part.glb`, values_url: `/doe/studies/${rec.out.id}/view3d/${did}/values.bin` });
       }
       return err(404, "NOT_FOUND", `목 서버에 없는 경로: ${method} ${path}`);
     }

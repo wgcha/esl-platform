@@ -4,7 +4,7 @@ import type { ColorRole } from "../lib/colormap";
 import type { ArrowSpec } from "./arrows";
 import type { V3 } from "./pick";
 import type { Projection } from "./projection";
-import type { SupportSpec } from "./supports";
+import type { SupportSpec, TieMarkSpec } from "./supports";
 import type { IdPatch, Rect } from "./select/lasso";
 import type { Bbox, ViewAxis, ViewSign } from "./viewFit";
 
@@ -20,6 +20,8 @@ export type PickEvent =
   | { type: "arrow"; index: number }
   | { type: "vertex"; vertex: number }
   | { type: "support"; index: number }
+  /** v0.25.2 강제 부여 표식(고리·✕) — index = manifest.tie_marks 위치 */
+  | { type: "tie"; index: number }
   | { type: "none" };
 
 export interface SceneOptions {
@@ -40,6 +42,8 @@ export interface SceneApi {
   setDeform(u: Float32Array | null, k: number): void;
   setArrows(arrows: ArrowSpec[], selectedIndex: number | null): void;
   setSupports(supports: SupportSpec[]): void;
+  /** v0.25.2 §4.3 강제 부여 표식(빈 고리 + 선 · ✕). 지지 층(setLayerVisible "supports")에 딸림. 없으면 표식 없음 */
+  setTieMarks?(spec: TieMarkSpec | null): void;
   /** 선택 강조: 화살표 번호(null 없음) + 노드 표식 정점(null 없음) */
   select(arrowIndex: number | null, vertex: number | null): void;
   /** 카메라 중심을 이 점으로(더블클릭) */

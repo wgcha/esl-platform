@@ -1,6 +1,6 @@
 // v0.24.9 지그 경계조건 표식(esl_bead_pos_u.md §10) — 순수 계산. 표식 자료 kind·dirs·val → 방식별 기호 선분 · 범례 · 탐침 문구.
 // 기호 색·문구는 이 표(MARK_TABLE) 한 곳. 옛 파일(kind 없음)은 supports.ts 의 dof 문자열 기호 그대로.
-import type { View3dSupport } from "../api/types";
+import type { View3dSupport, View3dTieMark } from "../api/types";
 import type { V3 } from "./pick";
 
 export type MarkKind = "tie_fixed" | "tie_disp" | "tie_spring" | "aux_inplane" | "support321";
@@ -33,6 +33,23 @@ export const MARK_TABLE: Record<MarkKind, MarkRow> = {
   aux_inplane: { color: "#7b3fb0", name: "면내 지지", dirName: "면내", legend: "보라 양방향 화살표 + 삼각 = 3-2-1 면내 강체 지지(n₁ 2방향 · n₂ 1방향)" },
   support321: { color: "#1b9e77", name: "3-2-1 지지", dirName: "dof", legend: "녹색 삼각 = 3-2-1 지지(구속 dof 표기)" },
 };
+/** v0.25.2 §4.3 강제 부여 표식(표 한 곳 — 색은 표식 색, 연속값 색 지도 colormaps.json 대상 아님) */
+export type TieKind = "force" | "ring" | "far" | "miss";
+export const TIE_TABLE: Record<TieKind, { color: string; legend: (farMm?: number | null) => string }> = {
+  force: { color: "#c2188f", legend: () => "자홍 테두리 = 체결부가 아닌 곳에 강제로 붙인 지지" },
+  ring: { color: "#c2188f", legend: (far) => `빈 고리 = Case 체결부 자리(선 = 옮겨 붙인 거리 · 빨강 = ${far != null ? `${num(far)} mm 넘음` : "먼 곳"})` },
+  far: { color: "#d4272b", legend: () => "" },
+  miss: { color: "#d4272b", legend: () => "✕ = 붙일 면이 없어 뺀 체결부" },
+};
+/** 강제 표식 선 굵기(px): 지지 테두리 여분 · 옮긴 거리 선 · 먼 강제 선 · 고리·✕ */
+export const TIE_PX = { outlinePad: 4, line: 1.5, far: 4, ring: 2 };
+/** 고리 반지름·✕ 반폭(기호 크기 L 의 배수) · 고리 꼭짓점 수 */
+export const TIE_RING_R = 0.5;
+export const TIE_RING_N = 20;
+/** 탐침(고리·✕ 클릭) 한 줄 */
+export const tieProbe = (m: Pick<View3dTieMark, "q" | "dist" | "via" | "far">) =>
+  `체결부 q${m.q} · ${m.via === "miss" ? "붙일 면 없음" : `거리 ${num(m.dist)} mm${m.far ? " · 먼 곳" : ""}`}`;
+
 /** 옛 파일(kind 없음) 대체 표시 안내 — 범례 툴팁·탐침 */
 export const LEGACY_MARK_TIP = "이전 형식 — 다시 만들기를 누르면 방식별 기호로 표시";
 /** 범례 줄 순서(표에 있는 순서 그대로) */
@@ -168,7 +185,7 @@ export const LEGACY_JIG_AUX_DOF = "ij";
 /** 범례(경계조건 칩 툴팁에 붙는 줄): 이 표식 목록에 있는 kind 의 한 줄 뜻(표 순서) + 옛 지그 파일 표식이 있으면 대체 안내.
  *  옛 지그 파일 판정(INT-3) = kind 없는 행이 있고 (jigView — 출처 표 group jig 인 Case 보기 — 또는 kind 없는 면내 지지 dof "ij" 행이 있음).
  *  전 노드 ESL 등 지그 아닌 출처의 3-2-1 지지(kind 없음)에는 "다시 만들기" 안내를 붙이지 않는다(다시 만들어도 기호가 같음). */
-export function markLegend(supports: Partial<Pick<View3dSupport, "kind" | "dof">>[], jigView = false): string[] {
+export function markLegend(supports: Partial<Pick<View3dSupport, "kind" | "dof" | "via">>[], jigView = false, tieMarks?: Pick<View3dTieMark, "via">[] | null, farMm?: number | null): string[] {
   const kinds = new Set<MarkKind>();
   let bare = false;
   let jigBare = false;
@@ -182,6 +199,10 @@ export function markLegend(supports: Partial<Pick<View3dSupport, "kind" | "dof">
   const legacy = bare && (jigView || jigBare);
   const lines = MARK_ORDER.filter((k) => kinds.has(k)).map((k) => MARK_TABLE[k].legend);
   if (legacy) lines.push(LEGACY_MARK_TIP);
+  // v0.25.2: 강제 부여 항목(있을 때만 — 옛 manifest 는 지금 그대로)
+  if (supports.some((s) => s.via === "force")) lines.push(TIE_TABLE.force.legend());
+  if (tieMarks?.some((m) => m.via === "force")) lines.push(TIE_TABLE.ring.legend(farMm));
+  if (tieMarks?.some((m) => m.via === "miss")) lines.push(TIE_TABLE.miss.legend());
   return lines;
 }
 

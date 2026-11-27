@@ -569,6 +569,7 @@ select:disabled {
 .card-head h3 {
   font-size: 1rem;
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;

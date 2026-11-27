@@ -851,6 +851,16 @@ export function CompareShapeSummary({ study }: { study: DoeStudyOut }) {
                 <td className="mono">{r.id}</td>
                 <td>
                   {r.name} {r.reference && <span className="badge info">기준</span>}
+                  {r.double_sheet && (
+                    <span
+                      className="badge warn"
+                      data-testid={`prep-dsheet-${r.id}`}
+                      title={`${CODE_TEXT.SHAPE_DOUBLE_SHEET} — 마주 보는 면 ${Math.round(r.double_sheet.frac * 100)} % · 간격 ${+r.double_sheet.gap_mm.toFixed(2)} mm`}
+                    >
+                      {" "}
+                      앞뒷면 두 장?
+                    </span>
+                  )}
                   {diagText(r.diag) && (
                     <span className="small muted" title="메시 입력 진단(보고만 — 메시는 그대로). 필요하면 HyperMesh 에서 고치세요" data-testid={`prep-diag-${r.id}`}>
                       {" "}
