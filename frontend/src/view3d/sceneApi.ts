@@ -1,5 +1,6 @@
 // 장면 인터페이스(three 에 의존하지 않음). View3DCard 는 이 인터페이스만 알고, 구현(scene.ts)은 동적 import 로 별도 청크에서 적재한다.
 // 시험에서는 이 인터페이스를 흉내 내는 mock 을 끼운다.
+import type { ColorRole } from "../lib/colormap";
 import type { ArrowSpec } from "./arrows";
 import type { V3 } from "./pick";
 import type { Projection } from "./projection";
@@ -60,7 +61,7 @@ export interface SceneApi {
   /** 정점 스칼라 aValue 업로드(필드가 바뀔 때만). values 는 원 정점 순서 */
   setField?(values: Float32Array): void;
   /** 범례 범위·레벨 — 셰이더 uniform 만(정점 루프·버퍼 업로드 0) */
-  setLegend?(l: { min: number; max: number; levels: number }): void;
+  setLegend?(l: { min: number; max: number; levels: number; log?: boolean; outGray?: boolean }): void;
   /** 최대·최소 표식(화면 크기 고정 점 + 라벨). 위치만 바뀌면 스프라이트를 다시 만들지 않는다 */
   setValueMarks?(marks: ValueMark[]): void;
   /** 원형 외곽선(특징선): base = 기준 위치(3n), pairs = 정점 쌍. pairs null = 지움 */
@@ -73,8 +74,8 @@ export interface SceneApi {
   // ---- v0.15.0 비드 직접 선택(esl_bead_select.md §11.2) — 선택 모드 전용, 위 메서드 동작은 그대로. 없는 구현(시험 mock)은 선택 모드를 못 씀
   /** v0.15.1 강조 점(빨강, 화면 크기 고정·가려져도 보임) — 좌표 3·n, null = 지움 */
   setMarkers?(points: Float32Array | null): void;
-  /** 표면 색표: blues(기본) · diverging(발산 ±, §7.3) */
-  setColorMap?(map: "blues" | "diverging"): void;
+  /** 표면 색표: 자원 역할 seq(기본 — 레인보우) · div(0 중심 발산 ±) · region(분류). reversed = 색 순서 뒤집기(v0.25.1) */
+  setColorMap?(role: ColorRole, reversed?: boolean): void;
   /** 요소 모드 시작: 삼각형 t → 요소 tri2elem[t]. 이후 표면 = 요소별 평면 음영(setElemColors) */
   setElements?(tri2elem: Uint32Array, nElems: number): void;
   /** 요소별 RGBA(sRGB 8비트, 길이 4·nElems) */
@@ -94,6 +95,9 @@ export interface ValueMark {
   vertex: number;
   position: V3;
   text: string;
+  /** v0.25.1 표식 기호·색(기본 "●" 주황 — umax 핀은 다른 기호) */
+  symbol?: string;
+  color?: string;
 }
 /** 카메라 공유 상태(투영은 ViewerSync 상태가 따로 맡는다). halfH = 직교 반높이, zoom = 직교 줌 */
 export interface CameraState {

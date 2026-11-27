@@ -519,6 +519,23 @@ class View3dOut(_Out):
     values_url: str
 
 
+class View3dSceneRanges(View3dRanges):
+    """v0.25.1 VL 씬 manifest ranges — 기존 키 + 선택 키 c·dc(옛 자료 = 키 없음 → null)."""
+
+    c: dict[str, Any] | None = None
+    dc: dict[str, Any] | None = None
+
+
+class View3dSceneOut(View3dOut):
+    """v0.25.1 VL(esl_view3d_scene_legend.md §2.3·§6) 씬 manifest = View3dOut + 선택 키 c·dc·pins·ranges.c·ranges.dc.
+    기존 View3dOut(`/view3d/{did}/manifest.json`) 응답은 바이트 불변(새 키는 이 서브클래스에만)."""
+
+    ranges: View3dSceneRanges
+    c: dict[str, Any] | None = None
+    dc: dict[str, Any] | None = None
+    pins: dict[str, Any] | None = None
+
+
 class View3dSourceRow(_Out):
     """v0.24.1 Case 3D 하중 출처 행(esl_view3d_sources.md §5.3). code·reason = 출처 불가 사유(코드·문구 — 사유 부분만),
     resp_* = 응답 변위(재현) 불가 사유, rigid = 재현 쌍 강체 제거 규칙."""
@@ -2371,6 +2388,44 @@ class DoeView3dRegenOut(_Out):
 RankMetricLit = Literal["lin", "solve", "jig", "jd", "js", "bf", "fi"]
 
 
+class DoeSceneEntryOut(_Out):
+    entry_id: str
+    kk: int | str
+
+
+class DoeSceneSkippedOut(_Out):
+    did: str | None = None
+    entry_id: str | None = None
+    code: str
+    text: str
+
+
+class DoeScenePackOut(_Out):
+    c_kind: Literal["fu", "mixed"] | None = None
+    designs: dict[str, list[str]]
+    skipped: list[DoeSceneSkippedOut] = Field(default_factory=list)
+
+
+class DoeSceneBudgetOut(_Out):
+    max_mb: float
+    est_mb: float
+
+
+class DoeSceneViewOut(_Out):
+    """v0.25.1 VL 사이드카 post/scene_view.json 요약(계약 §6) — packs 키 = 순위 보기 키(full·jig·jig_disp·jig_spring·bforce·fint)."""
+
+    entries: list[DoeSceneEntryOut]
+    packs: dict[str, DoeScenePackOut]
+    budget: DoeSceneBudgetOut | None = None
+
+
+class DoeSceneAddOut(_Out):
+    """v0.25.1 VL [씬 3D 만들기] 가능 여부: ok = 권한·작업 조건·설정 enabled 모두 충족, blocked = 막힌 이유(ok 이면 null)."""
+
+    ok: bool
+    blocked: str | None = None
+
+
 class DoeResultOut(_Out):
     scenario: DoeScenarioLit | None = None          # v0.14.0
     reference_source: Literal["step", "case"] | None = None    # ④ 만
@@ -2462,6 +2517,9 @@ class DoeResultOut(_Out):
     # (조건을 만족하는 행만, 없으면 null). 옛 키 view3d_regen·bforce_add·fint_add 는 같은 값 거울. 노드 힘 출처 재현 진단 폴더
     # {entry: "d000_<pe>_e<kk>"}(사이드카에 있을 때만 — 그 폴더의 recon.json·recon.bin)
     source_add: "dict[str, DoeView3dRegenOut] | None" = None
+    # v0.25.1 VL(esl_view3d_scene_legend.md §6): 씬 묶음 사이드카 요약(없음·깨짐 = null)·[씬 3D 만들기] 가능 여부
+    scene_view: "DoeSceneViewOut | None" = None
+    scene_add: "DoeSceneAddOut | None" = None
     view3d_bf_recon: dict[str, str] | None = None
     view3d_fi_recon: dict[str, str] | None = None
 
