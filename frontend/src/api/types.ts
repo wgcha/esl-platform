@@ -1839,8 +1839,9 @@ export interface ChangelogEntry {
 
 // ---------------------------------------------------------------- v0.5.8 3D 하중 보기 (계약 esl_3d_load.md §3.6·§4)
 export interface View3dValuesArray {
-  /** fn(int16, N, 부호) · fmag(uint16, N) · u(int16×3, mm) · pa(uint16, 면압 |Fn|/A MPa — 사용자 결정 2026-10-28) */
-  key: "fn" | "fmag" | "u" | "pa";
+  /** fn(int16, N, 부호) · fmag(uint16, N) · u(int16×3, mm) · pa(uint16, 면압 |Fn|/A MPa — 사용자 결정 2026-10-28)
+   *  · v0.25.1 씬 값 파일만 c(int16, C 기여도 N·mm) · dc(int16, 차이 — 안 묶음만) */
+  key: "fn" | "fmag" | "u" | "pa" | "c" | "dc";
   dtype: "int16" | "uint16";
   comps: number;
   offset: number;
@@ -1981,6 +1982,8 @@ export interface View3dSceneOut extends View3dOut {
   dc?: Record<string, unknown> | null;
   pins?: Record<string, unknown> | null;
   ranges: View3dSceneRanges;
+  /** 통합 INT-12: 형상 파일 캐시 키 = 묶음 key(씬과 무관 — 씬을 바꿔도 형상 URL 같음) */
+  geometry_key?: string | null;
 }
 
 /** v0.24.3 ④ 검증 출처(esl_validate_sources.md §7.2) — GET /validations/{id}/sources · /cases/{id}/validations/sources */
@@ -3841,6 +3844,8 @@ export interface DoeScenePackOut {
   c_kind?: "fu" | "mixed" | null;
   designs: Record<string, string[]>;
   skipped?: DoeSceneSkippedOut[];
+  /** 통합 INT-11: 3D 색·핀이 표와 다른 씬(SCENE_C_MISMATCH·SCENE_PIN_MISMATCH) — 숫자는 표 기준 */
+  approx?: DoeSceneSkippedOut[];
 }
 export interface DoeSceneBudgetOut {
   max_mb: number;

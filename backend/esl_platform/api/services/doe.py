@@ -35,6 +35,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import hashlib
 import os
 import re
 import threading
@@ -90,6 +91,8 @@ SCENE_ENTRY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 SCENE_FILE_RE = re.compile(r"^(?:part|part_lod)\.glb$|^e[0-9]{2,4}\.bin$")
 SCENE_MANIFEST_RE = re.compile(r"^e[0-9]{2,4}\.json$")
 SCENE_MEDIA = {".glb": "model/gltf-binary", ".bin": "application/octet-stream"}
+# 코어 사이드카 warnings 의 근사 표시(VL-C1-8 — "<코드>: <출처> <안> <엔트리> …") → 응답 packs[src].approx(통합 INT-11)
+SCENE_APPROX_RE = re.compile(r"^(SCENE_C_MISMATCH|SCENE_PIN_MISMATCH): ([a-z_]+) (d[0-9]+) ([A-Za-z0-9_.\-]{1,128}) ")
 SCENE_NOT_FOUND = "VIEW3D_SCENE_NOT_FOUND"
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
 RANK_VIEWS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")   # v0.24.4: 코어 RANK_SOURCES 키(jig_disp·jig_spring 도 사이드카 jig_view.json)
@@ -2650,7 +2653,15 @@ def _scene_view(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[
                                 "entry_id": x.get("entry_id") if isinstance(x.get("entry_id"), str) else None,
                                 "code": x["code"], "text": text})
             packs[src] = {"c_kind": pk.get("c_kind") if pk.get("c_kind") in ("fu", "mixed") else None,
-                          "designs": _scene_designs(pk), "skipped": skipped}
+                          "designs": _scene_designs(pk), "skipped": skipped, "approx": []}
+        seen: set[tuple[str, str, str, str]] = set()
+        for w in d.get("warnings") or []:                        # 근사 씬(색·핀 ≠ 표 값) — 코드·출처·안·엔트리만(수치 원문은 내지 않음)
+            m = SCENE_APPROX_RE.match(w) if isinstance(w, str) else None
+            if m is None or m.group(2) not in packs or m.groups() in seen:
+                continue
+            seen.add(m.groups())
+            packs[m.group(2)]["approx"].append({"did": m.group(3), "entry_id": m.group(4), "code": m.group(1),
+                                                "text": up_svc.doe_text(m.group(1))})
         b = d.get("budget")
         budget = ({"max_mb": float(b["max_mb"]), "est_mb": float(b["est_mb"])}
                   if isinstance(b, dict) and not isinstance(b.get("max_mb"), bool) and isinstance(b.get("max_mb"), (int, float))
@@ -2740,6 +2751,7 @@ def view3d_scene_manifest(ctx: AppContext, principal: Principal, sid: str, src: 
         raise not_found(SCENE_NOT_FOUND, msg)
     base_url = f"/doe/studies/{sid}/view3d-scene/{src}/{did}"
     out = dict(m)
+    out["geometry_key"] = pack.get("key") if isinstance(pack.get("key"), str) else None   # 형상 URL 캐시 키 = 묶음(씬 무관)
     out["geometry"] = pack["geometry"]                            # geometry·lod = 묶음 것(씬 manifest 는 가리킬 뿐)
     out["lod"] = lod
     out["values"] = {**m["values"], "name": vname}
@@ -2749,15 +2761,18 @@ def view3d_scene_manifest(ctx: AppContext, principal: Principal, sid: str, src: 
     return out
 
 
-def view3d_scene_file(ctx: AppContext, principal: Principal, sid: str, src: str, did: str, name: str) -> tuple[str, str]:
-    """GET …/view3d-scene/{src}/{did}/{name} — pack.json 에 적힌 part.glb·part_lod.glb·e<kk>.bin 만."""
+def view3d_scene_file(ctx: AppContext, principal: Principal, sid: str, src: str, did: str, name: str) -> tuple[str, str, str]:
+    """GET …/view3d-scene/{src}/{did}/{name} — pack.json 에 적힌 part.glb·part_lod.glb·e<kk>.bin 만 → (경로, 형식, ETag).
+    ETag = 묶음 key·파일 이름·크기·수정 시각(형상은 씬과 무관 — 씬을 바꿔도 같은 URL·같은 ETag → If-None-Match 304, 통합 INT-12)."""
     d, pack, _side, _base = _scene_pack(ctx, principal, sid, src, did)
     if not SCENE_FILE_RE.match(name or "") or name not in _scene_names(pack):
         raise not_found(SCENE_NOT_FOUND, "씬 3D 파일이 없습니다")
     p = os.path.join(d, name)
     if not os.path.isfile(p) or os.path.islink(p):
         raise not_found(SCENE_NOT_FOUND, "씬 3D 파일이 없습니다")
-    return p, SCENE_MEDIA[os.path.splitext(name)[1]]
+    st = os.stat(p)
+    tag = hashlib.sha256(f"{pack.get('key')}|{name}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:32]
+    return p, SCENE_MEDIA[os.path.splitext(name)[1]], tag
 
 
 def add_scene(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:

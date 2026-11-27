@@ -637,3 +637,23 @@ def test_v0251_factorization_reused(tmp_path):
     side = _side(out)
     assert set(side["packs"]) == {r["key"] for r in stg.SCENE_SOURCES} and not side["warnings"]
     assert 0.0 <= side["seconds"]
+
+
+# ---------------------------------------------------------------- 통합 INT-10 — 실제 BD_POST 산출물 = 백엔드 응답 스키마
+def test_int10_real_scene_manifests_pass_api_schema(w_all6, w_legacy, w_cmp_grid):
+    """통합 INT-10(독립 검증 차단): 실제 BD_POST 가 쓴 씬 manifest 전부(출처 6행·옛 지그·격자 — 값 배열 c·dc 포함)가 백엔드 응답
+    스키마 `View3dSceneOut` 을 통과(서비스가 붙이는 geometry·lod·URL 과 같이). 백엔드가 없는 환경이면 건너뜀."""
+    schemas = pytest.importorskip("esl_platform.api.schemas")
+    n, keys = 0, set()
+    for out in (w_all6, w_legacy, w_cmp_grid):
+        for dp, _dn, fns in os.walk(os.path.join(out, "post", stg.SCENE_DIR)):
+            if "pack.json" not in fns:
+                continue
+            pk = U.read_json(os.path.join(dp, "pack.json"))
+            for sc in pk["scenes"]:
+                m = U.read_json(os.path.join(dp, sc["manifest"]))
+                o = schemas.View3dSceneOut.model_validate({**m, "geometry": pk["geometry"], "lod": pk["lod"], "geometry_url": "g",
+                                                           "lod_url": None, "values_url": "v", "geometry_key": pk["key"]})
+                keys |= {a.key for a in o.values.arrays}
+                n += 1
+    assert n >= 36 and {"c", "dc"} <= keys, (n, keys)

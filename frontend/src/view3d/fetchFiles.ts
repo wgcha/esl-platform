@@ -1,6 +1,6 @@
 // view3d 바이너리 파일(part.glb · part_lod.glb · values.bin) 받기. 오류 본문 {detail:{code,message}} 는 ApiError 로.
 import { API_PREFIX, ApiError } from "../api/client";
-import type { ApiErrorDetail, View3dOut } from "../api/types";
+import type { ApiErrorDetail, View3dOut, View3dSceneOut } from "../api/types";
 
 /** manifest 의 파일 URL(API 루트 기준 경로 `/esl-runs/{id}/view3d/part.glb`, 접두 /esl/api 없음)을 요청 주소로.
  *  api 클라이언트와 같이 API_PREFIX 를 붙이고 `?key=<manifest.key>` 를 단다(409 VIEW3D_STALE 감지). 파일 이름만 오면 view3d 아래로 본다. */
@@ -13,10 +13,13 @@ export function resolveFileUrl(runId: string, urlOrName: string, key?: string): 
   return key ? `${url}${url.includes("?") ? "&" : "?"}key=${encodeURIComponent(key)}` : url;
 }
 
-export function fileUrls(m: View3dOut): { geometry: string; lod: string | null; values: string } {
+/** 파일 URL 3개. 형상(part.glb·LOD)의 key = 씬 묶음이면 묶음 key(`geometry_key` — 씬을 바꿔도 같은 URL → 브라우저 캐시·304, 통합 INT-12),
+ *  아니면 manifest key(지금 그대로). 값 파일은 늘 manifest key */
+export function fileUrls(m: View3dOut | View3dSceneOut): { geometry: string; lod: string | null; values: string } {
+  const gk = ("geometry_key" in m && m.geometry_key) || m.key;
   return {
-    geometry: resolveFileUrl(m.esl_run_id, m.geometry_url || m.geometry.name, m.key),
-    lod: m.lod ? resolveFileUrl(m.esl_run_id, m.lod_url || m.lod.name, m.key) : null,
+    geometry: resolveFileUrl(m.esl_run_id, m.geometry_url || m.geometry.name, gk),
+    lod: m.lod ? resolveFileUrl(m.esl_run_id, m.lod_url || m.lod.name, gk) : null,
     values: resolveFileUrl(m.esl_run_id, m.values_url || m.values.name, m.key),
   };
 }
