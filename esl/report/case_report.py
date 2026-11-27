@@ -2,7 +2,8 @@
 
 자체 완결 단일 파일(inline CSS·SVG·JSON·소량 JS, 외부 URL 0). 내용: 입력 요약, t* max-hold 곡선(두 지표),
 3-2-1 지지점, F_eq 상위 표, 검증 요약, 전 요소 재현 정확도(최대변형률 비교·분위수), **겹쳐보기**(2D 요소 컨투어
-Radioss ε / ESL ε / 오차 % 전환 + 불투명도 슬라이더 겹치기, 공통 색 범위, 회색 = 비교 불가, hotspot·지지점 표시),
+Radioss ε / ESL ε / 오차 % 전환 + 불투명도 슬라이더 겹치기, 공통 색 범위, 회색 = 비교 불가, hotspot·지지점 표시;
+색 = 공용 자원 ε ``seq``·오차 ``div`` 역할 — 정점은 데이터 JSON ``cmap``(``esl.io.colormaps.as_json``)에서만, v0.25.1 §5.7 L14·L15),
 변형 단면선 겹치기(초기·Radioss·ESL, 배율 슬라이더), 상위 N 표, 히스토그램, 의미 주석.
 
 요소 수가 ``max_points`` 를 넘으면 2D 셀 격자 다운샘플(esl.report.field.downsample). 각 절은 앞 단계 산출물이
@@ -21,6 +22,7 @@ import esl
 from esl import val_metrics as _vm
 from esl import val_src as _vs
 from esl.display import display_path
+from esl.io import colormaps as _cm
 from esl.report import field as F
 from esl.report import html as H
 
@@ -633,10 +635,9 @@ function nice(lo,hi,n){if(!(hi>lo)){hi=lo+(Math.abs(lo)||1);}var r=(hi-lo)/n,p=M
  for(;t<=hi+st*1e-9;t+=st)o.push(Math.abs(t)<st*1e-9?0:t);return o;}
 function f3(v){if(v===null||v===undefined||!isFinite(v))return '—';var a=Math.abs(v);
  return (a!==0&&(a<1e-3||a>=1e6))?v.toExponential(3):(+v.toPrecision(4)).toString();}
-var VIR=[[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]];
-var DIV=[[49,54,149],[69,117,180],[145,191,219],[240,228,140],[252,141,89],[215,48,39],[165,0,38]];
-function lerp(c,t){t=Math.max(0,Math.min(1,t));var s=t*(c.length-1),i=Math.min(Math.floor(s),c.length-2),f=s-i,a=c[i],b=c[i+1];
- return 'rgb('+Math.round(a[0]+(b[0]-a[0])*f)+','+Math.round(a[1]+(b[1]-a[1])*f)+','+Math.round(a[2]+(b[2]-a[2])*f)+')';}
+var CM=D.cmap||{},SEQC=(CM.seq||{}).stops,DIVC=(CM.div||{}).stops;
+function lerp(c,t){t=(t===t)?Math.max(0,Math.min(1,t)):0;var s=t*(c.length-1),i=Math.min(Math.floor(s),c.length-2),f=s-i,a=c[i],b=c[i+1];
+ function ch(k){return Math.floor(a[k]+(b[k]-a[k])*f+0.5);}return 'rgb('+ch(0)+','+ch(1)+','+ch(2)+')';}
 function grad(c){return 'linear-gradient(90deg,'+c.map(function(x,i){return 'rgb('+x.join(',')+') '+(100*i/(c.length-1)).toFixed(0)+'%';}).join(',')+')';}
 var M=D.map;
 if(M){
@@ -645,8 +646,8 @@ if(M){
  var layer='rad',op=0.5,mk=true,geo=null;
  var READ={0:'비교 대상',1:'HOLD(상승 중 아님)',2:'LOW(작은 변형률)',3:'EXCLUDED',4:'NO_PREV'};
  function col(L,i){var st=M.st[i];
-  if(L==='err'){if(st!==0||M.err[i]===null)return null;return lerp(DIV,(M.err[i]/M.errR+1)/2);}
-  var v=L==='rad'?M.rad[i]:M.esl[i];if(st===1||st===3||st===4||v===null)return null;return lerp(VIR,v/M.vmax);}
+  if(L==='err'){if(st!==0||M.err[i]===null)return null;return lerp(DIVC,(M.err[i]/M.errR+1)/2);}
+  var v=L==='rad'?M.rad[i]:M.esl[i];if(st===1||st===3||st===4||v===null)return null;return lerp(SEQC,v/M.vmax);}
  function setup(){var w=wrap.clientWidth||800,dx=M.xr[1]-M.xr[0]||1,dy=M.yr[1]-M.yr[0]||1,pad=20,
   h=Math.max(240,Math.min(680,(w-2*pad)*dy/dx+2*pad)),s=Math.min((w-2*pad)/dx,(h-2*pad)/dy),
   ox=(w-s*dx)/2,oy=(h-s*dy)/2,r=window.devicePixelRatio||1;
@@ -666,10 +667,10 @@ if(M){
    g.strokeStyle=fg;g.stroke();g.fillStyle=fg;g.textAlign='center';g.textBaseline='middle';g.fillText(h.label,x,y+0.5);});
 }
  function legend(){var L=layer,h,na='<span style="display:inline-block;width:14px;height:10px;background:var(--na);vertical-align:middle"></span> 비교 불가';
-  if(L==='err'){h='오차 % <span style="display:inline-block;width:200px;height:10px;vertical-align:middle;background:'+grad(DIV)+'"></span> '
+  if(L==='err'){h='오차 % <span style="display:inline-block;width:200px;height:10px;vertical-align:middle;background:'+grad(DIVC)+'"></span> '
    +'−'+f3(M.errR)+' … 0 … +'+f3(M.errR)+'% (범위 밖은 끝 색) · '+na;}
   else{h=(L==='ovl'?'Radioss / ESL (공통 범위) ':'ε_eq ')+'<span style="display:inline-block;width:200px;height:10px;vertical-align:middle;background:'
-   +grad(VIR)+'"></span> 0 … '+f3(M.vmax)+' · '+na;}
+   +grad(SEQC)+'"></span> 0 … '+f3(M.vmax)+' · '+na;}
   document.getElementById('legend').innerHTML=h;}
  function render(){setup();var L=layer==='ovl'?'rad':layer;draw(cv[0],L);
   if(layer==='ovl'){draw(cv[1],'esl');cv[1].style.opacity=op;cv[1].style.visibility='visible';}else{cv[1].style.visibility='hidden';}
@@ -767,7 +768,7 @@ def build_case_report(case_dir: str, record: dict | None = None, max_points: int
         head += (f'<p class="small muted">없는 산출물(해당 절은 "자료 없음"): '
                  f'{H.esc(", ".join(sorted(set(c.missing))))}</p>')
     body = head + toc + "\n".join(H.section(i, n, inner) for i, n, inner in parts)
-    data = {"map": mapd, "sec": secd}
+    data = {"map": mapd, "sec": secd, "cmap": _cm.as_json(("seq", "div"))}
     doc = H.page(t, body, script=JS, data=data, version=esl.__version__, extra_css=H.cond_css(body))
     info = {"sections": [i for i, _, _ in parts], "missing": sorted(set(c.missing)),
             "n_points": None if mapd is None else mapd["n_shown"],

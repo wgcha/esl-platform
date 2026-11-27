@@ -14,7 +14,10 @@ ctx 키
 """
 from __future__ import annotations
 
+import math
+
 from esl.doe import load_messages
+from esl.io import colormaps as _cm
 from esl.report import html as H
 
 SCN_KO = {"same": "① 같은 모델", "mesh": "② 다른 모델(메시 있음)", "step": "③ 다른 모델(STEP 만)", "compare": "④ 형상 직접 비교",
@@ -51,13 +54,19 @@ METRIC_DEFS = [
 ]
 
 
+# v0.25.1 ESL별 개선율 칸 색(esl_view3d_scene_legend.md §5.7 L18 = 화면 L10): 색 값 = C 변화율 r − 1(= −개선율), 자원 div 역할
+# t = 0.5 + (r − 1)/(2·SPAN) — 같은 입력이면 화면(DoePerEslTable)과 같은 rgb. 칸 숫자(개선율)·정렬·per_esl.json 은 불변.
+PER_ESL_HEAT_SPAN = 0.5                                   # 세기 기준 ±50 %(지금 기준 그대로)에서 끝색
+PER_ESL_NOTE = "파랑 개선(C 감소) · 빨강 악화(C 증가)"
+
+
 def _ratio_cell(r) -> str:
-    """ESL별 개선율 % 셀(개선 초록·악화 빨강, 세기 = |1 − r| 최대 50 %)."""
+    """ESL별 개선율 % 셀(배경 = C 변화율 발산 색: 파랑 개선(C 감소)·빨강 악화(C 증가), 0 = 무색, ±50 % 에서 끝색)."""
     if r is None:
         return "–"
     imp = 1.0 - float(r)
-    a = min(abs(imp) / 0.5, 1.0) * 0.55 + 0.08
-    col = f"rgba(22,163,74,{a:.2f})" if imp > 0 else f"rgba(220,38,38,{a:.2f})" if imp < 0 else "transparent"
+    x = float(r) - 1.0
+    col = "transparent" if x == 0 or not math.isfinite(x) else _cm.css(_cm.map_for("div"), 0.5 + x / (2.0 * PER_ESL_HEAT_SPAN))
     return f"<span style='display:inline-block;min-width:4.5em;padding:0 4px;background:{col}'>{H.esc(_pct(imp))}</span>"
 
 
@@ -71,6 +80,7 @@ def per_esl_html(rk: list, esl: list, top_n: int) -> str:
         rr = {p["entry_id"]: p.get("ratio") for p in x.get("per_esl") or []}
         trs.append([x["id"]] + [_ratio_cell(rr.get(e["entry_id"])) for e in esl])
     return ("<h3>ESL별 개선율(베이스라인 같은 ESL 대비)</h3>"
+            + f"<p class='small muted'>{H.esc(PER_ESL_NOTE)}</p>"
             + H.table(hdr, trs, num=tuple(range(1, len(hdr))), raw=tuple(range(1, len(hdr)))))
 
 

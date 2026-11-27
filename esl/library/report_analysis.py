@@ -4,8 +4,9 @@
 
 - 자체 완결 단일 파일: CSS·inline SVG·데이터·JS(정렬·필터 소량) 모두 내장, 외부 URL·CDN·폰트 0
   (SVG 는 HTML5 inline 이라 xmlns 도 쓰지 않음).
-- 라이트/다크: CSS 변수, ``prefers-color-scheme`` + ``data-theme`` 둘 다. 히트맵은 테마 색 + 불투명도 램프라
-  두 테마에서 같은 의미(0 = 바탕색으로 사라짐).
+- 라이트/다크: CSS 변수, ``prefers-color-scheme`` + ``data-theme`` 둘 다. 격자 지도(히트맵) 색은 공용 자원
+  (``esl.io.colormaps`` — 순차 ``seq`` 낮음 파랑 → 높음 빨강, 발산 ``div`` − 파랑 · 0 흰 · + 빨강)의 불투명 색이라
+  두 테마에서 같은 값 = 같은 색(v0.25.1 esl_view3d_scene_legend.md §5.7 L16·L17). ``--seq``·``--pos``·``--neg`` 는 선 그래프용.
 - 절: 표지 · 필터/요약 · 씬 표(정렬·필터) · 포락 히트맵(정규화 격자 + 대상 외곽) · 대표 케이스(모드 에너지 곡선,
   선택 씬, 셀 하중: 법선 성분 발산 색 + 면내 화살표) · 통계 뷰(유형·인치별 Σ|F|, SVD 계수 산점, 검증 오차) ·
   최적화 설정 · 한계.
@@ -19,6 +20,7 @@ import os
 import numpy as np
 
 from esl import val_metrics as _vm
+from esl.io import colormaps as _cm
 from esl.library import _util as U
 from esl.report.html import json_text
 
@@ -139,7 +141,7 @@ EXPLAIN = {
                     "hotspot 이동 = 가장 세게 변형되는 자리가 옮겨 간 거리(0 = 그대로, 판 크기 대비). "
                     "ε_max 비 = 새 최대 변형률 ÷ 옛 최대 변형률(1 넘으면 더 휨)."]),
     "cmp_envelope": ("어디서 힘이 늘거나 줄었나?",
-                     ["모든 씬을 겹친 셀별 최대 힘을 새 버전 − 옛 버전으로 뺀 지도. 파랑 = 늘어남, 주황 = 줄어듦."]),
+                     ["모든 씬을 겹친 셀별 최대 힘을 새 버전 − 옛 버전으로 뺀 지도. 빨강 = 늘어남, 파랑 = 줄어듦."]),
     "cmp_reps": ("대표 씬이 그대로인가?",
                  ["두 버전에서 각각 비슷한 씬을 묶어 중심 씬을 다시 고름. 같으면 이전 최적화 결과를 그대로 써도 된다."]),
     "cmp_limits": ("이 비교를 어디까지 믿을 수 있나?",
@@ -225,24 +227,29 @@ def _outline_path(outline, ox, oy, pw, ph) -> str:
 
 def heatmap(values, fr, outline=None, tips=None, mode="seq", vec=None, title="", w=620, legend_label="",
             highlight=None) -> str:
-    """values (nx,ny). mode seq: |값| 불투명도 램프(--seq), div: 부호별 --pos/--neg. vec (nx,ny,2) 면내 화살표."""
+    """values (nx,ny). mode seq: |값| 0~최대 → 자원 ``seq`` 역할(낮음 파랑 → 높음 빨강), div: 부호 있는 값 ±최대 →
+    ``div`` 역할(− 파랑 · 0 흰 · + 빨강, t = 0.5 + v/(2·최대)). 칸·색 막대 모두 불투명 색(투명도 램프 없음). vec (nx,ny,2) 면내 화살표."""
     V = np.asarray(values, dtype=float)
     nx, ny = V.shape
     pw, ph = _plot_box(fr, w - 90)
     ox, oy = 46.0, 24.0
     W, H = pw + 90, ph + 84
     vmax = float(np.max(np.abs(V))) if V.size else 0.0
+    cmap = _cm.map_for("seq" if mode == "seq" else "div")
+
+    def tcol(v) -> float:                        # 값 → 지도 t(최대 0 이면 seq 0·div 0.5)
+        if mode == "seq":
+            return (abs(v) / vmax) if vmax > 0 else 0.0
+        return 0.5 + v / (2.0 * vmax) if vmax > 0 else 0.5
     cw, chh = pw / nx, ph / ny
     out = [f'<text class="ttl" x="{ox}" y="15">{_e(title)}</text>']
     for i in range(nx):
         for j in range(ny):
             v = V[i, j]
-            a = (abs(v) / vmax) if vmax > 0 else 0.0
-            col = "var(--seq)" if mode == "seq" else ("var(--pos)" if v >= 0 else "var(--neg)")
             x, y = ox + i * cw, oy + (ny - 1 - j) * chh
             tip = tips[i][j] if tips is not None else f"({i},{j}) {_fmt(v)}"
             out.append(f'<rect class="cell" x="{x + 0.5:.1f}" y="{y + 0.5:.1f}" width="{max(cw - 1, 0.5):.1f}" '
-                       f'height="{max(chh - 1, 0.5):.1f}" fill="{col}" fill-opacity="{0.06 + 0.94 * a:.3f}" rx="1">'
+                       f'height="{max(chh - 1, 0.5):.1f}" fill="{_cm.css(cmap, tcol(v))}" rx="1">'
                        f'<title>{_e(tip)}</title></rect>')
     if highlight is not None:
         i, j = highlight
@@ -267,12 +274,8 @@ def heatmap(values, fr, outline=None, tips=None, mode="seq", vec=None, title="",
     n = 24
     for k in range(n):
         t = (k + 0.5) / n
-        if mode == "seq":
-            col, a = "var(--seq)", t
-        else:
-            col, a = ("var(--neg)", 1 - 2 * t) if t < 0.5 else ("var(--pos)", 2 * t - 1)
-        out.append(f'<rect x="{lx + k * lw / n:.1f}" y="{ly}" width="{lw / n + 0.3:.1f}" height="9" fill="{col}" '
-                   f'fill-opacity="{0.06 + 0.94 * a:.3f}"/>')
+        out.append(f'<rect x="{lx + k * lw / n:.1f}" y="{ly}" width="{lw / n + 0.3:.1f}" height="9" '
+                   f'fill="{_cm.css(cmap, t)}"/>')
     lo = "0" if mode == "seq" else _fmt(-vmax, 3)
     out.append(f'<text x="{lx}" y="{ly + 21}">{lo}</text>')
     out.append(f'<text x="{lx + lw}" y="{ly + 21}" text-anchor="end">{_fmt(vmax, 3)}</text>')
