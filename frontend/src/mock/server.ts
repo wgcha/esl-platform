@@ -1,6 +1,7 @@
 // 목 서버: fetch 래퍼 수준. 백엔드 실제 응답 모양(openapi_p1b.json + 자유 형식 응답은 서비스 코드)을 흉내 낸다.
 // tick()마다 작업이 한 걸음 진행된다.
 import { mockView3d } from "./view3dmock";
+import { sceneBin } from "./scenemock";
 import type {
   AnalysisCreate, AnalysisFilters, AnalysisOut, ComparisonCreate, ComparisonOut, DispLayer, EntryOut, FieldLayer, SectionAxis,
   ArtifactOut, CaseLibraryOut, CaseOut, ConfigIssue, EslRunOut, ExportTarget, JobOut, JobState, JobType, Me, Metric, RunAllOut, StageState, StepKey, StepStatus, SupportAuto, SupportProblem,
@@ -1838,6 +1839,15 @@ export function createMockFetch(server: MockServer, real?: typeof fetch): typeof
     if (dbin && method === "GET") {
       const v = mockView3d();
       return new Response(dbin[1] === "part.glb" ? v.glb : dbin[1] === "recon.bin" ? v.reconBin : v.values, { status: 200, headers: { "Content-Type": dbin[1] === "part.glb" ? "model/gltf-binary" : "application/octet-stream" } });
+    }
+    // v0.25.1 씬 묶음 파일: part.glb · e<kk>.bin (did/엔트리 순번으로 값 결정)
+    const sbin = /^\/esl\/api\/doe\/studies\/([^/]+)\/view3d-scene\/([^/]+)\/([^/]+)\/(part\.glb|e(\d+)\.bin)$/.exec(url.pathname);
+    if (sbin && method === "GET") {
+      const v = mockView3d();
+      if (sbin[4] === "part.glb") return new Response(v.glb, { status: 200, headers: { "Content-Type": "model/gltf-binary" } });
+      const rec = server.doe.recs.find((x) => x.out.id === sbin[1]);
+      const eid = rec?.result?.scene_view?.entries[Number(sbin[5])]?.entry_id ?? "e";
+      return new Response(sceneBin(decodeURIComponent(sbin[3]), eid), { status: 200, headers: { "Content-Type": "application/octet-stream" } });
     }
     const raw = init?.body;
     const isBuf = raw instanceof ArrayBuffer || ArrayBuffer.isView(raw as ArrayBufferView);

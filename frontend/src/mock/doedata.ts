@@ -8,6 +8,7 @@ import type {
 } from "../api/types";
 import EXAMPLE_YAML from "../../../config/esl_platform.example.yaml?raw";
 import { mockView3d } from "./view3dmock";
+import { sceneManifest, withScene } from "./scenemock";
 import type { DoeDepthSection, DoeSelectAutoOut, DoeSelectionAny, DoeSelectionIn, DoeSelectionOut, DoeSelectionV2 } from "../api/types";
 import { MOCK_MESSAGES, graphAutoSeed, graphBasis, graphDerive, graphManifest, graphMesh, graphOut, graphParams, graphPlan, graphValidate, stepAutoSeed, stepPlan } from "./graphmock";
 import { selAutoSeed, selBasis, selCellStatus, selColorMax, selDefaultSelection, selDerive, selManifest, selMesh, selParams, selPlan, selThumbSvg, selValidate } from "./selectmock";
@@ -1467,6 +1468,9 @@ export class DoeMock {
   settings: DoeSettingsOut = makeDoeSettings();
   recs: Rec[] = [];
   seededJobs: JobOut[] = [];
+  /** v0.25.1 시험용 기록: [씬 3D 만들기] POST 횟수 · 씬 manifest 요청(출처/안/엔트리) */
+  sceneAddCalls = 0;
+  sceneManifestCalls: string[] = [];
   seq = 0;
   /** 시험용: 다음 check-inputs 를 이 오류로 */
   checkError: MockResponse | null = null;
@@ -1759,6 +1763,19 @@ export class DoeMock {
       result: withFint(withBforce(s40.result!, kind), kind),          // v0.24.0 보완: 내력 ESL 함께(doe-50 ok · doe-51 FINT 없음)
     });
     this.recs.push(mk("doe-50", "QN80J Ch/R 비드 — 경계력·내력 ESL(v0.24)", "2026-11-18T09:00:00Z", "ok"), mk("doe-51", "QN80J Ch/R 비드 — 경계력·내력 자료 없음", "2026-11-18T10:00:00Z", "none"));
+  }
+
+  /** v0.25.1 시연·시험(?demoScene=1): doe-60 씬별 3D 있음(전 출처·마지막 엔트리 = 저장 한도로 빠짐) · doe-61 옛 결과(scene_view 없음 + [씬 3D 만들기] 가능) */
+  demoScene() {
+    if (this.recs.some((r) => r.out.id === "doe-60")) return;
+    this.demoBforce();
+    const s50 = this.recs.find((r) => r.out.id === "doe-50")!;
+    const keys = ["full", "jig", "jig_disp", "jig_spring", "bforce", "fint"];
+    const mk = (id: string, title: string, at: string, res: DoeResultOut): Rec => ({ ...s50, out: { ...s50.out, id, title, created_at: at }, jobIds: [...s50.jobIds], result: res });
+    this.recs.push(
+      mk("doe-60", "QN80J Ch/R 비드 — 낙하 씬별 3D(v0.25.1)", "2026-11-27T09:00:00Z", withScene(s50.result!, keys, { skipLast: true })),
+      mk("doe-61", "QN80J Ch/R 비드 — 옛 결과(씬 3D 없음)", "2026-11-27T10:00:00Z", { ...s50.result!, scene_view: null, scene_add: { ok: true, blocked: null } }),
+    );
   }
 
   /** v0.21.0 시연·시험(?demoShape=1): 새 스냅샷(shape_rules) — doe-30 ① 그래프 select(부분 W·guard 꼬리표·미리보기 RG_OUTSIDE_GUARD) · doe-31 ④ 형상 비교(완화 직행 칩·메시 품질 ⚠·품질 통과 최상위) ·
@@ -2808,6 +2825,21 @@ export class DoeMock {
         if (src === "jig") return a?.available ? ok(rec.out, 202) : err(409, "VIEW3D_REGEN_UNAVAILABLE", "지그가 계산된 스터디만 지그 3D 를 다시 만들 수 있습니다");
         if (!a?.available) return err(409, `${ns.code}_UNSUPPORTED`, `다른 메시 비교 방식(④·옛 ③)은 ${ns.name} 을 지원하지 않습니다`);
         return ok(rec.out, 202);
+      }
+      if (method === "POST" && sub === "/view3d/scenes") {      // v0.25.1 [씬 3D 만들기]
+        if (!rec.result?.scene_add?.ok) return err(409, "VIEW3D_SCENE_UNAVAILABLE", rec.result?.scene_add?.blocked ?? "씬 3D 를 만들 수 없습니다");
+        this.sceneAddCalls += 1;
+        return ok(rec.out, 202);
+      }
+      if ((r = sub.match(/^\/view3d-scene\/([^/]+)\/([^/]+)\/([^/]+)\/manifest\.json$/)) && method === "GET") {      // v0.25.1 씬 manifest
+        const [src, did, eid] = [r[1], r[2], r[3]].map(decodeURIComponent);
+        const sv = rec.result?.scene_view;
+        const kk = sv?.entries.findIndex((e) => e.entry_id === eid) ?? -1;
+        if (!sv || kk < 0) return err(404, "VIEW3D_SCENE_NOT_FOUND", "씬 3D 자료가 없습니다");
+        if (!(sv.packs[src]?.designs[did] ?? []).includes(eid)) return err(404, "VIEW3D_SCENE_NOT_FOUND", "씬 3D 자료가 없습니다");
+        this.sceneManifestCalls.push(`${src}/${did}/${eid}`);
+        const row = rec.result!.ranking.find((x) => x.id === did);
+        return ok(sceneManifest(rec.out.id, src, did, eid, kk, row ? row.umax / rec.result!.baseline.umax : 1));
       }
       if (method === "POST" && sub === "/view3d/regenerate") {
         const rg = rec.result?.view3d_regen;
