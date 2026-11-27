@@ -16,3 +16,4 @@
 - 결과·보기: n_ref · counts[{key,label,n}] · 순위 행 jig_ref · jig.grid.n_forced_shapes/n_ref_shapes · prep 형상 행 double_sheet{frac,gap_mm}
 - 경고 필드 이름 가정(대체 문구용 — 서버 message 가 오면 불필요): did,n_force,n_clusters,pct,dmin,dmed,dmax,far,n_far,n_miss. "참고" 꼬리표 title 은 JIG_GRID_TIE_FORCED 경고를 did(또는 id·name·문구 "형상 {did}")로 찾음
 - 다음: 높이 측정 스크립트(screenshots-v0252-f1.mjs) → check:api → 전체 vitest 1회
+- 완료: 높이 측정 전부 OK(2560·1920), 전체 vitest 1039/1040 — 실패 1 = scripts/check-api.test(check:api 11건: 위 새 키가 B1 의 openapi_p1b.json 갱신 전이라 "스키마에 없는 키"). 통합 때 B1 스냅샷 반영 후 재확인.
