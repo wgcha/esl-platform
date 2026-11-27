@@ -699,6 +699,62 @@ def stage_extract(ctx: Context) -> dict:
 
 
 # ====================================================================== S2 tstar
+MANUAL_REL = ("before", "at", "after")
+
+
+def _point(ctx: Context, model: StoredModel, metric: str, frame_index: int, auto: dict) -> dict:
+    """직접 고른 t* 의 값(계약 esl_tstar_manual_jig_force.md §2.3 — 코어 한 곳): history.npz 의 그 프레임에서 지표(자동 t* 와 같은
+    계열 — 누적 씬 = 누적 계열, 이번 증가 없는 요소·tstar.exclude_elem_ids 뺌) 최대 H 요소. auto = {frame_index, time, value}."""
+    from esl.io import frame_fill as _ff
+    if metric not in METRICS:
+        raise EslError("INPUT_INVALID", f"metric 은 {list(METRICS)} 중 하나 (값 {metric!r})")
+    meta = _frames_meta(ctx)
+    hz, hp = _history(ctx, model)
+    fidx = hz["frame_index"].astype(np.int64)
+    hit = np.flatnonzero(fidx == int(frame_index))
+    if hit.size != 1:
+        raise EslError("FRAME_NOT_FOUND", f"h3d 에 없는 프레임입니다(frame {frame_index} — history.npz 프레임 {fidx.size}개)")
+    f = int(hit[0])
+    series = _metric_series(hz, _shear_factor(ctx, meta), _source(meta))[metric]
+    ex = _exclude_mask(ctx, model.elem_id, hz["elem_id"])
+    cst = _cum_state(ctx, model)
+    if cst is not None:                            # 누적 씬: 값 = 누적 계열, 이번 증가 없는 요소(이전 손상만) 제외 — 자동과 같은 규칙
+        cum_v, inc_v = _cum.series(series, cst["prev"][hp], cst["modes"][metric])
+        no_inc = ~(np.where(np.isfinite(inc_v[-1]), inc_v[-1], -np.inf) > cst["min_increment"])
+        ex = no_inc if ex is None else (ex | no_inc)
+        series = cum_v
+    pt = tstar.point_at(series, f, ex)
+    fi = int(frame_index)
+    af = int(auto["frame_index"])
+    av = auto.get("value")
+    ratio = float(pt["value"]) / float(av) if av is not None and float(av) > 0 else None
+    D = {int(x) for x in meta.get("frames_D") or []}
+    return {"frame_index": fi, "time": float(hz["time"][f]), "elem_id": int(hz["elem_id"][pt["elem_pos"]]),
+            "value": float(pt["value"]),
+            "auto": {"frame_index": af, "time": float(auto["time"]), "value": None if av is None else float(av)},
+            "ratio": ratio, "rel": MANUAL_REL[0] if fi < af else (MANUAL_REL[1] if fi == af else MANUAL_REL[2]),
+            "in_D": fi in D, "have": _ff.have_frame(ctx.p(D_EXTRACT), fi)}
+
+
+def frame_point(out_dir: str, cfg: dict | None, metric: str, frame_index: int) -> dict:
+    """직접 고른 t* 의 값(계약 §2.3 — 백엔드 확정 저장·코어 _select_frame·보고서 공용). out_dir = Case 출력 폴더(01_extract·
+    02_tstar/tstar.json 필요), cfg = Case 코어 설정(tstar.exclude_elem_ids·cumulative — 없으면 제외 없음), metric = 곡선 지표.
+    반환 {frame_index, time, elem_id, value, auto{frame_index, time, value}, ratio(= value/자동 값 | None), rel(before|at|after),
+    in_D(frames_D 포함), have(disp.npz·strain_frames.npz 에 있음)}. 자동 = tstar.json metrics[metric].tstar. 오류: FRAME_NOT_FOUND
+    (history.npz 에 없는 프레임), PREREQUISITE_MISSING(추출·t* 산출물 없음), INPUT_INVALID(metric)."""
+    out_dir = os.path.abspath(os.fspath(out_dir))
+    _require(out_dir, [f"{D_EXTRACT}/history.npz", f"{D_EXTRACT}/frames.json", f"{D_TSTAR}/tstar.json"])
+    c = dict(cfg or {})
+    c["tstar"] = {"exclude_elem_ids": [], **(c.get("tstar") or {})}
+    ctx = Context(cfg=c, config_path="", rad="", results="", out=out_dir, ts="", frame=None, support_nodes=None,
+                  echo=lambda s: None, record={})
+    tj = _read_json(ctx.p(D_TSTAR, "tstar.json"))
+    rec = ((tj.get("metrics") or {}).get(metric) or {}).get("tstar")
+    if not isinstance(rec, dict):
+        raise EslError("INPUT_INVALID", f"tstar.json 에 {metric} 자동 t* 가 없음")
+    return _point(ctx, load_model(out_dir), metric, int(frame_index), rec)
+
+
 def _select_frame(tj: dict, frame: int | None) -> dict:
     """자동 t* 또는 --frame (후보 프레임 D 안에서만)."""
     if frame is None:

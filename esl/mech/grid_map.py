@@ -33,7 +33,24 @@ from esl.mech import bforce, jig, jig_bc
 SCHEMA = "esl/doe_jig_grid/1"
 RUN_SCHEMA = "esl/doe_jig_grid_run/1"
 VIA_MISS, VIA_BAND, VIA_SNAP = 0, 1, 2
-VIA_NAMES = {VIA_MISS: "miss", VIA_BAND: "band", VIA_SNAP: "snap"}
+VIA_FORCE = 3                                       # v0.25.2 강제 부여(esl_tstar_manual_jig_force.md §3.1)
+VIA_NAMES = {VIA_MISS: "miss", VIA_BAND: "band", VIA_SNAP: "snap", VIA_FORCE: "force"}
+# v0.25.2 옛 스냅샷 규칙(§3.6 — jig_bc.LEGACY_ABSENT 와 같은 관례): 스냅샷 rank.jig_grid 원본에 이 키가 없으면 DEFAULTS 에서 채우지
+# 않고 이 값(None = 강제 부여 끔 → capture(force=None) = v0.25.1 코드 경로, 결과·해시 바이트 불변)
+LEGACY_ABSENT = {"tie_force": None}
+# v0.25.2 잡기 단계 표(§3.1 — D-0.25.2-8): capture 가 위에서부터 돈다(단계 이름 분기 없음 — 열만 읽음). 앞 단계가 잡은 노드는 뒤 단계가
+# 다시 쓰지 않는다. target: all = 전 묶음 | empty = 앞 단계 뒤 노드 0 묶음. dist: 거리 한도 열(capture_rel·snap_rel = ×max(h_T, h_S),
+# force = tie_force.max_dist_mm(None = 없음, 값 = max(값, snap 한도))). normal: 법선 조건 각 열. pick: within = 한도 안 전부 |
+# nearest1 = 법선 맞는 최근접 1노드 | area_fill = 거리순 면적 합 ≥ 묶음 면적(최소 1). value: extrap = 골격 보간 + 선형 외삽 |
+# point = 그 골격 점 | closest = 골격 최근접점(클립, 외삽 없음). on: always | force(= 스냅샷 tie_force.enabled). 못 잡은 묶음 = miss.
+CAPTURE_STAGES = (
+    {"via": VIA_BAND, "target": "all", "dist": "capture_rel", "normal": "tie_normal_deg", "pick": "within",
+     "value": "extrap", "on": "always"},
+    {"via": VIA_SNAP, "target": "empty", "dist": "snap_rel", "normal": "tie_normal_deg", "pick": "nearest1",
+     "value": "point", "on": "always"},
+    {"via": VIA_FORCE, "target": "empty", "dist": "force", "normal": "force_normal_deg", "pick": "area_fill",
+     "value": "closest", "on": "force"},
+)
 ELEM_PT, ELEM_SEG, ELEM_TRI = 0, 1, 2
 # 해시 밖 키(경고 임계·수렴 진단 크기·표시 판정 — 계산 결과(per_esl)를 바꾸지 않음, 계약 §7.1)
 HASH_EXCLUDE = ("area_ratio_warn", "conv_warn", "frame_shift_warn", "load_resid_warn", "conv_mm", "noise_floor_min",

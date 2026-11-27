@@ -269,6 +269,33 @@ def rank(results: list[dict], *, noise_floor: float | None = None, tol: float = 
     return out
 
 
+# v0.25.2 결과 개수 줄(esl_tstar_manual_jig_force.md §4.1 — D-0.25.2-14): n_skipped·n_failed 키 → 라벨(한 곳 — 화면 거울
+# frontend pages/doe COUNT_LABELS, API counts 가 없을 때만 씀). 표에 없는 키 = 키 그대로. 순서 = 이 표 순서(표에 없는 키는 뒤, 이름순).
+COUNT_OK = {"key": "ok", "label": "성공"}
+COUNT_LABELS = {"mesh": "메시", "size": "크기/정렬", "solve": "해석", "morph": "모핑",
+                "collision": "스킵(충돌)", "fixed": "스킵(고정)", "geom": "스킵(형상)",
+                "jig": "지그 매핑 제외", "jd": "지그 매핑 제외", "js": "지그 매핑 제외",
+                "bf": "경계력 없음", "fi": "내력 없음", "sm": "강성 지표 없음", "ref": "참고용"}
+
+
+def count_items(R: dict) -> list[dict]:
+    """결과 개수(§4.1): [{key, label, n}] = 성공(n_ok, 항상) + n_skipped·n_failed 의 0 이 아닌 모든 키(COUNT_LABELS 순서) +
+    참고용(n_ref > 0 일 때만). 같은 키가 n_skipped·n_failed 양쪽에 있으면 합. 순수 함수(보고서·결과 문서 공용)."""
+    out = [{**COUNT_OK, "n": int(R.get("n_ok") or 0)}]
+    acc: dict[str, int] = {}
+    for blk in ("n_skipped", "n_failed"):
+        for k, v in (R.get(blk) or {}).items():
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) != 0:
+                acc[str(k)] = acc.get(str(k), 0) + int(v)
+    order = list(COUNT_LABELS)
+    for k in sorted(acc, key=lambda k: (order.index(k) if k in order else len(order), k)):
+        out.append({"key": k, "label": COUNT_LABELS.get(k, k), "n": acc[k]})
+    nr = R.get("n_ref")
+    if isinstance(nr, (int, float)) and not isinstance(nr, bool) and int(nr) > 0:
+        out.append({"key": "ref", "label": COUNT_LABELS["ref"], "n": int(nr)})
+    return out
+
+
 def attach_shapes(R: dict, shapes: dict[str, dict]) -> dict:
     """④ 형상 이름(v0.14.0 SC-D-4): 순위 행·베이스라인에 shape{name, file_name, reference}. shapes = {id: {name, file_name,
     reference, source?}}. 민감도는 변수가 없어 생략(COMPARE_NO_PARAMS — 호출자)."""
