@@ -562,7 +562,7 @@ def write_report(r: dict, out_html: str, info: dict | None = None) -> str:
     tips = [[f"셀 ({i},{j}) 구 {ra._fmt(Eb[i, j])} → 신 {ra._fmt(En[i, j])} (차 {ra._fmt(Ed[i, j])})" for j in range(ny)]
             for i in range(nx)]
     S.append("<h2>2. 셀 포락 차이</h2>" + ra.explain("cmp_envelope") + "<p class='muted small'>짝 씬의 셀별 max<sub>k</sub> |F<sub>cell</sub>| (정규화 격자). "
-             "차이 = 신 − 구 (파랑 증가, 주황 감소).</p><div class='grid2'><div class='card'>"
+             "차이 = 신 − 구 (빨강 증가, 파랑 감소).</p><div class='grid2'><div class='card'>"
              + ra.heatmap(Ed, fr, None, tips, "div", title="셀 포락 차이 (신 − 구)", w=560, legend_label="ΔF")
              + "</div><div class='card'>"
              + ra.heatmap(En, fr, None, tips, "seq", title=f"비교 버전 {r.get('new_version')} 셀 포락", w=560,
