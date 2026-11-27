@@ -4646,15 +4646,21 @@ def _jig_apply_multi(c: Ctx, t, did: str, mesh: dict, loads: list, region, r: di
     return warns
 
 
-def _jig_resp_rows(c: Ctx, mesh: dict, z, jidx, ld: list) -> list:
-    """지그 3D 응답 행(u 포함): 옛 npz(BC 배열 없음) = ``design_response``(병진 고정 — 옛 그대로), 새 npz = 저장 BC(엔트리 값·바닥·k)로
-    같은 경계 재풀이(view 메시 = 기준 위상 — 같은 노드 순서)."""
+def _jig_resp_rows(c: Ctx, mesh: dict, z, jidx, ld: list, keep: dict | None = None) -> list:
+    """지그 3D 응답 행(u 포함): 옛 npz(BC 배열 없음) = ``design_response``(병진 고정 — 옛 그대로: ``factor`` + ``respond``), 새 npz = 저장
+    BC(엔트리 값·바닥·k)로 같은 경계 재풀이(view 메시 = 기준 위상 — 같은 노드 순서). keep(v0.25.1) = 연 분해를 keep["h"] 에 남김(씬 묶음이
+    같은 분해로 후진대입만 — ``_scn_jig_p(st=keep)``)."""
     from esl.doe import jig as jg
     if "bc_node" not in z:
-        return jg.design_response(mesh, jidx, ld, c.solver_cfg(), keep_u=True)["rows"]
+        h = jg.factor(mesh, jidx, c.solver_cfg())              # = design_response(같은 분해·응답 — 통계만 없음)
+        if keep is not None:
+            keep["h"] = h
+        return jg.respond(h, ld, keep_u=True)
     from esl.mech import jig_bc
     zeids = [str(e) for e in z["entry_ids"].tolist()]
     h = jig_bc.factorize(_jig_sm(mesh, c.solver_cfg()), _jig_bc_of(z, None))
+    if keep is not None:
+        keep["h"] = h
     return [{"entry_id": e, "u": np.asarray(jig_bc.respond(h, F, _jig_bc_of(z, zeids.index(e)))["u"], dtype=np.float64)[:, :3]}
             for e, F in ld]
 
@@ -4764,17 +4770,20 @@ def _jig_v3d_build(c: Ctx, t, results: list, shown: list, z, row: dict) -> tuple
 
             def rmap(i):
                 return o[np.searchsorted(nid, nb_[np.asarray(i, dtype=np.int64)], sorter=o)]
-        P = _scn_jig_p(c, t, did, str(row["key"]), z, mesh)  # v0.25.1: _jig_resp_rows 와 같은 분해·응답(같은 u) — 씬 묶음이 이어 씀
+        jidx = rmap(z["jig_idx"])
+        ld = [(e, jg.forces(basis, np.asarray(z["a"][zeids.index(e)], dtype=np.float64), nb_.size)) for e in ents]
+        st: dict = {}
+        rows = _jig_resp_rows(c, mesh, z, jidx, ld, keep=st)     # v0.25.1: 연 분해를 st 에 남김 — 씬 묶음이 이어 씀(후진대입만)
         names = {}
-        for e in ents:
-            rr = P["get"](e)
+        for (e, F), rr in zip(ld, rows):
             sup = _jig_support_rows(z, e, rmap, mesh["x0"], smax, nid, str(row["key"]))   # dof(옛) + kind·dirs·val(엔트리 BC)
             nm = name if name else f"{BASELINE}_{tag}_e{order.index(e):02d}"
             od = c.writer.fresh_dir(c.p("post", "view3d", nm), c.out)
-            build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=rr["F"],
-                       u_rel=rr["u_view"], supports=sup, key=f"doe/{nm}", esl_run_id=str(e))
+            build_view(od, node_id=nid, x0=mesh["x0"], conn=mesh["conn"], elem_type=mesh["elem_type"], f=F, u_rel=rr["u"],
+                       supports=sup, key=f"doe/{nm}", esl_run_id=str(e))
             names[e] = nm
-        _scn_feed(c, str(row["key"]), did, P)
+        if _scn_wants(c, str(row["key"]), did):
+            _scn_feed(c, str(row["key"]), did, _scn_jig_p(c, t, did, str(row["key"]), z, mesh, st=st))
         return names
 
     for did in [d for d in shown if d in pick]:
@@ -5477,9 +5486,10 @@ def _scn_full(c: Ctx, t, did: str, row: dict) -> dict:
     return _scn_full_p(c, t, did, mesh, sup, loads)
 
 
-def _scn_jig_p(c: Ctx, t, did: str, src: str, z, mesh: dict) -> dict:
+def _scn_jig_p(c: Ctx, t, did: str, src: str, z, mesh: dict, st: dict | None = None) -> dict:
     """같은 메시 지그 provider 본체(``_jig_v3d_build`` 와 실행기 공용): 방식 npz 의 a·BC — 분해 1회(``_jig_resp_rows`` 와 같은 분해·응답,
-    BC 배열 없는 옛 npz = ``jig.factor``·``jig.respond`` = ``design_response`` 와 같은 계산) + 씬마다 응답."""
+    BC 배열 없는 옛 npz = ``jig.factor``·``jig.respond`` = ``design_response`` 와 같은 계산) + 씬마다 응답. st = ``_jig_resp_rows(keep)`` 가
+    남긴 분해(있으면 다시 분해하지 않음)."""
     from esl.doe import jig as jg
     from esl.mech import jig_bc
     nid = np.asarray(mesh["node_id"], dtype=np.int64)
@@ -5501,7 +5511,7 @@ def _scn_jig_p(c: Ctx, t, did: str, src: str, z, mesh: dict) -> dict:
     omega = np.zeros(N, bool)
     omega[pos[np.asarray(z["omega"], bool)]] = True
     jidx = rmap(z["jig_idx"])
-    st: dict = {"h": None}
+    st = {"h": (st or {}).get("h") if np.array_equal(nb_, nid) else None}   # 기존 3D 가 연 분해(같은 노드 순서일 때만 — 같은 BC 행)
 
     def remap(b):
         return {**b, "bc_node": rmap(b["bc_node"]), "sp_node": rmap(b["sp_node"])}
@@ -5838,8 +5848,9 @@ def _scn_begin(c: Ctx, t, results: list, shown: list, *, source: str, fresh: boo
         eids = [str(e["id"]) for e in c.D["entries"]]
         shown = list(dict.fromkeys([BASELINE] + [str(d) for d in shown if d]))
         plans, skipped, budget = _scn_plan(c, t, results, shown, fresh)
-        if fresh and os.path.isdir(c.p("post", SCENE_DIR)):
-            c.writer.fresh_dir(c.p("post", SCENE_DIR), c.out)
+        root = c.p("post", SCENE_DIR)
+        if fresh and os.path.isdir(root) and not os.path.islink(root):   # BD_POST 다시 = 보기 파생 자료라 지우고 새로(백업 안 함 — VL-C1-12)
+            shutil.rmtree(c.writer.guard(root))
         kk = {e: k for k, e in enumerate(eids)}
         for p_ in plans:
             p_["base"]["kk"] = kk

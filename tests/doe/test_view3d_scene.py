@@ -456,7 +456,7 @@ def test_v0251_11_budget(tmp_path):
 # ---------------------------------------------------------------- V-0251-12 보충 실행(post_mode scene)
 def _tree(out):
     from golden_pu import tree_sha
-    return tree_sha(out, os.path.dirname(out))
+    return tree_sha(out, os.path.dirname(out), scene=True)
 
 
 def test_v0251_12_supplement_old_study(tmp_path, monkeypatch):

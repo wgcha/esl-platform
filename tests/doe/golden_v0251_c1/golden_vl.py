@@ -121,7 +121,7 @@ CASES = ("same_lt", "same_all6", "sel_case_jig", "step_old", "cmp_lt", "cmp_grid
 
 def compute(case: str, tmp: str, mp, cfg_over: dict | None = None) -> dict:
     from golden_pu import tree_sha
-    return tree_sha(compute_out(case, tmp, mp, cfg_over), tmp)
+    return tree_sha(compute_out(case, tmp, mp, cfg_over), tmp, scene=True)
 
 
 def split_new(got: dict) -> tuple[dict, list]:

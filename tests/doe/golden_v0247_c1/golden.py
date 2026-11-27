@@ -45,7 +45,8 @@ def tree_sha(root: str, skip=("loads.npz", "/lib/", "/case/")) -> dict:
         for fn in fns:
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, root).replace(os.sep, "/")
-            if fn.endswith((".log", ".lock")) or fn.startswith("."):
+            if fn.endswith((".log", ".lock")) or fn.startswith(".") or "post/view3d_scene/" in rel or \
+                    rel.endswith("post/scene_view.json"):          # v0.25.1 새 파일(옛 골든 비교 밖 — V-0251-10 이 확인)
                 continue
             out[rel] = file_sha(p)
     return dict(sorted(out.items()))
