@@ -1,6 +1,7 @@
 // v0.17.3 공통 형상 보기(PartView) 자료 형식(esl_view_unify.md §3). 화면마다 어댑터(adapters.ts)가 가진 자료만 채우고,
 // 자료가 없는 층은 숨긴다(가짜 자료로 채우지 않음 — VU-D-5).
 import type { DoePlanLink, DoeSettingsOut, PlanViewFrame, XY } from "../../api/types";
+import type { ColorRole } from "../../lib/colormap";
 import type { Bbox } from "../viewFit";
 
 /** 켜고 끌 수 있는 층 */
@@ -90,7 +91,7 @@ export interface Part3DData {
   markers?: Float32Array | null;
   /** 선택 맞춤(없으면 버튼 숨김) */
   selectionBbox?: (() => Bbox | null) | null;
-  colorMap?: "blues" | "diverging";
+  colorMap?: ColorRole;
   /** 3D 칸 시험 id·이름(없으면 PartView testId + "-3d", "형상 3D") */
   hostTestId?: string;
   ariaLabel?: string;
