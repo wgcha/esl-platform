@@ -513,6 +513,14 @@ class BeadDoeBoundaryCfg(_M):
     load_share_min: float = Field(default=0.2, ge=0, le=1)
 
 
+class BeadDoeView3dSceneCfg(_M):
+    """v0.25.1 VL(esl_view3d_scene_legend.md §7.1) 낙하 씬별 3D 묶음 — 해시·스냅샷 밖(보기 설정)."""
+
+    enabled: bool = True                                         # 끄면 씬 묶음·사이드카를 만들지 않음(= v0.25.0 과 같은 파일 집합)
+    max_mb: float = Field(default=1024, ge=0, le=65536)          # 스터디당 씬 묶음 추정 용량 한도(0 = 한도 없음)
+    diff_cell_h_mult: float = Field(default=2.0, ge=0.5, le=8)   # 차이 격자 셀 = max(rank.jig_grid.cell_mm, 이 값 × 변 길이 중앙값)
+
+
 class BeadDoeView3dCfg(_M):
     top_k: int = Field(default=3, ge=0, le=50)
     jig: bool = True                                             # v0.23.2 지그 응답 3D(esl_v0232_fixes.md §4.2)
@@ -521,6 +529,7 @@ class BeadDoeView3dCfg(_M):
     jig_tie_gap_mm: float = Field(default=5.0, ge=0.0, le=1000.0)  # v0.23.3 지그 노드 상대 부품 찾기 거리(deck 표면 최근접, 보고만)
     regen_keep_backups: int = Field(default=1, ge=0, le=20)      # v0.23.3 3D 다시 만들기가 옮긴 이전 진단 폴더(_backup) 유지 개수(0 = 백업 안 함, esl_jig_view.md §3)
     recon: bool = True                                           # v0.24.1 노드 힘 출처 기준 3D 재현 진단(recon.json·recon.bin, esl_view3d_sources.md §5.2)
+    scene: BeadDoeView3dSceneCfg = BeadDoeView3dSceneCfg()       # v0.25.1 VL 낙하 씬별 3D 묶음(esl_view3d_scene_legend.md §7.1)
 
 
 class BeadDoeBforceCfg(_M):
@@ -2116,6 +2125,7 @@ def bead_doe_settings(s: Settings | None) -> dict[str, Any]:
     _fill_missing(d.setdefault("load_follow", {}), BeadDoeLoadFollowCfg().model_dump())    # v0.24.9 PU
     _fill_missing(d.setdefault("rank", {}), BeadDoeRankCfg().model_dump())     # v0.20.0 SM 강성 지표 키(코어 병합 전에도)
     _fill_missing(d.setdefault("case_jig", {}), BeadDoeCaseJigCfg().model_dump())   # v0.24.4(코어 DEFAULTS 병합 전에도)
+    _fill_missing(d.setdefault("view3d", {}).setdefault("scene", {}), BeadDoeView3dSceneCfg().model_dump())   # v0.25.1 VL
     return d
 
 
