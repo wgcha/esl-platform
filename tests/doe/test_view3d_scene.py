@@ -657,3 +657,39 @@ def test_int10_real_scene_manifests_pass_api_schema(w_all6, w_legacy, w_cmp_grid
                 keys |= {a.key for a in o.values.arrays}
                 n += 1
     assert n >= 36 and {"c", "dc"} <= keys, (n, keys)
+
+
+# ---------------------------------------------------------------- 통합 INT-14 — 씬 요약 umax 정의(평가 영역) 시험 자료 = 실제 BD_POST 결과
+SUMMARY_FIXTURE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "frontend", "src", "mock", "fixtures",
+                               "scene_summary_real_v0251.json")
+
+
+def _summary_rows(out: str) -> dict:
+    """post/result.json rank_views(출처 보기)마다 기준(worst_entry_id·umax·umax_ev)과 안 행 per_esl(C·ratio·umax·umax_ev) — 화면 씬 요약이
+    읽는 표 값 그대로."""
+    views: dict = {}
+    for fn in ("jig_view.json", "bforce_view.json", "fint_view.json"):     # 결과 API 가 rank_views 를 합치는 사이드카(서비스와 같은 파일)
+        p = os.path.join(out, "post", fn)
+        if os.path.isfile(p):
+            views.update(U.read_json(p).get("rank_views") or {})
+    pick = lambda d, ks: {k: d.get(k) for k in ks}  # noqa: E731
+    tabs = {}
+    for k, v in sorted(views.items()):
+        tabs[k] = {"baseline": pick(v["baseline"], ("worst_entry_id", "umax", "umax_ev")),
+                   "rows": [{"id": r["id"], "per_esl": [pick(p, ("entry_id", "C", "ratio", "umax", "umax_ev")) for p in r.get("per_esl") or []]}
+                            for r in v.get("ranking") or []]}
+    return {"world": "same_all6(평가 영역 있음 — golden_vl.compute_out)", "tabs": tabs}
+
+
+def test_int14_summary_fixture_is_real_result(w_all6):
+    """프런트 시험 자료(scene_summary_real_v0251.json) = 실제 BD_POST(평가 영역 있는 same_all6) 결과의 출처 보기별 표 값. 다시 기록:
+    ESL_RECORD_SCENE_FIXTURE=1. 평가 영역이 있어 umax ≠ umax_ev 인 행이 있어야 함(정의 혼합을 잡는 자료)."""
+    got = json.loads(json.dumps(_summary_rows(w_all6)))
+    if os.environ.get("ESL_RECORD_SCENE_FIXTURE") == "1":
+        with open(SUMMARY_FIXTURE, "w", encoding="utf-8") as fh:
+            json.dump(got, fh, ensure_ascii=False, sort_keys=True, indent=1)
+            fh.write("\n")
+    with open(SUMMARY_FIXTURE, encoding="utf-8") as fh:
+        assert json.load(fh) == got
+    rows = [p for t in got["tabs"].values() for r in t["rows"] for p in r["per_esl"]]
+    assert len(got["tabs"]) >= 3 and any(p["umax_ev"] is not None and p["umax_ev"] != p["umax"] for p in rows)

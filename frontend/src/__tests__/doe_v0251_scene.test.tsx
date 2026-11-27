@@ -51,6 +51,7 @@ import { NO_C_TEXT } from "../view3d/View3DCard";
 import { PER_ESL_HEAT_SPAN, heatStyle, perEslNote } from "../components/DoePerEslTable";
 import { COLOR_SEL_BUTTONS, SCENE_TEXT, approxFor, colorDisabled, hasScenePair, sceneChoices, sceneSummary, skippedFor, toggleScene } from "../pages/doe/doeScene";
 import FX from "../mock/fixtures/scene_real_v0251.json";
+import FXS from "../mock/fixtures/scene_summary_real_v0251.json";
 import { sceneManifest } from "../mock/scenemock";
 import { css, mapFor, relLuminance, table, textOn } from "../lib/colormap";
 import CM from "../../../resources/colormaps.json";
@@ -122,12 +123,14 @@ describe("V-0251-25 씬 연결 (순수)", () => {
     expect(toggleScene("e1", "e1")).toBeNull();
     expect(toggleScene("e1", "e2")).toBe("e2");
   });
-  it("씬 요약: C·umax 두 값 + 변화율(표 값과 같은 manifest 값)", () => {
-    const b = sceneManifest("s", "full", "d000", "e1", 0);
-    const d = sceneManifest("s", "full", "d001", "e1", 0, 1.2);
-    const t = sceneSummary({ label: "E1", base: b, cand: d });
-    expect(t).toMatch(/^ESL E1 · C 기준 [\d.e+]+ → 안 [\d.e+]+ \([+−]\d+\.\d %\) · umax 기준 [\d.]+ → 안 [\d.]+ \(\+20\.0 %\) mm$/);
-    expect(sceneSummary({ label: "E1", base: {}, cand: {} })).toBe("ESL E1");
+  it("씬 요약(INT-14): 표 값만 — C·변화율 = 표 행, umax 는 기준 행이 있을 때 같은 정의끼리(ev 끼리·umax 끼리)", () => {
+    const row = { entry_id: "e1", C: 800, ratio: 0.8, umax: 1.2, umax_ev: 1.1, epsmax: 0 };
+    const t = sceneSummary({ label: "E1", row, baseRow: { umax: 1.0, umax_ev: 1.0 } });
+    expect(t).toBe("ESL E1 · C 기준 1000 → 안 800 (−20.0 %) · umax 기준 1.000 → 안 1.100 (+10.0 %) mm");   // ev 끼리(전체 1.2 아님)
+    expect(sceneSummary({ label: "E1", row, baseRow: { umax: 1.0 } })).toBe("ESL E1 · C 기준 1000 → 안 800 (−20.0 %)");   // 정의 섞임 = umax 비움
+    expect(sceneSummary({ label: "E1", row: { ...row, umax_ev: null }, baseRow: { umax: 1.0, umax_ev: null } })).toContain("umax 기준 1.000 → 안 1.200 (+20.0 %) mm");
+    expect(sceneSummary({ label: "E1", row, baseRow: null })).toBe("ESL E1 · C 기준 1000 → 안 800 (−20.0 %)");   // 기준 행 없음 = C 만
+    expect(sceneSummary({ label: "E1", row: null })).toBe("ESL E1");   // 표 행 없음 = 숫자 없음(핀·manifest 숫자 안 씀)
   });
 });
 
@@ -219,25 +222,43 @@ describe("통합 INT-10~12 — 실제 응답 형식·근사 씬·형상 캐시",
     const cell = await screen.findByTestId(`per-esl-cell-${pick}-${eid}`, {}, { timeout: 10000 });
     const tt = cell.getAttribute("title") ?? "";
     const tC = Number(/^C ([^ ]+)/.exec(tt)![1]);
-    const tU = Number(/umax ([0-9.]+) mm/.exec(tt)![1]);
     await waitFor(() => expect(screen.getByTestId("v3d-scene-summary").textContent).toContain(`ESL ${s.options[1].textContent}`), { timeout: 10000 });
     const sum = screen.getByTestId("v3d-scene-summary").textContent ?? "";
     const sC = Number(/C 기준 [^ ]+ → 안 ([^ ]+)/.exec(sum)![1]);
-    const sU = Number(/umax[^→]*→ 안 ([0-9.]+)|umax 안 ([0-9.]+)/.exec(sum)!.slice(1).find((x) => x)!);
     expect(Math.abs(sC / tC - 1)).toBeLessThan(1e-3);
-    expect(Math.abs(sU - tU)).toBeLessThanOrEqual(0.005 + 1e-9);
+    expect(sum).not.toMatch(/umax 안 /);                                // umax 는 기준과 같은 정의 쌍으로만(INT-14)
   }, 30000);
 
-  it("sceneSummary·approxFor(순수): 표 행이 있으면 C·umax = 표, 없고 근사면 그 쪽 manifest 숫자를 쓰지 않음", () => {
-    const man = (cv: number, uv: number) => ({ c: { kind: "fu", sum: cv, offset: 0, value: cv }, pins: { umax: { node_id: 1, vertex: 0, value: uv, kind: "ev" } }, values: { arrays: [] } });
-    const row = { entry_id: "E0", C: 91.14, ratio: 0.9, umax: 91.14, epsmax: 0 };
-    const t = sceneSummary({ label: "E0", base: man(100, 80), cand: man(95, 107.29), row, baseUmax: 85 });
-    expect(t).toContain(`C 기준 ${Number((91.14 / 0.9).toPrecision(4))} → 안 91.14 (−10.0 %)`);
-    expect(t).toContain("umax 기준 85.000 → 안 91.140");
-    expect(t).not.toContain("107.29");
-    const ap = { base: [], cand: ["SCENE_C_MISMATCH", "SCENE_PIN_MISMATCH"], texts: ["x"] };
-    const t2 = sceneSummary({ label: "E0", base: man(100, 80), cand: man(95, 107.29), approx: ap });
-    expect(t2).toBe("ESL E0");                                       // 근사 쪽 manifest 숫자 없음 → 그 부분 생략
+  it("INT-14 실제 BD_POST 결과(평가 영역 있는 same_all6, 출처 6 보기): 요약 umax 증감 = 표 정의(ev)끼리, 부호 뒤집힘 0", () => {
+    type P = { entry_id: string; C: number; ratio: number; umax: number; umax_ev: number | null };
+    const fxs = FXS as unknown as { tabs: Record<string, { baseline: { worst_entry_id: string; umax: number; umax_ev: number | null }; rows: { id: string; per_esl: P[] }[] }> };
+    let shown = 0;
+    let mixedRows = 0;
+    for (const [tab, t] of Object.entries(fxs.tabs)) {
+      const b = t.baseline;
+      for (const r of t.rows)
+        for (const p of r.per_esl) {
+          if (p.umax_ev != null && p.umax_ev !== p.umax) mixedRows += 1;
+          const s = sceneSummary({ label: p.entry_id, row: { ...p, epsmax: 0 }, baseRow: b.worst_entry_id === p.entry_id ? b : null });
+          expect(s, `${tab} ${r.id} ${p.entry_id}`).toContain(`(${p.ratio - 1 >= 0 ? "+" : "−"}${Math.abs((p.ratio - 1) * 100).toFixed(1)} %)`);
+          const m = /umax 기준 ([\d.]+) → 안 ([\d.]+) \(([+−])/.exec(s);
+          if (b.worst_entry_id !== p.entry_id) {
+            expect(m, `${tab} ${r.id} ${p.entry_id}`).toBeNull();
+            continue;
+          }
+          shown += 1;
+          const [u0, u1] = [b.umax_ev ?? b.umax, p.umax_ev ?? p.umax];
+          expect(m![1]).toBe(u0.toFixed(3));
+          expect(m![2]).toBe(u1.toFixed(3));
+          expect(m![3]).toBe(u1 / u0 - 1 >= 0 ? "+" : "−");             // 표 정의끼리 비교와 같은 부호
+        }
+    }
+    expect(Object.keys(fxs.tabs).length).toBe(6);
+    expect(shown).toBeGreaterThan(0);
+    expect(mixedRows).toBeGreaterThan(0);                               // umax ≠ umax_ev 인 행이 있는 자료(정의 혼합을 잡음)
+  });
+
+  it("approxFor(순수)", () => {
     const r = { scene_view: { entries: [{ entry_id: "E0", kk: 0 }], packs: { full: { designs: {}, approx: [{ did: "d001", entry_id: "E0", code: "SCENE_PIN_MISMATCH", text: "a" }, { did: "d000", entry_id: "E0", code: "SCENE_C_MISMATCH", text: "b" }, { did: "d002", entry_id: "E0", code: "SCENE_C_MISMATCH", text: "c" }] } } } } as unknown as DoeResultOut;
     expect(approxFor(r, "full", "d001", "E0")).toEqual({ base: ["SCENE_C_MISMATCH"], cand: ["SCENE_PIN_MISMATCH"], texts: ["a", "b"] });
     expect(approxFor(r, "full", "d001", "E1")).toEqual({ base: [], cand: [], texts: [] });
@@ -262,7 +283,7 @@ describe("V-0251-25·26 화면: 씬 선택·옛 결과", () => {
     const e2 = s.options[2].value;
     fireEvent.change(s, { target: { value: e2 } });
     await waitFor(() => expect(lastCalls(2).every((x) => x.endsWith(`/${e2}`))).toBe(true), { timeout: 8000 });
-    await waitFor(() => expect(screen.getByTestId("v3d-scene-summary").textContent).toMatch(/C 기준 .* → 안 .*umax 기준/), { timeout: 8000 });
+    await waitFor(() => expect(screen.getByTestId("v3d-scene-summary").textContent).toMatch(/C 기준 .* → 안 /), { timeout: 8000 });
     // 안을 바꿔도 씬 유지
     const pickSel = screen.getByLabelText("3D 비교 안") as HTMLSelectElement;
     const other = [...pickSel.options].map((o) => o.value).find((v) => v !== pickSel.value)!;

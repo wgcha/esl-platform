@@ -91,8 +91,9 @@ SCENE_ENTRY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
 SCENE_FILE_RE = re.compile(r"^(?:part|part_lod)\.glb$|^e[0-9]{2,4}\.bin$")
 SCENE_MANIFEST_RE = re.compile(r"^e[0-9]{2,4}\.json$")
 SCENE_MEDIA = {".glb": "model/gltf-binary", ".bin": "application/octet-stream"}
-# 코어 사이드카 warnings 의 근사 표시(VL-C1-8 — "<코드>: <출처> <안> <엔트리> …") → 응답 packs[src].approx(통합 INT-11)
-SCENE_APPROX_RE = re.compile(r"^(SCENE_C_MISMATCH|SCENE_PIN_MISMATCH): ([a-z_]+) (d[0-9]+) ([A-Za-z0-9_.\-]{1,128}) ")
+# 코어 사이드카 warnings 의 근사 표시(VL-C1-8 — "<코드>: <출처> <안> <엔트리> …") → 응답 packs[src].approx(통합 INT-11).
+# 엔트리 id 는 공백이 있을 수 있어 정규식으로 자르지 않고 사이드카 entries 의 id 와 대조(INT-15)
+SCENE_APPROX_RE = re.compile(r"^(SCENE_C_MISMATCH|SCENE_PIN_MISMATCH): ([a-z_]+) (d[0-9]+) (.+)$", re.DOTALL)
 SCENE_NOT_FOUND = "VIEW3D_SCENE_NOT_FOUND"
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
 RANK_VIEWS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")   # v0.24.4: 코어 RANK_SOURCES 키(jig_disp·jig_spring 도 사이드카 jig_view.json)
@@ -2650,12 +2651,18 @@ def _scene_view(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[
             packs[src] = {"c_kind": pk.get("c_kind") if pk.get("c_kind") in ("fu", "mixed") else None,
                           "designs": _scene_designs(pk), "skipped": skipped, "approx": []}
         seen: set[tuple[str, str, str, str]] = set()
-        for w in d.get("warnings") or []:                        # 근사 씬(색·핀 ≠ 표 값) — 코드·출처·안·엔트리만(수치 원문은 내지 않음)
+        ids = sorted({e["entry_id"] for e in entries}, key=len, reverse=True)      # 긴 id 먼저(접두 겹침)
+        ws = d.get("warnings")
+        for w in ws if isinstance(ws, list) else []:             # 근사 씬(색·핀 ≠ 표 값) — 코드·출처·안·엔트리만(수치 원문은 내지 않음)
             m = SCENE_APPROX_RE.match(w) if isinstance(w, str) else None
-            if m is None or m.group(2) not in packs or m.groups() in seen:
+            if m is None or m.group(2) not in packs:             # 목록이 아니거나 형식이 다른 경고 = 그것만 무시(INT-15)
                 continue
-            seen.add(m.groups())
-            packs[m.group(2)]["approx"].append({"did": m.group(3), "entry_id": m.group(4), "code": m.group(1),
+            eid = next((i for i in ids if m.group(4) == i or m.group(4).startswith(i + " ")), None)
+            key = (m.group(1), m.group(2), m.group(3), eid or "")
+            if eid is None or key in seen:
+                continue
+            seen.add(key)
+            packs[m.group(2)]["approx"].append({"did": m.group(3), "entry_id": eid, "code": m.group(1),
                                                 "text": up_svc.doe_text(m.group(1))})
         b = d.get("budget")
         budget = ({"max_mb": float(b["max_mb"]), "est_mb": float(b["est_mb"])}
