@@ -80,6 +80,17 @@ VIEW3D_FILES = {"part.glb": "model/gltf-binary", "part_lod.glb": "model/gltf-bin
                 "regions.json": "application/json",      # v0.23.3 지그 진단 영역(esl_jig_view.md §1.4 — d000_jigdiag_*_fit 만)
                 "recon.json": "application/json",        # v0.24.1 노드 힘 출처 재현 진단(esl_view3d_sources.md §5.2 — d000_<pe>_e<kk> 만)
                 "recon.bin": "application/octet-stream"}
+# v0.25.1 VL(esl_view3d_scene_legend.md §2.2·§6): 씬 묶음 post/view3d_scene/<tag>/<did>/{pack.json·part.glb·part_lod.glb·e<kk>.json·e<kk>.bin} +
+# 사이드카 post/scene_view.json(esl/doe_scene_view/1). 조회 출처 = 순위 보기 키(RANK_VIEWS 화이트리스트).
+SCENE_DIR = "view3d_scene"
+SCENE_VIEW_JSON = "scene_view.json"
+SCENE_SCHEMA = "esl/doe_scene_view/1"
+SCENE_TAG_RE = re.compile(r"^[a-z0-9]{1,16}$")
+SCENE_ENTRY_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+SCENE_FILE_RE = re.compile(r"^(?:part|part_lod)\.glb$|^e[0-9]{2,4}\.bin$")
+SCENE_MANIFEST_RE = re.compile(r"^e[0-9]{2,4}\.json$")
+SCENE_MEDIA = {".glb": "model/gltf-binary", ".bin": "application/octet-stream"}
+SCENE_NOT_FOUND = "VIEW3D_SCENE_NOT_FOUND"
 JIG_VIEW_JSON = "jig_view.json"                          # v0.23.3 사이드카 post/jig_view.json(esl_jig_view.md §4)
 RANK_VIEWS = ("jig", "jig_disp", "jig_spring", "full", "bforce", "fint")   # v0.24.4: 코어 RANK_SOURCES 키(jig_disp·jig_spring 도 사이드카 jig_view.json)
 # v0.24.6(esl_viewer_hv.md §8.1·§8.3): 코어 RANK_SOURCES 열 v3d 거울(응답 키 3개 또는 None) — jig 만 result.json 우선, 그 밖 jig_view.json 행(jd·js)
@@ -2261,6 +2272,15 @@ def results(ctx: AppContext, principal: Principal, sid: str, sort: str = "score"
             out[row["legacy"]] = adds[key]
     if adds:
         out["source_add"] = adds
+    # v0.25.1 VL(계약 §6): 씬 묶음 사이드카 요약(없음 = null, 깨짐 = null + 경고 — 500 아님)·[씬 3D 만들기] 가능 여부. 모두 새 선택 키(기존 키 불변)
+    out["scene_view"], scene_bad = _scene_view(ctx, s, c)
+    if scene_bad:
+        out["warnings"] = [*out["warnings"], {"code": "SCENE_VIEW_INVALID", "level": "info", "message": up_svc.doe_text("SCENE_VIEW_INVALID")}]
+    if not regen_why:
+        with ctx.engine.connect() as conn:
+            regen_why.append(_regen_block(conn, principal, s))
+    scene_why = _scene_block(c, regen_why[0])
+    out["scene_add"] = {"ok": scene_why is None, "blocked": scene_why}
     if isinstance(r.get("eval_region"), dict):                # v0.24.0 평가 영역 요약(새 스냅샷만)
         out["eval_region"] = r["eval_region"]
     return _jsonable(out)
@@ -2566,6 +2586,204 @@ def view3d_file(ctx: AppContext, principal: Principal, sid: str, did: str, name:
     if not os.path.isfile(p) or os.path.islink(p):
         raise not_found("VIEW3D_NOT_FOUND", "3D 비교 파일이 없습니다")
     return p, VIEW3D_FILES[name]
+
+
+# ---------------------------------------------------------------- v0.25.1 VL 낙하 씬별 3D(esl_view3d_scene_legend.md §2.2·§6)
+def _scene_enabled(c: dict[str, Any]) -> bool:
+    return bool((((c.get("view3d") or {}).get("scene")) or {}).get("enabled", True))
+
+
+def _scene_block(c: dict[str, Any], regen_why: str | None) -> str | None:
+    """[씬 3D 만들기]를 막는 이유(None = 가능): 설정 끔 ∨ _regen_block(권한·작업·끝난 스터디·성공한 실행) — 문구 동사구만 바꿈."""
+    if not _scene_enabled(c):
+        return up_svc.doe_text("SCENE_UNAVAILABLE_DISABLED")
+    return None if regen_why is None else regen_why.replace("3D 를 다시 만들", "씬 3D 를 만들")
+
+
+def _scene_doc(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    """사이드카 post/scene_view.json → (문서|None, 깨짐). 파일 없음 = (None, False), 읽기·스키마 실패 = (None, True)."""
+    path = os.path.join(study_dir(ctx, s), "post", SCENE_VIEW_JSON)
+    if not os.path.lexists(path):
+        return None, False
+    d = _read_json(path, _max_mb(c))
+    if not isinstance(d, dict) or d.get("schema") != SCENE_SCHEMA or not isinstance(d.get("entries"), list) \
+            or not isinstance(d.get("packs"), dict):
+        return None, True
+    return d, False
+
+
+def _scene_designs(pk: dict[str, Any]) -> dict[str, list[str]]:
+    """사이드카 packs[src].designs — {did: {dir, scenes[]}} 또는 {did: [entry_id…]} → {did: [entry_id…]}(did 형식 오류 제외)."""
+    out: dict[str, list[str]] = {}
+    for did, v in (pk.get("designs") or {}).items():
+        sc = v.get("scenes") if isinstance(v, dict) else v
+        if DID_RE.match(str(did)) and isinstance(sc, list):
+            out[str(did)] = [str(e) for e in sc if isinstance(e, str)]
+    return out
+
+
+def _scene_view(ctx: AppContext, s: dict[str, Any], c: dict[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    """DoeSceneViewOut 모양 요약(없음 = None, 깨짐 = (None, True))."""
+    d, bad = _scene_doc(ctx, s, c)
+    if d is None:
+        return None, bad
+    try:
+        entries = [{"entry_id": e["entry_id"], "kk": e["kk"]} for e in d["entries"] if isinstance(e, dict) and isinstance(e.get("entry_id"), str)]
+        packs: dict[str, Any] = {}
+        for src in RANK_VIEWS:                                   # 화이트리스트 키만(순서 = 출처 표)
+            pk = d["packs"].get(src)
+            if not isinstance(pk, dict):
+                continue
+            skipped = []
+            for x in pk.get("skipped") or []:
+                if not isinstance(x, dict) or not isinstance(x.get("code"), str):
+                    continue
+                text = up_svc.doe_text(x["code"], **{k: v for k, v in x.items() if isinstance(v, (str, int, float))})
+                if isinstance(x.get("detail"), str) and x["detail"]:
+                    text = f"{text} ({x['detail']})"
+                skipped.append({"did": x.get("did") if isinstance(x.get("did"), str) else None,
+                                "entry_id": x.get("entry_id") if isinstance(x.get("entry_id"), str) else None,
+                                "code": x["code"], "text": text})
+            packs[src] = {"c_kind": pk.get("c_kind") if pk.get("c_kind") in ("fu", "mixed") else None,
+                          "designs": _scene_designs(pk), "skipped": skipped}
+        b = d.get("budget")
+        budget = ({"max_mb": float(b["max_mb"]), "est_mb": float(b["est_mb"])}
+                  if isinstance(b, dict) and not isinstance(b.get("max_mb"), bool) and isinstance(b.get("max_mb"), (int, float))
+                  and isinstance(b.get("est_mb"), (int, float)) else None)
+        out = {"entries": entries, "packs": packs, "budget": budget}
+        from ..schemas import DoeSceneViewOut
+
+        DoeSceneViewOut.model_validate(out)                      # 모양 검증(어긋나면 깨진 사이드카와 같이 null + 경고)
+        return out, False
+    except (KeyError, TypeError, ValueError):
+        return None, True
+
+
+def _scene_pack(ctx: AppContext, principal: Principal, sid: str, src: str, did: str) -> tuple[str, dict[str, Any], dict[str, Any], str]:
+    """(묶음 폴더, pack.json, 사이드카, sid 폴더) — src 화이트리스트·did 정규식·사이드카 등재·링크·경로 탈출 거부(404 VIEW3D_SCENE_NOT_FOUND).
+    권한 = 스터디 조회(_viewable). 파일 이름·경로는 클라이언트가 만들지 않음(사이드카 tag + did)."""
+    s, _job = _viewable(ctx, principal, sid)
+    msg = "씬 3D 자료가 없습니다"
+    if src not in RANK_VIEWS or not DID_RE.match(did or ""):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    c = cfg(ctx)
+    side, _bad = _scene_doc(ctx, s, c)
+    pk = (side or {}).get("packs", {}).get(src)
+    tag = pk.get("tag") if isinstance(pk, dict) else None
+    if not isinstance(tag, str) or not SCENE_TAG_RE.match(tag) or did not in _scene_designs(pk):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    base = study_dir(ctx, s)
+    try:
+        d = safe_case_file(base, f"post/{SCENE_DIR}/{tag}/{did}")
+    except DomainError:
+        raise not_found(SCENE_NOT_FOUND, msg) from None
+    root = os.path.join(base, "post")
+    for part in (SCENE_DIR, tag, did):                           # 폴더 링크 거부(조회와 같은 규칙)
+        root = os.path.join(root, part)
+        if os.path.islink(root) or not os.path.isdir(root):
+            raise not_found(SCENE_NOT_FOUND, msg)
+    pack = _read_json(os.path.join(d, "pack.json"), 64)
+    if not isinstance(pack, dict) or not isinstance(pack.get("geometry"), dict) or not isinstance(pack.get("scenes"), list):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    return d, pack, side or {}, base
+
+
+def _scene_names(pack: dict[str, Any]) -> set[str]:
+    """pack.json 에 적힌 내려받기 가능 파일 이름(형상·LOD·씬별 값)."""
+    names = [(pack.get("geometry") or {}).get("name"), (pack.get("lod") or {}).get("name") if isinstance(pack.get("lod"), dict) else None]
+    for sc in pack["scenes"]:
+        if isinstance(sc, dict):
+            v = sc.get("values")
+            names.append(v.get("name") if isinstance(v, dict) else v)
+    return {n for n in names if isinstance(n, str) and SCENE_FILE_RE.match(n)}
+
+
+def _scene_name(sc: dict[str, Any], key: str, kk: Any, ext: str) -> str:
+    v = sc.get(key)
+    v = v.get("name") if isinstance(v, dict) else v
+    if isinstance(v, str):
+        return v
+    try:
+        return f"e{int(kk):02d}.{ext}"
+    except (TypeError, ValueError):
+        return f"e{kk}.{ext}"
+
+
+def view3d_scene_manifest(ctx: AppContext, principal: Principal, sid: str, src: str, did: str, entry_id: str) -> dict[str, Any]:
+    """GET …/view3d-scene/{src}/{did}/{entry_id}/manifest.json — 씬 manifest(+ 파일 URL). entry_id = 사이드카 entries 에 있는 것만(서버가 kk 로 바꿈)."""
+    msg = "씬 3D 자료가 없습니다"
+    d, pack, side, _base = _scene_pack(ctx, principal, sid, src, did)
+    if not SCENE_ENTRY_RE.match(entry_id or ""):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    if not any(isinstance(e, dict) and e.get("entry_id") == entry_id for e in side["entries"]):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    sc = next((x for x in pack["scenes"] if isinstance(x, dict) and x.get("entry_id") == entry_id), None)
+    if sc is None:
+        raise not_found(SCENE_NOT_FOUND, msg)
+    mname, vname = _scene_name(sc, "manifest", sc.get("kk"), "json"), _scene_name(sc, "values", sc.get("kk"), "bin")
+    if not SCENE_MANIFEST_RE.match(mname) or vname not in _scene_names(pack):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    mp = os.path.join(d, mname)
+    m = _read_json(mp, 64)
+    if not isinstance(m, dict) or not isinstance(m.get("values"), dict):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    gname = pack["geometry"].get("name")
+    lod = pack.get("lod") if isinstance(pack.get("lod"), dict) else None
+    need = [gname, vname] + ([lod.get("name")] if lod else [])
+    if not all(isinstance(n, str) and SCENE_FILE_RE.match(n) and os.path.isfile(os.path.join(d, n))
+               and not os.path.islink(os.path.join(d, n)) for n in need):
+        raise not_found(SCENE_NOT_FOUND, msg)
+    base_url = f"/doe/studies/{sid}/view3d-scene/{src}/{did}"
+    out = dict(m)
+    out["geometry"] = pack["geometry"]                            # geometry·lod = 묶음 것(씬 manifest 는 가리킬 뿐)
+    out["lod"] = lod
+    out["values"] = {**m["values"], "name": vname}
+    out["geometry_url"] = f"{base_url}/{gname}"
+    out["lod_url"] = f"{base_url}/{lod['name']}" if lod else None
+    out["values_url"] = f"{base_url}/{vname}"
+    return out
+
+
+def view3d_scene_file(ctx: AppContext, principal: Principal, sid: str, src: str, did: str, name: str) -> tuple[str, str]:
+    """GET …/view3d-scene/{src}/{did}/{name} — pack.json 에 적힌 part.glb·part_lod.glb·e<kk>.bin 만."""
+    d, pack, _side, _base = _scene_pack(ctx, principal, sid, src, did)
+    if not SCENE_FILE_RE.match(name or "") or name not in _scene_names(pack):
+        raise not_found(SCENE_NOT_FOUND, "씬 3D 파일이 없습니다")
+    p = os.path.join(d, name)
+    if not os.path.isfile(p) or os.path.islink(p):
+        raise not_found(SCENE_NOT_FOUND, "씬 3D 파일이 없습니다")
+    return p, SCENE_MEDIA[os.path.splitext(name)[1]]
+
+
+def add_scene(ctx: AppContext, principal: Principal, sid: str) -> dict[str, Any]:
+    """POST …/view3d/scenes — 씬 3D 만들기(계약 §2.5·§6): 기존 DOE_RUN 큐에 마지막 성공 실행 params 사본 + doe.post_mode "scene"
+    (resume = BD_POST, DB 무변경, phase DONE 그대로 — add_source 와 같은 틀). 권한 = 실행 권한 ∧ (관리자 ∨ 작성자) 403, 작업 중 409
+    JOB_ACTIVE, 끝나지 않음·성공한 실행 없음·설정 끔 409 VIEW3D_SCENE_UNAVAILABLE."""
+    from ...core.job_types import steps_for
+
+    c = cfg(ctx)
+    with ctx.engine.connect() as conn:
+        s0 = load_study(conn, sid)
+    require_execute(principal, s0["project_id"])
+    if not _regen_owner(principal, s0):
+        raise forbidden("관리자 또는 이 스터디 작성자만 씬 3D 를 만들 수 있습니다")
+    require_config_ok(ctx)
+    with ctx.engine.begin() as conn:
+        s = load_study(conn, sid, for_update=True)
+        job = doe_repo.latest_job(conn, sid)
+        if job is not None and job["state"] not in TERMINAL:
+            raise conflict("JOB_ACTIVE", "이 강성 평가 스터디의 작업이 대기 중이거나 실행 중입니다")
+        why = _scene_block(c, _regen_block(conn, principal, s))
+        if why is not None:
+            raise conflict("VIEW3D_SCENE_UNAVAILABLE", why)
+        last = doe_repo.latest_job(conn, sid, job_type="DOE_RUN", state="SUCCEEDED")
+        params = copy.deepcopy(last["params"])
+        params["kind"] = "VIEW3D"                                 # 기존 POST_ONLY_KINDS(워커) — 새 작업 종류 없음
+        params["doe"] = {**params["doe"], "post_mode": "scene"}
+        params["warnings"] = []
+        step = [sd.key for sd in steps_for("DOE_RUN")].index("BD_POST") + 1
+        job = _insert_job(conn, principal, s, "DOE_RUN", params, resume=step)
+        return study_out(ctx, conn, s, job, c=c, principal=principal)
 
 
 # ---------------------------------------------------------------- v0.16.1 ④ 작은 형상 억제 목록(esl_select_relax.md §5A.5·§9)

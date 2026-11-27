@@ -390,6 +390,12 @@
   "A_RANGE_INVALID": "추가 비드 깊이 하한은 0 이상",
   "VB_WARP_INFO": "깊이 {d} mm 에서 뒤틀린 사각 요소 {n} 개(최대 {max}°) — 꺾인 모서리가 요소를 비스듬히 지나서 생김. 범위는 줄이지 않음",
   "VB_R_CLAMPED": "모서리 둥글기를 {r} mm 로 줄임(요소 크기 {r_h} mm 는 이 단면에 들어가지 않음)",
-  "VB_THETA_FLIP": "추가 비드 사면 각 상한({theta_hi}°)이 뒤집힘 기준 select.quality.flip_deg({flip}°)보다 큼"
+  "VB_THETA_FLIP": "추가 비드 사면 각 상한({theta_hi}°)이 뒤집힘 기준 select.quality.flip_deg({flip}°)보다 큼",
+  "SCENE_BUDGET": "저장 한도(설정 bead_doe.view3d.scene.max_mb)로 만들지 않았습니다",
+  "SCENE_FAILED": "이 낙하 씬의 3D 를 만들지 못했습니다",
+  "SCENE_NO_SOURCE": "이 출처에는 씬 3D 를 만들 입력(메시·응답)이 없습니다",
+  "SCENE_DIFF_NO_FRAME": "공통 좌표를 얻지 못해 C 기여도 차이를 만들지 못했습니다",
+  "SCENE_VIEW_INVALID": "씬 3D 요약(post/scene_view.json)을 읽지 못해 표시하지 않습니다 — 씬 3D 를 다시 만들 수 있습니다",
+  "SCENE_UNAVAILABLE_DISABLED": "설정 bead_doe.view3d.scene.enabled 가 꺼져 있어 씬 3D 를 만들 수 없습니다"
  }
 }

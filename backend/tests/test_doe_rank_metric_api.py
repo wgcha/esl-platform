@@ -408,10 +408,13 @@ def test_view3d_cfg_mirror():
 
     want = {"top_k": 3, "jig": True, "jig_support_max": 64, "jig_diag": True, "jig_tie_gap_mm": 5.0, "regen_keep_backups": 1,   # v0.23.3
             "recon": True}                                                                    # v0.24.1 재현 진단(esl_view3d_sources.md §7)
-    assert DEFAULTS["view3d"] == want and BeadDoeCfg().model_dump()["view3d"] == want
+    scene = {"enabled": True, "max_mb": 1024, "diff_cell_h_mult": 2.0}                    # v0.25.1 VL 낙하 씬별 3D 묶음(esl_view3d_scene_legend.md §7.1)
+    full = {**want, "scene": scene}
+    # 코어 DEFAULTS["view3d"]["scene"] 병합 전(C1 병합 전)에는 코어 쪽만 scene 없이 대조 — 병합 후에는 전체 대조(이 분기 사라짐)
+    assert DEFAULTS["view3d"] == (full if "scene" in DEFAULTS["view3d"] else want) and BeadDoeCfg().model_dump()["view3d"] == full
     for p in ("esl_platform.example.yaml", "esl_platform.prod.example.yaml"):
         y = yaml.safe_load((REPO / "config" / p).read_text(encoding="utf-8"))
-        assert y["bead_doe"]["view3d"] == want, p
+        assert y["bead_doe"]["view3d"] == full, p
 
 
 @pytest.mark.parametrize("bad", [{"jig_support_max": 0}, {"jig_support_max": 2001}, {"jig": "x"}])

@@ -35,6 +35,7 @@ from ..schemas import (
     DoeStudyOut,
     SelectionDerived,
     View3dOut,
+    View3dSceneOut,
 )
 from ..services import doe as svc
 from ..services import item_delete as del_svc
@@ -158,6 +159,14 @@ def doe_view3d_regenerate(sid: str, request: Request, principal: Principal = Dep
     return svc.regenerate_view3d(get_ctx(request), principal, sid)
 
 
+@router.post("/doe/studies/{sid}/view3d/scenes", response_model=DoeStudyOut, status_code=202)
+def doe_view3d_scenes(sid: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.25.1 VL 씬 3D 만들기(esl_view3d_scene_legend.md §2.5·§6): 3D 비교 대상 × 전 낙하 씬의 씬 묶음(post/view3d_scene/**)·사이드카
+    (post/scene_view.json)만 만든다(순위·결과 파일 불변). 기존 DOE_RUN 큐(post_mode scene, BD_POST 부터). 권한 = 관리자 ∨ 작성자(403),
+    작업 중 409 JOB_ACTIVE, 끝나지 않음·성공한 실행 없음·설정(bead_doe.view3d.scene.enabled) 끔 = 409 VIEW3D_SCENE_UNAVAILABLE."""
+    return svc.add_scene(get_ctx(request), principal, sid)
+
+
 @router.post("/doe/studies/{sid}/sources/{src}", response_model=DoeStudyOut, status_code=202)
 def doe_add_source(sid: str, src: str, request: Request, principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     """출처 자료 만들기(v0.24.0 노드 힘 출처 추가 계산 esl_bforce.md §6·esl_fint.md §5.2 + v0.24.1 지그 3D 다시 만들기 일반화
@@ -230,6 +239,25 @@ def doe_view3d_file(sid: str, did: str, name: str, request: Request,
                     principal: Principal = Depends(get_principal)) -> FileResponse:
     path, media = svc.view3d_file(get_ctx(request), principal, sid, did, name)
     return FileResponse(path, media_type=media, headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
+
+
+@router.get("/doe/studies/{sid}/view3d-scene/{src}/{did}/{entry_id}/manifest.json", response_model=View3dSceneOut,
+            response_model_by_alias=True)
+def doe_view3d_scene_manifest(sid: str, src: str, did: str, entry_id: str, request: Request,
+                              principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    """v0.25.1 VL 씬 manifest(기존 view3d manifest 키 + 선택 키 c·dc·pins·ranges.c·ranges.dc, 파일 URL = …/view3d-scene/{src}/{did}/…).
+    src = 순위 보기 키 화이트리스트, did = DID_RE, entry_id = 사이드카 엔트리만. 없음·형식 오류·링크 = 404 VIEW3D_SCENE_NOT_FOUND."""
+    return svc.view3d_scene_manifest(get_ctx(request), principal, sid, src, did, entry_id)
+
+
+@router.get("/doe/studies/{sid}/view3d-scene/{src}/{did}/{name}", response_class=FileResponse,
+            responses={200: {"content": {"model/gltf-binary": {}, "application/octet-stream": {}},
+                             "description": "씬 묶음 GLB·값 파일(pack.json 에 적힌 이름만)"}})
+def doe_view3d_scene_file(sid: str, src: str, did: str, name: str, request: Request,
+                          principal: Principal = Depends(get_principal)) -> FileResponse:
+    path, media = svc.view3d_scene_file(get_ctx(request), principal, sid, src, did, name)
+    # 형상(part.glb)은 씬을 바꿔도 같은 URL — 브라우저가 재검증(ETag)하며 캐시하게 no-store 가 아닌 no-cache
+    return FileResponse(path, media_type=media, headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"})
 
 
 @router.get("/doe/studies/{sid}/shapes/{did}/defeature", response_model=dict[str, Any])
