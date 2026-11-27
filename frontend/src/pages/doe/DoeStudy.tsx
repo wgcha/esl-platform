@@ -64,11 +64,11 @@ import { JobFailBanner, isFailedJob, progressText } from "../../components/JobFa
 import { BlockErr, MsgFold } from "../../components/MsgFold";
 import { SourceTabs } from "../../view3d/SourceTabs";
 import { loadRangeTop, loadUnitOf } from "../../view3d/values";
-import { groupFieldsOf, reconLineText } from "../../view3d/sources";
+import { groupFieldsOf, reconLineText, SOURCE_ROWS } from "../../view3d/sources";
 import { useStudyRecon } from "../../view3d/useRecon";
 import type { SourceTabItem } from "../../view3d/sources";
 import { hiddenSourcesSig, isHiddenSource } from "../../view3d/sources";
-import { BF_GRADE_TEXT, V3D_RECON_NONE_TEXT, LOAD_SOURCES, hiddenPrimaryOf, jigMethodNote, nodalNote, supportText, sourceAddOf, sourceNoView, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
+import { BF_GRADE_TEXT, V3D_RECON_NONE_TEXT, LOAD_SOURCES, countTail, hiddenPrimaryOf, otherRankedTab, jigMethodNote, nodalNote, supportText, sourceAddOf, sourceNoView, sourceOf, tabResult, tabState, type ChipKind, type LoadSource, type LoadTab, type NodalCols, type PairKeys, type TabState, type View3dKind } from "./doeTabs";
 
 const ACTIVE_PHASE = ["PREP", "PREVIEW", "RUN"];
 const MARK: Record<string, string> = { SUCCEEDED: "✓", RUNNING: "●", FAILED: "✗", SKIPPED: "↷" };
@@ -1641,6 +1641,19 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
   const addTab = !!tabs && !!curTab && !tabs.ok[curTab] && !!tabs.add[curTab];
   const curSrc = tabs && curTab ? sourceOf(curTab, loadSources) : null;
   const tabR = useMemo(() => (result.data ? (curSrc ? tabResult(result.data, curTab, loadSources) : result.data) : null), [result.data, curSrc, curTab, loadSources]);
+  // v0.25.2 §7.2 결과 카드 제목: "… OK n개 형상" 뒤에 0 이 아닌 제외·참고 개수(없으면 지금과 같은 글자 — 한 줄, 넘치면 말줄임 + title)
+  const resultTitle = `${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${(tabR ?? result.data).n_ok}${isCompare ? "개 형상" : "안"}${countTail(tabR ?? result.data)}` : ""}`;
+  // v0.25.2 §4.2 빈 탭 안내: 이 하중 출처에 순위가 없고 다른 탭에 있으면 그 탭으로 가는 링크(빈 문구 자리 1줄)
+  const emptyAlt = result.data && tabs && curTab ? otherRankedTab(result.data, curTab, loadSources) : null;
+  const emptyNote = emptyAlt ? (
+    <span data-testid="empty-rank-note">
+      이 하중 출처에는 순위에 든 형상이 없습니다{(() => { const t = countTail(tabR ?? result.data!); return t ? `(${t.replace(/^ · /, "").replace(/ · /g, " · ")})` : ""; })()} —{" "}
+      <button type="button" className="link-btn" data-testid="empty-rank-link" onClick={() => setLtab(emptyAlt.key)}>
+        [{emptyAlt.label}]
+      </button>{" "}
+      탭에는 순위가 있습니다
+    </span>
+  ) : null;
   /** 불가 출처의 첫 칩(사유 — v0.23.2 지그 미계산·불가 칩 유지)을 현재 탭 띠 앞에(원 결과로). 탭 없음(curSrc null) = 띠 기본 칩 전부 */
   const reasonChips = tabs && curSrc && result.data
     ? loadSources.filter((x) => !tabs.ok[x.key] && x.chips.length).map((x) => <StatusChipOnly key={x.key} result={result.data!} kind={x.chips[0]} />)
@@ -2104,7 +2117,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
       )}
       {ranStage && s && (
         <Card
-          title={`${isCompare ? "② 결과" : isSelect ? "⑦ 결과" : "⑤ 결과"}${result.data ? ` · OK ${(tabR ?? result.data).n_ok}${isCompare ? "개 형상" : "안"}` : ""}`}
+          title={resultTitle}
+          hint={resultTitle}
           right={
             result.data ? (
               <span className="inline-actions">
@@ -2181,6 +2195,8 @@ function StudyDetail({ projectId, id, st, stError }: { projectId: string; id: st
                           perEslNote={perEslNote(r, pick)}
                           resultNote={isCompare ? COMPARE_NOTE : null}
                           grid={gridOf(result.data)}
+                          empty={emptyNote}
+                          refTag={!curSrc || sourceGroup(curSrc.key) === "jig"}
                         />
                       </div>
                       <div className="doe-col-pe">
@@ -2281,6 +2297,9 @@ function LoadTabSeg({ ts, tab, setTab, sources }: { ts: TabState; tab: LoadTab; 
   const items: SourceTabItem[] = sources.map((s) => ({ key: s.key, label: s.label, title: s.title, ok: ts.ok[s.key], why: ts.reason[s.key], add: ts.add[s.key], ...groupFieldsOf(s.key, sources.map((x) => x.key)) }));
   return <SourceTabs items={items} tab={tab} setTab={setTab} label="하중 정의" prefix="doe-load" testId="doe-load-tab" whyTestId="doe-load-tab-why" />;
 }
+
+/** 출처 행의 그룹(지그 3방식 = "jig") — 참고용 꼬리표는 지그 출처 탭에서만 */
+const sourceGroup = (key: string) => SOURCE_ROWS.find((r) => r.key === key)?.group ?? null;
 
 export function DoeStudy() {
   const { projectId = "", doeId = "new" } = useParams();

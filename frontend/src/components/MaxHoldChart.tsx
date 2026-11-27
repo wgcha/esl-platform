@@ -48,6 +48,8 @@ export function MaxHoldChart({
   candidates,
   selectedFrame,
   label,
+  frames,
+  onPick,
 }: {
   time: number[];
   value: number[];
@@ -55,9 +57,14 @@ export function MaxHoldChart({
   candidates: TstarCandidate[];
   selectedFrame: number | null;
   label: string;
+  /** v0.25.2 §7.1: 곡선 점마다 프레임 번호(없으면 배열 위치) */
+  frames?: number[];
+  /** 주면 곡선 클릭 = 가장 가까운 프레임 선택(실행 권한 있을 때만 준다) */
+  onPick?: (frame: number) => void;
 }) {
   const { ref, width: W } = useWidth<HTMLDivElement>();
   const [showInc, setShowInc] = useState(false);
+  const [hover, setHover] = useState<number | null>(null);
   const inc = valueInc && valueInc.length === time.length ? valueInc : null;
   const H = Math.round(Math.max(280, Math.min(W * 0.32, 480)));
   if (!time.length) return <div className="empty">곡선 데이터가 없습니다</div>;
@@ -68,11 +75,47 @@ export function MaxHoldChart({
   const sy = (v: number) => H - M.b - (v / y1) * (H - M.t - M.b);
   const d = time.map((t, i) => `${i ? "L" : "M"}${sx(t).toFixed(1)},${sy(value[i]).toFixed(1)}`).join("");
   const dInc = inc && showInc ? time.map((t, i) => `${i ? "L" : "M"}${sx(t).toFixed(1)},${sy(Math.max(0, inc[i])).toFixed(1)}`).join("") : null;
+  const frameAt = (i: number) => frames?.[i] ?? i;
+  // t* 세로선 = 그 프레임의 시각(frame_stride > 1 에서도 맞음 — 프레임 번호 = 배열 위치 가정 안 함)
+  const selPos = selectedFrame === null ? -1 : time.findIndex((_, i) => frameAt(i) === selectedFrame);
   const sel = candidates.find((c) => c.frame_index === selectedFrame);
-  const selT = sel ? sel.time : selectedFrame !== null && time[selectedFrame] !== undefined ? time[selectedFrame] : null;
+  const selT = selPos >= 0 ? time[selPos] : sel ? sel.time : null;
+  // 마우스 x → 가장 가까운 곡선 점(시각 차 최소, 동률 = 앞 프레임)
+  const posAt = (clientX: number, svg: SVGSVGElement) => {
+    const px = clientX - svg.getBoundingClientRect().left;
+    const t = x0 + ((px - M.l) / (W - M.l - M.r)) * (x1 - x0 || 1);
+    let best = 0;
+    let bd = Infinity;
+    for (let i = 0; i < time.length; i++) {
+      const dd = Math.abs(time[i] - t);
+      if (dd < bd) {
+        bd = dd;
+        best = i;
+      }
+    }
+    return best;
+  };
+  const inPlot = (clientX: number, clientY: number, svg: SVGSVGElement) => {
+    const r = svg.getBoundingClientRect();
+    const px = clientX - r.left;
+    const py = clientY - r.top;
+    return px >= M.l && px <= W - M.r && py >= M.t && py <= H - M.b;
+  };
   return (
     <div ref={ref} className="chart">
-      <svg width={W} height={H} role="img" aria-label={`${label} max-hold 곡선`}>
+      <svg
+        width={W}
+        height={H}
+        role="img"
+        aria-label={`${label} max-hold 곡선`}
+        className={onPick ? "pickable" : undefined}
+        data-testid="maxhold-svg"
+        onMouseMove={(e) => setHover(onPick && inPlot(e.clientX, e.clientY, e.currentTarget) ? posAt(e.clientX, e.currentTarget) : null)}
+        onMouseLeave={() => setHover(null)}
+        onClick={(e) => {
+          if (onPick && inPlot(e.clientX, e.clientY, e.currentTarget)) onPick(frameAt(posAt(e.clientX, e.currentTarget)));
+        }}
+      >
         {(() => { const ys = ticks(0, y1); const f = tickFmt(ys); return ys.map((v) => (
           <g key={`y${v}`}>
             <line x1={M.l} x2={W - M.r} y1={sy(v)} y2={sy(v)} className="chart-grid" />
@@ -97,7 +140,19 @@ export function MaxHoldChart({
         <path d={d} className="chart-line" />
         {dInc && <path d={dInc} className="chart-line inc" data-testid="inc-line" />}
         {candidates.map((c) => (
-          <circle key={c.frame_index} cx={sx(c.time)} cy={sy(c.value)} r={c.frame_index === selectedFrame ? 4.5 : 3.5} className={c.frame_index === selectedFrame ? "chart-pt current" : "chart-pt"}>
+          <circle
+            key={c.frame_index}
+            cx={sx(c.time)}
+            cy={sy(c.value)}
+            r={c.frame_index === selectedFrame ? 4.5 : 3.5}
+            className={c.frame_index === selectedFrame ? "chart-pt current" : "chart-pt"}
+            data-testid={`chart-cand-${c.frame_index}`}
+            onClick={(e) => {
+              if (!onPick) return;
+              e.stopPropagation();
+              onPick(c.frame_index);
+            }}
+          >
             <title>{`후보 ${c.rank}: 프레임 ${c.frame_index}, t=${c.time}s, ${c.value}`}</title>
           </circle>
         ))}
@@ -106,6 +161,14 @@ export function MaxHoldChart({
             <line x1={sx(selT)} x2={sx(selT)} y1={M.t} y2={H - M.b} className="chart-marker" />
             <text x={sx(selT) + 6} y={M.t - 4} className="chart-label marker">
               t* = {selT.toFixed(3)} s
+            </text>
+          </g>
+        )}
+        {hover !== null && onPick && (
+          <g data-testid="chart-hover" pointerEvents="none">
+            <line x1={sx(time[hover])} x2={sx(time[hover])} y1={M.t} y2={H - M.b} className="chart-hover" />
+            <text x={M.l + 8} y={M.t + 14} className="chart-label hover">
+              프레임 {frameAt(hover)} · {time[hover].toFixed(3)} s · {+value[hover].toPrecision(4)}
             </text>
           </g>
         )}

@@ -7,6 +7,7 @@ export type Selection =
   | { kind: "arrow"; key: string } // 노드 모드 = rank, 군집 모드 = 라벨
   | { kind: "vertex"; vertex: number }
   | { kind: "support"; index: number }
+  | { kind: "tie"; index: number } // v0.25.2 강제 부여 표식(고리·✕) — manifest.tie_marks 위치
   | null;
 
 /** 현재 모드에서 보이는 화살표 키(= 표 행 키) */
@@ -26,6 +27,7 @@ export function selectionFromPick(e: PickEvent, arrowKeys: string[]): Selection 
   if (e.type === "arrow") return arrowKeys[e.index] !== undefined ? { kind: "arrow", key: arrowKeys[e.index] } : null;
   if (e.type === "vertex") return { kind: "vertex", vertex: e.vertex };
   if (e.type === "support") return { kind: "support", index: e.index };
+  if (e.type === "tie") return { kind: "tie", index: e.index };
   return null;
 }
 
@@ -56,5 +58,6 @@ export function sceneSelection(
     const i = top.length ? arrows.findIndex((a) => a.vertex === sel.vertex) : -1;
     return { arrowIndex: i >= 0 ? i : null, vertex: sel.vertex };
   }
+  if (sel.kind === "tie") return { arrowIndex: null, vertex: null };
   return { arrowIndex: null, vertex: supports[sel.index]?.vertex ?? null };
 }

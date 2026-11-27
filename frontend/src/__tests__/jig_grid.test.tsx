@@ -57,7 +57,7 @@ describe("§1.4 코드 문구·정보 등급·gridOf", () => {
   });
 
   it("정보 등급 5개(OUTSIDE·AREA_RATIO·FRAME_SHIFT·CONV·RANK)만 level 없이도 ⓘ, 경고 등급은 ⚠", () => {
-    expect([...JIG_GRID_INFO_CODES].sort()).toEqual(["JIG_GRID_AREA_RATIO", "JIG_GRID_CONV", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE", "JIG_GRID_ON_CLONE", "JIG_GRID_OUTSIDE", "JIG_GRID_RANK"]);
+    expect([...JIG_GRID_INFO_CODES].sort()).toEqual(["JIG_GRID_AREA_RATIO", "JIG_GRID_CONV", "JIG_GRID_FRAME_SHIFT", "JIG_GRID_MESH_MISMATCH", "JIG_GRID_MESH_MISMATCH_SHAPE", "JIG_GRID_ON_CLONE", "JIG_GRID_OUTSIDE", "JIG_GRID_RANK", "JIG_GRID_TIE_HINT"]);
     for (const c of JIG_GRID_INFO_CODES) expect(isInfoWarn({ code: c })).toBe(true);
     for (const c of ["JIG_GRID_SOURCE_MISSING", "JIG_GRID_TIE_MISS", "JIG_GRID_LOAD_RESID", "JIG_GRID_NO_REF", "JIG_GRID_TIE_SNAP"]) expect(isInfoWarn({ code: c })).toBe(false);
     expect(isInfoWarn({ code: "JIG_GRID_TIE_MISS", level: "info" })).toBe(true);

@@ -1215,6 +1215,11 @@ export class MockServer {
           metrics: this.tstarMetrics,
           hotspots: this.tstarMetrics[sel].hotspots,
           frames_D: FRAMES_D,
+          // v0.25.2 §6.1: 임의 프레임 선택 자료(목 — frame_stride 1, 채움 가능)
+          frames: this.tstarMetrics[sel].history.time.map((t, i) => ({ frame_index: i, time: t })),
+          frames_have: FRAMES_D,
+          fill: { available: true, code: null, text: null },
+          manual_ratio_warn: 0.5,
         },
       };
     }
@@ -1224,6 +1229,22 @@ export class MockServer {
       const blk = this.tstarMetrics[metric];
       if (!blk) return err(422, "INVALID_METRIC", `지표 ${metric} 가 없습니다`);
       const cand = blk.candidates.find((x) => x.frame_index === b.frame_index);
+      const hf = b.frame_index as number;
+      if (!cand && Number.isInteger(hf) && hf >= 0 && hf < blk.history.time.length) {
+        // v0.25.2 §6.1 2번: 후보 밖 — 변위가 있거나 채움 가능이면 저장(manual 포함)
+        const auto = blk.tstar!;
+        const value = blk.history.value[hf];
+        const ratio = auto.value > 0 ? value / auto.value : null;
+        c.tstar = {
+          metric, frame_index: hf, time: blk.history.time[hf], elem_id: 0, value, source: "user",
+          manual: { auto_frame: auto.frame_index, auto_time: auto.time, auto_value: auto.value, ratio, rel: hf < auto.frame_index ? "before" : hf > auto.frame_index ? "after" : "at", in_D: FRAMES_D.includes(hf), have: FRAMES_D.includes(hf) },
+        };
+        this.applyAutoSupport(c);
+        c.version += 1;
+        return { status: 200, body: this.caseOut(c) };
+      }
+      if (!cand && !(Number.isInteger(hf) && hf >= 0)) return err(422, "FRAME_NOT_FOUND", "h3d 에 없는 프레임입니다");
+      if (!cand && hf >= blk.history.time.length) return err(422, "FRAME_NOT_FOUND", "h3d 에 없는 프레임입니다");
       if (!cand || cand.in_D === false)
         return err(422, "FRAME_NOT_CANDIDATE", `frame ${b.frame_index} 은 ${metric} 후보가 아닙니다`, {
           candidates: blk.candidates.filter((x) => x.in_D !== false).map((x) => x.frame_index),

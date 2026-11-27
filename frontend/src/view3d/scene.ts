@@ -18,7 +18,8 @@ import { ndcToPx, pickSegmentScreen, type ScreenSeg, type V3 } from "./pick";
 import { DEFAULT_PROJECTION, PERSP_FOV as FOV, orthoClip, orthoHalfHeightFromPersp, perspPositionFromOrtho, pxWorld, type Projection } from "./projection";
 import type { CameraState, CreateScene, GeoData, PickEvent, SceneApi, SceneOptions, ViewerSceneLayer } from "./sceneApi";
 import { fitView, validBbox, viewBasis, type Bbox, type FitResult } from "./viewFit";
-import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec } from "./supports";
+import { SUPPORT_COLOR, SYMBOL_GLYPH, type SupportSpec, type TieMarkSpec } from "./supports";
+import { TIE_PX } from "./supportMarks";
 import { PAN_SPEED, STATIC_MOVING, WHEEL_ZOOM_SPEED, trackballRotateSpeed } from "../lib/viewerControls";
 
 const LOD_RESTORE_MS = 250;
@@ -501,7 +502,35 @@ void main() {`,
   const markLines: LineSegments2[] = [];
   const markMats = new Map<string, LineMaterial>();
   let supports: SupportSpec[] = [];
+  // v0.25.2 강제 부여: 지지 테두리(자홍) 선 + Case 체결부 자리 고리·선·✕ — 지지 층에 딸림
+  const outlineLines: LineSegments2[] = [];
+  const tieLines: LineSegments2[] = [];
+  let tiePicks: TieMarkSpec["picks"] = [];
+  const colorLines = (arr: number[], color: string, px: number, order: number, into: LineSegments2[]) => {
+    const key = `${color}|${px}`;
+    let m = markMats.get(key);
+    if (!m) {
+      m = new LineMaterial({ color, linewidth: px, depthTest: false, transparent: true, worldUnits: false });
+      m.resolution.copy(supMat.resolution);
+      markMats.set(key, m);
+    }
+    const g = new LineSegmentsGeometry();
+    g.setPositions(arr);
+    const o = new LineSegments2(g, m);
+    o.frustumCulled = false;
+    o.renderOrder = order;
+    scene.add(o);
+    into.push(o);
+  };
+  const clearLines = (list: LineSegments2[]) => {
+    for (const o of list) {
+      scene.remove(o);
+      o.geometry.dispose();
+    }
+    list.length = 0;
+  };
   const clearSupports = () => {
+    clearLines(outlineLines);
     if (supLines) {
       scene.remove(supLines);
       supLines.geometry.dispose();
@@ -524,6 +553,8 @@ void main() {`,
     const on = layerOn.supports;
     if (supLines) supLines.visible = on;
     for (const o of markLines) o.visible = on;
+    for (const o of outlineLines) o.visible = on;
+    for (const o of tieLines) o.visible = on;
     for (const sp of supSprites) sp.visible = on;
   };
   // v0.24.6 최대·최소 표식 스프라이트, 원형 외곽선
@@ -681,6 +712,12 @@ void main() {`,
       const off = v.addScaledVector(raycaster.ray.direction, -t).length();
       return off <= pxW(t) * 14;
     });
+    const tieIdx = !layerOn.supports ? -1 : tiePicks.findIndex((t) => {
+      const v = new Vector3(t.pos[0], t.pos[1], t.pos[2]).sub(raycaster.ray.origin);
+      const tt = v.dot(raycaster.ray.direction);
+      if (tt <= 0) return false;
+      return v.addScaledVector(raycaster.ray.direction, -tt).length() <= pxW(tt) * 14;
+    });
     // v0.8.0: 예전 광선-선분 월드 거리 허용(6 px)은 2 px 선에 너무 좁아, 직교 기본(v0.7.1)에서 짧게 보이는 화살표를
     // 거의 못 눌렀다(원근은 가까운 화살표가 커 보여 가려졌음). 화면 공간 거리로 원근·직교·줌 모두 같은 px 허용.
     const r = canvas.getBoundingClientRect();
@@ -700,6 +737,7 @@ void main() {`,
     const ai = pickSegmentScreen([ev.clientX - r.left, ev.clientY - r.top], ssegs);
     if (ai >= 0) return { type: "arrow", index: ai };
     if (supIdx >= 0) return { type: "support", index: supIdx };
+    if (tieIdx >= 0) return { type: "tie", index: tiePicks[tieIdx].index };
     const l = currentLayer();
     if (l) {
       const hit = raycaster.intersectObject(l.mesh, false)[0];
@@ -807,7 +845,14 @@ void main() {`,
       supports = list;
       const pts: number[] = [];
       const byColor = new Map<string, number[]>();
+      const byOutline = new Map<string, number[]>();
       for (const s of list) {
+        if (s.outline) {
+          // 강제로 붙인 지지: 같은 기호를 굵은 자홍 선으로 한 겹 더 깔아 테두리처럼 보이게(기호 색 선이 위에)
+          const arr = byOutline.get(s.outline) ?? [];
+          for (const [a, b] of s.markSegs ?? s.segments) arr.push(...a, ...b);
+          byOutline.set(s.outline, arr);
+        }
         if (s.markSegs && s.markColor) {
           const arr = byColor.get(s.markColor) ?? [];
           for (const [a, b] of s.markSegs) arr.push(...a, ...b);
@@ -821,6 +866,7 @@ void main() {`,
         scene.add(sp);
         supSprites.push(sp);
       }
+      for (const [color, arr] of byOutline) if (arr.length) colorLines(arr, color, SUPPORT_LINE_PX + 0.5 + TIE_PX.outlinePad, 7, outlineLines);
       for (const [color, arr] of byColor) {
         let m = markMats.get(color);
         if (!m) {
@@ -846,6 +892,17 @@ void main() {`,
       }
       applySupVis();
       sizeSprites();
+      invalidate();
+    },
+    setTieMarks(spec) {
+      clearLines(tieLines);
+      tiePicks = spec?.picks ?? [];
+      for (const layer of spec?.layers ?? []) {
+        const arr: number[] = [];
+        for (const [a, b] of layer.segs) arr.push(...a, ...b);
+        if (arr.length) colorLines(arr, layer.color, layer.widthPx, 9, tieLines);
+      }
+      applySupVis();
       invalidate();
     },
     select(arrowIndex, vertex) {

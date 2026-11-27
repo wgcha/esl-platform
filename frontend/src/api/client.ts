@@ -130,8 +130,21 @@ export const CODE_TEXT: Record<string, string> = {
   SHAPE_DUPLICATE_FILE: "같은 STEP 파일이 두 번 이상 들어 있습니다",
   SHAPE_QUALITY_FAIL: "메시 품질 Fail 요소 비율이 상한을 넘었습니다(차단 아님 — 결과에 메시 품질 차이가 섞일 수 있음)",
   DEFEATURE_SKIPPED: "작은 구멍 메움을 건너뛰고 그대로 메싱했습니다",
+  // v0.25.2 t* 임의 프레임(esl_tstar_manual_jig_force.md §6.1) — 원본 문구는 서버(esl/io/messages.py·doe_messages.json), 여기는 거울
+  FRAME_NOT_EXTRACTABLE: "이 시점은 고를 수 없습니다 — 변위를 읽을 수 없는 프레임입니다",
+  FRAME_NOT_FOUND: "h3d 에 없는 프레임입니다",
+  TSTAR_FRAME_FILL_FAILED: "직접 고른 시점을 h3d 에서 읽지 못했습니다 — 다시 실행하거나 ② 에서 다른 시점을 고르세요",
+  SHAPE_DOUBLE_SHEET: "판 앞뒷면 표면이 둘 다 들어 있는 것 같습니다 — 두께가 두 번 계산되고 지그 체결부를 못 찾을 수 있습니다. 중립면 한 장으로 올려 주세요",
   MESH_FACE_FALLBACK: "일부 면을 다른 2D 알고리즘(또는 제약 해제)으로 메시했습니다 — 그 면 주변 요소 모양이 다를 수 있음",
 };
+
+/** v0.25.2 §2.5 직접 고른 t* 문구 거울(서버 TSTAR_MANUAL*). {f} 프레임 · {t} 시간 · {pct} 자동 대비 % · {fa}·{ta} 자동 t* */
+export const TSTAR_MANUAL_TEXT = {
+  TSTAR_MANUAL: "직접 고른 시점: 프레임 {f} · {t} s — 지표 값이 자동 t*(프레임 {fa} · {ta} s)의 {pct} % 입니다",
+  TSTAR_MANUAL_LOW: "직접 고른 시점의 지표가 자동 t* 의 {pct} % 뿐입니다 — 하중이 최대에 한참 못 미친 시점의 ESL 입니다",
+  TSTAR_MANUAL_AFTER: "자동 t* 뒤 시점입니다 — 지표(max-hold)는 지나간 최대값이고, ESL 은 이 시점의 변위로 만듭니다",
+  TSTAR_MANUAL_NO_RISING: "이 시점에 변형률이 오르는 요소가 없어 변형률 hotspot 비교는 생략합니다(변위 검증은 그대로)",
+} as const;
 
 /** 일괄 실행 멈춤 코드 중 일반 API 오류와 이름이 같아 CODE_TEXT 에 넣지 않는 것(errorText 회귀 방지) */
 export const RUN_ALL_STOP_TEXT: Record<string, string> = {
