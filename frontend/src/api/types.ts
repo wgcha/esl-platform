@@ -141,6 +141,18 @@ export interface TStar {
   support_auto?: SupportAuto | null;
   /** v0.13.0 일괄 실행이 자동 확정했으면 {by:"run_all", run_all_id, user_id}(esl_run_all.md §4.2) */
   confirmed?: TStarConfirmed | null;
+  /** v0.25.2 §6.1: 후보 밖 프레임을 직접 고른 t* 일 때만(없으면 자동 후보 선택) */
+  manual?: TStarManual | null;
+}
+/** v0.25.2 §2.3·§6.1 — 직접 고른 t* 의 자동 대비 값. rel = 자동 t* 보다 앞·같음·뒤 */
+export interface TStarManual {
+  auto_frame: number;
+  auto_time: number;
+  auto_value: number;
+  ratio: number | null;
+  rel: "before" | "at" | "after";
+  in_D: boolean;
+  have: boolean;
 }
 export interface TStarConfirmed {
   by: string;
@@ -505,6 +517,15 @@ export interface QueueXfer {
 export type Queue = QueueOut;
 
 // ---------------------------------------------------------------- t* (GET /cases/{id}/tstar, 자유 형식)
+export interface TstarFrame {
+  frame_index: number;
+  time: number;
+}
+export interface TstarFill {
+  available: boolean;
+  code: string | null;
+  text: string | null;
+}
 export interface TstarPoint {
   frame_index: number;
   time: number;
@@ -537,7 +558,7 @@ export interface TstarMetricBlock {
   tstar: TstarPoint | null;
   candidates: TstarCandidate[];
   /** max-hold 곡선 m(f) = max_{e∈H} v[f,e] (누적 씬이면 누적, value_inc = 이번 낙하 증분) */
-  history: { time: number[]; value: number[]; value_inc?: number[] };
+  history: { time: number[]; value: number[]; value_inc?: number[]; /** v0.25.2 §6.1: 곡선 점의 프레임 번호(없으면 frames 순서) */ frame_index?: number[] };
   hotspots: Hotspot[];
   error?: string;
   /** v0.8.0 누적 씬: 이전 손상만(이번 증가 없음) 제외 수 */
@@ -552,6 +573,14 @@ export interface TstarView {
   hotspots: Hotspot[];
   /** 변위가 추출된 후보 프레임 D */
   frames_D: number[];
+  /** v0.25.2 §6.1: 고를 수 있는 프레임 전부(history.npz 순서) */
+  frames?: TstarFrame[];
+  /** v0.25.2: 변위·변형률이 있는 프레임(D ∪ 채운 프레임) */
+  frames_have?: number[];
+  /** v0.25.2: D 밖 프레임 채움 가능 여부(frame_fill.DECIDE — 불가면 code·text) */
+  fill?: TstarFill;
+  /** v0.25.2(제안 키 — B1 과 맞춤): 직접 고른 t* 경고 임계 tstar.manual_ratio_warn. 없으면 경고색 판정 생략 */
+  manual_ratio_warn?: number;
   /** v0.8.0 누적 씬만 */
   cumulative?: { enabled: boolean; epsp_mode: CumulativeMode; eq_mode: CumulativeMode; agg: string; n_prev_elems: number; min_increment: number };
 }

@@ -72,13 +72,13 @@ function FoldCard({ title, children, right, fold }: { title?: string; children: 
 }
 
 /** 카드: 머리(제목·오른쪽 요소) + 본문. PhysicsAI Card 와 같은 구조(.card-head / .card-body). fold 가 없으면 기존과 같은 DOM */
-export function Card({ title, children, right, fold }: { title?: string; children: ReactNode; right?: ReactNode; fold?: CardFold | null }) {
+export function Card({ title, children, right, fold, hint }: { title?: string; children: ReactNode; right?: ReactNode; fold?: CardFold | null; /** 제목에 마우스를 올리면 뜨는 설명(새 줄 없음) */ hint?: string }) {
   if (fold) return <FoldCard title={title} right={right} fold={fold}>{children}</FoldCard>;
   return (
     <section className="card" aria-label={title}>
       {(title || right) && (
         <header className="card-head">
-          <h3>{title}</h3>
+          <h3 title={hint}>{title}</h3>
           {right}
         </header>
       )}

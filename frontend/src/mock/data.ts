@@ -148,7 +148,7 @@ function block(elems: Elem[]): TstarMetricBlock {
   return {
     tstar: { frame_index: c0.frame_index, time: c0.time, elem_id: c0.elem_id, value: c0.value },
     candidates,
-    history: { time: TIME, value },
+    history: { time: TIME, value, frame_index: TIME.map((_, f) => f) },
     hotspots,
   };
 }
